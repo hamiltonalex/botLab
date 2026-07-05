@@ -22,7 +22,7 @@
   },
   "build": {
     "appId": "com.dmitri.fundingarb",
-    "productName": "Funding-Arb Paper Simulator",
+    "productName": "BotLab",
     "directories": {
       "output": "release",
       "buildResources": "build"

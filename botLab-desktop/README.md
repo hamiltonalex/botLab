@@ -1,4 +1,4 @@
-# Funding-Arb Paper Simulator — Phase 1 (live data, paper-only)
+# BotLab — Desktop · Funding-Rate Arbitrage (Phase 1: live data, paper-only)
 
 A cross-platform desktop app (macOS `.dmg` / Windows `.exe`) that runs a delta-neutral
 **funding-rate arbitrage** strategy on **live GMX V2 (Arbitrum/Avalanche) × Hyperliquid** data and
@@ -111,7 +111,7 @@ npm run dist         # current platform
 Output lands in `release/`. Builds are **unsigned** (Phase 1). To run an unsigned build:
 
 - **macOS** — right-click the app → **Open** → **Open** (bypasses Gatekeeper once), or
-  `xattr -dr com.apple.quarantine "/Applications/Funding-Arb Paper Simulator.app"`.
+  `xattr -dr com.apple.quarantine "/Applications/BotLab.app"`.
 - **Windows** — SmartScreen → **More info** → **Run anyway**.
 
 Code-signing / notarization hooks are left for P6.

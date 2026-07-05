@@ -28,6 +28,7 @@ import { loadPositions, savePositions, loadSettings, saveSettings } from "../eng
 import { decimate } from "../engine/format.js";
 import { TWO_LEG, ONE_LEG, ALL_MARKETS, twoLegByKey, oneLegByKey, chainsInUse } from "../engine/universe.js";
 import { isolateSmokeProfile } from "./smoke-profile.js";
+import { migrateLegacyUserData } from "./migrate.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SMOKE = process.env.FA_SMOKE === "1"; // hidden-window self-test: boot, poll, print, quit
@@ -578,6 +579,12 @@ function startPolling() {
 
 app.whenReady().then(async () => {
   baseDir = app.getPath("userData");
+  // productName changed "Funding-Arb Paper Simulator" -> "BotLab", which moves this userData dir.
+  // Copy an existing forward-test ledger + settings over before we read anything, so the rename
+  // never loses paper positions. Skipped under FA_SMOKE (its profile is an isolated temp dir).
+  if (!SMOKE) {
+    migrateLegacyUserData({ newDir: baseDir, appDataDir: app.getPath("appData"), log: (m) => console.log(m) });
+  }
   state.settings = { ...state.settings, ...loadSettings(baseDir) };
   state.settings.costs = normalizeCosts(state.settings.costs || DEFAULT_COSTS);
   // win gates sliceWindow via Number.isFinite: a legacy/hand-edited settings.json holding "7"
