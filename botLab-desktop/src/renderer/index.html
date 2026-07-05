@@ -148,6 +148,41 @@ body::before{
 .live.fresh .led{ background:var(--pos); box-shadow:0 0 9px var(--pos); animation:pulse 1.8s ease-in-out infinite; }
 @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.45} }
 
+/* version pill — OTA update status (§15). Always present; only its look/text change (no layout shift).
+   Shares the .live vocabulary; the dot mirrors update state the way .live .led mirrors data freshness. */
+.verpill{
+  display:inline-flex; align-items:center; gap:7px; -webkit-user-select:none; user-select:none;
+  font-family:var(--f-mono); font-size:10.5px; font-weight:600; letter-spacing:.4px;
+  color:var(--txt-faint); border:1px solid var(--line); border-radius:6px; padding:5px 9px;
+  background:transparent; transition:.18s; min-width:62px; white-space:nowrap; cursor:default;
+}
+.verpill .vdot{ width:7px; height:7px; border-radius:50%; background:#3a4254; transition:.18s; flex:0 0 auto; }
+.verpill.clickable{ cursor:pointer; }
+.verpill.clickable:hover{ color:var(--txt-dim); border-color:var(--line-2); }
+.verpill.checking .vdot{ background:var(--neu); animation:pulse 1.6s ease-in-out infinite; }
+.verpill.uptodate{ color:var(--pos); border-color:rgba(41,224,143,.4); }
+.verpill.uptodate .vdot{ background:var(--pos); box-shadow:0 0 8px var(--pos); }
+.verpill.available, .verpill.downloaded{ color:var(--accent); border-color:rgba(76,155,255,.5); background:var(--accent-bg); }
+.verpill.available .vdot, .verpill.downloaded .vdot{ background:var(--accent); box-shadow:0 0 8px var(--accent); }
+.verpill.downloading{ color:var(--accent); border-color:rgba(76,155,255,.4); }
+.verpill.downloading .vdot{ background:var(--accent); }
+.verpill.installing{ color:var(--accent); border-color:rgba(76,155,255,.4); }
+.verpill.error{ color:var(--neg); border-color:rgba(255,86,86,.4); }
+.verpill.error .vdot{ background:var(--neg); }
+
+/* updater popover — reuses the .help-pop shell (position/bg/shadow); adds interactive controls.
+   Untrusted release notes/error text are injected with textContent, never innerHTML (§8.4). */
+.upd-pop .upd-notes{ white-space:pre-wrap; max-height:180px; overflow-y:auto; font-size:11.5px;
+  color:var(--txt-dim); background:var(--inset,rgba(255,255,255,.02)); border:1px solid var(--line);
+  border-radius:6px; padding:8px 10px; margin:4px 0 0; }
+.upd-pop .upd-reassure{ font-size:11px; color:var(--txt-faint); margin:9px 0 0; }
+.upd-pop .upd-actions{ display:flex; gap:8px; flex-wrap:wrap; margin-top:11px; }
+.upd-pop .upd-btn{ font:600 11px var(--f-sans); padding:6px 12px; border-radius:6px; cursor:pointer;
+  border:1px solid var(--line-2); background:transparent; color:var(--txt-dim); transition:.15s; }
+.upd-pop .upd-btn:hover{ color:var(--txt); border-color:var(--accent); }
+.upd-pop .upd-btn.primary{ color:var(--accent); background:var(--accent-bg); border-color:rgba(76,155,255,.5); }
+.upd-pop .upd-btn.primary:hover{ color:#eaf2ff; background:rgba(76,155,255,.24); }
+
 /* poll-interval control (how often live data + the forward paper test refresh) */
 .pollctl{ display:inline-flex; align-items:center; gap:7px; font-family:var(--f-mono); font-size:10.5px; color:var(--txt-faint); }
 .pollctl .lbl{ letter-spacing:.5px; text-transform:uppercase; }
@@ -610,6 +645,10 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
       <span class="led"></span><span id="liveTxt">ЗАГРУЗКА…</span><span aria-hidden="true" style="opacity:.55">⟳</span>
     </button>
     <button class="help-btn" data-help="topbar" aria-haspopup="dialog" aria-expanded="false" aria-label="Справка: статус данных и опрос">?</button>
+    <button class="verpill" id="verPill" aria-haspopup="dialog" aria-expanded="false" aria-label="Версия и статус обновления">
+      <span class="vdot"></span><span id="verPillTxt">—</span>
+    </button>
+    <button class="help-btn" data-help="updater" aria-haspopup="dialog" aria-expanded="false" aria-label="Справка: обновления приложения">?</button>
     <span class="stamp">данные по состоянию на <b id="stamp">ожидание живых данных…</b></span>
   </header>
 
@@ -2718,13 +2757,35 @@ if($('tradeNewBtn')) $('tradeNewBtn').onclick = gotoLaunch;
    клик по «?»; позиционирование с учётом краёв окна (работает на macOS/Windows
    одинаково — чистый Chromium, без нативных API).
    ========================================================================== */
-const HELP = {
+// Help registry, split into namespaces by owner (§16.2). HELP_CORE = the shell (topbar, updater,
+// ledger infrastructure); HELP_FUNDING_ARB = the funding-arb bot's panels. Future bots merge their own
+// HELP_<BOT> spread. The popover mechanism is unchanged — HELP is just the union of the namespaces.
+const HELP_CORE = {
   topbar: { t:'Статус данных и опрос бирж', b:
     '<p>Верхняя панель показывает, насколько свежи живые данные, и управляет частотой их обновления.</p><ul>'+
     '<li><b>«данные по состоянию на …»</b> — время (UTC) последнего успешного опроса GMX и Hyperliquid и его возраст. Все панели ниже рассчитаны именно на эти данные.</li>'+
     '<li><b>Опрос 1м/5м/15м</b> — интервал автоматического опроса живых ставок. Он же задаёт шаг начисления бумажного теста: один живой шаг покрывает не более 3× интервала, всё сверх этого дозаполняется историей.</li>'+
     '<li><b>Индикатор LIVE</b> — зелёный: данные свежие и полные; «ПРЕДУПР.»: один из источников/инструментов деградировал (детали — в подсказке статуса); «УСТАРЕЛО»: последний успешный опрос старше 15 минут. Клик по кнопке — немедленный внеочередной опрос.</li>'+
+    '<li><b>Пилюля версии</b> — установленная версия и статус обновления «по воздуху»; клик проверяет обновления, «?» рядом с ней — подробная справка. Подробнее — в справке «Обновления приложения».</li>'+
     '<li><b>Бейдж PAPER</b> — приложение только читает публичные данные бирж: ордера не отправляются, API-ключи и реальный капитал не задействованы.</li></ul>' },
+  updater: { t:'Обновления приложения (OTA)', b:
+    '<p>Пилюля версии в шапке показывает установленную версию и состояние обновления «по воздуху» из GitHub Releases. Проверка идёт автоматически — при запуске и каждые 6 часов; клик по пилюле запускает проверку вручную.</p><ul>'+
+    '<li><b>Состояния</b>: <b>vX.Y.Z</b> — актуальная; <b>проверка…</b> — идёт запрос; <b>Доступна vX</b> — вышла новая версия (клик — заметки релиза и кнопка «Скачать»); <b>Скачивание… %</b> — идёт загрузка; <b>Перезапустить для vX</b> — обновление готово; <b>ошибка обновления</b> — клик покажет причину и запасные пути.</li>'+
+    '<li><b>Скачивание — только по клику.</b> Приложение не качает обновления в фоне; момент выбираете вы.</li>'+
+    '<li><b>Перезапуск безопасен.</b> Позиции и журнал операций сохранены на диск и переживают обновление; бумажный тест продолжится после перезапуска, а разрыв времени дозаполнится историей.</li>'+
+    '<li><b>Целостность.</b> Каждый файл сверяется по <span class="fx">SHA-512</span> из манифеста релиза; при несовпадении установка не начинается.</li>'+
+    '<li><b>Если что-то не так</b> — «Скачать вручную» откроет страницу релизов в браузере, «Показать лог» — файл <span class="fx">userData/logs/main.log</span> с диагностикой.</li>'+
+    '<li><b>«Что нового»</b> — после каждого обновления страница релиза один раз открывается в браузере; вернуться к ней можно из поповера пилюли.</li></ul>' },
+  ledger: { t:'Журнал операций · двойная бухгалтерия позиции', b:
+    '<p>Каждая финансовая операция выбранной позиции — отдельной строкой: доход и расход раздельно, как в бухгалтерской книге. Позиция выбирается кликом в таблице позиций выше; селекторы зоны анализа (период/режим/капитал/плечо) на журнал не влияют.</p><ul>'+
+    '<li><b>Типы операций</b>: фандинг GMX (непрерывное начисление за тик опроса), борроу GMX (всегда расход), фандинг HL (расчёт на границе часа), издержки (разовые вход+выход, первая строка журнала — ˅ раскрывает детализацию), ◌ разрыв (период без данных — честный $0, ничего не начислено), ✎ корр. (ручная корректировка, зарезервировано).</li>'+
+    '<li><b>Баланс</b> — накопленный нетто-P&L после каждой операции. Последняя строка обязана сходиться с «реализовано (нетто)» позиции: статус сверки — в шапке журнала. <b class="neg">Расхождение — это баг</b>, а не рыночное событие.</li>'+
+    '<li><b>Источник</b>: без пометки — живой опрос; «·ист» — дозаполнено историческими почасовыми ставками после разрыва; «·проп» — интервал пропущен (см. строку «разрыв»).</li>'+
+    '<li><b>Итоги</b> сверху — всегда по ВСЕМ операциям позиции; фильтр по типам добавляет отдельный подытог, не подменяя итогов.</li>'+
+    '<li><b>Экспорт</b> CSV / XLSX / JSON — всегда полный журнал со всеми служебными полями (seq, источник, интервал, размер, детализация издержек), независимо от фильтра и показанных страниц.</li>'+
+    '<li>Журнал закрытой позиции хранится до ручного удаления: «удалить журнал…» в шапке (только для закрытых, с подтверждением, безвозвратно).</li></ul>' },
+};
+const HELP_FUNDING_ARB = {
   toolbar: { t:'Панель управления · параметры расчёта', b:
     '<p>Все разделы страницы пересчитываются мгновенно под выбранные здесь параметры. Данные по всем инструментам собираются постоянно, поэтому переключение не требует ожидания.</p><ul>'+
     '<li><b>Инструмент</b> — рынок GMX V2 (и для двуногой стратегии — парный перп Hyperliquid).</li>'+
@@ -2815,14 +2876,6 @@ const HELP = {
     '<li><b>b_long / b_short</b> — borrow factor/сек; всегда издержка.</li>'+
     '<li><b>hl_rate</b> — часовая ставка Hyperliquid.</li>'+
     '<li>Производные колонки — те же величины в годовых: <span class="fx">APR = factor·3600·8760</span>, <span class="fx">HL APR = rate·8760</span>; net — итог выбранной конфигурации.</li></ul>' },
-  ledger: { t:'Журнал операций · двойная бухгалтерия позиции', b:
-    '<p>Каждая финансовая операция выбранной позиции — отдельной строкой: доход и расход раздельно, как в бухгалтерской книге. Позиция выбирается кликом в таблице позиций выше; селекторы зоны анализа (период/режим/капитал/плечо) на журнал не влияют.</p><ul>'+
-    '<li><b>Типы операций</b>: фандинг GMX (непрерывное начисление за тик опроса), борроу GMX (всегда расход), фандинг HL (расчёт на границе часа), издержки (разовые вход+выход, первая строка журнала — ˅ раскрывает детализацию), ◌ разрыв (период без данных — честный $0, ничего не начислено), ✎ корр. (ручная корректировка, зарезервировано).</li>'+
-    '<li><b>Баланс</b> — накопленный нетто-P&L после каждой операции. Последняя строка обязана сходиться с «реализовано (нетто)» позиции: статус сверки — в шапке журнала. <b class="neg">Расхождение — это баг</b>, а не рыночное событие.</li>'+
-    '<li><b>Источник</b>: без пометки — живой опрос; «·ист» — дозаполнено историческими почасовыми ставками после разрыва; «·проп» — интервал пропущен (см. строку «разрыв»).</li>'+
-    '<li><b>Итоги</b> сверху — всегда по ВСЕМ операциям позиции; фильтр по типам добавляет отдельный подытог, не подменяя итогов.</li>'+
-    '<li><b>Экспорт</b> CSV / XLSX / JSON — всегда полный журнал со всеми служебными полями (seq, источник, интервал, размер, детализация издержек), независимо от фильтра и показанных страниц.</li>'+
-    '<li>Журнал закрытой позиции хранится до ручного удаления: «удалить журнал…» в шапке (только для закрытых, с подтверждением, безвозвратно).</li></ul>' },
   scanner: { t:'Скринер инструментов', b:
     '<p>Все двуногие инструменты набора, отранжированные по МЕДИАННОМУ net APR за текущее окно (в лучшей конфигурации каждого).</p><ul>'+
     '<li><b>Медиана против среднего</b>: на тонких рынках редкие выбросы завышают среднее в разы — медиана устойчива, поэтому ранжирование по ней.</li>'+
@@ -2830,6 +2883,21 @@ const HELP = {
     '<li><b>Статус</b> — «низколиквидный» при суммарном OI &lt; $1M: цифры честные, но исполнение такого размера нереалистично.</li>'+
     '<li>Подсвеченная строка — текущий выбор.</li></ul>' },
 };
+// Union of the namespaces — future bots add `...HELP_<BOT>`. Key collisions are caught by the oracle's
+// helpCoverage check (§16.4). This is the object the popover mechanism reads.
+const HELP = { ...HELP_CORE, ...HELP_FUNDING_ARB };
+
+// Edge-aware placement shared by the help popover and the updater popover: below the trigger, flipped
+// above when it would overflow the bottom, clamped horizontally to the window (macOS/Windows identical).
+function placePopover(pop, btn){
+  const r = btn.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  const left = Math.min(Math.max(8, r.left - 12), vw - pw - 8);
+  let top = r.bottom + 8;
+  if (top + ph > vh - 8) top = r.top - ph - 8;
+  top = Math.min(Math.max(8, top), Math.max(8, vh - ph - 8));
+  pop.style.left = left+'px'; pop.style.top = top+'px';
+}
 
 let helpPop = null, helpBtnActive = null;
 function closeHelp(){
@@ -2846,14 +2914,7 @@ function openHelp(btn){
   helpPop.className='help-pop'; helpPop.setAttribute('role','dialog'); helpPop.setAttribute('aria-label',h.t); helpPop.tabIndex=-1;
   helpPop.innerHTML = '<h4>'+h.t+'<button class="x" aria-label="Закрыть справку">✕</button></h4>'+h.b;
   document.body.appendChild(helpPop);
-  // позиционирование: под кнопкой; при нехватке места — над ней; по горизонтали прижать к краям окна
-  const r = btn.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
-  const pw = helpPop.offsetWidth, ph = helpPop.offsetHeight;
-  let left = Math.min(Math.max(8, r.left - 12), vw - pw - 8);
-  let top  = r.bottom + 8;
-  if (top + ph > vh - 8) top = r.top - ph - 8;
-  top = Math.min(Math.max(8, top), Math.max(8, vh - ph - 8)); // финальный зажим в видимую область
-  helpPop.style.left = left+'px'; helpPop.style.top = top+'px';
+  placePopover(helpPop, btn);
   helpPop.querySelector('.x').onclick = closeHelp;
   helpPop.focus();
 }
@@ -2862,11 +2923,16 @@ document.addEventListener('click', (e)=>{
   const btn = e.target.closest('.help-btn');
   if(btn){ e.stopPropagation(); openHelp(btn); return; }
   if(helpPop && !helpPop.contains(e.target)) closeHelp();   // клик вне — закрыть
+  // the updater popover closes on any outside click too — but NOT on the pill itself (that toggles it)
+  if(UPD.pop && !UPD.pop.contains(e.target) && !e.target.closest('#verPill')) closeUpdaterPop();
 });
-document.addEventListener('keydown', (e)=>{ if(e.key==='Escape'){ closeHelp(); closeTicket(true); } });
-window.addEventListener('resize', closeHelp);
+document.addEventListener('keydown', (e)=>{ if(e.key==='Escape'){ closeHelp(); closeUpdaterPop(); closeTicket(true); } });
+window.addEventListener('resize', ()=>{ closeHelp(); closeUpdaterPop(); });
 // прокрутка страницы закрывает поповер (позиция бы «уехала»); прокрутка ВНУТРИ поповера — нет
-window.addEventListener('scroll', (e)=>{ if(!(helpPop && helpPop.contains(e.target))) closeHelp(); }, true);
+window.addEventListener('scroll', (e)=>{
+  if(!(helpPop && helpPop.contains(e.target))) closeHelp();
+  if(!(UPD.pop && UPD.pop.contains(e.target))) closeUpdaterPop();
+}, true);
 // единые ARIA-атрибуты триггеров
 document.querySelectorAll('.help-btn').forEach(b=>{
   if(!b.hasAttribute('aria-haspopup')) b.setAttribute('aria-haspopup','dialog');
@@ -2874,6 +2940,129 @@ document.querySelectorAll('.help-btn').forEach(b=>{
   if(!b.hasAttribute('aria-label')) b.setAttribute('aria-label','Справка по разделу');
   b.title = 'Что это за раздел?';
 });
+
+/* ── версия и OTA-обновления: пилюля в шапке + поповер (§15) ─────────────────────────────────────
+   Пилюля всегда присутствует (даже в file://-режиме); меняется только вид/текст — без layout shift.
+   Заметки релиза и тексты ошибок приходят от GitHub → в DOM попадают ТОЛЬКО через textContent (§8.4). */
+const UPD = { snap:{ state:'idle', current:null, next:null, percent:0, notes:'', error:null }, pop:null };
+
+function renderVerpill(){
+  const pill = $('verPill'); if(!pill) return;
+  const s = UPD.snap;
+  const v = s.current ? ('v'+s.current) : '—';
+  const cls = { idle:'', checking:'checking', upToDate:'uptodate', available:'available',
+    downloading:'downloading', downloaded:'downloaded', installing:'installing', error:'error' }[s.state] || '';
+  const clickable = ['idle','available','downloaded','error'].includes(s.state);
+  pill.className = 'verpill' + (cls?(' '+cls):'') + (clickable?' clickable':'');
+  pill.style.background = ''; // reset; 'downloading' paints a progress gradient below
+  let label;
+  switch(s.state){
+    case 'checking':    label = v+' · проверка…'; break;
+    case 'upToDate':    label = v+' — актуальная'; break;
+    case 'available':   label = 'Доступна v'+s.next; break;
+    case 'downloading': label = 'Скачивание… '+s.percent+'%';
+      pill.style.background = 'linear-gradient(90deg, var(--accent-bg) '+s.percent+'%, transparent '+s.percent+'%)'; break;
+    case 'downloaded':  label = 'Перезапустить для v'+s.next; break;
+    case 'installing':  label = 'Установка…'; break;
+    case 'error':       label = v+' · ошибка обновления'; break;
+    default:            label = v; // idle
+  }
+  $('verPillTxt').textContent = label;
+  pill.setAttribute('aria-label', 'Версия и статус обновления: '+label);
+  pill.title = { idle:'Проверить обновления', checking:'Проверка обновлений…',
+    upToDate:'Установлена последняя версия', available:'Доступно обновление — подробнее',
+    downloading:'Идёт скачивание обновления', downloaded:'Обновление готово — перезапустить',
+    installing:'Установка обновления…', error:'Ошибка обновления — подробнее' }[s.state] || '';
+}
+
+function closeUpdaterPop(){
+  if(!UPD.pop) return;
+  UPD.pop.remove(); UPD.pop=null;
+  const pill=$('verPill'); if(pill) pill.setAttribute('aria-expanded','false');
+}
+function updBtn(label, primary, onClick){
+  const b=document.createElement('button');
+  b.className='upd-btn'+(primary?' primary':''); b.type='button'; b.textContent=label; b.onclick=onClick;
+  return b;
+}
+function openUpdaterPop(anchor){
+  closeUpdaterPop(); closeHelp();
+  const s = UPD.snap;
+  if(!['available','downloaded','error'].includes(s.state)) return; // only these states have a popover
+  const fa = window.fa && window.fa.updates;
+  const pop=document.createElement('div');
+  pop.className='help-pop upd-pop'; pop.setAttribute('role','dialog'); pop.tabIndex=-1;
+  const h4=document.createElement('h4');
+  const title=document.createElement('span');
+  const x=document.createElement('button'); x.className='x'; x.type='button'; x.setAttribute('aria-label','Закрыть'); x.textContent='✕'; x.onclick=closeUpdaterPop;
+  const actions=document.createElement('div'); actions.className='upd-actions';
+
+  if(s.state==='available'){
+    title.textContent='Доступна версия '+s.next;
+    pop.appendChild(h4); h4.append(title,x);
+    // release notes are UNTRUSTED (GitHub) — textContent only, never innerHTML (§8.4)
+    if(s.notes){ const n=document.createElement('p'); n.className='upd-notes'; n.textContent=s.notes; pop.appendChild(n); }
+    actions.append(
+      updBtn('Скачать', true, ()=>{ if(fa) fa.download(); closeUpdaterPop(); }),
+      updBtn('Что нового', false, ()=>{ if(fa) fa.whatsNew(s.next); }),
+    );
+  } else if(s.state==='downloaded'){
+    title.textContent='Готово к установке · v'+s.next;
+    pop.appendChild(h4); h4.append(title,x);
+    const r=document.createElement('p'); r.className='upd-reassure';
+    r.textContent='Позиции и журнал сохраняются, бумажный тест продолжится после перезапуска.';
+    pop.appendChild(r);
+    actions.append(
+      updBtn('Перезапустить', true, ()=>{ if(fa) fa.install(); }),
+      updBtn('Что нового', false, ()=>{ if(fa) fa.whatsNew(s.next); }),
+    );
+  } else { // error — three exits (§13)
+    let headline = { check:'Не удалось проверить обновления', download:'Ошибка при скачивании',
+      install:'Не удалось установить обновление' }[s.error && s.error.stage] || 'Ошибка обновления';
+    if(s.error && /sha512|checksum|integrity/i.test(s.error.message||'')) headline='Файл повреждён — установка не начата';
+    title.textContent=headline;
+    pop.appendChild(h4); h4.append(title,x);
+    if(s.error && s.error.message){ const m=document.createElement('p'); m.className='upd-notes'; m.textContent=s.error.message; pop.appendChild(m); }
+    actions.append(
+      updBtn('Повторить', true, ()=>{ if(fa) fa.check(); closeUpdaterPop(); }),
+      updBtn('Скачать вручную', false, ()=>{ if(fa) fa.whatsNew(''); }),  // '' -> releases index, not a tag
+      updBtn('Показать лог', false, ()=>{ if(fa) fa.showLog(); }),
+    );
+  }
+  pop.appendChild(actions);
+  document.body.appendChild(pop);
+  placePopover(pop, anchor);
+  UPD.pop=pop; anchor.setAttribute('aria-expanded','true'); pop.focus();
+}
+function toggleUpdaterPop(anchor){ if(UPD.pop) closeUpdaterPop(); else openUpdaterPop(anchor); }
+
+$('verPill').onclick = ()=>{
+  const fa = window.fa && window.fa.updates; const s = UPD.snap;
+  if(s.state==='idle'){ if(fa) fa.check(); return; }                 // idle: check now
+  if(['available','downloaded','error'].includes(s.state)) toggleUpdaterPop($('verPill'));
+  // checking / downloading / installing / upToDate: intentionally inert
+};
+
+// initial paint (works with no bridge) + live subscription to main's state machine
+(async function initUpdaterUI(){
+  renderVerpill();
+  const fa = window.fa && window.fa.updates;
+  if(!fa) return;
+  try{
+    const snap = await fa.status();                 // snapshot carries current version + current state
+    if(snap) UPD.snap = snap;
+    else if(window.fa.version) UPD.snap.current = await window.fa.version();
+  }catch(_e){ /* keep neutral idle */ }
+  renderVerpill();
+  fa.onState(snap=>{
+    UPD.snap = snap;
+    if(UPD.pop){                                     // rebuild an open popover for the new state, or drop it
+      if(['available','downloaded','error'].includes(snap.state)) openUpdaterPop($('verPill'));
+      else closeUpdaterPop();
+    }
+    renderVerpill();
+  });
+})();
 
 /* init: первый рендер — «пустые» состояния (никаких сид-цифр), затем живые данные из main */
 render(); // включает renderTrade()
