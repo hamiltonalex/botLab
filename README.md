@@ -28,4 +28,4 @@ Early and experimental. Distributed manually for now.
 
 ## License
 
-© Alex Hamilton. All rights reserved (no open-source license chosen yet).
+[MIT](LICENSE) © Alex Hamilton
