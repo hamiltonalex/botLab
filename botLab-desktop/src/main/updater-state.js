@@ -32,17 +32,34 @@ const clampPercent = (p) => {
 };
 
 // A GitHub release body can arrive as a string OR (in some electron-updater code paths) an array of
-// { version, note } objects. Coerce to ONE plain string and bound its length so a pathological body
-// can't bloat the IPC payload. This is NOT the XSS defense — the renderer MUST inject the result with
-// textContent, never innerHTML (§8.4). We keep the raw characters intact precisely because textContent
-// neutralizes them; pre-escaping here would double-escape in the DOM.
+// { version, note } objects. Coerce to ONE plain string, convert HTML to readable plain text, and
+// bound its length so a pathological body can't bloat the IPC payload.
+//
+// GitHub renders release bodies to HTML (even a one-line note comes back as "<p>…</p>"). The renderer
+// injects notes with textContent (§8.4) — the real XSS boundary — which shows any tags LITERALLY, so
+// raw HTML would leak "<p>…</p>" into the pill popover. We therefore strip tags to plain text here
+// (block ends -> newlines, list items -> bullets) as FORMATTING; textContent downstream is still the
+// security boundary, and stripping also guarantees no markup (e.g. <img onerror>) reaches the DOM.
 export function toPlainNotes(raw, maxLen = 4000) {
   if (raw == null) return "";
   let s;
   if (Array.isArray(raw)) s = raw.map((n) => (n && typeof n === "object" ? (n.note ?? "") : String(n))).join("\n\n");
   else if (typeof raw === "object") s = raw.note ?? JSON.stringify(raw);
   else s = String(raw);
-  s = s.trim();
+  s = s
+    .replace(/<\s*br\s*\/?>/gi, "\n") // <br> -> newline
+    .replace(/<\/\s*(p|div|li|ul|ol|h[1-6]|tr|blockquote)\s*>/gi, "\n") // block ends -> newline
+    .replace(/<\s*li[^>]*>/gi, "• ") // list items -> bullets
+    .replace(/<[^>]+>/g, "") // strip all remaining tags
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, "&") // decode &amp; LAST so it can't re-form another entity
+    .replace(/[ \t]+\n/g, "\n") // trim trailing spaces per line
+    .replace(/\n{3,}/g, "\n\n") // collapse blank-line runs
+    .trim();
   return s.length > maxLen ? `${s.slice(0, maxLen)}…` : s;
 }
 
