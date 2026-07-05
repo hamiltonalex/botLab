@@ -24,11 +24,13 @@ import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts } 
 import { ledgerView, buildLedger } from "../engine/ledger.js";
 import { toLedgerCsv, toLedgerSheet, toLedgerJson, ledgerFileName, dialogFiltersFor } from "./export.js";
 import { buildXlsxBuffer } from "./xlsx-writer.js";
-import { loadPositions, savePositions, loadSettings, saveSettings } from "../engine/store.js";
+import { loadPositions, savePositions, loadSettings, saveSettings, hasSettings } from "../engine/store.js";
 import { decimate } from "../engine/format.js";
 import { TWO_LEG, ONE_LEG, ALL_MARKETS, twoLegByKey, oneLegByKey, chainsInUse } from "../engine/universe.js";
 import { isolateSmokeProfile } from "./smoke-profile.js";
 import { migrateLegacyUserData } from "./migrate.js";
+import { initUpdater, disposeUpdater } from "./updater.js";
+import { decideChangelogOpen } from "./updater-state.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SMOKE = process.env.FA_SMOKE === "1"; // hidden-window self-test: boot, poll, print, quit
@@ -585,6 +587,9 @@ app.whenReady().then(async () => {
   if (!SMOKE) {
     migrateLegacyUserData({ newDir: baseDir, appDataDir: app.getPath("appData"), log: (m) => console.log(m) });
   }
+  // Post-migration snapshot of "did the user have a prior profile?" — the changelog auto-open below
+  // uses it to tell a fresh install from an upgrade (§8.3). Captured BEFORE any saveSettings creates it.
+  const settingsFileExisted = hasSettings(baseDir);
   state.settings = { ...state.settings, ...loadSettings(baseDir) };
   state.settings.costs = normalizeCosts(state.settings.costs || DEFAULT_COSTS);
   // win gates sliceWindow via Number.isFinite: a legacy/hand-edited settings.json holding "7"
@@ -596,6 +601,25 @@ app.whenReady().then(async () => {
     state.settings.asset = state.settings.strat === "one" ? "ETH-Arb" : "ETH";
     saveSettings(baseDir, state.settings);
   }
+  // §8.3 — after an update lands, open the release's "what's new" page exactly once. The decision is
+  // pure (updater-state.js); here we act on it and persist the version so it shows at most once per upgrade.
+  const changelog = decideChangelogOpen({
+    isPackaged: app.isPackaged,
+    settingsFileExisted,
+    lastRunVersion: state.settings.lastRunVersion,
+    currentVersion: app.getVersion(),
+  });
+  if (changelog.open) {
+    try {
+      shell.openExternal(changelog.url);
+    } catch (e) {
+      console.log("[main] changelog auto-open failed (non-fatal):", e.message);
+    }
+  }
+  if (state.settings.lastRunVersion !== changelog.nextLastRunVersion) {
+    state.settings.lastRunVersion = changelog.nextLastRunVersion;
+    saveSettings(baseDir, state.settings);
+  }
   state.positions = loadPositions(baseDir);
   // An OPEN paper position whose instrument was removed/delisted can no longer be tracked or closed
   // from the UI. Close it on boot (P&L accrued so far is preserved as realized) so it does not sit as
@@ -604,6 +628,9 @@ app.whenReady().then(async () => {
 
   createWindow();
   wireIpc();
+  // OTA updater (§5): registers the fa:update:* / fa:version IPC now; scheduled checks only run in a
+  // packaged build. Skipped entirely under SMOKE (isolated profile, quits in <1s).
+  if (!SMOKE) initUpdater({ window: win });
 
   // Boot order matters: gaps are priced from HISTORY *before* the first live accrual, so the
   // capped live step only ever covers the small remainder after the last historical hour.
@@ -674,4 +701,11 @@ app.whenReady().then(async () => {
 // surprising; the gap backfill makes restarts accurate anyway (audit M19).
 app.on("window-all-closed", () => {
   app.quit();
+});
+
+// Tear down timers before the process exits (§5.4): the exchange poll and the updater's 6h check
+// timer. quitAndInstall() also fires before-quit, so an update install cleans up through here too.
+app.on("before-quit", () => {
+  if (pollTimer) clearInterval(pollTimer);
+  disposeUpdater();
 });
