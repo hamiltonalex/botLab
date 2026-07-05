@@ -12,17 +12,25 @@
     "start": "electron .",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
-    "dist:win": "electron-builder --win"
+    "dist:win": "electron-builder --win",
+    "check:tag": "node scripts/check-tag-version.mjs",
+    "check:changelog": "node scripts/check-changelog.mjs",
+    "make:icon": "node scripts/make-icon.mjs"
   },
   "author": "Alex Hamilton",
   "license": "MIT",
+  "dependencies": {
+    "electron-log": "^5.2.0",
+    "electron-updater": "^6.3.9"
+  },
   "devDependencies": {
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.dmitri.fundingarb",
+    "appId": "com.hamiltonalex.botlab",
     "productName": "BotLab",
+    "artifactName": "BotLab-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -31,12 +39,23 @@
       "src/**/*",
       "package.json"
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "hamiltonalex",
+        "repo": "botLab"
+      }
+    ],
     "mac": {
       "target": [
-        { "target": "dmg", "arch": ["universal"] }
+        { "target": "dmg", "arch": ["universal"] },
+        { "target": "zip", "arch": ["universal"] }
       ],
       "category": "public.app-category.finance",
-      "identity": null
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true
     },
     "win": {
       "target": [
