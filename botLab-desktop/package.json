@@ -5,7 +5,7 @@
   "type": "module",
   "main": "src/main/main.js",
   "scripts": {
-    "test": "node --test test/",
+    "test": "node --test",
     "oracle": "electron scripts/selector-oracle.mjs",
     "smoke": "node scripts/smoke-live.mjs",
     "verify:loris": "node scripts/verify-loris.mjs",
