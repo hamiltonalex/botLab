@@ -63,6 +63,11 @@ export function savePositions(baseDir, positions) {
 }
 
 // ---- UI/settings (capital, leverage, selection, cost overrides, poll interval) ----
+// Whether a settings.json already exists — lets the post-update changelog logic tell a fresh install
+// (no file) apart from an upgrade (file present, §8.3). Read-only: never creates the file.
+export function hasSettings(baseDir) {
+  return existsSync(settingsPath(baseDir));
+}
 export function loadSettings(baseDir) {
   ensureDir(baseDir);
   return readJson(settingsPath(baseDir), {});

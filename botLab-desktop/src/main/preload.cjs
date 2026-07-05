@@ -20,4 +20,19 @@ contextBridge.exposeInMainWorld("fa", {
     ipcRenderer.on("fa:push", h);
     return () => ipcRenderer.removeListener("fa:push", h);
   },
+  // OTA updates (§5.2). The renderer only ever sees updater STATES — never the network or the FS.
+  updates: {
+    status: () => ipcRenderer.invoke("fa:update:status"),
+    check: () => ipcRenderer.invoke("fa:update:check"),
+    download: () => ipcRenderer.invoke("fa:update:download"),
+    install: () => ipcRenderer.invoke("fa:update:install"),
+    whatsNew: (version) => ipcRenderer.invoke("fa:update:whatsNew", version),
+    showLog: () => ipcRenderer.invoke("fa:update:showLog"),
+    onState: (cb) => {
+      const h = (_e, snap) => cb(snap);
+      ipcRenderer.on("fa:update:state", h);
+      return () => ipcRenderer.removeListener("fa:update:state", h);
+    },
+  },
+  version: () => ipcRenderer.invoke("fa:version"),
 });

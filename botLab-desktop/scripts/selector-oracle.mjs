@@ -328,8 +328,105 @@ async function run() {
   if (costPersist.afterBlur !== 2 || costPersist.sentOnBlur !== costPersist.next)
     throw new Error(`focusout flush missing (DEV-07): ${JSON.stringify(costPersist)}`);
 
+  // ── helpCoverage (§16.4): every .help-btn[data-help] ⇄ HELP entry, and each popover opens VISIBLE
+  // with a non-empty h4 + body (computed styles, not a bare DOM assert — our lesson). Regression-locks
+  // "every feature ships its Help entry" now that HELP is split into namespaces (§16.2).
+  const help = await win.webContents.executeJavaScript(`(() => {
+    const keys = Object.keys(HELP);
+    const btns = [...document.querySelectorAll('.help-btn[data-help]')].map(b => b.dataset.help);
+    const btnSet = new Set(btns);
+    const missingEntry = [...new Set(btns)].filter(k => !HELP[k]);   // (a) button with no HELP entry
+    const orphanEntry  = keys.filter(k => !btnSet.has(k));           // (b) HELP entry with no button
+    const openFailures = [];                                          // (c) popover must open VISIBLE
+    for (const k of keys) {
+      const btn = document.querySelector('.help-btn[data-help="'+k+'"]');
+      if (!btn) continue;                                             // already flagged by orphanEntry
+      openHelp(btn);
+      const pop = document.querySelector('.help-pop');
+      if (!pop) { openFailures.push(k+':no-pop'); continue; }
+      const cs = getComputedStyle(pop), h4 = pop.querySelector('h4'), p = pop.querySelector('p');
+      if (cs.display === 'none' || cs.visibility === 'hidden' || pop.offsetHeight <= 0) openFailures.push(k+':not-visible');
+      else if (!h4 || !h4.textContent.trim()) openFailures.push(k+':empty-h4');
+      else if (!p || !p.textContent.trim()) openFailures.push(k+':empty-body');
+      closeHelp();
+    }
+    return { entries: keys.length, buttons: btns.length, missingEntry, orphanEntry, openFailures, hasUpdater: keys.includes('updater') };
+  })()`);
+  if (help.missingEntry.length) throw new Error("helpCoverage: .help-btn without a HELP entry: " + help.missingEntry.join(", "));
+  if (help.orphanEntry.length) throw new Error("helpCoverage: HELP entry without a .help-btn (orphan text): " + help.orphanEntry.join(", "));
+  if (help.openFailures.length) throw new Error("helpCoverage: popover open/visibility failures: " + help.openFailures.join(", "));
+  if (!help.hasUpdater) throw new Error("helpCoverage: the 'updater' Help entry is missing");
+
+  // ── updaterStates (§17.2): drive all 8 pill states through the renderer's presentation layer and
+  // assert labels, classes, clickability, computed color for tonal states, popover contents, and — the
+  // security-critical one — that untrusted release notes / error text stay INERT (textContent, §8.4).
+  // The oracle window has no main process, so we drive UPD/renderVerpill directly (the same seam the
+  // mock IPC feeds in the packaged app); window.fa stays undefined so the action buttons are no-ops.
+  const upd = await win.webContents.executeJavaScript(`(() => {
+    const pill = document.getElementById('verPill'), txt = document.getElementById('verPillTxt');
+    const set = (s) => { UPD.snap = s; renderVerpill(); };
+    const base = { current:'0.2.0', next:null, percent:0, notes:'', error:null };
+    const out = {};
+    set({ ...base, state:'idle' });        out.idle = { txt: txt.textContent, cls: pill.className, clickable: pill.classList.contains('clickable') };
+    set({ ...base, state:'checking' });    out.checking = { txt: txt.textContent, cls: pill.className };
+    set({ ...base, state:'upToDate' });    out.upToDate = { txt: txt.textContent, cls: pill.className };
+    set({ ...base, state:'downloading', next:'0.3.0', percent:42 }); out.downloading = { txt: txt.textContent, bg: pill.style.background, clickable: pill.classList.contains('clickable') };
+    set({ ...base, state:'installing' });  out.installing = { txt: txt.textContent, clickable: pill.classList.contains('clickable') };
+    // available: popover + escaping — inject BOTH a <script> and an <img onerror> (the latter fires via
+    // innerHTML but must NOT via textContent). Neither may run or become a DOM node.
+    window.__updXss = false;
+    set({ ...base, state:'available', next:'0.3.0', notes:'<img src=x onerror="window.__updXss=true">\\n<script>window.__updXss=true</script>\\nRELEASE NOTES' });
+    openUpdaterPop(pill);
+    let pop = document.querySelector('.upd-pop'), notes = pop && pop.querySelector('.upd-notes');
+    out.available = {
+      txt: txt.textContent, cls: pill.className,
+      popVisible: !!pop && getComputedStyle(pop).display!=='none' && pop.offsetHeight>0,
+      role: pop && pop.getAttribute('role'),
+      buttons: pop ? [...pop.querySelectorAll('.upd-btn')].map(b=>b.textContent) : [],
+      notesText: notes && notes.textContent,
+      liveNodes: notes ? notes.querySelectorAll('script,img').length : -1,   // must be 0 (textContent)
+    };
+    closeUpdaterPop();
+    set({ ...base, state:'downloaded', next:'0.3.0', percent:100 });
+    openUpdaterPop(pill); pop = document.querySelector('.upd-pop');
+    out.downloaded = {
+      txt: txt.textContent, cls: pill.className,
+      reassure: pop && pop.querySelector('.upd-reassure') && pop.querySelector('.upd-reassure').textContent,
+      buttons: pop ? [...pop.querySelectorAll('.upd-btn')].map(b=>b.textContent) : [],
+    };
+    closeUpdaterPop();
+    // error with a sha512 message -> "Файл повреждён" headline; three exits; message stays inert text
+    set({ ...base, state:'error', error:{ stage:'download', message:'sha512 checksum mismatch <b>x</b>' } });
+    openUpdaterPop(pill); pop = document.querySelector('.upd-pop'); const emsg = pop && pop.querySelector('.upd-notes');
+    out.error = {
+      txt: txt.textContent, cls: pill.className,
+      headline: pop && pop.querySelector('h4 span') && pop.querySelector('h4 span').textContent,
+      buttons: pop ? [...pop.querySelectorAll('.upd-btn')].map(b=>b.textContent) : [],
+      msgText: emsg && emsg.textContent, msgLiveNodes: emsg ? emsg.querySelectorAll('b').length : -1,
+    };
+    closeUpdaterPop();
+    out.xssRan = window.__updXss; // must be false
+    return out;
+  })()`);
+  const uEq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  if (upd.idle.txt !== "v0.2.0" || !upd.idle.clickable) throw new Error("updaterStates: idle wrong: " + JSON.stringify(upd.idle));
+  if (!upd.checking.txt.includes("проверка") || !upd.checking.cls.includes("checking")) throw new Error("updaterStates: checking wrong: " + JSON.stringify(upd.checking));
+  if (!upd.upToDate.txt.includes("актуальная") || !upd.upToDate.cls.includes("uptodate")) throw new Error("updaterStates: upToDate wrong: " + JSON.stringify(upd.upToDate));
+  if (upd.downloading.txt !== "Скачивание… 42%" || !upd.downloading.bg.includes("42%") || upd.downloading.clickable) throw new Error("updaterStates: downloading wrong: " + JSON.stringify(upd.downloading));
+  if (upd.installing.txt !== "Установка…" || upd.installing.clickable) throw new Error("updaterStates: installing wrong: " + JSON.stringify(upd.installing));
+  if (upd.available.txt !== "Доступна v0.3.0" || !upd.available.popVisible || upd.available.role !== "dialog") throw new Error("updaterStates: available pill/popover wrong: " + JSON.stringify(upd.available));
+  if (!uEq(upd.available.buttons, ["Скачать", "Что нового"])) throw new Error("updaterStates: available buttons wrong: " + JSON.stringify(upd.available.buttons));
+  if (!upd.available.notesText.includes("RELEASE NOTES") || !upd.available.notesText.includes("<script>")) throw new Error("updaterStates: notes must carry the LITERAL escaped markup: " + JSON.stringify(upd.available.notesText));
+  if (upd.available.liveNodes !== 0) throw new Error("updaterStates: release notes injected LIVE nodes — XSS boundary breached");
+  if (upd.downloaded.txt !== "Перезапустить для v0.3.0" || !upd.downloaded.reassure || !upd.downloaded.reassure.includes("сохраняются")) throw new Error("updaterStates: downloaded reassurance wrong: " + JSON.stringify(upd.downloaded));
+  if (!uEq(upd.downloaded.buttons, ["Перезапустить", "Что нового"])) throw new Error("updaterStates: downloaded buttons wrong: " + JSON.stringify(upd.downloaded.buttons));
+  if (!upd.error.cls.includes("error") || upd.error.headline !== "Файл повреждён — установка не начата") throw new Error("updaterStates: error headline wrong: " + JSON.stringify(upd.error));
+  if (!uEq(upd.error.buttons, ["Повторить", "Скачать вручную", "Показать лог"])) throw new Error("updaterStates: error three-exits wrong: " + JSON.stringify(upd.error.buttons));
+  if (upd.error.msgLiveNodes !== 0 || !upd.error.msgText.includes("<b>")) throw new Error("updaterStates: error message must be inert text (textContent)");
+  if (upd.xssRan) throw new Error("updaterStates: release-notes payload EXECUTED — critical XSS failure");
+
   await win.close();
-  console.log(JSON.stringify({ selectorCombinations: comboChecks, selectionDatasets: cases.length, fuzzSteps: fuzz.steps, violations: 0, rendererWarnings: rendererWarnings.length, positionConfig: "pass", newestClosed: "pass", zoneSemantics: "pass", costValidation: "pass", costPersistence: "pass", ledgerReconciliation: "pass", ledgerZoneIsolation: "pass", ledgerClosedRetention: "pass", ledgerMismatchAlarm: "pass" }));
+  console.log(JSON.stringify({ selectorCombinations: comboChecks, selectionDatasets: cases.length, fuzzSteps: fuzz.steps, violations: 0, rendererWarnings: rendererWarnings.length, positionConfig: "pass", newestClosed: "pass", zoneSemantics: "pass", costValidation: "pass", costPersistence: "pass", ledgerReconciliation: "pass", ledgerZoneIsolation: "pass", ledgerClosedRetention: "pass", ledgerMismatchAlarm: "pass", helpCoverage: help.entries + " entries", updaterStates: "pass" }));
 }
 
 app.whenReady().then(async () => {

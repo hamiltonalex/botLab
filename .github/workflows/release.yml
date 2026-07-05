@@ -1,0 +1,93 @@
+name: release
+
+# Release pipeline — OTA plan §7.5 / §9.2.
+#
+# Triggered ONLY by pushing a version tag (v*). Flow:
+#   1. draft   — create the draft GitHub Release first, before the build matrix, so the two
+#                per-OS jobs never race to create it.
+#   2. release — for each OS: gate (tag == package.json version) -> full test suite ->
+#                electron-builder builds, signs + notarizes (macOS), and uploads artifacts
+#                to that SAME draft.
+#
+# The draft is published MANUALLY after a human smoke-checks the installers (§18) — CI never
+# publishes to users on its own. Building only in CI from a tag also closes the
+# "stale locally-built DMG" class of bug (§7.5).
+#
+# NOTE ON LAYOUT: the git repo root is one level above the app. The app package (package.json,
+# src/, scripts/, test/) lives in botLab-desktop/. Workflows must sit at the repo root under
+# .github/, so build steps set working-directory to the app dir via the release job's defaults.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # Runs at the repo root — no checkout needed, gh talks to the API with GITHUB_TOKEN.
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create (or reuse) the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Draft $GITHUB_REF_NAME already exists — reusing."
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "$GITHUB_REF_NAME" \
+              --notes "Draft — replace with the CHANGELOG.md section for this version before publishing."
+          fi
+
+  release:
+    needs: draft
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: botLab-desktop
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags: the changelog gate diffs src/engine against the previous tag
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: botLab-desktop/package-lock.json
+      - run: npm ci
+
+      # Release gate 1: the tag must equal package.json version (§7.3). Fails before any build.
+      - name: Gate — tag matches package.json version
+        run: node scripts/check-tag-version.mjs
+
+      # Release gate 2: CHANGELOG section for this version exists + carries an impact flag; an engine
+      # change may not declare "Влияние: нет" (§8.1, §9.2-3).
+      - name: Gate — CHANGELOG section + impact flag
+        run: node scripts/check-changelog.mjs
+
+      # Release gate 3: the full test suite must be green before artifacts exist (§9.2).
+      - name: Gate — full test suite
+        run: npm test
+
+      # Build + (macOS) sign + notarize, then upload assets to the draft created above.
+      - name: Build, sign, notarize, publish to draft
+        run: npx --no-install electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing — Developer ID Application cert (.p12 base64) + its password.
+          # Absent on the Windows runner; electron-builder just skips signing there.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          # macOS notarization — App Store Connect API key (no 2FA; ideal for CI, §10.1).
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
