@@ -121,12 +121,20 @@ test("toPlainNotes coerces string / array / object and bounds length", () => {
   assert.ok(out.endsWith("…"));
 });
 
-test("toPlainNotes passes markup through as LITERAL text (textContent is the XSS boundary)", () => {
-  const payload = '<script>alert(1)</script>';
-  // The string is returned verbatim — the safety comes from the renderer using textContent, not from
-  // mangling the notes here. We assert it stays an inert string, unchanged.
-  assert.equal(toPlainNotes(payload), payload);
-  assert.equal(typeof toPlainNotes(payload), "string");
+test("toPlainNotes converts an HTML release body to readable plain text", () => {
+  // GitHub wraps even a one-line note in <p>…</p>; textContent would show the tags literally.
+  assert.equal(toPlainNotes("<p>Fixed the thing</p>"), "Fixed the thing");
+  assert.equal(toPlainNotes("<p>one</p><p>two</p>"), "one\ntwo");
+  assert.equal(toPlainNotes("a<br/>b"), "a\nb");
+  assert.equal(toPlainNotes("<ul><li>x</li><li>y</li></ul>"), "• x\n• y");
+  assert.equal(toPlainNotes("R&amp;D &lt;ok&gt;"), "R&D <ok>");
+});
+
+test("toPlainNotes strips tags so no markup survives (textContent stays the XSS boundary)", () => {
+  const out = toPlainNotes('<img src=x onerror="hack()">Notes<b>!</b>');
+  assert.equal(out, "Notes!"); // tags gone, visible text kept
+  assert.ok(!/[<>]/.test(out), "no angle-bracket markup remains");
+  assert.equal(typeof out, "string");
 });
 
 // ── releaseTagUrl (§9.1 XSS/URL-injection row) ─────────────────────────────────────────────────────
