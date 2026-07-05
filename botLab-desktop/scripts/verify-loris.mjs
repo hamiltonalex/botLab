@@ -255,6 +255,7 @@ function extractSettlementSeries(payload, coin) {
 function probeBaseDir() {
   if (args["base-dir"]) return resolve(args["base-dir"]);
   const candidates = [
+    join(homedir(), "Library", "Application Support", "BotLab"),
     join(homedir(), "Library", "Application Support", "funding-arb-desktop"),
     join(homedir(), "Library", "Application Support", "Funding-Arb Paper Simulator"),
   ];
