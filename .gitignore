@@ -1,0 +1,10 @@
+# dependencies & build output (per-package, but ignored repo-wide for safety)
+node_modules/
+release/
+dist/
+
+# logs & OS cruft
+*.log
+.DS_Store
+
+# runtime data caches are written to the OS userData dir, never the repo

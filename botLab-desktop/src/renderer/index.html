@@ -1,0 +1,2924 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<!-- Renderer makes NO network calls (all fetching happens in the main process over IPC); only
+     Google Fonts are loaded. CSP tightened accordingly. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'none'" />
+<title>Funding-Arb Paper Simulator</title>
+
+<!--
+  ============================================================================
+  FUNDING-ARB PAPER SIMULATOR  —  UI/UX PROTOTYPE  (look & feel only)
+  ============================================================================
+  Дельта-нейтральный funding-арбитраж GMX V2 (Arbitrum) × Hyperliquid + GMX-карри.
+
+  ВАЖНО: это ПРОТОТИП ИНТЕРФЕЙСА. ВСЕ числа — РЕАЛИСТИЧНЫЙ МОК (помечен // MOCK),
+  взят по порядку величины из реальных бэктестов (spread_cache CSV + xlsx-экспорты),
+  чтобы согласовать состав и вид данных. НЕТ настоящих fetch к биржам, НЕТ настоящей
+  математики P&L, НЕТ загрузки. Переключатели меняют мок-числа правдоподобно
+  (простое масштабирование), но это не движок. Места подключения реальных данных
+  помечены // TODO(real).
+
+  Один самодостаточный файл: инлайн CSS + ванильный JS, без сборки, без зависимостей.
+  Графики — собственный canvas-рендер (HiDPI), поэтому файл работает офлайн по
+  двойному клику. Шрифты — IBM Plex (Google Fonts) с системными фолбэками.
+  ============================================================================
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+<style>
+/* ───────────────────────── DESIGN TOKENS ───────────────────────── */
+:root{
+  /* near-black, high-contrast institutional terminal */
+  --bg:        #07090d;
+  --bg-grid:   #0c0f16;
+  --panel:     #0e121a;
+  --panel-2:   #131826;
+  --inset:     #0a0d14;
+  --line:      rgba(126,148,184,.16);   /* hairline — visible block separation */
+  --line-2:    rgba(126,148,184,.28);   /* stronger divider */
+  --line-soft: rgba(126,148,184,.09);
+
+  --txt:       #e9eef6;   /* primary */
+  --txt-dim:   #93a0b6;   /* secondary */
+  --txt-faint: #5e6a82;   /* tertiary / captions */
+
+  /* semantic — chosen for contrast on near-black, clearly distinct hues */
+  --pos:       #29e08f;   /* green: short receives / profit / >0 */
+  --pos-bri:   #54ffae;
+  --pos-bg:    rgba(41,224,143,.10);
+  --neg:       #ff5667;   /* red: pays / loss / <0 */
+  --neg-bri:   #ff8089;
+  --neg-bg:    rgba(255,86,103,.10);
+  --neu:       #ffb02e;   /* amber: neutral / zero line */
+  --neu-bg:    rgba(255,176,46,.10);
+  --price:     #e6edf7;   /* white: price / spot */
+  --price-2:   #8fb4ff;   /* second venue price line (cool tint) */
+
+  --accent:    #4c9bff;   /* UI selection / focus — distinct from semantics */
+  --accent-bg: rgba(76,155,255,.14);
+
+  --f-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --f-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+
+  --r:   10px;   /* card radius */
+  --r-s: 7px;
+  --pad: 16px;
+}
+
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
+html{ -webkit-text-size-adjust:100%; }
+body{
+  background:
+    radial-gradient(1200px 520px at 50% -8%, rgba(76,155,255,.08), transparent 60%),
+    var(--bg);
+  color:var(--txt);
+  font-family:var(--f-sans);
+  font-size:13px;
+  line-height:1.45;
+  letter-spacing:.1px;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+  min-height:100vh;
+}
+/* faint structural grid texture for atmosphere/depth (subtle, not decorative noise) */
+body::before{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0; opacity:.5;
+  background-image:
+    linear-gradient(var(--line-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+  background-size:48px 48px, 48px 48px;
+  -webkit-mask-image:radial-gradient(120% 90% at 50% 0%, #000 30%, transparent 80%);
+          mask-image:radial-gradient(120% 90% at 50% 0%, #000 30%, transparent 80%);
+}
+
+.mono{ font-family:var(--f-mono); font-variant-numeric:tabular-nums; font-feature-settings:'tnum' 1,'zero' 1; }
+.num{ font-family:var(--f-mono); font-variant-numeric:tabular-nums; font-feature-settings:'tnum' 1,'zero' 1; white-space:nowrap; }
+.pos{ color:var(--pos); } .neg{ color:var(--neg); } .neu{ color:var(--neu); } .white{ color:var(--price); }
+.dim{ color:var(--txt-dim); } .faint{ color:var(--txt-faint); }
+
+/* ───────────────────────── LAYOUT SHELL ───────────────────────── */
+.app{ position:relative; z-index:1; max-width:1640px; margin:0 auto; padding:0 18px 60px; }
+
+/* top bar */
+.topbar{
+  position:sticky; top:0; z-index:40;
+  display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+  padding:13px 4px 12px;
+  background:linear-gradient(180deg, rgba(7,9,13,.97), rgba(7,9,13,.88));
+  -webkit-backdrop-filter:blur(8px);
+  backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--line);
+}
+.brand{ display:flex; align-items:baseline; gap:11px; min-width:0; }
+.brand .mark{
+  font-family:var(--f-mono); font-weight:700; font-size:15px; letter-spacing:.4px; color:var(--txt);
+  white-space:nowrap;
+}
+.brand .mark .dot{ color:var(--pos); }
+.brand .sub{ font-size:11.5px; color:var(--txt-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.topbar .spacer{ flex:1 1 auto; }
+
+.badge-paper{
+  display:inline-flex; align-items:center; gap:7px;
+  font-family:var(--f-mono); font-size:10.5px; font-weight:600; letter-spacing:.6px;
+  color:var(--neu); background:var(--neu-bg); border:1px solid rgba(255,176,46,.4);
+  padding:5px 9px; border-radius:6px; text-transform:uppercase;
+}
+.badge-paper .blip{ width:7px; height:7px; border-radius:50%; background:var(--neu); box-shadow:0 0 8px var(--neu); }
+
+.stamp{ font-family:var(--f-mono); font-size:11px; color:var(--txt-faint); white-space:nowrap; }
+.stamp b{ color:var(--txt-dim); font-weight:600; }
+
+/* LIVE toggle */
+.live{
+  display:inline-flex; align-items:center; gap:8px; cursor:pointer; -webkit-user-select:none; user-select:none;
+  font-family:var(--f-mono); font-size:11px; font-weight:600; letter-spacing:.6px;
+  color:var(--txt-faint); border:1px solid var(--line); border-radius:6px; padding:5px 9px;
+  background:transparent; transition:.18s;
+}
+.live[aria-pressed="true"]{ color:var(--pos); border-color:rgba(41,224,143,.45); background:var(--pos-bg); }
+.live .led{ width:8px; height:8px; border-radius:50%; background:#3a4254; transition:.18s; }
+.live.fresh .led{ background:var(--pos); box-shadow:0 0 9px var(--pos); animation:pulse 1.8s ease-in-out infinite; }
+@keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.45} }
+
+/* poll-interval control (how often live data + the forward paper test refresh) */
+.pollctl{ display:inline-flex; align-items:center; gap:7px; font-family:var(--f-mono); font-size:10.5px; color:var(--txt-faint); }
+.pollctl .lbl{ letter-spacing:.5px; text-transform:uppercase; }
+.pollctl .seg{ display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+.pollctl .seg button{ font-family:var(--f-mono); font-size:10.5px; font-weight:600; color:var(--txt-faint); background:transparent; border:0; padding:4px 8px; cursor:pointer; transition:.15s; }
+.pollctl .seg button + button{ border-left:1px solid var(--line); }
+.pollctl .seg button:hover{ color:var(--txt-dim); }
+.pollctl .seg button[aria-pressed="true"]{ color:var(--pos); background:var(--pos-bg); }
+
+/* кнопка «Пересчёт» — ЕДИНСТВЕННАЯ «primary»-кнопка тулбара: акцентный синий (интерактив),
+   НЕ красный — красный в этой палитре жёстко занят семантикой убытка/опасности (--neg).
+   Позиция — замыкающая «зона действия» тулбара (паттерн submit у формы параметров). */
+.recalc-btn{
+  font:700 11.5px var(--f-sans); letter-spacing:.7px; text-transform:uppercase;
+  padding:10px 20px; border-radius:8px; cursor:pointer;
+  color:var(--accent); background:var(--accent-bg);
+  border:1px solid rgba(76,155,255,.5); transition:.15s;
+}
+.recalc-btn:hover{ color:#eaf2ff; background:rgba(76,155,255,.24); border-color:var(--accent); box-shadow:0 2px 16px rgba(76,155,255,.28); }
+.recalc-btn:active{ transform:translateY(1px); }
+.recalc-btn:disabled{ opacity:.55; cursor:wait; box-shadow:none; }
+
+/* ── контекстная справка: «?» в заголовке каждого раздела, клик — поповер с пояснением ── */
+.help-btn{
+  flex:0 0 auto; width:17px; height:17px; border-radius:50%; padding:0;
+  display:inline-flex; align-items:center; justify-content:center;
+  font:700 10.5px var(--f-mono); color:var(--txt-faint);
+  background:transparent; border:1px solid var(--line-2); cursor:pointer; transition:.15s;
+}
+.help-btn:hover, .help-btn[aria-expanded="true"]{ color:var(--accent); border-color:var(--accent); background:rgba(76,155,255,.08); }
+.help-pop{
+  position:fixed; z-index:200; width:min(400px, calc(100vw - 24px)); max-height:min(430px, 70vh); overflow-y:auto;
+  background:var(--panel-2, #10141c); border:1px solid var(--line-2); border-radius:var(--r-s);
+  box-shadow:0 12px 34px rgba(0,0,0,.55); padding:14px 16px; font-size:12px; line-height:1.55; color:var(--txt-dim);
+}
+.help-pop:focus{ outline:none; }
+.help-pop h4{ margin:0 0 8px; font-size:11px; font-weight:700; letter-spacing:.9px; text-transform:uppercase; color:var(--txt); display:flex; align-items:center; gap:8px; }
+.help-pop h4 .x{ margin-left:auto; width:18px; height:18px; border:0; border-radius:4px; background:transparent; color:var(--txt-faint); font:600 13px var(--f-sans); cursor:pointer; }
+.help-pop h4 .x:hover{ color:var(--txt); background:rgba(126,148,184,.12); }
+.help-pop p{ margin:0 0 7px; }
+.help-pop ul{ margin:0 0 7px; padding-left:16px; }
+.help-pop li{ margin:0 0 5px; }
+.help-pop b{ color:var(--txt); font-weight:600; }
+.help-pop .fx{ font-family:var(--f-mono); font-size:11px; color:var(--accent); }
+
+/* control toolbar */
+.toolbar{
+  position:sticky; top:51px; z-index:30;
+  display:flex; align-items:flex-end; gap:18px 22px; flex-wrap:wrap;
+  padding:13px 14px; margin-top:14px;
+  background:linear-gradient(180deg, var(--panel-2), var(--panel));
+  border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:0 1px 0 rgba(255,255,255,.02) inset;
+}
+.ctl{ display:flex; flex-direction:column; gap:6px; }
+.ctl > label{ font-size:10px; letter-spacing:.9px; text-transform:uppercase; color:var(--txt-faint); font-weight:600; }
+
+/* segmented control */
+.seg{ display:inline-flex; background:var(--inset); border:1px solid var(--line); border-radius:8px; padding:3px; gap:2px; }
+.seg button{
+  font-family:var(--f-sans); font-size:12px; font-weight:600; color:var(--txt-dim);
+  background:transparent; border:0; border-radius:6px; padding:6px 12px; cursor:pointer;
+  transition:.14s; letter-spacing:.2px; white-space:nowrap;
+}
+.seg button.num{ font-family:var(--f-mono); }
+.seg button:hover{ color:var(--txt); background:rgba(126,148,184,.08); }
+.seg button[aria-pressed="true"]{ color:#05121f; background:var(--accent); box-shadow:0 1px 8px rgba(76,155,255,.35); }
+.seg.semantic button[aria-pressed="true"]{ color:#05130d; background:var(--pos); box-shadow:0 1px 8px rgba(41,224,143,.3); }
+
+/* select-style (asset) */
+.assetsel{ display:inline-flex; gap:2px; background:var(--inset); border:1px solid var(--line); border-radius:8px; padding:3px; }
+.assetsel button{
+  font-family:var(--f-mono); font-size:12.5px; font-weight:600; color:var(--txt-dim);
+  background:transparent; border:0; border-radius:6px; padding:6px 13px; cursor:pointer; transition:.14s;
+}
+.assetsel button:hover{ color:var(--txt); background:rgba(126,148,184,.08); }
+.assetsel button[aria-pressed="true"]{ color:var(--txt); background:var(--panel-2); border:1px solid var(--line-2); box-shadow:0 0 0 1px rgba(76,155,255,.25), 0 2px 10px rgba(0,0,0,.4); padding:5px 12px; }
+
+/* focus ring for a11y */
+button:focus-visible, input:focus-visible, [tabindex]:focus-visible{
+  outline:2px solid var(--accent); outline-offset:2px; border-radius:6px;
+}
+
+/* ───────────────────────── CARDS / SECTIONS ───────────────────────── */
+.grid{ display:grid; gap:14px; margin-top:14px; }
+.card{
+  background:linear-gradient(180deg, var(--panel-2), var(--panel));
+  border:1px solid var(--line); border-radius:var(--r);
+  padding:var(--pad);
+  box-shadow:0 1px 0 rgba(255,255,255,.02) inset, 0 6px 22px -16px rgba(0,0,0,.8);
+  min-width:0;
+}
+.card.flush{ padding:0; overflow:hidden; }
+.sec-head{ display:flex; align-items:center; gap:10px; margin:0 0 12px; }
+.sec-head h2{
+  margin:0; font-size:11px; font-weight:700; letter-spacing:1.1px; text-transform:uppercase; color:var(--txt-dim);
+}
+.sec-head .tag{
+  font-family:var(--f-mono); font-size:10px; font-weight:600; letter-spacing:.4px;
+  color:var(--txt-faint); border:1px solid var(--line); border-radius:5px; padding:2px 7px;
+}
+.sec-head .tag.green{ color:var(--pos); border-color:rgba(41,224,143,.35); background:var(--pos-bg); }
+.sec-head .tag.amber{ color:var(--neu); border-color:rgba(255,176,46,.35); background:var(--neu-bg); }
+.sec-head .rule{ flex:1 1 auto; height:1px; background:linear-gradient(90deg,var(--line-2),transparent); }
+.sec-head .hint{ font-size:11px; color:var(--txt-faint); }
+
+/* ───────────────────────── HERO (A) ───────────────────────── */
+.hero{ display:grid; grid-template-columns:minmax(300px,1.05fr) minmax(360px,1.55fr); gap:14px; }
+.hero-main{
+  background:
+    radial-gradient(560px 240px at 12% 0%, rgba(41,224,143,.10), transparent 60%),
+    linear-gradient(180deg, var(--panel-2), var(--panel));
+  border:1px solid var(--line); border-radius:var(--r); padding:18px 20px;
+  display:flex; flex-direction:column; gap:14px; position:relative; overflow:hidden;
+}
+.hero-main .topline{ display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+.cfg-pill{
+  font-family:var(--f-mono); font-size:11px; font-weight:600; color:var(--txt);
+  border:1px solid var(--line-2); border-radius:6px; padding:3px 9px; background:var(--inset);
+}
+.cfg-pill b{ color:var(--accent); }
+.mode-pill{ font-family:var(--f-mono); font-size:10.5px; font-weight:600; letter-spacing:.4px; padding:3px 8px; border-radius:6px; }
+.mode-gross{ color:var(--neu); border:1px solid rgba(255,176,46,.35); background:var(--neu-bg); }
+.mode-net{ color:var(--pos); border:1px solid rgba(41,224,143,.35); background:var(--pos-bg); }
+
+.pnl-hero{ display:flex; flex-direction:column; gap:2px; }
+.pnl-hero .lbl{ font-size:11px; letter-spacing:.8px; text-transform:uppercase; color:var(--txt-faint); font-weight:600; }
+.pnl-hero .val{
+  font-family:var(--f-mono); font-weight:700; line-height:1; letter-spacing:-.5px;
+  font-size:clamp(40px, 6.4vw, 68px);
+}
+.pnl-hero .val .cur{ font-size:.5em; opacity:.65; font-weight:600; vertical-align:.18em; margin-right:.06em; }
+/* «≈» перед числом-ГИПОТЕЗОЙ (истор. оценка, не реализованный P&L) — чтобы крупное число
+   никогда не читалось как накопленная прибыль бумажного счёта. */
+.pnl-hero .val.est{ opacity:.82; }
+.pnl-hero .val .approx{ font-size:.5em; opacity:.6; font-weight:600; vertical-align:.14em; margin-right:.1em; }
+
+.hero-kpis{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.kpi{ background:var(--inset); border:1px solid var(--line); border-radius:var(--r-s); padding:11px 13px; }
+.kpi .lbl{ font-size:10px; letter-spacing:.6px; text-transform:uppercase; color:var(--txt-faint); font-weight:600; margin-bottom:5px; }
+.kpi .v{ font-family:var(--f-mono); font-weight:700; font-size:24px; line-height:1; }
+.kpi .sub{ font-size:10.5px; color:var(--txt-faint); margin-top:5px; }
+
+.hero-foot{ display:flex; gap:16px; flex-wrap:wrap; font-size:11px; color:var(--txt-dim); margin-top:auto; }
+.hero-foot .it{ display:flex; gap:6px; align-items:center; }
+.hero-foot .it .k{ color:var(--txt-faint); }
+
+/* matrix */
+.matrix-wrap{ background:linear-gradient(180deg, var(--panel-2), var(--panel)); border:1px solid var(--line); border-radius:var(--r); padding:16px; display:flex; flex-direction:column; }
+.matrix-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+.matrix-head .ttl{ font-size:11px; letter-spacing:1px; text-transform:uppercase; color:var(--txt-dim); font-weight:700; }
+.matrix-head .leg{ display:flex; gap:12px; font-size:10.5px; color:var(--txt-faint); }
+.matrix{ display:grid; grid-template-columns:84px 1fr 1fr; gap:8px; }
+.matrix .corner{}
+.matrix .colh, .matrix .rowh{ display:flex; align-items:center; justify-content:center; font-family:var(--f-mono); font-size:11px; font-weight:600; color:var(--txt-dim); }
+.matrix .rowh{ justify-content:flex-end; padding-right:10px; flex-direction:column; align-items:flex-end; gap:1px; }
+.matrix .rowh small{ color:var(--txt-faint); font-size:9.5px; font-weight:500; }
+.cell{
+  position:relative; cursor:pointer; text-align:center; border:1px solid var(--line); border-radius:8px;
+  background:var(--inset); padding:11px 8px 10px; transition:.14s; min-width:0;
+}
+.cell:hover{ border-color:var(--line-2); background:var(--panel-2); transform:translateY(-1px); }
+.cell .pnl{ font-family:var(--f-mono); font-weight:700; font-size:17px; line-height:1.05; }
+.cell .apr{ font-family:var(--f-mono); font-size:11px; margin-top:3px; color:var(--txt-dim); }
+.cell[aria-checked="true"]{ border-color:var(--accent); background:var(--accent-bg); box-shadow:0 0 0 1px var(--accent), 0 6px 20px -10px rgba(76,155,255,.6); }
+.cell[aria-checked="true"] .apr{ color:var(--txt); }
+.cell .pick{ position:absolute; top:6px; right:7px; font-size:8.5px; color:var(--accent); font-weight:700; letter-spacing:.5px; opacity:0; }
+.cell[aria-checked="true"] .pick{ opacity:1; }
+
+/* ───────────────────────── EQUITY (B) ───────────────────────── */
+.chart-box{ position:relative; width:100%; }
+.chart-box canvas{ display:block; width:100%; }
+.equity-canvas{ height:300px; }
+.spread-canvas{ height:150px; }
+.legs-canvas{ height:172px; }
+.price-canvas{ height:150px; }
+.chart-tip{
+  position:absolute; pointer-events:none; z-index:5; opacity:0; transition:opacity .1s;
+  background:rgba(8,11,17,.96); border:1px solid var(--line-2); border-radius:7px; padding:7px 9px;
+  font-family:var(--f-mono); font-size:11px; color:var(--txt); white-space:nowrap;
+  box-shadow:0 8px 24px -10px rgba(0,0,0,.9); transform:translate(-50%,-115%);
+}
+.chart-tip .r{ display:flex; justify-content:space-between; gap:14px; }
+.chart-tip .r .k{ color:var(--txt-faint); }
+.legend{ display:flex; gap:16px; flex-wrap:wrap; font-size:11px; color:var(--txt-dim); margin-top:10px; }
+.legend .it{ display:flex; align-items:center; gap:6px; }
+.legend .sw{ width:11px; height:11px; border-radius:3px; }
+.legend .sw.line{ height:3px; border-radius:2px; width:16px; }
+
+/* ───────────────────────── DATA PANELS (D) ───────────────────────── */
+.transparency{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.dl{ display:flex; flex-direction:column; gap:1px; }
+.dl .row{ display:grid; grid-template-columns:1fr auto; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line-soft); }
+.dl .row:last-child{ border-bottom:0; }
+.dl .row .k{ color:var(--txt-dim); font-size:12px; display:flex; align-items:center; gap:7px; min-width:0; }
+.dl .row .k .ic{ width:6px; height:6px; border-radius:1.5px; flex:none; }
+.dl .row .v{ font-family:var(--f-mono); font-size:12.5px; font-weight:600; text-align:right; }
+.dl .row .v small{ font-weight:500; color:var(--txt-faint); font-size:10.5px; }
+.subhdr{ font-size:10px; letter-spacing:.8px; text-transform:uppercase; color:var(--txt-faint); font-weight:700; margin:12px 0 2px; }
+
+/* OI skew bar */
+.oi-bar{ height:26px; border-radius:6px; overflow:hidden; display:flex; border:1px solid var(--line); margin:6px 0 4px; }
+.oi-bar .lng{ background:linear-gradient(180deg,rgba(41,224,143,.5),rgba(41,224,143,.28)); display:flex; align-items:center; padding-left:9px; }
+.oi-bar .sht{ background:linear-gradient(180deg,rgba(255,86,103,.5),rgba(255,86,103,.28)); display:flex; align-items:center; justify-content:flex-end; padding-right:9px; }
+.oi-bar span{ font-family:var(--f-mono); font-size:10.5px; font-weight:700; color:var(--txt); }
+.oi-meta{ display:flex; justify-content:space-between; font-size:10.5px; color:var(--txt-faint); }
+.who-pays{ font-size:11.5px; margin-top:8px; color:var(--txt-dim); }
+.who-pays b.pos{ color:var(--pos); } .who-pays b.neg{ color:var(--neg); }
+
+/* ───────────────────────── STRATEGY (E) + COSTS (F) ───────────────────────── */
+.two-col{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.why-box{ background:var(--inset); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:7px; padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--txt-dim); }
+.why-box b{ color:var(--txt); }
+.addr{ font-family:var(--f-mono); font-size:11px; color:var(--txt-dim); word-break:break-all; }
+
+.cost-row{ display:grid; grid-template-columns:1fr 86px 78px; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--line-soft); }
+.cost-row .k{ font-size:12px; color:var(--txt-dim); }
+.cost-row .k small{ color:var(--txt-faint); font-size:10px; display:block; }
+.cost-row input{
+  font-family:var(--f-mono); font-size:12px; color:var(--accent); text-align:right;
+  background:rgba(76,155,255,.06); border:1px solid rgba(76,155,255,.28); border-radius:6px; padding:5px 7px; width:100%;
+}
+.cost-row input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-bg); }
+.cost-row input[aria-invalid="true"]{ border-color:var(--neg); color:var(--neg-bri); box-shadow:0 0 0 3px var(--neg-bg); }
+.cost-row .unit{ font-family:var(--f-mono); font-size:11px; color:var(--txt-faint); text-align:left; }
+.cost-row .usd{ font-family:var(--f-mono); font-size:12px; font-weight:600; text-align:right; }
+.cost-total{ display:grid; grid-template-columns:1fr auto; gap:8px; padding:10px 0 2px; margin-top:6px; border-top:1px solid var(--line-2); }
+.cost-total .k{ font-size:12px; font-weight:600; color:var(--txt); }
+.cost-total .v{ font-family:var(--f-mono); font-weight:700; font-size:14px; text-align:right; }
+.cost-note{ font-size:10.5px; color:var(--txt-faint); margin-top:8px; }
+.blue-hint{ font-size:10.5px; color:var(--accent); margin-top:6px; display:flex; align-items:center; gap:6px; }
+.blue-hint .sw{ width:10px; height:10px; border-radius:3px; background:rgba(76,155,255,.18); border:1px solid rgba(76,155,255,.45); }
+
+/* ───────────────────────── RAW INSPECTOR ───────────────────────── */
+.table-scroll{ overflow:auto; max-height:360px; border-radius:0 0 var(--r) var(--r); }
+.table-scroll::-webkit-scrollbar{ height:10px; width:10px; }
+.table-scroll::-webkit-scrollbar-thumb{ background:#1d2433; border-radius:6px; border:2px solid var(--panel); }
+.table-scroll::-webkit-scrollbar-track{ background:transparent; }
+table.raw{ border-collapse:collapse; width:100%; font-family:var(--f-mono); font-size:11px; }
+table.raw th, table.raw td{ padding:6px 10px; text-align:right; white-space:nowrap; border-bottom:1px solid var(--line-soft); }
+table.raw thead th{
+  position:sticky; top:0; z-index:2; background:#0c1018; color:var(--txt-faint);
+  font-weight:600; font-size:9.5px; letter-spacing:.4px; text-transform:uppercase; text-align:right;
+  border-bottom:1px solid var(--line-2); cursor:default;
+}
+table.raw thead th.lft, table.raw td.lft{ text-align:left; }
+table.raw tbody tr:hover{ background:rgba(76,155,255,.05); }
+table.raw td.ts{ color:var(--txt-dim); }
+table.raw td.px{ color:var(--price); font-weight:600; }
+table.raw td.netcell{ font-weight:700; }
+table.raw td.flag{ text-align:center; }
+.legend-cols{ display:flex; flex-wrap:wrap; gap:5px 8px; padding:10px 16px; font-size:10px; color:var(--txt-faint); border-bottom:1px solid var(--line); }
+.legend-cols code{ color:var(--txt-dim); background:var(--inset); padding:1px 5px; border-radius:4px; font-family:var(--f-mono); }
+
+/* ───────────────────────── SCANNER ───────────────────────── */
+table.scan{ border-collapse:collapse; width:100%; font-size:12px; }
+table.scan th, table.scan td{ padding:7px 10px; border-bottom:1px solid var(--line-soft); text-align:right; white-space:nowrap; }
+table.scan th{ font-size:9.5px; letter-spacing:.4px; text-transform:uppercase; color:var(--txt-faint); font-weight:600; text-align:right; }
+table.scan th.lft, table.scan td.lft{ text-align:left; }
+table.scan td.sym{ font-family:var(--f-mono); font-weight:700; color:var(--txt); }
+table.scan td.n{ font-family:var(--f-mono); font-variant-numeric:tabular-nums; }
+table.scan tr.me{ background:rgba(76,155,255,.08); }
+table.scan tr.me td.sym{ color:var(--accent); }
+table.scan tr:hover td{ background:rgba(126,148,184,.05); }
+.chip{ font-family:var(--f-mono); font-size:10px; font-weight:700; padding:1px 6px; border-radius:4px; }
+.chip.A{ color:var(--pos); background:var(--pos-bg); border:1px solid rgba(41,224,143,.3); }
+.chip.B{ color:var(--accent); background:var(--accent-bg); border:1px solid rgba(76,155,255,.3); }
+.chip.thin{ color:var(--neu); background:var(--neu-bg); border:1px solid rgba(255,176,46,.3); }
+.chip.trad{ color:var(--pos); background:var(--pos-bg); border:1px solid rgba(41,224,143,.3); }
+
+/* ───────────────────────── FOOTER (G) ───────────────────────── */
+.footer{ margin-top:22px; padding:18px; border:1px solid var(--line); border-radius:var(--r); background:linear-gradient(180deg, var(--panel), var(--inset)); }
+.footer h3{ margin:0 0 12px; font-size:11px; letter-spacing:1px; text-transform:uppercase; color:var(--neu); display:flex; align-items:center; gap:8px; }
+.disc{ display:grid; grid-template-columns:repeat(2,1fr); gap:8px 22px; }
+.disc .d{ display:flex; gap:9px; font-size:11.5px; color:var(--txt-dim); line-height:1.5; }
+.disc .d .i{ flex:none; width:16px; height:16px; border-radius:4px; display:grid; place-items:center; font-size:10px; font-weight:700; margin-top:1px; }
+.disc .d .i.r{ color:var(--neg); background:var(--neg-bg); border:1px solid rgba(255,86,103,.3); }
+.disc .d .i.a{ color:var(--neu); background:var(--neu-bg); border:1px solid rgba(255,176,46,.3); }
+.disc .d .i.b{ color:var(--accent); background:var(--accent-bg); border:1px solid rgba(76,155,255,.3); }
+.disc .d b{ color:var(--txt); font-weight:600; }
+.foot-src{ margin-top:14px; padding-top:12px; border-top:1px solid var(--line); font-size:10.5px; color:var(--txt-faint); display:flex; flex-wrap:wrap; gap:6px 16px; font-family:var(--f-mono); }
+
+.mock-flag{
+  display:inline-flex; align-items:center; gap:5px; font-family:var(--f-mono); font-size:9px; font-weight:700;
+  letter-spacing:.5px; color:var(--neu); border:1px solid rgba(255,176,46,.3); background:var(--neu-bg);
+  padding:1px 5px; border-radius:4px; text-transform:uppercase; vertical-align:middle;
+}
+
+/* page-load stagger (respects reduced motion) */
+.reveal{ opacity:0; transform:translateY(8px); animation:rise .5s cubic-bezier(.2,.7,.2,1) forwards; }
+@keyframes rise{ to{ opacity:1; transform:none; } }
+@media (prefers-reduced-motion:reduce){
+  .reveal{ animation:none; opacity:1; transform:none; }
+  .live[aria-pressed="true"] .led{ animation:none; }
+}
+
+/* responsive */
+@media (max-width:1080px){
+  .hero{ grid-template-columns:1fr; }
+  .transparency{ grid-template-columns:1fr; }
+  .two-col{ grid-template-columns:1fr; }
+  .disc{ grid-template-columns:1fr; }
+}
+@media (max-width:560px){
+  .app{ padding:0 10px 48px; }
+  .matrix{ grid-template-columns:62px 1fr 1fr; }
+  .hero-kpis{ grid-template-columns:1fr; }
+}
+.span2{ grid-column:1 / -1; }
+
+/* ══════════ ZONES — два независимых мира: Ⅱ торговля (форвард, с t0) и Ⅰ анализ (гипотеза) ══════════ */
+.zone{ position:relative; margin-top:14px; border-radius:var(--r);
+  border:1px solid var(--line); padding:12px 12px 14px; scroll-margin-top:62px; }
+.zone-trade{ border-color:rgba(255,176,46,.30);
+  background:linear-gradient(180deg, rgba(255,176,46,.045), transparent 140px);
+  box-shadow:0 0 0 1px rgba(255,176,46,.06), 0 10px 30px -24px rgba(255,176,46,.5); }
+.zone-analysis{ border-color:rgba(76,155,255,.26);
+  background:linear-gradient(180deg, rgba(76,155,255,.035), transparent 140px); }
+.zone-head{ display:flex; align-items:center; gap:10px; padding:2px 4px 10px; }
+.zone-head .zn{ font-family:var(--f-mono); font-weight:700; font-size:12px;
+  letter-spacing:1.4px; text-transform:uppercase; }
+.zone-trade .zn{ color:var(--neu); }
+.zone-analysis .zn{ color:var(--accent); }
+.zone-head .tag{ font:500 10.5px var(--f-mono); color:var(--txt-dim); border:1px solid var(--line);
+  border-radius:20px; padding:2px 9px; letter-spacing:.4px; white-space:nowrap; }
+.zone-trade .zone-head .tag{ color:var(--neu); border-color:rgba(255,176,46,.35); background:var(--neu-bg); }
+.zone-head .rule{ flex:1 1 auto; height:1px; background:linear-gradient(90deg,var(--line-2),transparent); }
+.zone-head .hint{ color:var(--txt-faint); font-size:11px; white-space:nowrap; }
+/* idle (нет позиций) — приглушённая полоса-заглушка, НЕ скрытие */
+.zone.idle{ opacity:.8; border-style:dashed; }
+.zone.idle .trade-grid{ display:none; }
+.zone.idle #tradeNewBtn{ display:none; } /* в idle запуск предлагает полоса-заглушка */
+.trade-empty{ display:none; align-items:center; gap:12px; padding:10px 6px;
+  color:var(--txt-faint); font-size:12px; }
+.zone.idle .trade-empty{ display:flex; }
+.trade-empty .goto{ font:600 11px var(--f-sans); color:var(--accent);
+  background:var(--accent-bg); border:1px solid rgba(76,155,255,.4);
+  border-radius:6px; padding:5px 10px; cursor:pointer; }
+.trade-grid{ display:grid; grid-template-columns:minmax(300px,1fr) minmax(360px,1.4fr); gap:14px; }
+@media (max-width:1080px){ .trade-grid{ grid-template-columns:1fr; } }
+/* подсветка зоны торговли после запуска стратегии.
+   ВАЖНО: класс заменяет свойство animation, поэтому на элементе с .reveal (rise+forwards)
+   он обнулил бы восстановленную непрозрачность — страхуемся явным opacity/transform. */
+@keyframes zoneFlash{ 0%{ box-shadow:0 0 0 2px rgba(255,176,46,.75); } 100%{ box-shadow:0 0 0 1px rgba(255,176,46,.06); } }
+.zone-flash{ animation:zoneFlash 1.2s ease-out 2; opacity:1; transform:none; }
+@media (prefers-reduced-motion:reduce){ .zone-flash{ animation:none; } }
+.sr-only{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+/* кокпит зоны Ⅱ */
+#tradeBreak{ display:flex; flex-direction:column; gap:1px; margin:8px 0 12px; }
+#tradeBreak .row{ display:grid; grid-template-columns:1fr auto; gap:10px; padding:3px 0;
+  border-bottom:1px solid var(--line-soft); font-size:12.5px; }
+#tradeBreak .row .k{ color:var(--txt-dim); }
+.rowpick{ font:600 12px var(--f-mono); color:var(--txt); background:none; border:none;
+  cursor:pointer; padding:0; letter-spacing:.3px; }
+.rowpick:focus-visible, .trade-empty .goto:focus-visible{ outline:1px solid var(--accent); outline-offset:2px; }
+table.scan tr.me .rowpick{ color:var(--accent); }
+.paperbtn.mini{ font-size:10.5px; padding:3px 8px; }
+/* запуск стратегии: CTA + инлайн-тикет подтверждения (зона Ⅰ) */
+.launch-row{ display:flex; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap; }
+.launch-row .hint{ color:var(--txt-faint); font-size:11px; }
+.ticket{ margin-top:10px; padding:12px; border:1px solid rgba(76,155,255,.4); border-radius:var(--r-s);
+  background:var(--inset); display:flex; flex-direction:column; gap:2px; max-width:520px; }
+.ticket[hidden]{ display:none; } /* авторский display:flex иначе перебивает UA-правило атрибута hidden */
+.ticket .trow{ display:grid; grid-template-columns:1fr auto; gap:10px; align-items:center;
+  padding:4px 0; border-bottom:1px solid var(--line-soft); font-size:12.5px; }
+.ticket .trow .k{ color:var(--txt-dim); }
+.ticket input{ width:130px; font:600 12.5px var(--f-mono); color:var(--txt); background:var(--panel-2);
+  border:1px solid var(--line-2); border-radius:6px; padding:5px 8px; text-align:right; }
+.ticket input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 1px var(--accent-bg); }
+.ticket input[aria-invalid="true"]{ border-color:var(--neg); }
+.ticket-err{ margin-top:8px; color:var(--neg-bri); font-size:12px; }
+.ticket-actions{ display:flex; gap:10px; margin-top:10px; }
+#ticketConfirm:disabled{ opacity:.5; cursor:not-allowed; }
+.ticket .gate-ok{ color:var(--pos); } .ticket .gate-warn{ color:var(--neu); } .ticket .gate-bad{ color:var(--neg-bri); }
+/* бумажная торговля — кнопки и сетка (перенесено из инлайн-блока секции) */
+.paperbtn{ font:600 12px var(--f-sans); padding:7px 14px; border-radius:var(--r-s); cursor:pointer;
+  border:1px solid var(--line-2); background:var(--panel-2); color:var(--txt); transition:.12s; }
+.paperbtn.open{ border-color:rgba(41,224,143,.5); color:var(--pos-bri); }
+.paperbtn.close{ border-color:rgba(255,86,103,.5); color:var(--neg-bri); }
+.paperbtn:disabled{ opacity:.5; cursor:wait; }
+.paper-grid{ display:grid; grid-template-columns:290px 1fr; gap:16px; align-items:stretch; }
+@media(max-width:820px){ .paper-grid{ grid-template-columns:1fr; } }
+#paperBox{ display:flex; flex-direction:column; gap:2px; font-size:12.5px; }
+#paperBox .prow{ display:flex; justify-content:space-between; gap:10px; padding:4px 0; border-bottom:1px solid var(--line-soft); }
+#paperBox .prow .k{ color:var(--txt-dim); }
+
+/* ───────── ЖУРНАЛ ОПЕРАЦИЙ (зона Ⅱ, per-позиция) ───────── */
+.ledger-controls{ display:flex; align-items:center; gap:10px 14px; flex-wrap:wrap; padding:0 16px 10px; }
+.lchips{ display:flex; gap:5px; flex-wrap:wrap; }
+.lchip{ font:600 10.5px var(--f-mono); color:var(--txt-dim); background:var(--inset);
+  border:1px solid var(--line); border-radius:20px; padding:3px 9px; cursor:pointer; transition:.14s; }
+.lchip .cnt{ color:var(--txt-faint); font-weight:500; margin-left:3px; }
+.lchip:hover{ color:var(--txt); border-color:var(--line-2); }
+.lchip[aria-pressed="true"]{ color:var(--accent); background:var(--accent-bg); border-color:rgba(76,155,255,.45); }
+.lexport{ margin-left:auto; display:flex; gap:6px; }
+/* цвета типов = легенда декомпозиции ног (зелёный GMX-фандинг / красный борроу / синий HL) */
+.lchip-t{ letter-spacing:.3px; white-space:nowrap; }
+.t-gmxf{ color:var(--pos);    background:var(--pos-bg);    border:1px solid rgba(41,224,143,.3); }
+.t-exp { color:var(--neg);    background:var(--neg-bg);    border:1px solid rgba(255,86,103,.3); }
+.t-hlf { color:var(--accent); background:var(--accent-bg); border:1px solid rgba(76,155,255,.3); }
+.t-gap { color:var(--neu);    background:var(--neu-bg);    border:1px solid rgba(255,176,46,.3); }
+.t-adj { color:var(--txt-dim);                             border:1px solid var(--line-2); }
+.ledger-totals{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; padding:0 16px 10px; }
+.ledger-totals .lt{ background:var(--inset); border:1px solid var(--line); border-radius:var(--r-s); padding:8px 11px; min-width:0; }
+.ledger-totals .lbl{ display:block; font-size:9.5px; letter-spacing:.6px; text-transform:uppercase;
+  color:var(--txt-faint); font-weight:600; margin-bottom:3px; }
+.ledger-totals .v{ font-size:15px; font-weight:700; }
+.ledger-subtotal{ padding:0 16px 8px; font-size:11px; font-family:var(--f-mono); }
+/* сверка-mismatch: громкое баг-состояние (кормит оракул через data-recon) */
+#ledgerRecon.bad{ color:var(--neg-bri); border-color:rgba(255,86,103,.55); background:var(--neg-bg);
+  font-weight:700; animation:reconPulse 1.6s ease-in-out 3; }
+@keyframes reconPulse{ 50%{ box-shadow:0 0 0 3px var(--neg-bg); } }
+table.ledger tr.lgap td{ color:var(--txt-faint); }
+table.ledger tr.lday td{ background:var(--inset); color:var(--txt-dim); font:600 10.5px var(--f-mono);
+  letter-spacing:.5px; text-align:left; border-bottom:1px solid var(--line-2); }
+table.ledger tr.ldetail td{ background:var(--inset); padding:8px 14px 10px 38px; white-space:normal; text-align:left; }
+table.ledger tr.ldetail .dl{ max-width:640px; }
+.lexp{ width:18px; height:18px; padding:0; border:0; border-radius:4px; background:transparent;
+  color:var(--txt-faint); font:600 10px var(--f-mono); cursor:pointer; transition:.14s transform; }
+.lexp:hover{ color:var(--accent); background:rgba(76,155,255,.08); }
+.lexp[aria-expanded="true"]{ transform:rotate(180deg); color:var(--accent); }
+.lsrc{ font-size:9.5px; }
+.ledger-msg{ padding:0 16px 8px; font-size:11.5px; font-family:var(--f-mono); }
+.ledger-msg.ok{ color:var(--pos); } .ledger-msg.err{ color:var(--neg-bri); } .ledger-msg.dim{ color:var(--txt-faint); }
+.ledger-del{ display:inline-flex; align-items:center; gap:8px; }
+.ledger-del[hidden]{ display:none; } /* авторский display иначе перебивает UA-правило атрибута hidden (см. .ticket) */
+.ledger-del .k{ font-size:11px; color:var(--neg-bri); }
+.ledger-foot{ display:flex; align-items:center; gap:14px; padding:10px 16px 14px; }
+.ledger-empty{ padding:26px 16px; text-align:center; color:var(--txt-faint); font-size:12px; }
+#ledgerUpdated .blip{ display:inline-block; width:6px; height:6px; border-radius:50%;
+  background:var(--txt-faint); margin-right:6px; vertical-align:1px; box-shadow:none; }
+#ledgerUpdated.tick .blip{ background:var(--pos); animation:ledgerBlip 1s ease-out 1; }
+@keyframes ledgerBlip{ 0%{ box-shadow:0 0 0 0 rgba(41,224,143,.5);} 100%{ box-shadow:0 0 0 7px transparent;} }
+@media (prefers-reduced-motion:reduce){
+  #ledgerUpdated.tick .blip, #ledgerRecon.bad{ animation:none; }
+}
+@media (max-width:1080px){ .ledger-totals{ grid-template-columns:1fr 1fr; } }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ══════════════════ TOP BAR (C: бейдж + Live + штамп) ══════════════════ -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark">FUNDING<span class="dot">·</span>ARB</span>
+      <span class="sub">Дельта-нейтральный арбитраж ставок финансирования · GMX&nbsp;V2 (Arbitrum) × Hyperliquid</span>
+    </div>
+    <span class="spacer"></span>
+    <span class="badge-paper"><span class="blip"></span>PAPER · без реального капитала</span>
+    <div class="pollctl" title="Интервал опроса живых данных — как часто обновляется бумажный тест">
+      <span class="lbl">опрос</span>
+      <div class="seg" id="pollSel" role="group" aria-label="Интервал опроса живых данных">
+        <button data-v="1"  aria-pressed="false">1м</button>
+        <button data-v="5"  aria-pressed="true">5м</button>
+        <button data-v="15" aria-pressed="false">15м</button>
+      </div>
+    </div>
+    <button class="live" id="liveBtn" title="Обновить живые данные сейчас (опрос идёт автоматически по выбранному интервалу)">
+      <span class="led"></span><span id="liveTxt">ЗАГРУЗКА…</span><span aria-hidden="true" style="opacity:.55">⟳</span>
+    </button>
+    <button class="help-btn" data-help="topbar" aria-haspopup="dialog" aria-expanded="false" aria-label="Справка: статус данных и опрос">?</button>
+    <span class="stamp">данные по состоянию на <b id="stamp">ожидание живых данных…</b></span>
+  </header>
+
+  <!-- ══════════════════ ЗОНА Ⅱ · ТОРГОВЛЯ · PAPER TRADING (форвард, с t0) ══════════════════ -->
+  <section id="zoneTrade" class="zone zone-trade reveal" style="animation-delay:.03s" aria-labelledby="zoneTradeHead" tabindex="-1">
+    <div class="zone-head">
+      <span class="zn" id="zoneTradeHead">Ⅱ · Торговля · Paper Trading</span>
+      <span class="tag">форвард · с t0 · нетто</span>
+      <button class="help-btn" data-help="paper">?</button>
+      <span class="rule"></span>
+      <button id="tradeNewBtn" class="paperbtn open mini">▶ запустить новую позицию</button>
+      <span class="hint">не зависит от периода и режима P&amp;L в анализе</span>
+    </div>
+  <div class="trade-empty" id="tradeEmpty" role="status">
+    <span>○ стратегия не запущена — выберите инструмент, конфигурацию, период и плечо в зоне «Анализ стратегий» ниже и запустите бумажную торговлю. Реализованный P&amp;L появится здесь.</span>
+    <button class="goto" id="tradeGoto">▶ Запустить стратегию (Paper Trading)</button>
+  </div>
+  <div class="trade-grid">
+    <!-- кокпит: главный P&L с момента запуска -->
+    <div class="card" id="tradeCockpit">
+      <div class="sec-head">
+        <h2>P&amp;L счёта · с момента запуска (t0)</h2>
+        <span class="tag amber" id="tradeStatus">—</span>
+        <span class="rule"></span>
+      </div>
+      <div class="pnl-hero" aria-live="polite" aria-atomic="true">
+        <span class="lbl">реализовано · нетто (после разовых издержек) · <span id="tradeCtx" class="mono">—</span></span>
+        <span class="val" id="tradePnl"><span class="cur">$</span>—</span>
+      </div>
+      <div id="tradeBreak"></div>
+      <div class="hero-kpis">
+        <div class="kpi">
+          <div class="lbl">Доходность с t0</div>
+          <div class="v" id="tradeRet">—</div>
+          <div class="sub">нетто · к капиталу позиции</div>
+        </div>
+        <div class="kpi">
+          <div class="lbl">APR с t0</div>
+          <div class="v" id="tradeApr">—</div>
+          <div class="sub" id="tradeAprSub">после ≥24 ч начисления</div>
+        </div>
+      </div>
+    </div>
+    <!-- все позиции счёта -->
+    <div class="card flush" id="tradeTableCard">
+      <div class="sec-head" style="padding:16px 16px 0; margin-bottom:10px">
+        <h2>Позиции · все</h2>
+        <span class="rule"></span>
+        <span class="hint">клик по строке — детали и кривая ниже</span>
+      </div>
+      <div class="table-scroll" style="max-height:240px">
+        <table class="scan" id="tradeTable">
+          <caption class="sr-only">Бумажные позиции счёта</caption>
+          <thead><tr>
+            <th class="lft" scope="col">Инструмент</th>
+            <th class="lft" scope="col">Конфиг</th>
+            <th scope="col">Кап × плечо</th>
+            <th scope="col">P&amp;L нетто</th>
+            <th class="lft" scope="col">Статус</th>
+            <th scope="col"></th>
+          </tr></thead>
+          <tbody id="tradeBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <!-- детали выбранной позиции + форвардная кривая -->
+    <div class="paper-grid span2" id="tradeParams">
+      <div>
+        <div class="sec-head" style="margin-bottom:8px">
+          <h2>Параметры выбранной позиции</h2>
+          <span class="rule"></span>
+          <button id="tradeCloseBtn" class="paperbtn close" hidden>■ Закрыть позицию</button>
+        </div>
+        <div id="paperBox"></div>
+      </div>
+      <div class="chart-box" style="min-height:220px;">
+        <canvas id="fwdCanvas" class="equity-canvas" aria-label="Форвардная кривая капитала"></canvas>
+        <div class="chart-tip" id="fwdTip"></div>
+      </div>
+    </div>
+    <div class="legend span2">
+      <div class="it"><span class="sw line" style="background:var(--pos)"></span>реальная накопленная equity (нетто) с t0 · GMX-фандинг посекундно + расчёты HL почасово</div>
+      <div class="it faint">бумажно · funding/borrow из live-данных · без execution effects и реального капитала</div>
+    </div>
+    <!-- ЖУРНАЛ ОПЕРАЦИЙ выбранной позиции: каждая финансовая операция отдельной строкой,
+         доход/расход раздельно (двойная бухгалтерия форвард-теста). Данные — fa:getLedger
+         по требованию; итоги обязаны сходиться с «реализовано (нетто)» позиции (сверка). -->
+    <div class="card flush span2" id="ledgerCard">
+      <div class="sec-head" style="padding:16px 16px 0; margin-bottom:8px">
+        <h2>Журнал операций</h2>
+        <button class="help-btn" data-help="ledger">?</button>
+        <span class="cfg-pill" id="ledgerIdent">—</span>
+        <span class="tag" id="ledgerStatus">—</span>
+        <span class="tag green" id="ledgerRecon" data-recon="ok" data-delta="0">✓ сходится</span>
+        <span class="rule"></span>
+        <span class="stamp" id="ledgerUpdated"><span class="blip" aria-hidden="true"></span><span id="ledgerUpdatedTxt" aria-live="polite">—</span></span>
+        <button id="ledgerFreshBtn" class="paperbtn mini" hidden>⟳ обновить журнал</button>
+        <span id="ledgerDelWrap" hidden>
+          <button id="ledgerDelBtn" class="paperbtn mini">удалить журнал…</button>
+          <span id="ledgerDelConfirm" class="ledger-del" hidden>
+            <span class="k" id="ledgerDelMsg">удалить позицию и весь журнал безвозвратно?</span>
+            <button id="ledgerDelYes" class="paperbtn close mini">Удалить безвозвратно</button>
+            <button id="ledgerDelNo" class="paperbtn mini">отмена</button>
+          </span>
+        </span>
+      </div>
+      <div class="ledger-controls">
+        <div class="lchips" id="ledgerFilters" role="group" aria-label="Фильтр по типу операции">
+          <button class="lchip" data-type="all" aria-pressed="true">все <span class="cnt">—</span></button>
+          <button class="lchip" data-type="gmx_funding" aria-pressed="false">фандинг GMX <span class="cnt">—</span></button>
+          <button class="lchip" data-type="gmx_borrow" aria-pressed="false">борроу GMX <span class="cnt">—</span></button>
+          <button class="lchip" data-type="hl_funding" aria-pressed="false">фандинг HL <span class="cnt">—</span></button>
+          <button class="lchip" data-type="open_costs" aria-pressed="false">издержки <span class="cnt">—</span></button>
+          <button class="lchip" data-type="gap_unpriced" aria-pressed="false">◌ разрыв <span class="cnt">—</span></button>
+          <button class="lchip" data-type="manual_adjustment" aria-pressed="false" hidden>✎ корр. <span class="cnt">—</span></button>
+        </div>
+        <div class="seg" id="ledgerSortSel" role="group" aria-label="Порядок операций по времени">
+          <button data-v="desc" aria-pressed="true">новые сверху</button>
+          <button data-v="asc" aria-pressed="false">старые сверху</button>
+        </div>
+        <div class="lexport">
+          <button id="ledgerExportCsv" class="paperbtn mini">CSV</button>
+          <button id="ledgerExportXlsx" class="paperbtn mini">XLSX</button>
+          <button id="ledgerExportJson" class="paperbtn mini">JSON</button>
+        </div>
+      </div>
+      <div id="ledgerExportMsg" class="ledger-msg" role="status" hidden></div>
+      <div class="ledger-totals" id="ledgerTotals">
+        <div class="lt"><span class="lbl">Σ доход</span><span class="v num pos" id="ledgerTotIncome">—</span></div>
+        <div class="lt"><span class="lbl">Σ расход</span><span class="v num neg" id="ledgerTotExpense">—</span></div>
+        <div class="lt"><span class="lbl">нетто (журнал)</span><span class="v num" id="ledgerTotNet">—</span></div>
+        <div class="lt"><span class="lbl">сверка с позицией</span><span class="v num" id="ledgerReconCell">—</span></div>
+      </div>
+      <div class="ledger-subtotal faint" id="ledgerFiltered" hidden></div>
+      <div class="table-scroll" id="ledgerScroll" style="max-height:420px" tabindex="0" role="region"
+           aria-label="Журнал операций выбранной позиции, прокручиваемая таблица">
+        <table class="raw ledger" id="ledgerTable">
+          <caption class="sr-only">Журнал операций выбранной бумажной позиции</caption>
+          <thead><tr>
+            <th aria-label="Детали"></th>
+            <th class="lft" scope="col">Время UTC</th>
+            <th class="lft" scope="col">Тип</th>
+            <th scope="col">Доход (+)</th>
+            <th scope="col">Расход (−)</th>
+            <th scope="col">Баланс</th>
+            <th scope="col">Цена</th>
+          </tr></thead>
+          <tbody id="ledgerBody"></tbody>
+        </table>
+        <div class="ledger-empty" id="ledgerEmpty" hidden></div>
+      </div>
+      <div class="ledger-foot">
+        <button id="ledgerMore" class="paperbtn mini" hidden>показать ещё</button>
+        <span class="hint" id="ledgerCount">—</span>
+      </div>
+    </div>
+  </div>
+  </section><!-- /zoneTrade -->
+
+  <!-- ══════════════════ ЗОНА Ⅰ · АНАЛИЗ СТРАТЕГИЙ (история · гипотеза) ══════════════════ -->
+  <section id="zoneAnalysis" class="zone zone-analysis" aria-labelledby="zoneAnalysisHead">
+    <div class="zone-head">
+      <span class="zn" id="zoneAnalysisHead">Ⅰ · Анализ стратегий</span>
+      <span class="tag">история · гипотеза · не бумажный счёт</span>
+      <span class="rule"></span>
+      <span class="hint">период и плечо действуют только здесь</span>
+    </div>
+
+  <!-- ══════════════════ CONTROL TOOLBAR (C) ══════════════════ -->
+  <nav class="toolbar reveal" aria-label="Параметры расчёта">
+    <div class="ctl">
+      <label id="assetLbl">Инструмент</label>
+      <div class="assetsel" id="assetSel" role="group" aria-labelledby="assetLbl"></div>
+    </div>
+    <div class="ctl">
+      <label>Стратегия</label>
+      <div class="seg" id="stratSel" role="group" aria-label="Стратегия">
+        <button data-v="two" aria-pressed="true">Дельта-нейтральная · 2 ноги</button>
+        <button data-v="one" aria-pressed="false">Одна нога · GMX carry</button>
+      </div>
+    </div>
+    <div class="ctl" id="cfgWrap">
+      <label>Конфигурация</label>
+      <div class="seg" id="cfgSel" role="group" aria-label="Конфигурация ног">
+        <button data-v="A" aria-pressed="true" class="num">A · short GMX + long HL</button>
+        <button data-v="B" aria-pressed="false" class="num">B · long GMX + short HL</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <label>Период</label>
+      <div class="seg" id="winSel" role="group" aria-label="Период данных">
+        <button data-v="1"   class="num" aria-pressed="true">1д</button>
+        <button data-v="7"   class="num" aria-pressed="false">7д</button>
+        <button data-v="30"  class="num" aria-pressed="false">30д</button>
+        <button data-v="90"  class="num" aria-pressed="false">90д</button>
+        <button data-v="365" class="num" aria-pressed="false">365д</button>
+      </div>
+    </div>
+    <div class="ctl">
+      <label>Режим P&amp;L</label>
+      <div class="seg semantic" id="modeSel" role="group" aria-label="Режим расчёта P&L">
+        <button data-v="gross" aria-pressed="true">Брутто</button>
+        <button data-v="net"   aria-pressed="false">Нетто · после издержек</button>
+      </div>
+    </div>
+    <div class="ctl" style="justify-content:center; margin-left:auto">
+      <label aria-hidden="true">&nbsp;</label>
+      <button id="recalcBtn" class="recalc-btn" title="Полный пересчёт: синхронизировать выбранные параметры с движком, обновить живые данные и перерисовать все разделы заново">⟳ Пересчёт</button>
+    </div>
+    <div class="ctl" style="justify-content:center">
+      <label aria-hidden="true">&nbsp;</label>
+      <button class="help-btn" data-help="toolbar">?</button>
+    </div>
+  </nav>
+
+  <!-- ══════════════════ HERO — ДОХОДНОСТЬ (A) ══════════════════ -->
+  <section class="grid reveal" style="animation-delay:.08s">
+    <div class="hero">
+      <div class="hero-main">
+        <div class="topline">
+          <span class="cfg-pill" id="heroCfg">Конфигурация <b>A</b></span>
+          <span class="mode-pill mode-gross" id="heroMode">БРУТТО · до издержек</span>
+          <button class="help-btn" data-help="hero">?</button>
+        </div>
+        <div class="pnl-hero" aria-live="polite" aria-atomic="true">
+          <span class="lbl"><span id="heroLbl">Оценка P&amp;L за окно · история (гипотеза)</span> · <span id="heroCtx" class="mono">$1k · 1x · 1д</span></span>
+          <span class="val" id="heroPnl"><span class="cur">$</span>—</span>
+        </div>
+        <div class="hero-kpis">
+          <div class="kpi">
+            <div class="lbl">Доходность за период</div>
+            <div class="v" id="heroRet">0%</div>
+            <div class="sub" id="heroRetSub">к инвестированному капиталу</div>
+          </div>
+          <div class="kpi">
+            <div class="lbl">APR · в годовом выражении</div>
+            <div class="v" id="heroApr">0%</div>
+            <div class="sub" id="heroAprSub">медианная (устойчивая к выбросам): —</div>
+          </div>
+        </div>
+        <div class="hero-foot">
+          <div class="it"><span class="k">ноционал на ногу</span><span class="num" id="heroNotional">—</span></div>
+          <div class="it"><span class="k">$/час</span><span class="num" id="heroPerHr">—</span></div>
+          <div class="it"><span class="k">макс. просадка</span><span class="num neg" id="heroDD">—</span></div>
+          <div class="it"><span class="k">часов в периоде</span><span class="num" id="heroHours">—</span></div>
+        </div>
+        <div class="launch-row">
+          <button id="paperBtn" class="paperbtn open" aria-expanded="false" aria-controls="launchTicket">▶ Запустить стратегию (Paper Trading)</button>
+          <button class="help-btn" data-help="launch">?</button>
+          <span class="hint">откроет бумажную позицию по текущему выбору · результат — в зоне «Торговля» вверху</span>
+        </div>
+        <div id="launchTicket" class="ticket" role="group" aria-label="Подтверждение запуска стратегии (Paper Trading)" hidden>
+          <div class="trow"><span class="k">инструмент</span><span class="num" id="ticketInst">—</span></div>
+          <div class="trow"><span class="k">стратегия · конфигурация</span><span class="num" id="ticketCfg">—</span></div>
+          <div class="trow"><label class="k" for="ticketCap">капитал, $</label><input id="ticketCap" type="number" min="1" step="any" inputmode="decimal" aria-invalid="false"></div>
+          <div class="trow"><label class="k" for="ticketLev">плечо, ×</label><input id="ticketLev" type="number" min="1" step="any" inputmode="decimal" aria-invalid="false"></div>
+          <div class="trow"><span class="k">ноционал на ногу</span><span class="num" id="ticketNotional">—</span></div>
+          <div class="trow"><span class="k">разовые издержки <small>(зафиксируются при входе)</small></span><span class="num neg" id="ticketCost">—</span></div>
+          <div class="trow"><span class="k">готовность данных</span><span class="num" id="ticketGate">—</span></div>
+          <div id="ticketErr" class="ticket-err" role="alert" hidden></div>
+          <div class="ticket-actions">
+            <button id="ticketConfirm" class="paperbtn open">Подтвердить · запустить</button>
+            <button id="ticketCancel" class="paperbtn">Отмена</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="matrix-wrap">
+        <div class="matrix-head">
+          <span class="ttl">Капитал × плечо</span>
+          <span class="leg"><span>сценарии по истории окна · не бумажный счёт</span></span>
+          <button class="help-btn" data-help="matrix">?</button>
+        </div>
+        <div class="matrix" id="matrix" role="radiogroup" aria-label="Сценарий: капитал × плечо">
+          <div class="corner" aria-hidden="true"></div>
+          <div class="colh" aria-hidden="true">1× плечо</div>
+          <div class="colh" aria-hidden="true">10× плечо</div>
+          <!-- rows injected -->
+        </div>
+        <div class="cost-note" style="margin-top:12px">
+          В ячейке — чистый P&amp;L, ниже — APR. Расчёт учитывает режим
+          (<span id="mxMode">брутто</span>) и период (<span id="mxWin" class="mono">365д</span>).
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════ EQUITY CURVE (B) ══════════════════ -->
+  <section class="grid reveal" style="animation-delay:.12s">
+    <div class="card">
+      <div class="sec-head">
+        <h2>Кривая капитала · история за окно (гипотеза)</h2>
+        <button class="help-btn" data-help="equity">?</button>
+        <span class="tag" id="eqTag">$100k · 1x</span>
+        <span class="rule"></span>
+        <span class="hint">затенение — просадка от пика · режим брутто/нетто — в панели управления</span>
+      </div>
+      <div class="chart-box">
+        <canvas id="equityCanvas" class="equity-canvas" aria-label="График кривой капитала"></canvas>
+        <div class="chart-tip" id="equityTip"></div>
+      </div>
+      <div class="legend">
+        <div class="it"><span class="sw line" style="background:var(--pos)"></span>капитал (equity = депозит + накопленный P&amp;L)</div>
+        <div class="it"><span class="sw" style="background:rgba(255,86,103,.28)"></span>просадка (drawdown)</div>
+        <div class="it"><span class="sw line" style="background:var(--neu);opacity:.7"></span>начальный капитал</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════ ПРОЗРАЧНОСТЬ ДАННЫХ (D) ══════════════════ -->
+  <section class="grid reveal" style="animation-delay:.16s">
+    <div class="sec-head" style="margin-bottom:2px">
+      <h2>Рыночные данные бирж</h2>
+      <span class="tag amber">первичные данные · полная детализация</span>
+      <span class="rule"></span>
+    </div>
+    <div class="transparency">
+
+      <!-- GMX panel -->
+      <div class="card">
+        <div class="sec-head">
+          <h2 id="gmxTitle">GMX V2 · Arbitrum</h2>
+          <button class="help-btn" data-help="gmx">?</button>
+          <span class="tag green">on-chain</span>
+          <span class="rule"></span>
+        </div>
+        <div class="subhdr">Ставка финансирования (funding factor/сек, /1e30) · текущая · live</div>
+        <div class="dl" id="gmxFactors"></div>
+        <div class="subhdr">Ставка заимствования (borrow factor/сек, /1e30) · всегда издержка</div>
+        <div class="dl" id="gmxBorrow"></div>
+        <div class="subhdr">Дисбаланс открытого интереса (OI)</div>
+        <div class="oi-bar" id="oiBar"><div class="lng" style="width:68%"><span id="oiLngTxt">LONG 68%</span></div><div class="sht" style="width:32%"><span id="oiShtTxt">SHORT 32%</span></div></div>
+        <div class="oi-meta"><span id="oiLngUsd">long $—</span><span id="oiShtUsd">short $—</span></div>
+        <div class="who-pays" id="whoPays"></div>
+      </div>
+
+      <!-- HL panel -->
+      <div class="card">
+        <div class="sec-head">
+          <h2 id="hlTitle">Hyperliquid</h2>
+          <button class="help-btn" data-help="hl">?</button>
+          <span class="tag green">perp</span>
+          <span class="rule"></span>
+        </div>
+        <div class="subhdr">Ставка финансирования (часовая) · текущая · live</div>
+        <div class="dl" id="hlRates"></div>
+        <div class="subhdr">Премия (index − mark) · параметры рынка</div>
+        <div class="dl" id="hlMeta"></div>
+        <div class="who-pays" id="hlWhoPays" style="margin-top:14px"></div>
+      </div>
+
+      <!-- net spread chart -->
+      <div class="card span2">
+        <div class="sec-head">
+          <h2>Чистый спред финансирования · по временным интервалам</h2>
+          <button class="help-btn" data-help="spread">?</button>
+          <span class="tag" id="spreadTag">Конфигурация A</span>
+          <span class="rule"></span>
+          <span class="hint">зелёный — спред&gt;0 (доход), красный — спред&lt;0 (расход) · янтарный — нулевая линия</span>
+        </div>
+        <div class="chart-box">
+          <canvas id="spreadCanvas" class="spread-canvas" aria-label="График нетто-спреда funding по временным интервалам"></canvas>
+          <div class="chart-tip" id="spreadTip"></div>
+        </div>
+      </div>
+
+      <!-- leg contribution -->
+      <div class="card">
+        <div class="sec-head">
+          <h2>Декомпозиция доходности по ногам</h2>
+          <button class="help-btn" data-help="legs">?</button>
+          <span class="rule"></span>
+        </div>
+        <div class="chart-box">
+          <canvas id="legsCanvas" class="legs-canvas" aria-label="Вклад ног по временным группам"></canvas>
+        </div>
+        <div class="legend">
+          <div class="it"><span class="sw" style="background:var(--pos)"></span><span id="legGmxLbl">финансирование GMX</span></div>
+          <div class="it"><span class="sw" style="background:var(--neg)"></span>− заимствование GMX</div>
+          <div class="it"><span class="sw" style="background:var(--accent)"></span><span id="legHlLbl">финансирование HL</span></div>
+        </div>
+      </div>
+
+      <!-- price / delta -->
+      <div class="card">
+        <div class="sec-head">
+          <h2>Цена инструмента · справочная (Binance)</h2>
+          <button class="help-btn" data-help="price">?</button>
+          <span class="rule"></span>
+          <span class="hint">одна справочная серия · кросс-венью базис — P3</span>
+        </div>
+        <div class="chart-box">
+          <canvas id="priceCanvas" class="price-canvas" aria-label="Справочная цена (Binance)"></canvas>
+        </div>
+        <div class="legend">
+          <div class="it"><span class="sw line" style="background:var(--price)"></span>справочная цена (Binance)</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════ СТРАТЕГИЯ (E) + ИЗДЕРЖКИ (F) ══════════════════ -->
+  <section class="grid reveal" style="animation-delay:.2s">
+    <div class="two-col">
+
+      <!-- strategy summary -->
+      <div class="card">
+        <div class="sec-head">
+          <h2>Сводка по стратегии</h2>
+          <button class="help-btn" data-help="strategy">?</button>
+          <span class="tag" id="stratTag">Конфигурация A</span>
+          <span class="rule"></span>
+        </div>
+        <div class="why-box" id="whyBox"></div>
+        <div class="dl" id="stratSummary"></div>
+      </div>
+
+      <!-- cost model -->
+      <div class="card">
+        <div class="sec-head">
+          <h2>Транзакционные издержки · модель</h2>
+          <button class="help-btn" data-help="costs">?</button>
+          <span class="rule"></span>
+        </div>
+        <div id="costRows"></div>
+        <div class="cost-total">
+          <span class="k">Разовые издержки (вход+выход) · ноционал <span id="costNotional" class="num">$1k</span></span>
+          <span class="v neg" id="costTotal">−$0</span>
+        </div>
+        <div class="cost-total" style="border-top:0; padding-top:4px">
+          <span class="k">Чистый результат после издержек</span>
+          <span class="v" id="costAfter">$0</span>
+        </div>
+        <div class="blue-hint"><span class="sw"></span>синие поля редактируемы · мгновенный пересчёт</div>
+        <div class="cost-note">
+          Позиция удерживается весь период, поэтому торговые комиссии — РАЗОВЫЕ (один вход и выход на ногу),
+          а не ежечасные. Финансирование и заимствование GMX уже учтены в брутто-P&amp;L (непрерывно).
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════ ИНСПЕКТОР СЫРЫХ ДАННЫХ (D) ══════════════════ -->
+  <section class="grid reveal" style="animation-delay:.24s">
+    <div class="card flush">
+      <div class="sec-head" style="padding:16px 16px 0; margin-bottom:10px">
+        <h2>Первичные данные · почасовая детализация</h2>
+        <button class="help-btn" data-help="raw">?</button>
+        <span class="tag" id="inspTag">Конфигурация A</span>
+        <span class="rule"></span>
+        <span class="hint">первичные и производные показатели по часам</span>
+      </div>
+      <div class="legend-cols">
+        <span><code>f_*/1e30</code> первичный funding factor/сек · short&gt;0 ⇒ доход короткой позиции</span>
+        <span><code>b_*/1e30</code> borrow factor/сек · всегда издержка</span>
+        <span><code>APR = factor·3600·8760</code></span>
+        <span><code>HL APR = rate·8760</code></span>
+      </div>
+      <div class="table-scroll">
+        <table class="raw" id="rawTable">
+          <thead id="rawHead"></thead>
+          <tbody id="rawBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════ SCANNER RANKING (E) ══════════════════ -->
+  <section class="grid reveal" style="animation-delay:.28s">
+    <div class="card flush">
+      <div class="sec-head" style="padding:16px 16px 0; margin-bottom:10px">
+        <h2>Скринер инструментов · ранжирование</h2>
+        <button class="help-btn" data-help="scanner">?</button>
+        <span class="tag amber">ранжирование по медиане · устойчиво к выбросам</span>
+        <span class="tag" id="scanWinTag">окно —</span>
+        <span class="rule"></span>
+        <span class="hint">средние искажены выбросами на низколиквидных рынках · медиана устойчивее к выбросам</span>
+      </div>
+      <div class="table-scroll" style="max-height:none">
+        <table class="scan" id="scanTable">
+          <thead>
+            <tr>
+              <th class="lft">#</th><th class="lft">Инструмент</th><th class="lft">Конфиг</th>
+              <th>Net APR (медиана)</th><th>Net APR (среднее)</th>
+              <th>Доля&nbsp;&gt;&nbsp;0</th><th>Смен знака</th><th class="lft">Статус</th>
+            </tr>
+          </thead>
+          <tbody id="scanBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════ FOOTER — ОГОВОРКИ ЧЕСТНОСТИ (G) ══════════════════ -->
+  </section><!-- /zoneAnalysis -->
+
+  <footer class="footer reveal" style="animation-delay:.32s">
+    <h3>Риски, допущения и ограничения модели</h3>
+    <div class="disc">
+      <div class="d"><span class="i r">P</span><span><b>Режим PAPER (симуляция).</b> Модель рассчитывает доходность гипотетического капитала на фактических исторических данных бирж; ордера не исполняются, реальный капитал и API-ключи не задействованы.</span></div>
+      <div class="d"><span class="i r">L</span><span><b>Риск ликвидации при использовании плеча.</b> Ноционал = капитал × плечо. При 10× и P&amp;L, и разовые издержки масштабируются десятикратно, и возникает риск ликвидации, не учитываемый carry-моделью финансирования.</span></div>
+      <div class="d"><span class="i a">M</span><span><b>Устойчивость к выбросам: медиана против среднего.</b> Редкие скачки ставок могут резко завышать среднее, особенно на тонких рынках. Поэтому скринер ранжирует текущий набор по медиане, а обе метрики рассчитываются заново из выбранного живого окна.</span></div>
+      <div class="d"><span class="i b">B</span><span><b>Короткие окна шумны.</b> Годовая оценка по 1–7 дням чувствительна к отдельным часам и не является прогнозом. Проверяйте медиану, долю положительных часов, смены знака и ликвидность вместе.</span></div>
+      <div class="d"><span class="i a">D</span><span><b>Актуальность данных.</b> Историческое окно (до 365 дней) подтягивается с бирж и дополняется каждый час; текущие ставки опрашиваются каждые несколько минут. Фактическая свежесть — в отметке «данные по состоянию на &lt;UTC&gt;» вверху.</span></div>
+      <div class="d"><span class="i b">F</span><span><b>Точность исполнения ограничена.</b> Paper-ledger использует живые ставки, но не моделирует ликвидацию, динамический price impact, фактическое проскальзывание и кросс-биржевой ценовой базис. Эти риски нельзя выводить из показанного funding P&amp;L.</span></div>
+      <div class="d"><span class="i a">Z</span><span><b>Две зоны — два смысла P&amp;L.</b> «Ⅱ · Торговля» показывает реализованный результат бумажных позиций с момента запуска (t0), всегда нетто. «Ⅰ · Анализ» — историческую гипотезу за выбранное окно (знак «≈»). Период, режим брутто/нетто и плечо анализа на торговый счёт не влияют.</span></div>
+    </div>
+    <div class="foot-src">
+      <span>Источники: GMX Subsquid (gmx-synthetics) · Hyperliquid info API · Binance 1h klines</span>
+      <span>Соглашение о знаках: f_short&gt;0 ⇒ доход короткой позиции · заимствование — всегда издержка · ставка HL&gt;0 ⇒ доход короткой позиции</span>
+      <span>свежесть данных — в отметке «данные по состоянию на &lt;UTC&gt;» вверху</span>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+/* ============================================================================
+   FUNDING-ARB PAPER SIMULATOR — PRODUCTION RENDERER
+   ----------------------------------------------------------------------------
+   Renderer does no network or ledger I/O. Exchange data, history, paper positions and account
+   summaries arrive through the context-isolated IPC bridge; local calculations only rescale the
+   selected historical series for scenario display.
+   ========================================================================== */
+'use strict';
+
+/* ── const формулы (из движка funding_spread_core.py) ── */
+const SEC_PER_HOUR = 3600, HOURS_PER_YEAR = 8760;          // annualize: factor*3600*8760 ; HL: rate*8760
+const fmtUSD = (v, dp=2) => {
+  const s = v < 0 ? '−' : '';
+  const a = Math.abs(v);
+  if (a >= 1e6) return s + '$' + (a/1e6).toFixed(a>=1e7?1:2) + 'M';
+  if (a >= 1e4) return s + '$' + (a/1e3).toFixed(a>=1e5?0:1) + 'k';
+  return s + '$' + a.toLocaleString('en-US',{minimumFractionDigits:dp,maximumFractionDigits:dp});
+};
+const fmtUSDfull = v => (v<0?'−':'') + '$' + Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtAxisUSD = (v, span) => {
+  const dp = span<1 ? 3 : (span<100 ? 2 : (span<1000 ? 1 : 0));
+  return (v<0?'−':'')+'$'+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:dp,maximumFractionDigits:dp});
+};
+const fmtPct = (v, dp=2) => (v>0?'+':'') + (v*100).toFixed(dp) + '%';
+const fmtPctNS = (v, dp=2) => (v*100).toFixed(dp) + '%';
+const sci = (v) => { if (v===0) return '0'; const e=v.toExponential(4); return e.replace('e','e'); };
+const clsSign = v => v>0?'pos':(v<0?'neg':'neu');
+
+/* ============================================================================
+   СТАРТОВЫЕ СТРУКТУРЫ — ТОЛЬКО МЕТАДАННЫЕ ИНСТРУМЕНТОВ (имена, адреса, сети).
+   НИКАКИХ цифр статистики/ставок/OI до прихода живых данных: все stat-поля null,
+   рендереры показывают «история загружается…». Живой датасет из main-процесса
+   полностью замещает эти объекты (applyDataset). Аудит D4: seed-мок удалён.
+   ========================================================================== */
+
+/* ── Двунога (delta-neutral): per (asset, config). ── */
+let TWO_LEG = {
+  ETH: { price:null, hlCoin:'ETH', hlMaxLev:25,
+    gmxName:'ETH/USD [ETH-USDC]', gmxAddr:'0x70d95587d40A2caf56bd97485aB3Eec10Bee6336', gmxChain:'Arbitrum',
+    raw:null, oi:null, chosen:'A', A:null, B:null, hours:0 },
+  BTC: { price:null, hlCoin:'BTC', hlMaxLev:40,
+    gmxName:'BTC/USD [WBTC.b-USDC]', gmxAddr:'0x47c031236e19d024b42f8AE6780E44A573170703', gmxChain:'Arbitrum',
+    raw:null, oi:null, chosen:'B', A:null, B:null, hours:0 },
+};
+
+/* ── Одна нога (GMX-карри): per market (актив×сеть). ── */
+let ONE_LEG = {
+  'ETH-Arb':  { label:'ETH · Arbitrum',  asset:'ETH', price:null, chain:'Arbitrum',
+    gmxName:'ETH/USD [ETH-USDC]', gmxAddr:'0x70d95587d40A2caf56bd97485aB3Eec10Bee6336',
+    raw:null, oi:null, netMean:null, netMedian:null, netMin:null, netMax:null,
+    fundMean:null, fundMedian:null, fundMin:null, fundMax:null,
+    borrowMean:null, borrowMedian:null, borrowMax:null,
+    pctPos:null, flips:null, longsPayPct:null, shortsPayPct:null, ddPct:null, hours:0 },
+  'BTC-Arb':  { label:'BTC · Arbitrum',  asset:'BTC', price:null, chain:'Arbitrum',
+    gmxName:'BTC/USD [WBTC.b-USDC]', gmxAddr:'0x47c031236e19d024b42f8AE6780E44A573170703',
+    raw:null, oi:null, netMean:null, netMedian:null, netMin:null, netMax:null,
+    fundMean:null, fundMedian:null, fundMin:null, fundMax:null,
+    borrowMean:null, borrowMedian:null, borrowMax:null,
+    pctPos:null, flips:null, longsPayPct:null, shortsPayPct:null, ddPct:null, hours:0 },
+  'ETH-Avax': { label:'ETH · Avalanche', asset:'ETH', price:null, chain:'Avalanche',
+    gmxName:'ETH/USD [ETH-USDC]', gmxAddr:'0xB7e69749E3d2EDd90ea59A4932EFEa2D41E245d7',
+    raw:null, oi:null, netMean:null, netMedian:null, netMin:null, netMax:null,
+    fundMean:null, fundMedian:null, fundMin:null, fundMax:null,
+    borrowMean:null, borrowMedian:null, borrowMax:null,
+    pctPos:null, flips:null, longsPayPct:null, shortsPayPct:null, ddPct:null, hours:0 },
+};
+
+/* ── Scanner ranking: ПУСТОЙ до живого скана (никаких фиктивных строк). ── */
+let SCANNER = [];
+
+/* ── default cost model (editable) — из AUDIT cost-model; правится в панели ниже ── */
+const COSTS = {
+  gmxOpen:   0.06,   // % notional
+  gmxClose:  0.06,   // % notional
+  gmxImpact: 0.10,   // % notional (entry+exit)
+  gmxGas:    1.00,   // $ flat (не масштабируется ноционалом)
+  hlTaker:   0.045,  // % notional per side
+  hlSides:   2,      // entry+exit
+};
+const COST_LIMITS = { gmxOpen:100, gmxClose:100, gmxImpact:100, gmxGas:1000000, hlTaker:100, hlSides:10 };
+
+/* ============================================================================
+   LIVE DATA BRIDGE (main-процесс → рендерер). applyDataset полностью замещает
+   TWO_LEG/ONE_LEG/SCANNER живыми данными (без подмешивания seed-значений),
+   хранит серию графиков С МЕТКОЙ ВЫБОРА (series.forKey), бумажные позиции,
+   сводку счёта и штамп свежести. Всё остальное (render/draw) — без изменений.
+   ========================================================================== */
+const LIVE = { ready:false, series:null, positions:[], fresh:null, account:null, scannerWinDays:null };
+
+// Ключ текущего выбора — серия рендерится ТОЛЬКО если её forKey совпадает (аудит D5).
+function selKey(){
+  const cfg = state.strat==='one' ? 'A' : state.cfg;
+  return state.strat+'|'+state.asset+'|'+cfg+'|'+state.win;
+}
+function matchedSeries(){
+  return (LIVE.series && LIVE.series.forKey===selKey()) ? LIVE.series : null;
+}
+
+function costFocusActive(){
+  const cr = $('costRows');
+  return !!(cr && document.activeElement && cr.contains(document.activeElement));
+}
+
+function applyDataset(ds){
+  if(!ds) return;
+  if(ds.twoLeg)  TWO_LEG = ds.twoLeg;
+  if(ds.oneLeg)  ONE_LEG = ds.oneLeg;
+  if(ds.scanner) SCANNER = ds.scanner;
+  LIVE.scannerWinDays = Number.isFinite(Number(ds.scannerWinDays)) ? Number(ds.scannerWinDays) : null;
+  LIVE.series    = ds.series || null;   // null очищает: чужая серия не показывается
+  LIVE.positions = ds.positions || [];
+  LIVE.fresh     = ds.fresh || LIVE.fresh;
+  LIVE.account   = ds.account || null;
+  LIVE.ready     = true;
+  // гидратация сохранённой модели издержек (аудит D8) — не во время редактирования
+  if(ds.settings && ds.settings.costs && !costFocusActive()) Object.assign(COSTS, ds.settings.costs);
+  updateFreshness();
+  if(typeof render==='function') render(); // render() now includes renderTrade()
+}
+
+/* ============================================================================
+   STATE
+   ========================================================================== */
+const state = {
+  strat: 'two',       // two | one
+  asset: 'ETH',       // two-leg: ETH|BTC ; one-leg: ETH-Arb|BTC-Arb|ETH-Avax
+  cfg:   'A',
+  win:   1,           // 1 | 7 | 30 | 90 | 365  (дефолт — самое короткое окно)
+  mode:  'gross',     // gross | net
+  cap:   1000,        // selected capital — по умолчанию МИНИМАЛЬНЫЙ из матрицы (CAPS[0])
+  lev:   1,           // selected leverage (matrix)
+  live:  false,
+};
+const CAPS = [1000, 10000, 100000, 1000000];
+const LEVS = [1, 10];
+
+/* ============================================================================
+   ПРОФИЛЬ / P&L / СЕРИИ — только живые данные (PRNG-генераторы удалены, аудит D4)
+   ========================================================================== */
+
+// активный профиль доходности по текущему state.
+// prof.loading === true, пока живая история по выбору ещё не загружена: рендереры обязаны
+// показывать «история загружается…» вместо цифр (никаких нулей/сидов — аудит D4).
+function activeProfile(){
+  if (state.strat==='one'){
+    const m = ONE_LEG[state.asset] || {};
+    const loading = !(Number.isFinite(m.netMean));
+    return {
+      loading,
+      netMean:m.netMean, netMedian:m.netMedian, ddPct:m.ddPct, pctPos:m.pctPos,
+      signChg:m.flips, gmxFund:m.fundMean, gmxBorrow:m.borrowMean, hlFund:0,
+      isOne:true, raw:m.raw||null, price:m.price, hlFundLabel:'—',
+    };
+  }
+  const a = TWO_LEG[state.asset] || {};
+  const p = a[state.cfg] || null;
+  if (!p){
+    return { loading:true, isOne:false, raw:a.raw||null, price:a.price,
+      netMean:null, netMedian:null, ddPct:null, pctPos:null, signChg:null,
+      gmxFund:null, gmxBorrow:null, hlFund:null, meanA:null, meanB:null };
+  }
+  return {
+    loading:false,
+    netMean:p.netMean, netMedian:p.netMedian, ddPct:p.ddPct, pctPos:p.pctPos,
+    signChg:p.signChg, gmxFund:p.gmxFund, gmxBorrow:p.gmxBorrow, hlFund:p.hlFund,
+    isOne:false, raw:a.raw||null, price:a.price, meanA:p.meanA, meanB:p.meanB,
+  };
+}
+
+/* P&L выбранного исторического окна (сценарная оценка; форвардный ledger приходит из main). */
+function oneOffCost(notional, isOne){
+  // соответствует xlsx: two-leg = notional*0.0031 + $1 ; one-leg = notional*0.0022 + $1
+  const gmxPct = (COSTS.gmxOpen + COSTS.gmxClose + COSTS.gmxImpact)/100;
+  let c = notional*gmxPct + COSTS.gmxGas;
+  if (!isOne) c += notional*(COSTS.hlTaker/100)*COSTS.hlSides;
+  return c;
+}
+// ИСТОРИЧЕСКАЯ оценка за окно (гипотеза, НЕ бумажный счёт). Считается ТОЛЬКО по живой
+// серии, совпадающей с текущим выбором (matchedSeries); до её загрузки pnl === null и
+// потребители показывают «история загружается…». Аннуализация — по ФАКТИЧЕСКОМУ горизонту
+// данных серии (series.nDays), а не по запрошенному окну (аудит D9).
+function computePnL(cap, lev){
+  const prof = activeProfile();
+  const notional = cap * lev;
+  const cost = oneOffCost(notional, prof.isOne);
+  const s = matchedSeries();
+  const base = s && s.equityBaseCum;
+  if (!base || base.length<2){
+    return { notional, gross:null, cost, net:null, pnl:null, ret:null, apr:null, prof, nDays:null, hours:null, ddPct:null, loading:true };
+  }
+  const gross = base[base.length-1] * notional;
+  const net   = gross - cost;
+  const pnl   = state.mode==='net' ? net : gross;
+  const nDays = s.nDays || (base.length-1);
+  const hours = s.hours || nDays*24;
+  const ret   = pnl/cap;
+  const apr   = nDays>0 ? ret * (365/nDays) : null;
+  // просадка ТЕКУЩЕГО окна (доля ноционала) из той же серии, что и все остальные числа героя;
+  // раньше сюда попадал полнокадровый (365д) ddPct профиля — окно и просадка расходились
+  const ddPct = Number.isFinite(s.ddPct) ? s.ddPct : prof.ddPct;
+  return { notional, gross, cost, net, pnl, ret, apr, prof, nDays, hours, ddPct, loading:false };
+}
+
+/* ── Серии графиков: ТОЛЬКО живая история текущего выбора (matchedSeries).
+   Синтетические PRNG-фолбэки удалены (аудит D4): пока серии нет — build* возвращают
+   null и renderCharts рисует заглушку «история загружается…». ── */
+
+/* equity-кривая: реальный кумулятив из истории (series.equityBaseCum, per-$1). */
+function buildEquity(cap, lev){
+  const s = matchedSeries();
+  const base = s && s.equityBaseCum;
+  if(!base || base.length<2) return null;
+  const notional=cap*lev, nDays=base.length-1;
+  const cost = state.mode==='net' ? oneOffCost(notional, activeProfile().isOne) : 0;
+  const cum = base.map((x,i)=> x*notional - (i>0?cost:0));   // net-режим: сдвиг на издержки после входа
+  const eq  = cum.map(c=>cap+c);
+  let peak=-Infinity; const dd=eq.map(v=>{ peak=Math.max(peak,v); return v-peak; });
+  return { eq, cum, dd, cap, nDays, unit: (s.bucketUnit==='hour'?'ч':'д') };
+}
+
+/* нетто-спред (для бар-чарта): реальные средние net APR по бакету (час/день по окну). */
+function buildSpread(){
+  const s = matchedSeries();
+  return (s && s.spreadDaily && s.spreadDaily.length) ? { arr: s.spreadDaily, unit:(s.bucketUnit==='hour'?'час':'день') } : null;
+}
+
+/* вклад ног (stacked): средние компонент по группе (мес/нед/дн/6ч по окну). */
+function buildLegs(){
+  const s = matchedSeries();
+  return (s && s.legsMonthly && s.legsMonthly.length) ? { arr: s.legsMonthly, unit:(s.legUnit||'мес') } : null;
+}
+
+/* справочная цена: одна реальная дневная серия (Binance). Кросс-венью базис — P3. */
+function buildPrice(){
+  const s = matchedSeries();
+  return (s && s.price && s.price.ref && s.price.ref.length) ? s.price : null;
+}
+
+/* сырые часовые строки для инспектора: последние n РЕАЛЬНЫХ часовых строк истории. */
+function buildRawRows(n){
+  const s = matchedSeries();
+  if(!s || !s.rawRows || !s.rawRows.length) return null;
+  return s.rawRows.slice(0, n).map(r=>({ ...r, ts: new Date(r.ts) }));
+}
+
+/* ============================================================================
+   CANVAS CHART HELPERS (HiDPI)
+   ========================================================================== */
+function setupCanvas(cv){
+  const dpr = Math.max(1, window.devicePixelRatio||1);
+  const rect = cv.getBoundingClientRect();
+  const w = Math.max(10, rect.width), h = Math.max(10, rect.height||cv.clientHeight);
+  cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  return { ctx, w, h };
+}
+const C = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+function niceTicks(min,max,n){
+  const span=(max-min)||1, step0=span/n, mag=Math.pow(10,Math.floor(Math.log10(step0)));
+  const norm=step0/mag; let step;
+  step = norm<1.5?1:norm<3?2:norm<7?5:10; step*=mag;
+  const start=Math.ceil(min/step)*step, ticks=[];
+  for(let v=start; v<=max+step*0.001; v+=step) ticks.push(v);
+  return ticks;
+}
+
+/* line chart с заливкой просадки + кросс-хейр */
+function drawEquity(cv, data, tipEl){
+  const { ctx, w, h } = setupCanvas(cv);
+  const padL=92, padR=14, padT=14, padB=22;
+  const { eq, dd, cap, nDays } = data;
+  const min = Math.min(cap, ...eq), max = Math.max(cap, ...eq);
+  const pad = (max-min)*0.12 || 1;
+  const lo=min-pad, hi=max+pad;
+  const X = i => padL + (i/(nDays))*(w-padL-padR);
+  const Y = v => padT + (1-(v-lo)/(hi-lo))*(h-padT-padB);
+
+  // grid + y labels
+  ctx.font = "10px " + C('--f-mono');
+  ctx.textBaseline='middle';
+  niceTicks(lo,hi,4).forEach(v=>{
+    const y=Y(v); ctx.strokeStyle=C('--line-soft'); ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke();
+    ctx.fillStyle=C('--txt-faint'); ctx.textAlign='right';
+    ctx.fillText(fmtAxisUSD(v, hi-lo), padL-8, y);
+  });
+  // стартовая линия капитала (амбер)
+  const yCap=Y(cap);
+  ctx.strokeStyle=C('--neu'); ctx.globalAlpha=.6; ctx.setLineDash([4,4]); ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(padL,yCap); ctx.lineTo(w-padR,yCap); ctx.stroke();
+  ctx.setLineDash([]); ctx.globalAlpha=1;
+
+  // drawdown fill (от equity до бегущего пика)
+  let peak=-Infinity; const peakArr=eq.map(v=>{peak=Math.max(peak,v); return peak;});
+  ctx.beginPath();
+  for(let i=0;i<=nDays;i++){ const x=X(i), y=Y(eq[i]); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+  for(let i=nDays;i>=0;i--){ ctx.lineTo(X(i), Y(peakArr[i])); }
+  ctx.closePath(); ctx.fillStyle='rgba(255,86,103,.14)'; ctx.fill();
+
+  // equity line + glow gradient area
+  const up = eq[nDays] >= cap;
+  const col = up ? C('--pos') : C('--neg');
+  const grad = ctx.createLinearGradient(0,padT,0,h-padB);
+  grad.addColorStop(0, up?'rgba(41,224,143,.22)':'rgba(255,86,103,.22)');
+  grad.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.beginPath();
+  for(let i=0;i<=nDays;i++){ const x=X(i), y=Y(eq[i]); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+  ctx.lineTo(X(nDays), Y(lo)); ctx.lineTo(X(0), Y(lo)); ctx.closePath();
+  ctx.fillStyle=grad; ctx.fill();
+
+  ctx.beginPath();
+  for(let i=0;i<=nDays;i++){ const x=X(i), y=Y(eq[i]); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }
+  ctx.strokeStyle=col; ctx.lineWidth=2; ctx.lineJoin='round'; ctx.stroke();
+  // endpoint dot
+  ctx.fillStyle=col; ctx.beginPath(); ctx.arc(X(nDays),Y(eq[nDays]),3.2,0,7); ctx.fill();
+
+  // x labels: по умолчанию — дни истории; форвардный график передаёт свои (data.xLeft/xRight)
+  ctx.fillStyle=C('--txt-faint'); ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  ctx.fillText(data.xLeft || ('−'+nDays+(data.unit||'д')), padL+28, h-6);
+  ctx.fillText(data.xRight || 'сейчас', w-padR-26, h-6);
+
+  // crosshair; первая строка тултипа — data.tipFor(i) если задана (форвард: реальное время точки)
+  cv._hit = { X, Y, eq, dd, nDays, padL, padR, w, h, padT, padB, cap };
+  attachCrosshair(cv, tipEl, (mx)=>{
+    const i = Math.round(((mx-padL)/(w-padL-padR))*nDays);
+    if(i<0||i>nDays) return null;
+    const x=X(i), y=Y(eq[i]);
+    const head = data.tipFor
+      ? data.tipFor(i)
+      : '<div class="r"><span class="k">'+(data.unit==='ч'?'час':'день')+'</span><span>'+(i-nDays)+'</span></div>';
+    return { x, y, html:
+      head+
+      '<div class="r"><span class="k">equity</span><span>'+fmtUSDfull(eq[i])+'</span></div>'+
+      '<div class="r"><span class="k">P&L</span><span class="'+clsSign(eq[i]-cap)+'">'+fmtUSDfull(eq[i]-cap)+'</span></div>'+
+      '<div class="r"><span class="k">просадка</span><span class="neg">'+fmtUSDfull(dd[i])+'</span></div>' };
+  });
+}
+
+/* заглушка на канвасе, пока живой серии нет (или она не для текущего выбора) */
+function drawEmpty(cv, tipEl, msg){
+  const { ctx, w, h } = setupCanvas(cv);
+  if(tipEl) tipEl.style.opacity=0;
+  cv.onmousemove = null; cv.onmouseleave = null;
+  ctx.fillStyle=C('--txt-faint'); ctx.font='11px '+C('--f-sans');
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(msg || 'история загружается…', w/2, h/2);
+}
+
+function drawSpread(cv, data, tipEl){
+  const { ctx, w, h } = setupCanvas(cv);
+  const padL=46, padR=10, padT=10, padB=18;
+  const arr = Array.isArray(data) ? data : data.arr;
+  const unit = (data && data.unit) || 'день';
+  const amax = Math.max(...arr.map(Math.abs), 0.1);
+  const X = i => padL + (i+0.5)/arr.length*(w-padL-padR);
+  const Y = v => padT + (1-(v+amax)/(2*amax))*(h-padT-padB);
+  const bw = Math.max(1, (w-padL-padR)/arr.length*0.82);
+  // y grid
+  ctx.font="10px "+C('--f-mono'); ctx.textBaseline='middle';
+  [amax,0,-amax].forEach(v=>{
+    const y=Y(v); ctx.strokeStyle = v===0?C('--neu'):C('--line-soft');
+    ctx.globalAlpha = v===0?.5:1; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); ctx.globalAlpha=1;
+    ctx.fillStyle=C('--txt-faint'); ctx.textAlign='right'; ctx.fillText(fmtPctNS(v,0), padL-6, y);
+  });
+  const y0=Y(0);
+  arr.forEach((v,i)=>{
+    const x=X(i), y=Y(v);
+    ctx.fillStyle = v>=0 ? 'rgba(41,224,143,.78)' : 'rgba(255,86,103,.78)';
+    ctx.fillRect(x-bw/2, Math.min(y,y0), bw, Math.abs(y-y0));
+  });
+  attachCrosshair(cv, tipEl, (mx)=>{
+    const i=Math.floor((mx-padL)/(w-padL-padR)*arr.length);
+    if(i<0||i>=arr.length) return null;
+    return { x:X(i), y:Y(arr[i]), html:
+      '<div class="r"><span class="k">'+unit+'</span><span>'+(i-arr.length)+'</span></div>'+
+      '<div class="r"><span class="k">net APR</span><span class="'+clsSign(arr[i])+'">'+fmtPct(arr[i])+'</span></div>' };
+  });
+}
+
+function drawLegs(cv, data){
+  const { ctx, w, h } = setupCanvas(cv);
+  const padL=46, padR=10, padT=10, padB=20;
+  const legs = Array.isArray(data) ? data : data.arr;
+  const unit = (data && data.unit) || 'мес';
+  let pmax=0, nmax=0;
+  legs.forEach(m=>{ pmax=Math.max(pmax, m.gmxFund>0?m.gmxFund:0, m.hlFund>0?m.hlFund:0, (m.gmxFund>0?m.gmxFund:0)+(m.hlFund>0?m.hlFund:0)); nmax=Math.max(nmax, m.gmxBorrow + (m.gmxFund<0?-m.gmxFund:0)+(m.hlFund<0?-m.hlFund:0)); });
+  const amax=Math.max(pmax,nmax,0.02)*1.15;
+  const X=i=> padL + (i+0.5)/legs.length*(w-padL-padR);
+  const Y=v=> padT + (1-(v+amax)/(2*amax))*(h-padT-padB);
+  const bw=Math.max(4,(w-padL-padR)/legs.length*0.6);
+  ctx.font="10px "+C('--f-mono'); ctx.textBaseline='middle';
+  [amax,0,-amax].forEach(v=>{ const y=Y(v); ctx.strokeStyle=v===0?C('--neu'):C('--line-soft'); ctx.globalAlpha=v===0?.5:1;
+    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke(); ctx.globalAlpha=1;
+    ctx.fillStyle=C('--txt-faint'); ctx.textAlign='right'; ctx.fillText(fmtPctNS(v,0),padL-6,y); });
+  const y0=Y(0);
+  legs.forEach((m,i)=>{
+    const x=X(i);
+    // стек: положительные сегменты вверх от нуля, отрицательные — вниз
+    let accPos=0, accNeg=0;
+    const seg=(val,color)=>{
+      if(val>0){ const yTop=Y(accPos+val), yBot=Y(accPos); ctx.fillStyle=color; ctx.fillRect(x-bw/2,yTop,bw,yBot-yTop); accPos+=val; }
+      else if(val<0){ const yTop=Y(accNeg), yBot=Y(accNeg+val); ctx.fillStyle=color; ctx.fillRect(x-bw/2,yTop,bw,yBot-yTop); accNeg+=val; }
+    };
+    seg(m.gmxFund>0?m.gmxFund:0, 'rgba(41,224,143,.8)');
+    seg(m.hlFund>0?m.hlFund:0,  'rgba(76,155,255,.8)');
+    seg(-(m.gmxBorrow),         'rgba(255,86,103,.8)');
+    seg(m.gmxFund<0?m.gmxFund:0,'rgba(41,224,143,.4)');
+    seg(m.hlFund<0?m.hlFund:0,  'rgba(76,155,255,.4)');
+  });
+  ctx.fillStyle=C('--txt-faint'); ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  ctx.fillText((unit==='мес'?'по месяцам':'по '+unit)+' ('+legs.length+')', (padL+w-padR)/2, h-5);
+}
+
+function drawPrice(cv, data){
+  const { ctx, w, h } = setupCanvas(cv);
+  const padL=52, padR=42, padT=12, padB=18;
+  const ref = data.ref || []; const n=ref.length;
+  if(!n){ return; }
+  const min=Math.min(...ref), max=Math.max(...ref);
+  const pad=(max-min)*0.15||1; const lo=min-pad, hi=max+pad;
+  const X=i=> padL + (n>1 ? i/(n-1) : 0.5)*(w-padL-padR);
+  const Y=v=> padT + (1-(v-lo)/(hi-lo))*(h-padT-padB);
+  ctx.font="10px "+C('--f-mono'); ctx.textBaseline='middle';
+  niceTicks(lo,hi,3).forEach(v=>{ const y=Y(v); ctx.strokeStyle=C('--line-soft'); ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke();
+    ctx.fillStyle=C('--txt-faint'); ctx.textAlign='right'; ctx.fillText(v>=1000?(v/1000).toFixed(1)+'k':v.toFixed(v<10?3:1), padL-6, y); });
+  // single reference series (Binance daily closes); no fabricated second venue or delta (аудит)
+  ctx.beginPath(); for(let i=0;i<n;i++){ const x=X(i),y=Y(ref[i]); i?ctx.lineTo(x,y):ctx.moveTo(x,y);} ctx.strokeStyle=C('--price'); ctx.lineWidth=1.8; ctx.lineJoin='round'; ctx.stroke();
+}
+
+/* общий кросс-хейр для line/bar */
+function attachCrosshair(cv, tipEl, probe){
+  if(!tipEl) return;
+  cv.onmousemove = (e)=>{
+    const rect=cv.getBoundingClientRect(); const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+    const r=probe(mx,my);
+    if(!r){ tipEl.style.opacity=0; return; }
+    tipEl.innerHTML=r.html; tipEl.style.left=r.x+'px'; tipEl.style.top=r.y+'px'; tipEl.style.opacity=1;
+  };
+  cv.onmouseleave=()=>{ tipEl.style.opacity=0; };
+}
+
+/* ============================================================================
+   RENDER
+   ========================================================================== */
+const $ = id => document.getElementById(id);
+
+/* ГЛАВНОЕ ЧИСЛО ЭКРАНА (аудит D1): если есть бумажные позиции — это НАКОПЛЕННЫЙ P&L
+   БУМАЖНОГО СЧЁТА (реально начисленный с t0). Историческая оценка окна показывается
+   только когда счёт пуст, и всегда явно подписана «история (гипотеза)». */
+// prefers-reduced-motion: плавные прокрутки/подсветки отключаемы системной настройкой
+const smoothOk = ()=> !matchMedia('(prefers-reduced-motion: reduce)').matches;
+// Большое P&L-число (общий рендер для героя анализа и кокпита торговли)
+function setBigPnl(el, v, est){
+  if(!Number.isFinite(v)){ el.innerHTML='<span class="cur">$</span>—'; el.className='val'; return; }
+  const approx = est ? '<span class="approx">≈</span>' : '';
+  el.innerHTML = approx + '<span class="cur">'+(v<0?'−$':'$')+'</span>' + Math.round(Math.abs(v)).toLocaleString('en-US');
+  el.className = 'val ' + clsSign(v) + (est ? ' est' : '');
+}
+function renderHero(){
+  const big = $('heroPnl');
+  const setBig = (v, est)=> setBigPnl(big, v, est);
+
+  // Герой зоны АНАЛИЗА — ВСЕГДА историческая оценка (гипотеза) по текущему выбору селекторов.
+  // Реализованный P&L бумажных позиций показывает только зона «Торговля» (renderTrade):
+  // двухрежимный «хамелеон» устранён архитектурно (редизайн 2026-07, вопрос «застывшие −$373»).
+  const p = computePnL(state.cap, state.lev);
+  $('heroLbl').textContent = 'Оценка P&L за окно · история (гипотеза)';
+  if (p.loading){
+    setBig(NaN);
+    $('heroCtx').textContent = 'история загружается…';
+    $('heroRet').textContent='—'; $('heroRet').className='v faint';
+    $('heroApr').textContent='—'; $('heroApr').className='v faint';
+    $('heroAprSub').textContent = 'живые данные · подождите';
+    $('heroNotional').textContent = fmtUSD(state.cap*state.lev,0);
+    $('heroPerHr').textContent='—'; $('heroDD').textContent='—'; $('heroHours').textContent='—';
+  } else {
+    setBig(p.pnl, true); // est=true: историческая ГИПОТЕЗА, не реализованный P&L — помечаем «≈»
+    $('heroCtx').textContent = fmtUSD(state.cap,0) + ' · ' + state.lev + 'x · данных: ' + p.nDays + 'д из ' + state.win + 'д';
+    $('heroRet').textContent = fmtPct(p.ret); $('heroRet').className='v '+clsSign(p.ret);
+    $('heroRetSub').textContent = 'к инвестированному капиталу · гипотеза';
+    $('heroApr').textContent = fmtPct(p.apr); $('heroApr').className='v '+clsSign(p.apr);
+    const med = matchedSeries() ? matchedSeries().netMedian : p.prof.netMedian;
+    const shortWin = state.win<=7 ? ' · <span class="neu">короткое окно — годовые оценки шумны</span>' : '';
+    $('heroAprSub').innerHTML = 'медианная (устойчивая к выбросам): <span class="'+clsSign(med)+'">'+(Number.isFinite(med)?fmtPct(med):'—')+'</span>'+shortWin;
+    $('heroNotional').textContent = fmtUSD(p.notional,0);
+    const perHr = p.hours>0 ? p.pnl/p.hours : null;
+    $('heroPerHr').innerHTML = '<span class="'+clsSign(perHr)+'">'+(Number.isFinite(perHr)?fmtUSDfull(perHr):'—')+'</span>';
+    // просадка: доля НОЦИОНАЛА → $ по ноционалу, % — к капиталу (аудит M6/M21/M38);
+    // берётся из серии ТЕКУЩЕГО окна (p.ddPct), согласована с кривой капитала (аудит #3 W1)
+    const ddFrac = p.ddPct;
+    $('heroDD').textContent = Number.isFinite(ddFrac)
+      ? fmtPct(-ddFrac*state.lev) + ' (' + fmtUSDfull(-ddFrac*p.notional) + ')'
+      : '—';
+    $('heroHours').textContent = (p.hours||0).toLocaleString('en-US');
+  }
+
+  // пилюля конфигурации следует СЕЛЕКТОРУ: герой всегда описывает текущий выбор анализа
+  $('heroCfg').innerHTML = state.strat==='one'
+    ? 'Одна нога · <b>GMX carry</b>'
+    : 'Конфигурация <b>'+state.cfg+'</b>';
+  const m = $('heroMode');
+  if(state.mode==='net'){ m.textContent='НЕТТО · после издержек'; m.className='mode-pill mode-net'; }
+  else { m.textContent='БРУТТО · до издержек'; m.className='mode-pill mode-gross'; }
+  $('mxMode').textContent = state.mode==='net'?'нетто':'брутто';
+  $('mxWin').textContent = state.win+'д';
+  $('eqTag').textContent = fmtUSD(state.cap,0)+' · '+state.lev+'x';
+}
+
+function renderMatrix(){
+  const mx = $('matrix');
+  // удалить старые ряды (оставить 3 заголовка)
+  [...mx.querySelectorAll('.cell,.rowh')].forEach(n=>n.remove());
+  CAPS.forEach(cap=>{
+    const rh=document.createElement('div'); rh.className='rowh'; rh.setAttribute('aria-hidden','true');
+    rh.innerHTML = fmtUSD(cap,0) + '<small>капитал</small>';
+    mx.appendChild(rh);
+    LEVS.forEach(lev=>{
+      const p=computePnL(cap,lev);
+      const sel = (cap===state.cap && lev===state.lev);
+      const cell=document.createElement('div'); cell.className='cell'; cell.setAttribute('role','radio'); cell.tabIndex=0;
+      cell.setAttribute('aria-checked', sel?'true':'false');
+      if (p.loading){
+        cell.setAttribute('aria-label','Капитал '+fmtUSD(cap,0)+', плечо '+lev+'×, история загружается');
+        cell.innerHTML = '<span class="pick" aria-hidden="true">ВЫБРАНО</span>'+
+          '<div class="pnl faint" aria-hidden="true">—</div>'+
+          '<div class="apr" aria-hidden="true">загрузка…</div>';
+      } else {
+        cell.setAttribute('aria-label',
+          'Капитал '+fmtUSD(cap,0)+', плечо '+lev+'×, P&L '+(p.pnl<0?'минус ':'')+fmtUSD(Math.abs(p.pnl),0)+', APR '+fmtPct(p.apr,1));
+        cell.innerHTML = '<span class="pick" aria-hidden="true">ВЫБРАНО</span>'+
+          '<div class="pnl '+clsSign(p.pnl)+'" aria-hidden="true">'+(p.pnl<0?'−':'')+fmtUSD(Math.abs(p.pnl),0)+'</div>'+
+          '<div class="apr" aria-hidden="true">APR '+fmtPct(p.apr,1)+'</div>';
+      }
+      const pick=()=>{ state.cap=cap; state.lev=lev; render(); };
+      cell.onclick=pick;
+      cell.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); pick(); } };
+      mx.appendChild(cell);
+    });
+  });
+}
+
+function dlRow(k, v, vcls, icon){
+  const ic = icon ? '<span class="ic" style="background:'+icon+'"></span>' : '';
+  return '<div class="row"><div class="k">'+ic+k+'</div><div class="v '+(vcls||'')+'">'+v+'</div></div>';
+}
+
+function renderGmxPanel(){
+  const prof = activeProfile(); const r=prof.raw;
+  const isOne = prof.isOne;
+  const meta = (isOne ? ONE_LEG[state.asset] : TWO_LEG[state.asset]) || {};
+  $('gmxTitle').textContent = 'GMX V2 · ' + (meta.gmxChain||meta.chain||'Arbitrum');
+
+  if(!r){
+    $('gmxFactors').innerHTML = dlRow('ставки', '<span class="faint">ожидание живых данных…</span>','faint');
+    $('gmxBorrow').innerHTML = '';
+    $('oiBar').innerHTML = '';
+    $('oiLngUsd').textContent='—'; $('oiShtUsd').textContent='—';
+    $('whoPays').textContent='Живые данные GMX ещё не получены.';
+    return;
+  }
+  const aprF = f => f*SEC_PER_HOUR*HOURS_PER_YEAR;
+  $('gmxFactors').innerHTML =
+    dlRow('funding/s SHORT <small>текущий · live, /1e30</small>', sci(r.f_short)+' <small>('+fmtPct(aprF(r.f_short))+' APR)</small>', clsSign(r.f_short), C('--pos')) +
+    dlRow('funding/s LONG <small>текущий · live, /1e30</small>',  sci(r.f_long)+' <small>('+fmtPct(aprF(r.f_long))+' APR)</small>',  clsSign(r.f_long), C('--neg'));
+  $('gmxBorrow').innerHTML =
+    dlRow('borrow/s SHORT <small>текущий · live, /1e30</small>', sci(r.b_short)+' <small>('+fmtPctNS(aprF(r.b_short))+' APR)</small>', 'neu', C('--neu')) +
+    dlRow('borrow/s LONG <small>текущий · live, /1e30</small>',  sci(r.b_long)+' <small>('+fmtPctNS(aprF(r.b_long))+' APR)</small>',  'neu', C('--neu'));
+
+  // OI skew (guard: нет данных или нулевой OI — не делим на ноль, аудит M3)
+  const oi=meta.oi; const tot=oi ? oi.longUsd+oi.shortUsd : 0;
+  if(!oi || !(tot>0)){
+    $('oiBar').innerHTML='';
+    $('oiLngUsd').textContent='—'; $('oiShtUsd').textContent='—';
+    $('whoPays').textContent = oi ? 'Открытый интерес на рынке нулевой — дисбаланс не определён.' : 'Данные OI ещё не получены.';
+    return;
+  }
+  const lp=oi.longUsd/tot;
+  $('oiBar').innerHTML =
+    '<div class="lng" style="width:'+(lp*100).toFixed(0)+'%"><span>LONG '+(lp*100).toFixed(0)+'%</span></div>'+
+    '<div class="sht" style="width:'+((1-lp)*100).toFixed(0)+'%"><span>SHORT '+((1-lp)*100).toFixed(0)+'%</span></div>';
+  $('oiLngUsd').textContent='long '+fmtUSD(oi.longUsd,0);
+  $('oiShtUsd').textContent='short '+fmtUSD(oi.shortUsd,0);
+  // OI is context, not the accounting source of truth. The payer text follows the actual live
+  // canonical factors; inferring it from the larger OI side could contradict the displayed rate.
+  const oiSide = lp>0.5 ? 'LONG' : (lp<0.5 ? 'SHORT' : 'сбалансирован');
+  const fundingText = r.f_short>0
+    ? 'финансирование платят <b>лонги</b>, получает <b class="pos">короткая позиция</b>'
+    : (r.f_short<0
+        ? 'финансирование платят <b>шорты</b>, получает <b class="pos">длинная позиция</b>'
+        : 'текущая ставка финансирования равна нулю');
+  const borrowSides=[];
+  if(r.b_long>0) borrowSides.push('LONG');
+  if(r.b_short>0) borrowSides.push('SHORT');
+  const borrowText = borrowSides.length
+    ? 'заимствование начисляется стороне '+borrowSides.join(' и ')
+    : 'текущая ставка заимствования равна нулю';
+  $('whoPays').innerHTML = 'OI больше на стороне <b>'+oiSide+'</b> (контекст). По фактическим live-факторам: '+fundingText+'; '+borrowText+'.';
+}
+
+function renderHlPanel(){
+  const prof = activeProfile();
+  if(prof.isOne){
+    $('hlTitle').textContent='Hyperliquid';
+    $('hlRates').innerHTML = dlRow('—', '<span class="faint">одна нога · Hyperliquid не используется</span>','faint');
+    $('hlMeta').innerHTML = dlRow('Стратегия','GMX carry (только GMX)','dim');
+    $('hlWhoPays').innerHTML='Одна нога (GMX carry): короткая позиция по инструменту + залог в нём же. Нога Hyperliquid отсутствует.';
+    return;
+  }
+  const meta=TWO_LEG[state.asset] || {}; const r=meta.raw;
+  $('hlTitle').textContent='Hyperliquid · '+(meta.hlCoin||'—');
+  if(!r || !Number.isFinite(r.hl_rate)){
+    $('hlRates').innerHTML = dlRow('ставки', '<span class="faint">ожидание живых данных…</span>','faint');
+    $('hlMeta').innerHTML = dlRow('инструмент HL', meta.hlCoin||'—', 'white');
+    $('hlWhoPays').textContent = 'Живые данные Hyperliquid ещё не получены.';
+    return;
+  }
+  const hlShort=r.hl_rate*HOURS_PER_YEAR, hlLong=-r.hl_rate*HOURS_PER_YEAR;
+  $('hlRates').innerHTML =
+    dlRow('ставка финансирования (часовая · текущая live)', sci(r.hl_rate), clsSign(r.hl_rate), C('--pos')) +
+    dlRow('финансирование APR · получает SHORT', fmtPct(hlShort), clsSign(hlShort)) +
+    dlRow('финансирование APR · получает LONG',  fmtPct(hlLong),  clsSign(hlLong));
+  $('hlMeta').innerHTML =
+    dlRow('премия (index − mark)', fmtPctNS(r.hl_premium,4), clsSign(r.hl_premium)) +
+    dlRow('инструмент HL', meta.hlCoin, 'white') +
+    dlRow('макс. плечо HL', (meta.hlMaxLev??'—')+'×', 'dim');
+  const legHl = state.cfg==='A'?'long':'short';
+  $('hlWhoPays').innerHTML = 'Нога Hyperliquid в конфигурации '+state.cfg+': <b class="'+(legHl==='long'?'pos':'neg')+'">'+(legHl==='long'?'LONG':'SHORT')+'</b>'+
+    ' · '+(r.hl_rate>0?'ставка&gt;0 ⇒ доход короткой позиции':'ставка&lt;0 ⇒ доход длинной позиции');
+}
+
+function renderStrategy(){
+  const prof=activeProfile();
+  const tag = state.strat==='one' ? 'GMX carry' : ('Конфигурация '+state.cfg);
+  $('stratTag').textContent=tag; $('spreadTag').textContent=tag; $('inspTag').textContent=tag;
+
+  if(state.strat==='one'){
+    const m=ONE_LEG[state.asset] || {};
+    if(!Number.isFinite(m.netMean)){
+      $('whyBox').innerHTML = 'Одна нога · <b>GMX carry</b>: короткая позиция по '+(m.asset||'—')+' + залог в нём же на GMX ('+(m.chain||'—')+').';
+      $('stratSummary').innerHTML =
+        dlRow('Рынок GMX', m.gmxName||'—','white') +
+        dlRow('Адрес рынка (market token)', '<span class="addr">'+(m.gmxAddr||'—')+'</span>','') +
+        dlRow('Сеть', m.chain||'—','dim') +
+        dlRow('Статистика за окно', '<span class="faint">история загружается…</span>','faint');
+      return;
+    }
+    $('whyBox').innerHTML = 'Одна нога · <b>GMX carry</b>: короткая позиция по '+m.asset+' + залог в нём же на GMX ('+m.chain+'). '+
+      'Доход = финансирование (получает короткая позиция) − заимствование. Короткая позиция получала финансирование <b>'+fmtPctNS(m.longsPayPct)+'</b> времени.';
+    $('stratSummary').innerHTML =
+      dlRow('Рынок GMX', m.gmxName,'white') +
+      dlRow('Адрес рынка (market token)', '<span class="addr">'+m.gmxAddr+'</span>','') +
+      dlRow('Сеть', m.chain,'dim') +
+      // окно берём из ШТАМПА самого блока статистики (m.winDays), не из селектора: пуш, собранный
+      // под прежний период, не должен ни на миг подписываться новым (панель без forKey-гарда)
+      dlRow('Окно статистики', (m.winDays ?? state.win)+'д · '+(m.hours||0)+' ч данных','dim') +
+      dlRow('Net carry APR · медиана', fmtPct(m.netMedian), clsSign(m.netMedian)) +
+      dlRow('Net carry APR · среднее', fmtPct(m.netMean), clsSign(m.netMean)) +
+      dlRow('Финансирование APR (получает SHORT)', fmtPct(m.fundMean), clsSign(m.fundMean)) +
+      dlRow('Заимствование APR (издержка)', fmtPctNS(m.borrowMean),'neu') +
+      dlRow('Доля времени carry&gt;0', fmtPctNS(m.pctPos),'dim') +
+      dlRow('Число разворотов (смена плательщика)', m.flips,'dim') +
+      dlRow('Часов: платят лонги / платят шорты', fmtPctNS(m.longsPayPct,0)+' / '+fmtPctNS(m.shortsPayPct,0),'dim') +
+      dlRow('Макс. просадка', fmtPct(-m.ddPct)+' от ноционала','neg');
+    return;
+  }
+  const a=TWO_LEG[state.asset] || {}, p=a[state.cfg];
+  if(!p){
+    $('whyBox').innerHTML = 'Живая история за окно загружается — сравнение конфигураций A/B появится после её обработки.';
+    $('stratSummary').innerHTML =
+      dlRow('Рынок GMX', a.gmxName||'—','white') +
+      dlRow('Адрес рынка (market token)', '<span class="addr">'+(a.gmxAddr||'—')+'</span>','') +
+      dlRow('Инструмент HL', a.hlCoin||'—','dim') +
+      dlRow('Статистика за окно', '<span class="faint">история загружается…</span>','faint');
+    return;
+  }
+  const chosen=a.chosen;
+  const why = state.cfg===chosen
+    ? 'Конфигурация <b>'+chosen+'</b> выбрана автоматически (выше средний net APR): среднее A <b class="'+clsSign(p.meanA)+'">'+fmtPct(p.meanA)+'</b> против среднего B <b class="'+clsSign(p.meanB)+'">'+fmtPct(p.meanB)+'</b>.'
+    : 'Конфигурация <b>'+state.cfg+'</b> не оптимальна по модели (ниже доходность). Автовыбор: <b>'+chosen+'</b>. Среднее A '+fmtPct(p.meanA)+' против среднего B '+fmtPct(p.meanB)+'.';
+  $('whyBox').innerHTML = why;
+  const legLbl = state.cfg==='A' ? 'short GMX + long HL' : 'long GMX + short HL';
+  $('stratSummary').innerHTML =
+    dlRow('Конфигурация ног', legLbl,'white') +
+    dlRow('Рынок GMX', a.gmxName,'white') +
+    dlRow('Адрес рынка (market token)', '<span class="addr">'+a.gmxAddr+'</span>','') +
+    dlRow('Инструмент HL · макс. плечо', a.hlCoin+' · '+a.hlMaxLev+'×','dim') +
+    dlRow('Окно статистики', (a.winDays ?? state.win)+'д · '+(a.hours||0)+' ч данных','dim') +
+    dlRow('Net APR · медиана (устойчивая к выбросам)', fmtPct(p.netMedian), clsSign(p.netMedian)) +
+    dlRow('Net APR · среднее', fmtPct(p.netMean), clsSign(p.netMean)) +
+    dlRow('Net APR · min / max', fmtPct(p.netMin,0)+' / '+fmtPct(p.netMax,0),'dim') +
+    dlRow('Доля времени спред&gt;0', fmtPctNS(p.pctPos),'dim') +
+    dlRow('Число смен знака спреда', p.signChg,'dim') +
+    dlRow('Вклад: финансирование GMX', fmtPct(p.gmxFund), clsSign(p.gmxFund), C('--pos')) +
+    dlRow('Вклад: − заимствование GMX', fmtPct(-p.gmxBorrow),'neg', C('--neg')) +
+    dlRow('Вклад: финансирование HL', fmtPct(p.hlFund), clsSign(p.hlFund), C('--accent')) +
+    dlRow('Макс. просадка', fmtPct(-p.ddPct)+' от ноционала','neg');
+}
+
+let costWired=false;
+function renderCosts(){
+  const prof=activeProfile(); const isOne=prof.isOne;
+  const notional = state.cap*state.lev;
+  $('costNotional').textContent = fmtUSD(notional,0);
+  const rows = [
+    ['gmxOpen','Комиссия открытия GMX','% ноционала', true],
+    ['gmxClose','Комиссия закрытия GMX','% ноционала', true],
+    ['gmxImpact','Проскальзывание GMX (price impact, вход+выход)','% ноционала', true],
+    ['gmxGas','Газ / keeper GMX','$ фикс', true],
+    ['hlTaker','Комиссия taker HL · за сторону','% ноционала', !isOne],
+    ['hlSides','Число сторон HL (вход+выход)','шт', !isOne],
+  ];
+  // если пользователь сейчас редактирует поле — не пересобирать innerHTML (фокус/каретка
+  // терялись бы на каждом 5-минутном push, аудит M2); обновляем только производные значения
+  if(costFocusActive()){ updateCostDerived(false); return; }
+  let html='';
+  rows.forEach(([key,label,unit,show])=>{
+    if(!show){ return; }
+    html += '<div class="cost-row">'+
+      '<div class="k">'+label+'<small>'+(key==='hlTaker'?'×'+COSTS.hlSides+' сторон':unit)+'</small></div>'+
+      '<input type="number" min="0" max="'+COST_LIMITS[key]+'" step="'+(key==='hlSides'?'1':'any')+'" data-cost="'+key+'" value="'+COSTS[key]+'" inputmode="decimal" aria-label="'+label+'"/>'+
+      '<div class="usd '+(key==='hlSides'?'faint':'neg')+'" data-usd="'+key+'">—</div></div>';
+  });
+  $('costRows').innerHTML=html;
+  // Делегированный обработчик навешивается ОДИН раз на контейнер (#costRows не пересоздаётся,
+  // меняется только innerHTML его детей), поэтому редактируемый <input> НЕ пересобирается на
+  // каждый ввод — фокус и каретка сохраняются, и можно набирать дробные значения (0.045) посимвольно.
+  if(!costWired){
+    $('costRows').addEventListener('input', e=>{
+      const inp = e.target.closest('input[data-cost]'); if(!inp) return;
+      const key=inp.dataset.cost, v=Number(inp.value), max=COST_LIMITS[key];
+      const valid=inp.value.trim()!=='' && Number.isFinite(v) && v>=0 && v<=max && (key!=='hlSides' || Number.isInteger(v));
+      inp.setAttribute('aria-invalid', valid?'false':'true');
+      if(valid){
+        COSTS[key] = v;
+        // персист строго ЗДЕСЬ, после присвоения: отдельный 'input'-слушатель на #costRows
+        // регистрировался раньше этого и слал в main модель ДО применения правки — последняя
+        // правка не доезжала до диска и откатывалась следующим push (DEV-07, UI-вериф. 2026-07-03)
+        if(window.fa) window.fa.setCosts(COSTS);
+      }
+      updateCostDerived(true);
+    });
+    $('costRows').addEventListener('focusout', e=>{
+      const inp=e.target.closest('input[data-cost]'); if(!inp) return;
+      if(inp.getAttribute('aria-invalid')==='true'){ inp.value=COSTS[inp.dataset.cost]; inp.setAttribute('aria-invalid','false'); }
+      if(window.fa) window.fa.setCosts(COSTS); // страховочный флаш актуальной модели при уходе фокуса (DEV-07)
+    });
+    costWired=true;
+  }
+  updateCostDerived(false);
+}
+
+// Пересчёт ТОЛЬКО производных значений (usd-ячейки + итоги; при режиме «после комиссий» — hero/matrix/графики),
+// БЕЗ пересборки полей ввода. liveEdit=true только при ручном редактировании (full render уже обновил остальное).
+function updateCostDerived(liveEdit){
+  const prof=activeProfile(); const isOne=prof.isOne;
+  const notional = state.cap*state.lev;
+  $('costRows').querySelectorAll('.cost-row').forEach(row=>{
+    const inp=row.querySelector('input[data-cost]'); const usdEl=row.querySelector('[data-usd]');
+    if(!inp||!usdEl) return; const key=inp.dataset.cost;
+    if(key==='hlSides'){ usdEl.textContent='—'; return; }
+    let usd;
+    if(key==='gmxGas') usd=COSTS.gmxGas;
+    else if(key==='hlTaker') usd=notional*(COSTS.hlTaker/100)*COSTS.hlSides;
+    else usd=notional*(COSTS[key]/100);
+    usdEl.textContent='−'+fmtUSD(usd,2);
+  });
+  const cost=oneOffCost(notional,isOne);
+  $('costTotal').textContent='−'+fmtUSDfull(cost);
+  // «после издержек» — тем же путём, что и hero (реальный кумулятив окна), аудит M8
+  const pc = computePnL(state.cap, state.lev);
+  if (pc.loading || !Number.isFinite(pc.gross)){
+    $('costAfter').textContent='—';
+    $('costAfter').className='v faint';
+  } else {
+    const after=pc.gross-cost;
+    $('costAfter').textContent=fmtUSDfull(after);
+    $('costAfter').className='v '+clsSign(after);
+  }
+  // издержки влияют на главный P&L только в режиме «после комиссий»
+  if(liveEdit && state.mode==='net'){ renderHero(); renderMatrix(); renderCharts(); }
+}
+
+function renderRaw(){
+  const prof=activeProfile(); const isOne=prof.isOne;
+  const cfg = isOne?'—':state.cfg;
+  // borrow column follows the leg the net actually subtracts (A → short, B → long)
+  const borrLbl = cfg==='A' ? 'borrAPR S' : 'borrAPR L';
+  // NB: per-hour price is not joined into the frame (assemble.js sets rawRows.price=null), so the
+  // inspector does not advertise a price column it can never populate (аудит).
+  const cols = isOne
+    ? ['Datetime UTC','f/s LONG','f/s SHORT','b/s LONG','b/s SHORT','fundAPR SHORT','borrAPR SHORT','Net carry SHORT','side']
+    : ['Datetime UTC','f/s LONG','f/s SHORT','b/s LONG','b/s SHORT','HL rate/h','fundAPR S','fundAPR L',borrLbl,'HL APR L','HL APR S','Net APR ('+cfg+')','>0?'];
+  $('rawHead').innerHTML = '<tr>'+cols.map((c,i)=>'<th class="'+(i===0?'lft':'')+'">'+c+'</th>').join('')+'</tr>';
+  const rows=buildRawRows(120);
+  if(!rows){
+    $('rawBody').innerHTML = '<tr><td class="lft faint" colspan="'+cols.length+'">история загружается — реальные часовые строки появятся после бэкфилла…</td></tr>';
+    return;
+  }
+  let html='';
+  rows.forEach(r=>{
+    const ts = r.ts.toISOString().slice(0,16).replace('T',' ');
+    if(isOne){
+      const side = r.f_short>0 ? '<span class="pos">L→S</span>' : '<span class="neg">S→L</span>';
+      html += '<tr><td class="lft ts">'+ts+'</td>'+
+        '<td>'+sci(r.f_long)+'</td><td>'+sci(r.f_short)+'</td>'+
+        '<td>'+sci(r.b_long)+'</td><td>'+sci(r.b_short)+'</td>'+
+        '<td class="'+clsSign(r.gmxFundShort)+'">'+fmtPct(r.gmxFundShort,1)+'</td>'+
+        '<td class="neu">'+fmtPctNS(r.gmxBorShort,1)+'</td>'+
+        '<td class="netcell '+clsSign(r.net)+'">'+fmtPct(r.net,1)+'</td>'+
+        '<td class="flag">'+side+'</td></tr>';
+    } else {
+      html += '<tr><td class="lft ts">'+ts+'</td>'+
+        '<td>'+sci(r.f_long)+'</td><td>'+sci(r.f_short)+'</td>'+
+        '<td>'+sci(r.b_long)+'</td><td>'+sci(r.b_short)+'</td>'+
+        '<td class="'+clsSign(r.hl_rate)+'">'+sci(r.hl_rate)+'</td>'+
+        '<td class="'+clsSign(r.gmxFundShort)+'">'+fmtPct(r.gmxFundShort,1)+'</td>'+
+        '<td class="'+clsSign(r.gmxFundLong)+'">'+fmtPct(r.gmxFundLong,1)+'</td>'+
+        '<td class="neu">'+fmtPctNS(cfg==='A'?r.gmxBorShort:r.gmxBorLong,1)+'</td>'+
+        '<td class="'+clsSign(r.hlLong)+'">'+fmtPct(r.hlLong,1)+'</td>'+
+        '<td class="'+clsSign(r.hlShort)+'">'+fmtPct(r.hlShort,1)+'</td>'+
+        '<td class="netcell '+clsSign(r.net)+'">'+fmtPct(r.net,1)+'</td>'+
+        '<td class="flag '+(r.net>0?'pos':'neg')+'">'+(r.net>0?'1':'0')+'</td></tr>';
+    }
+  });
+  $('rawBody').innerHTML=html;
+}
+
+function renderScanner(){
+  const scanWin = LIVE.scannerWinDays;
+  const current = Number.isFinite(scanWin) && scanWin===state.win;
+  const tag = $('scanWinTag');
+  if(tag) tag.textContent = current ? 'окно '+scanWin+'д' : 'окно '+state.win+'д · обновление…';
+  // Scanner stats are window-dependent. A push assembled under the previous period can land
+  // inside the 50 ms selector debounce; do not relabel those rankings as the new period.
+  if(!current){
+    $('scanBody').innerHTML = '<tr><td class="lft faint" colspan="8">скринер обновляется для окна '+state.win+'д…</td></tr>';
+    return;
+  }
+  if(!SCANNER.length){
+    $('scanBody').innerHTML = '<tr><td class="lft faint" colspan="8">живой скан заполняется по мере загрузки истории инструментов…</td></tr>';
+    return;
+  }
+  let html='';
+  SCANNER.forEach(row=>{
+    const me = (state.strat!=='one' && row.s===state.asset);
+    const status = row.st==='trad'
+      ? '<span class="chip trad">ликвидный</span>'
+      : '<span class="chip thin">низколиквидный</span>';
+    html += '<tr class="'+(me?'me':'')+'">'+
+      '<td class="lft n">'+row.r+'</td>'+
+      '<td class="lft sym">'+row.s+'</td>'+
+      '<td class="lft"><span class="chip '+row.c+'">'+row.c+'</span></td>'+
+      '<td class="n '+clsSign(row.med)+'">'+fmtPct(row.med,1)+'</td>'+
+      '<td class="n dim">'+fmtPct(row.mean,1)+'</td>'+
+      '<td class="n dim">'+fmtPctNS(row.pct,0)+'</td>'+
+      '<td class="n dim">'+row.sc+'</td>'+
+      '<td class="lft">'+status+'</td></tr>';
+  });
+  $('scanBody').innerHTML=html;
+}
+
+let chartData={};
+function renderCharts(){
+  chartData.eq = buildEquity(state.cap, state.lev);
+  chartData.sp = buildSpread();
+  chartData.lg = buildLegs();
+  chartData.px = buildPrice();
+  if(chartData.eq) drawEquity($('equityCanvas'), chartData.eq, $('equityTip'));
+  else drawEmpty($('equityCanvas'), $('equityTip'), 'история загружается…');
+  if(chartData.sp) drawSpread($('spreadCanvas'), chartData.sp, $('spreadTip'));
+  else drawEmpty($('spreadCanvas'), $('spreadTip'), 'история загружается…');
+  if(chartData.lg) drawLegs($('legsCanvas'), chartData.lg);
+  else drawEmpty($('legsCanvas'), null, 'история загружается…');
+  if(chartData.px) drawPrice($('priceCanvas'), chartData.px);
+  else drawEmpty($('priceCanvas'), null, 'цены загружаются…');
+}
+
+function syncControls(){
+  // показать/скрыть конфиг для one-leg; обновить asset-селектор список
+  $('cfgWrap').style.display = state.strat==='one' ? 'none' : '';
+  $('assetLbl').textContent = state.strat==='one' ? 'Рынок (инструмент · сеть)' : 'Инструмент';
+  const sel=$('assetSel');
+  const opts = state.strat==='one'
+    ? Object.keys(ONE_LEG).map(k=>({v:k, t:ONE_LEG[k].label}))
+    : Object.keys(TWO_LEG).map(k=>({v:k, t:k}));
+  sel.innerHTML = opts.map(o=>'<button data-v="'+o.v+'" aria-pressed="'+(o.v===state.asset?'true':'false')+'">'+o.t+'</button>').join('');
+  sel.querySelectorAll('button').forEach(b=> b.onclick=()=>{
+    state.asset=b.dataset.v;
+    // двунога: при смене актива берём конфиг, выбранный движком (argmax mean A/B)
+    if(state.strat!=='one'){ state.cfg = TWO_LEG[state.asset].chosen; }
+    render();
+  });
+  // legs labels по конфигу
+  $('legGmxLbl').textContent = state.strat==='one' ? 'финансирование GMX (short)' : (state.cfg==='A'?'финансирование GMX (short)':'финансирование GMX (long)');
+  $('legHlLbl').textContent = state.strat==='one' ? 'Hyperliquid (нет)' : (state.cfg==='A'?'финансирование HL (long)':'финансирование HL (short)');
+  // config pressed
+  $('cfgSel').querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed', b.dataset.v===state.cfg?'true':'false'));
+  // sync strat/win/mode segments from state (для восстановленных настроек)
+  const setPressed=(id,val)=>{ const el=$(id); if(!el) return; el.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed', b.dataset.v===String(val)?'true':'false')); };
+  setPressed('stratSel', state.strat); setPressed('winSel', state.win); setPressed('modeSel', state.mode);
+}
+
+function render(){
+  syncControls();
+  renderHero();
+  renderMatrix();
+  renderGmxPanel();
+  renderHlPanel();
+  renderStrategy();
+  renderCosts();
+  renderRaw();
+  renderScanner();
+  renderCharts();
+  renderTrade(); // зона Ⅱ: кокпит/таблица/детали — нетто-первично, от режима анализа не зависит
+}
+
+/* ============================================================================
+   EVENTS
+   ========================================================================== */
+function wireSeg(id, key, cast){
+  $(id).querySelectorAll('button').forEach(b=>{
+    b.onclick=()=>{
+      $(id).querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed','false'));
+      b.setAttribute('aria-pressed','true');
+      state[key]= cast? cast(b.dataset.v) : b.dataset.v;
+      // при смене стратегии — сбросить актив к валидному
+      if(key==='strat'){
+        state.asset = state.strat==='one' ? 'ETH-Arb' : 'ETH';
+        state.cfg = state.strat==='one' ? state.cfg : TWO_LEG[state.asset].chosen;
+        $('cfgSel').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed', x.dataset.v===state.cfg?'true':'false'));
+      }
+      // при смене актива (two-leg) — выбрать чосен-конфиг по умолчанию
+      render();
+    };
+  });
+}
+wireSeg('stratSel','strat');
+wireSeg('cfgSel','cfg');
+wireSeg('winSel','win', v=>parseInt(v,10));
+wireSeg('modeSel','mode');
+
+/* интервал опроса (топбар): 1/5/15 мин — как часто main опрашивает биржи и начисляет форвард-тест.
+   setSettings перезапускает таймер опроса (main.js). Кнопка выставляется оптимистично, а syncPollSel
+   подтверждает по факту из fresh.pollMinutes на следующем пуше. */
+function syncPollSel(pm){
+  const sel=$('pollSel'); if(!sel || !pm) return;
+  sel.querySelectorAll('button').forEach(b=> b.setAttribute('aria-pressed', parseInt(b.dataset.v,10)===pm ? 'true':'false'));
+}
+if($('pollSel')) $('pollSel').querySelectorAll('button').forEach(b=>{
+  b.onclick=()=>{
+    const pm = parseInt(b.dataset.v,10);
+    syncPollSel(pm);
+    if(window.fa) window.fa.setSettings({ pollMinutes: pm });
+  };
+});
+
+/* «Пересчёт»: принудительная ПОЛНАЯ пересинхронизация. Все производные цифры — чистые
+   функции от (настройки, фреймы истории, живой снапшот), поэтому шаги: (1) отправить в
+   main ВСЕ текущие значения кнопок; (2) пересобрать датасет под этот выбор (fa:select);
+   (3) внеочередной опрос бирж (fa:refreshNow); (4) применить и перерисовать всё с нуля.
+   Страховка от любого рассинхрона состояния при переключениях на запущенном боте. */
+if($('recalcBtn')) $('recalcBtn').onclick = async ()=>{
+  const b=$('recalcBtn'); const t=b.textContent;
+  b.disabled=true; b.textContent='ПЕРЕСЧЁТ…';
+  try{
+    if(window.fa){
+      persist();                                       // (1) все настройки -> main (cap/lev/mode вкл.)
+      const ds = await window.fa.select({strat:state.strat, asset:state.asset, cfg:state.cfg, win:state.win});
+      applyDataset(ds);                                // (2) серия и панели под ТЕКУЩИЙ выбор
+      const ds2 = await window.fa.refreshNow();        // (3) свежие живые ставки + начисление позиций
+      applyDataset(ds2);                               // (4) applyDataset -> render(): всё заново
+    } else {
+      render();                                        // файловый режим: перерисовать из локального состояния
+    }
+  }catch(e){ console.warn('recalc failed', e); }
+  b.disabled=false; b.textContent=t;
+  updateFreshness();
+};
+
+/* live-кнопка = индикатор свежести + принудительное обновление сейчас (не тумблер) */
+$('liveBtn').onclick = async ()=>{
+  $('liveTxt').textContent='ОБНОВЛЕНИЕ…';
+  try{
+    if(window.fa){ const ds=await window.fa.refreshNow(); applyDataset(ds); }
+  }catch(e){ console.warn('refreshNow failed', e); }
+  updateFreshness(); // вернуть индикатор к фактическому состоянию свежести
+};
+
+/* ── main→renderer мост ── */
+let selTimer;
+function notifyMain(){
+  if(!window.fa) return;
+  clearTimeout(selTimer);
+  selTimer=setTimeout(async ()=>{
+    try{ const ds=await window.fa.select({strat:state.strat, asset:state.asset, cfg:state.cfg, win:state.win}); applyDataset(ds); }
+    catch(e){ console.warn('select failed', e); }
+  }, 50);
+}
+function persist(){ if(window.fa) window.fa.setSettings({strat:state.strat,asset:state.asset,cfg:state.cfg,win:state.win,cap:state.cap,lev:state.lev,mode:state.mode}); }
+['stratSel','cfgSel','winSel','assetSel'].forEach(id=>{ const el=$(id); if(el) el.addEventListener('click', ()=>{ notifyMain(); persist(); }, false); });
+['modeSel'].forEach(id=>{ const el=$(id); if(el) el.addEventListener('click', persist, false); });
+$('matrix').addEventListener('click', persist, false);
+// правки модели издержек персистятся в делегированном обработчике renderCosts() — строго после
+// COSTS[key]=v; второй слушатель здесь отправлял модель с отставанием на один ввод (DEV-07)
+
+/* штамп свежести: время последнего опроса, возраст, статус гейта знаков и бэкфилла */
+function updateFreshness(){
+  const f=LIVE.fresh; const stamp=$('stamp'); if(!stamp) return;
+  if(f) syncPollSel(f.pollMinutes); // отразить фактический интервал опроса на кнопках
+  if(!f || !f.gmxAtIso){
+    stamp.textContent='ожидание живых данных…';
+    stamp.title='';
+    $('liveTxt').textContent='НЕТ ДАННЫХ';
+    $('liveBtn').classList.remove('fresh');
+    return;
+  }
+  const iso = f.gmxAtIso.replace('T',' ').slice(0,19)+' UTC';
+  const age = (f.ageSec==null)?'—':((f.ageSec<90? f.ageSec+'с' : Math.round(f.ageSec/60)+'м')+' назад');
+  const bf  = (f.backfilling && f.backfilling.length) ? ' · <span class="neu">история: загрузка '+f.backfilling.length+' инстр.</span>' : '';
+  const notes=[...(f.notes||[]),...(f.bootNotes||[])];
+  const warnings=notes.length ? ' · <b class="neu">⚠ сообщений: '+notes.length+'</b>' : '';
+  stamp.innerHTML = iso+' · '+age + (f.stale?' · <b class="neg">УСТАРЕЛО</b>':'') + (f.gateOk?'':' · <b class="neg">⚠ гейт знаков — начисление приостановлено</b>') + bf + warnings;
+  stamp.title=notes.join('\n');
+  const degraded=(f.notes||[]).length>0 || f.accrualOk===false;
+  const led=$('liveBtn').querySelector('.led'); if(led) led.style.background = f.stale? 'var(--neg)' : (degraded?'var(--neu)':'var(--pos)');
+  $('liveBtn').classList.toggle('fresh', !f.stale);
+  $('liveTxt').textContent = f.stale ? 'УСТАРЕЛО' : (degraded ? 'ПРЕДУПР.' : 'LIVE');
+}
+
+/* форвардный бумажный тест */
+let paperError = null; // последняя ошибка открытия/закрытия — показывается в деталях позиции
+let paperErrorFor = null;
+// ЗОНА Ⅱ живёт СВОИМ выбором позиции — развязана от селекторов анализа (инструмент/период/режим).
+// По умолчанию — новейшая открытая, иначе новейшая закрытая; клик по строке таблицы переключает.
+// Дефолт вычисляется и НЕ записывается обратно (важно для оракула: нет утечки между датасетами).
+const tradeUi = { selectedId: null };
+function tradeSelectedPosition(){
+  const ps = LIVE.positions || [];
+  if (!ps.length) return null;
+  const byId = ps.find(p => p.id === tradeUi.selectedId);
+  if (byId) return byId;
+  const newest = (items) => items.reduce((best, p) => !best || p.createdAt > best.createdAt ? p : best, null);
+  return newest(ps.filter(p => p.status === 'open')) || newest(ps);
+}
+function tradeRow(k, v, cls){ return '<div class="row"><span class="k">'+k+'</span><span class="num '+(cls||'')+'">'+v+'</span></div>'; }
+function renderTrade(){
+  const zone=$('zoneTrade'), box=$('paperBox'); if(!zone || !box) return;
+  const ps=LIVE.positions||[];
+  const acc=LIVE.account;
+  const errLine = paperError
+    ? '<div class="prow"><span class="k neg">⚠</span><span class="neg">'+paperError+'</span></div>' : '';
+  if(!ps.length){
+    // пустое состояние: тихая полоса-заглушка, кокпит скрыт стилями .zone.idle
+    zone.classList.add('idle');
+    $('tradeStatus').textContent='не запущено'; $('tradeStatus').className='tag';
+    setBigPnl($('tradePnl'), NaN);
+    $('tradeCtx').textContent='—';
+    $('tradeBreak').innerHTML='';
+    $('tradeRet').textContent='—'; $('tradeRet').className='v faint';
+    $('tradeApr').textContent='—'; $('tradeApr').className='v faint';
+    $('tradeAprSub').textContent='появится после запуска и ≥24 ч начисления';
+    $('tradeBody').innerHTML='';
+    box.innerHTML=errLine;
+    $('tradeCloseBtn').hidden=true;
+    return;
+  }
+  zone.classList.remove('idle');
+  const p=tradeSelectedPosition(); const s=p.summary; const sc=v=> v>=0?'pos':'neg';
+  const started=new Date(p.createdAt).toISOString().replace('T',' ').slice(0,16)+' UTC';
+  const isOpen=p.status==='open';
+  // — кокпит: всегда НЕТТО после разовых издержек, от режима брутто/нетто анализа не зависит —
+  $('tradeStatus').textContent=isOpen?'● открыта':'○ закрыта';
+  $('tradeStatus').className='tag'+(isOpen?' amber':'');
+  setBigPnl($('tradePnl'), s.netPnl);
+  $('tradeCtx').textContent=fmtUSD(p.capital,0)+' · '+p.leverage+'x · с '+started;
+  $('tradeBreak').innerHTML=
+    tradeRow('накоплено фандинга (брутто)', fmtUSDfull(s.grossPnl), sc(s.grossPnl))+
+    tradeRow('разовые издержки (зафиксированы при входе)', '−'+fmtUSDfull(s.roundTripCost).replace('+',''), 'neg')+
+    (acc && acc.count>0 ? tradeRow('Σ счёт · '+acc.count+' поз., '+acc.open+' откр. (нетто)', fmtUSDfull(acc.netPnl), clsSign(acc.netPnl)) : '');
+  const ret = p.capital ? s.netPnl/p.capital : null;
+  $('tradeRet').textContent=fmtPct(ret); $('tradeRet').className='v '+clsSign(ret);
+  if(s.aprReliable){
+    $('tradeApr').textContent=fmtPct(s.apr); $('tradeApr').className='v '+clsSign(s.apr);
+    $('tradeAprSub').textContent='реализованный · нетто · '+s.hoursElapsed.toFixed(1)+' ч с t0';
+  } else {
+    $('tradeApr').textContent='—'; $('tradeApr').className='v faint';
+    $('tradeAprSub').textContent='нужно ≥24 ч начисления · прошло '+s.hoursElapsed.toFixed(1)+' ч';
+  }
+  // — таблица всех позиций счёта (новейшие сверху) —
+  $('tradeBody').innerHTML=[...ps].sort((a,b)=>b.createdAt-a.createdAt).map(q=>{
+    const qs=q.summary||{};
+    const sel=q.id===p.id;
+    const cfg=q.strategy==='one' ? 'одна нога' : (q.config||'—');
+    return '<tr data-pos-id="'+q.id+'"'+(sel?' class="me"':'')+'>'+
+      '<td class="lft sym"><button class="rowpick" aria-pressed="'+sel+'">'+q.instrumentKey+'</button></td>'+
+      '<td class="lft">'+cfg+'</td>'+
+      '<td class="num">'+fmtUSD(q.capital,0)+' × '+q.leverage+'</td>'+
+      '<td class="num '+clsSign(qs.netPnl)+'">'+fmtUSDfull(qs.netPnl)+'</td>'+
+      '<td class="lft '+(q.status==='open'?'pos':'faint')+'">'+(q.status==='open'?'● открыта':'○ закрыта')+'</td>'+
+      '<td>'+(q.status==='open'?'<button class="paperbtn close mini" data-close-id="'+q.id+'">закрыть</button>':'')+'</td>'+
+    '</tr>';
+  }).join('');
+  // — детали выбранной позиции (нетто-первично) —
+  const aprHtml = s.aprReliable
+    ? '<span class="num '+sc(s.apr)+'">'+fmtPct(s.apr)+'</span>'
+    : '<span class="faint">— (нужно ≥24 ч, прошло '+s.hoursElapsed.toFixed(1)+' ч)</span>';
+  const gapNote = s.gapSkippedSec>60 ? '<div class="prow"><span class="k">не начислено (нет данных)</span><span class="num neu">'+Math.round(s.gapSkippedSec/60)+' мин</span></div>' : '';
+  box.innerHTML=
+    '<div class="prow"><span class="k">t0</span><span class="num">'+started+'</span></div>'+
+    '<div class="prow"><span class="k">прошло</span><span class="num">'+s.hoursElapsed.toFixed(1)+' ч</span></div>'+
+    '<div class="prow"><span class="k">накоплено фандинга (брутто)</span><span class="num '+sc(s.grossPnl)+'">'+fmtUSDfull(s.grossPnl)+'</span></div>'+
+    '<div class="prow"><span class="k">разовые издержки <small>(зафиксированы при входе)</small></span><span class="num neg">−'+fmtUSDfull(s.roundTripCost).replace('+','')+'</span></div>'+
+    '<div class="prow"><span class="k">реализовано (нетто)</span><span class="num '+sc(s.netPnl)+'">'+fmtUSDfull(s.netPnl)+'</span></div>'+
+    '<div class="prow"><span class="k">APR с t0 (нетто)</span>'+aprHtml+'</div>'+
+    '<div class="prow"><span class="k">просадка</span><span class="num neg">'+fmtUSDfull(s.maxDrawdown)+'</span></div>'+
+    gapNote+
+    (p.config ? '<div class="prow"><span class="k">конфигурация ног <small>(зафиксирована при входе)</small></span><span class="num">'+(p.config==='A'?'A · short GMX + long HL':'B · long GMX + short HL')+'</span></div>' : '')+
+    '<div class="prow"><span class="k">капитал · плечо</span><span class="num">'+fmtUSD(p.capital,0)+' · '+p.leverage+'x</span></div>'+
+    errLine;
+  $('tradeCloseBtn').hidden=!isOpen;
+  if(isOpen) $('tradeCloseBtn').dataset.id=p.id;
+  drawForward(p);
+  // журнал операций той же выбранной позиции; promise сохраняется для оракула (await DOM)
+  tradeUi._ledgerPromise = renderLedger(p);
+}
+function drawForward(p){
+  const cv=$('fwdCanvas'); if(!cv) return;
+  if(!p || !p.equityCurve || p.equityCurve.length<2){
+    drawEmpty(cv, $('fwdTip'), 'форвардная кривая появится после открытия позиции');
+    return;
+  }
+  const cap=p.capital;
+  const pts=p.equityCurve;
+  // зона Ⅱ нетто-первична: кривая всегда после разовых издержек, режим анализа не влияет
+  const eq=pts.map(pt=> pt.equityNet);
+  const n=eq.length-1;
+  let peak=-Infinity; const dd=eq.map(v=>{peak=Math.max(peak,v); return v-peak;});
+  // ось X — реальное время точек начисления, не «дни» (аудит M4/M29/M40)
+  const hrsTotal=(pts[n].t - pts[0].t)/3600000;
+  const xLeft = 't0 −'+(hrsTotal>=48 ? (hrsTotal/24).toFixed(1)+'д' : hrsTotal.toFixed(1)+'ч');
+  const tipFor=(i)=>{
+    const t=new Date(pts[Math.min(i,n)].t).toISOString().slice(5,16).replace('T',' ');
+    return '<div class="r"><span class="k">время UTC</span><span>'+t+'</span></div>';
+  };
+  drawEquity(cv, { eq, dd, cap, nDays:n, xLeft, xRight:'сейчас', tipFor }, $('fwdTip'));
+}
+
+/* ══════════ ЖУРНАЛ ОПЕРАЦИЙ (Transaction Ledger) выбранной позиции ══════════
+   Полный журнал может насчитывать десятки тысяч событий, поэтому он НЕ ездит в каждом
+   fa:push: рендерер запрашивает страницу через fa:getLedger по требованию и перезапрашивает
+   ТОЛЬКО когда меняется сигнатура (позиция · accrualCount · сортировка · фильтр · объём).
+   Итоги — всегда по ВСЕМ событиям позиции; сверка Σ ≡ netPnl — исполняемый инвариант
+   (движок ledgerReconciles → бейдж data-recon → оракул). Виджет живёт выбором зоны Ⅱ
+   (tradeSelectedPosition) и НЕ читает селекторы анализа (win/mode/cap/lev). */
+const LEDGER_PAGE = 200;
+const fmtLedgerUSD = v => (v<0?'−':'') + '$' + Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:4,maximumFractionDigits:4});
+const LEDGER_TYPE_LABEL = { open_costs:'издержки', gmx_funding:'фандинг GMX', gmx_borrow:'борроу GMX', hl_funding:'фандинг HL', gap_unpriced:'◌ разрыв', manual_adjustment:'✎ корр.' };
+const LEDGER_CHIP_CLS  = { open_costs:'t-exp', gmx_funding:'t-gmxf', gmx_borrow:'t-exp', hl_funding:'t-hlf', gap_unpriced:'t-gap', manual_adjustment:'t-adj' };
+const LEDGER_SRC_LABEL = { live:'живой опрос', history:'дозаполнено историческими ставками', skipped:'интервал пропущен (нет данных)', open:'фиксация при открытии' };
+const LEDGER = { posId:null, sig:null, order:'desc', types:new Set(), limit:LEDGER_PAGE,
+  view:null, viewAccrual:null, fetching:null, fetchPromise:null, expandedSeq:null, keepScroll:false, delTimer:null, msgTimer:null };
+const ledgerEsc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ledgerDur = sec => !Number.isFinite(sec) ? '—' : sec>=5400 ? (sec/3600).toFixed(1)+' ч' : sec>=90 ? Math.round(sec/60)+' мин' : Math.round(sec)+' с';
+const ledgerRuDay = key => new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(key+'T00:00:00Z'));
+const ledgerPx = v => Number.isFinite(v) ? '$'+v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+
+function ledgerMsg(text, cls, ttlMs){
+  const el=$('ledgerExportMsg'); if(!el) return;
+  clearTimeout(LEDGER.msgTimer);
+  if(!text){ el.hidden=true; el.textContent=''; return; }
+  el.hidden=false; el.className='ledger-msg '+(cls||''); el.textContent=text;
+  if(ttlMs && smoothOk()) LEDGER.msgTimer=setTimeout(()=>{ el.hidden=true; }, ttlMs);
+}
+
+// шапка-идентичность: ЧЕЙ журнал показан (инструмент · конфиг · капитал × плечо · статус)
+function ledgerIdentity(p){
+  const cfg = p.strategy==='one' ? 'одна нога · GMX carry'
+    : (p.config==='A' ? 'A · short GMX + long HL' : p.config==='B' ? 'B · long GMX + short HL' : (p.config||'—'));
+  $('ledgerIdent').textContent = p.instrumentKey+' · '+cfg+' · '+fmtUSD(p.capital,0)+' × '+p.leverage;
+  const isOpen = p.status==='open';
+  $('ledgerStatus').textContent = isOpen ? '● открыта' : '○ закрыта';
+  $('ledgerStatus').className = 'tag'+(isOpen?' amber':'');
+  $('ledgerDelWrap').hidden = isOpen;      // удаление — только для закрытых (требование)
+  if(isOpen) ledgerDelDisarm();
+}
+
+function ledgerSetRecon(recon){
+  const badge=$('ledgerRecon'), cell=$('ledgerReconCell');
+  if(!recon){ badge.className='tag'; badge.textContent='—'; badge.dataset.recon='na'; cell.textContent='—'; cell.className='v num faint'; return; }
+  badge.dataset.delta = String(recon.delta);
+  if(recon.ok){
+    badge.className='tag green'; badge.removeAttribute('role');
+    badge.textContent='✓ сходится'; badge.dataset.recon='ok';
+    cell.textContent='= P&L позиции ✓'; cell.className='v num pos';
+  } else {
+    badge.className='tag bad'; badge.setAttribute('role','alert');
+    badge.textContent='⚠ расхождение '+fmtLedgerUSD(recon.delta)+' · баг начисления'; badge.dataset.recon='mismatch';
+    cell.textContent='Δ '+fmtLedgerUSD(recon.delta); cell.className='v num neg';
+  }
+}
+
+function ledgerRowsHtml(view){
+  const out=[]; let prevDay=null;
+  for(const e of view.events){
+    const day=new Date(e.t).toISOString().slice(0,10);
+    if(day!==prevDay){
+      prevDay=day;
+      const dn=view.dayNets ? view.dayNets[day] : null;
+      out.push('<tr class="lday"><td colspan="7">— '+ledgerRuDay(day)+' —'+
+        (Number.isFinite(dn) ? ' <span class="dim">· за день:</span> <span class="num '+clsSign(dn)+'">'+(dn>0?'+':'')+fmtLedgerUSD(dn)+'</span>' : '')+'</td></tr>');
+    }
+    const gap = e.type==='gap_unpriced';
+    const src = e.source==='history' ? '<span class="lsrc faint" title="'+LEDGER_SRC_LABEL.history+'"> ·ист</span>'
+              : e.source==='skipped' ? '<span class="lsrc faint" title="'+LEDGER_SRC_LABEL.skipped+'"> ·проп</span>' : '';
+    const agg = e.meta && e.meta.aggregated ? ' <span class="mock-flag" title="funding и borrow за этот тик объединены — позиция открыта до раздельного учёта">агрегировано</span>' : '';
+    const ts = new Date(e.t).toISOString().slice(5,19).replace('T',' ');
+    out.push('<tr'+(gap?' class="lgap"':'')+' data-seq="'+e.seq+'">'+
+      '<td><button class="lexp" aria-expanded="false" aria-controls="ledgerDet-'+e.seq+'" aria-label="Детали операции">˅</button></td>'+
+      '<td class="lft ts">'+ts+src+'</td>'+
+      '<td class="lft"><span class="chip lchip-t '+(LEDGER_CHIP_CLS[e.type]||'t-adj')+'">'+(LEDGER_TYPE_LABEL[e.type]||e.type)+'</span>'+agg+'</td>'+
+      '<td class="num'+(e.income>0?' pos':'')+'">'+(gap?'—':(e.income>0?fmtLedgerUSD(e.income):''))+'</td>'+
+      '<td class="num'+(e.expense>0?' neg':'')+'">'+(gap?'—':(e.expense>0?'−'+fmtLedgerUSD(e.expense):''))+'</td>'+
+      '<td class="num netcell '+clsSign(e.runningBalance)+'">'+fmtLedgerUSD(e.runningBalance)+'</td>'+
+      '<td class="num dim">'+ledgerPx(e.priceAtOp)+'</td></tr>');
+  }
+  return out.join('');
+}
+
+function ledgerDetailHtml(e){
+  const dl=[];
+  const row=(k,v,cls)=> dl.push('<div class="row"><div class="k">'+k+'</div><div class="v '+(cls||'')+'">'+v+'</div></div>');
+  row('описание', ledgerEsc(e.description||'—'));
+  row('id операции · seq', '<span class="mono">'+ledgerEsc(e.id)+'</span> · '+e.seq, 'dim');
+  row('источник', ledgerEsc(LEDGER_SRC_LABEL[e.source]||e.source||'—'), 'dim');
+  if(e.venue) row('биржа · нога', ledgerEsc(e.venue)+' · '+(e.strategyLeg||'—')+(e.direction?' · '+(e.direction==='long'?'LONG':'SHORT'):''), 'dim');
+  if(Number.isFinite(e.fundingIntervalSec)) row('интервал начисления', ledgerDur(e.fundingIntervalSec), 'dim');
+  row('размер позиции (ноционал) · плечо', fmtUSDfull(e.positionSize)+' · '+e.leverage+'x', 'dim');
+  row('цена в момент операции', Number.isFinite(e.priceAtOp)?ledgerPx(e.priceAtOp):'— (нет данных, не фабрикуется)', 'dim');
+  row('валюта', e.currency||'USD', 'dim');
+  if(e.meta && Number.isFinite(e.meta.settlements) && e.meta.settlements>1) row('часовых расчётов HL в записи', e.meta.settlements, 'dim');
+  if(e.meta && e.meta.gapSkippedSec>0) row('не начислено (нет данных)', ledgerDur(e.meta.gapSkippedSec), 'neu');
+  if(e.meta && e.meta.reason) row('причина', ledgerEsc(e.meta.reason), 'neu');
+  if(e.breakdown){
+    const b=e.breakdown;
+    row('— детализация издержек —','');
+    row('комиссия открытия GMX','−'+fmtLedgerUSD(b.gmxOpenUsd||0),'neg');
+    row('комиссия закрытия GMX','−'+fmtLedgerUSD(b.gmxCloseUsd||0),'neg');
+    row('price impact (вход+выход)','−'+fmtLedgerUSD(b.gmxImpactUsd||0),'neg');
+    row('газ / keeper','−'+fmtLedgerUSD(b.gmxGasUsd||0),'neg');
+    row('taker HL (все стороны)','−'+fmtLedgerUSD(b.hlTakerUsd||0),'neg');
+    const sum=(b.gmxOpenUsd||0)+(b.gmxCloseUsd||0)+(b.gmxImpactUsd||0)+(b.gmxGasUsd||0)+(b.hlTakerUsd||0);
+    row('Σ детализации','−'+fmtLedgerUSD(sum),'neg');
+  } else if(e.type==='open_costs'){
+    row('детализация', 'недоступна — позиция открыта до появления журнала', 'faint');
+  }
+  return '<tr class="ldetail" id="ledgerDet-'+e.seq+'"><td colspan="7"><div class="dl">'+dl.join('')+'</div></td></tr>';
+}
+
+function applyLedgerDom(p, view){
+  const t=view.totalsAll;
+  const inc=$('ledgerTotIncome'), exp=$('ledgerTotExpense'), net=$('ledgerTotNet');
+  // итоги — той же точностью (4 знака), что и строки: суб-центовые начисления за тик при
+  // 2 знаках округлялись до «$0.00», хотя в колонке дохода видны $0.0004+… — confusing
+  inc.textContent=fmtLedgerUSD(t.income);
+  exp.textContent='−'+fmtLedgerUSD(t.expense);
+  net.textContent=fmtLedgerUSD(t.net); net.className='v num '+clsSign(t.net);
+  ledgerSetRecon(view.recon);
+  // чипы: счётчики по ПОЛНОМУ набору; «✎ корр.» скрыт, пока тип не встречается
+  $('ledgerFilters').querySelectorAll('.lchip').forEach(b=>{
+    const ty=b.dataset.type;
+    const cnt=b.querySelector('.cnt');
+    if(ty==='all'){ if(cnt) cnt.textContent=(view.allCount||0).toLocaleString('en-US'); b.setAttribute('aria-pressed', LEDGER.types.size===0?'true':'false'); return; }
+    const n=(view.counts&&view.counts[ty])||0;
+    if(cnt) cnt.textContent=n.toLocaleString('en-US');
+    if(ty==='manual_adjustment') b.hidden = n===0;
+    b.setAttribute('aria-pressed', LEDGER.types.has(ty)?'true':'false');
+  });
+  const fl=$('ledgerFiltered');
+  if(view.filteredTotals){
+    const labels=[...LEDGER.types].map(x=>LEDGER_TYPE_LABEL[x]||x).join(', ');
+    fl.hidden=false;
+    fl.innerHTML='отфильтровано ('+ledgerEsc(labels)+'): '+view.totalCount.toLocaleString('en-US')+' соб. · доход <span class="pos">'+
+      fmtLedgerUSD(view.filteredTotals.income)+'</span> · расход <span class="neg">−'+fmtLedgerUSD(view.filteredTotals.expense)+'</span>';
+  } else { fl.hidden=true; fl.textContent=''; }
+  // таблица
+  const body=$('ledgerBody'), emptyEl=$('ledgerEmpty'), scroll=$('ledgerScroll');
+  const keep = LEDGER.keepScroll ? scroll.scrollTop : 0;
+  LEDGER.expandedSeq=null;
+  if(!view.events.length){
+    body.innerHTML='';
+    emptyEl.hidden=false;
+    emptyEl.innerHTML = LEDGER.types.size
+      ? 'нет операций выбранных типов · <button class="lchip" data-reset="1">сбросить фильтр</button>'
+      : 'операций пока нет — первое начисление появится после очередного опроса (интервал — в шапке приложения)';
+  } else {
+    emptyEl.hidden=true;
+    body.innerHTML=ledgerRowsHtml(view);
+  }
+  scroll.scrollTop = LEDGER.keepScroll ? keep : 0;
+  LEDGER.keepScroll=false;
+  // футер: пагинация
+  const more=$('ledgerMore'), cnt=$('ledgerCount');
+  const remaining=Math.max(0, view.totalCount - view.events.length);
+  more.hidden = remaining<=0;
+  if(remaining>0) more.textContent='показать ещё '+Math.min(LEDGER_PAGE, remaining).toLocaleString('en-US')+' · осталось '+remaining.toLocaleString('en-US');
+  cnt.textContent='показано '+view.events.length.toLocaleString('en-US')+' из '+view.totalCount.toLocaleString('en-US')+
+    (LEDGER.types.size?' (по фильтру)':'')+' · всего операций: '+(view.allCount||0).toLocaleString('en-US');
+  // штамп «обновлено» + блип
+  $('ledgerUpdatedTxt').textContent='обновлено '+new Date().toISOString().slice(11,19)+' UTC';
+  const st=$('ledgerUpdated');
+  st.classList.remove('tick'); void st.offsetWidth; st.classList.add('tick');
+  $('ledgerFreshBtn').hidden=true;
+}
+
+// Перерисовка/перезапрос журнала. Вызывается из renderTrade() на каждый пуш/клик; сигнатура
+// отсекает лишние IPC. Возвращает promise — оракул дожидается применения DOM.
+function renderLedger(p, opts){
+  opts=opts||{};
+  if(!p || !$('ledgerCard')) return Promise.resolve();
+  ledgerIdentity(p);
+  if(!(window.fa && typeof window.fa.getLedger==='function')){
+    const sig='nofa|'+p.id;
+    if(LEDGER.sig!==sig){
+      LEDGER.sig=sig; LEDGER.posId=p.id; LEDGER.view=null;
+      $('ledgerBody').innerHTML='';
+      const e=$('ledgerEmpty'); e.hidden=false;
+      e.textContent='журнал недоступен: нет моста fa (файловый режим) — запустите приложение (npm start)';
+      $('ledgerMore').hidden=true; $('ledgerCount').textContent='—'; ledgerSetRecon(null);
+    }
+    return Promise.resolve();
+  }
+  const posChanged = p.id!==LEDGER.posId;
+  if(posChanged){ LEDGER.limit=LEDGER_PAGE; LEDGER.expandedSeq=null; LEDGER.keepScroll=false; ledgerMsg(null); ledgerDelDisarm(); }
+  const sig=[p.id, (p.accrualCount??'n'), LEDGER.order, [...LEDGER.types].sort().join('+')||'all', LEDGER.limit].join('|');
+  if(sig===LEDGER.sig && !opts.force) return Promise.resolve();
+  // дедупликация конкурентных запросов: пуш/клик/ResizeObserver могут дёрнуть renderTrade,
+  // пока идентичный fa:getLedger ещё в полёте — возвращаем ТОТ ЖЕ промис, не дублируя IPC
+  if(LEDGER.fetching===sig && LEDGER.fetchPromise && !opts.force) return LEDGER.fetchPromise;
+  // пассивный рост данных при «глубоком чтении» (догружены страницы / старые сверху / раскрыта
+  // строка): DOM не дёргаем — предлагаем обновление кнопкой, без прыжков скролла
+  const passiveGrowth = !opts.user && !opts.force && !posChanged && LEDGER.view &&
+    Number.isFinite(p.accrualCount) && Number.isFinite(LEDGER.viewAccrual) && p.accrualCount!==LEDGER.viewAccrual;
+  const deep = LEDGER.limit>LEDGER_PAGE || LEDGER.order==='asc' || LEDGER.expandedSeq!=null;
+  if(passiveGrowth && deep){
+    const btn=$('ledgerFreshBtn');
+    btn.hidden=false;
+    btn.textContent='⟳ обновить журнал (+'+(p.accrualCount-LEDGER.viewAccrual)+' тик.)';
+    return Promise.resolve();
+  }
+  if(posChanged){
+    $('ledgerBody').innerHTML='';
+    const e=$('ledgerEmpty'); e.hidden=false; e.textContent='журнал загружается…';
+  }
+  LEDGER.fetching=sig;
+  LEDGER.fetchPromise = window.fa.getLedger({ id:p.id, offset:0, limit:LEDGER.limit, order:LEDGER.order, types:[...LEDGER.types] })
+    .then(view=>{
+      if(LEDGER.fetching!==sig) return;                     // ответ устарел — пришёл более новый запрос
+      const cur=tradeSelectedPosition();
+      if(!cur || cur.id!==p.id || !view) return;            // выбор сменился, пока ждали
+      if(view.error){
+        const e=$('ledgerEmpty'); e.hidden=false;
+        e.textContent='не удалось загрузить журнал: '+view.error;
+        $('ledgerBody').innerHTML=''; ledgerSetRecon(null);
+        return;
+      }
+      LEDGER.view=view; LEDGER.sig=sig; LEDGER.posId=p.id;
+      LEDGER.viewAccrual=Number.isFinite(p.accrualCount)?p.accrualCount:null;
+      applyLedgerDom(p, view);
+    })
+    .catch(err=>{
+      if(LEDGER.fetching!==sig) return;
+      const e=$('ledgerEmpty'); e.hidden=false;
+      e.textContent='не удалось загрузить журнал: '+String(err&&err.message||err).slice(0,80);
+      console.warn('getLedger failed', err);
+    })
+    .finally(()=>{ if(LEDGER.fetching===sig){ LEDGER.fetching=null; LEDGER.fetchPromise=null; } });
+  return LEDGER.fetchPromise;
+}
+
+function ledgerUserRefresh(){
+  const p=tradeSelectedPosition();
+  if(p) renderLedger(p,{user:true,force:true});
+}
+
+/* — удаление закрытой позиции: инлайн-двухшаговое подтверждение (native confirm не в идиоме) — */
+function ledgerDelDisarm(){
+  clearTimeout(LEDGER.delTimer);
+  const c=$('ledgerDelConfirm'), b=$('ledgerDelBtn');
+  if(c) c.hidden=true;
+  if(b) b.hidden=false;
+}
+if($('ledgerDelBtn')) $('ledgerDelBtn').onclick=()=>{
+  const n=LEDGER.view ? (LEDGER.view.allCount||0) : 0;
+  $('ledgerDelMsg').textContent='удалить позицию и весь журнал'+(n?' ('+n.toLocaleString('en-US')+' операций)':'')+' безвозвратно?';
+  $('ledgerDelBtn').hidden=true;
+  $('ledgerDelConfirm').hidden=false;
+  $('ledgerDelYes').focus({preventScroll:true});
+  clearTimeout(LEDGER.delTimer);
+  LEDGER.delTimer=setTimeout(ledgerDelDisarm, 10000);   // 10 с бездействия — откат
+};
+if($('ledgerDelNo')) $('ledgerDelNo').onclick=()=>{ ledgerDelDisarm(); $('ledgerDelBtn').focus({preventScroll:true}); };
+if($('ledgerDelYes')) $('ledgerDelYes').onclick=async function(){
+  const id=LEDGER.posId; if(!window.fa || !id) return;
+  this.disabled=true;
+  try{
+    const r=await window.fa.deletePaper(id);
+    if(r && r.error){ ledgerMsg('не удалено: '+r.error, 'err'); }
+    else{
+      tradeUi.selectedId=null;                       // выбор падёт на следующую позицию штатным фолбэком
+      ledgerMsg('журнал удалён', 'ok', 4000);
+      const ds=await window.fa.select({strat:state.strat, asset:state.asset, cfg:state.cfg, win:state.win});
+      applyDataset(ds);
+      const z=$('zoneTrade'); if(z) z.focus({preventScroll:true});
+    }
+  }catch(e){ ledgerMsg('не удалено: ошибка IPC '+String(e&&e.message||e).slice(0,60), 'err'); }
+  this.disabled=false;
+  ledgerDelDisarm();
+};
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') ledgerDelDisarm(); });
+
+/* — сортировка / фильтры / пагинация / раскрытие строк — */
+if($('ledgerSortSel')) $('ledgerSortSel').querySelectorAll('button').forEach(b=>{
+  b.onclick=()=>{
+    if(LEDGER.order===b.dataset.v) return;
+    $('ledgerSortSel').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed','false'));
+    b.setAttribute('aria-pressed','true');
+    LEDGER.order=b.dataset.v; LEDGER.limit=LEDGER_PAGE;
+    ledgerUserRefresh();
+  };
+});
+if($('ledgerFilters')) $('ledgerFilters').addEventListener('click', e=>{
+  const b=e.target.closest('.lchip'); if(!b) return;
+  const ty=b.dataset.type;
+  if(ty==='all') LEDGER.types.clear();
+  else if(LEDGER.types.has(ty)) LEDGER.types.delete(ty);
+  else LEDGER.types.add(ty);
+  LEDGER.limit=LEDGER_PAGE;
+  ledgerUserRefresh();
+});
+if($('ledgerEmpty')) $('ledgerEmpty').addEventListener('click', e=>{
+  if(e.target.closest('[data-reset]')){ LEDGER.types.clear(); LEDGER.limit=LEDGER_PAGE; ledgerUserRefresh(); }
+});
+if($('ledgerMore')) $('ledgerMore').onclick=function(){
+  LEDGER.limit+=LEDGER_PAGE;
+  LEDGER.keepScroll=true;
+  const p=tradeSelectedPosition();
+  if(p) renderLedger(p,{user:true});
+  this.focus({preventScroll:true});                  // дочитывание с места
+};
+if($('ledgerFreshBtn')) $('ledgerFreshBtn').onclick=ledgerUserRefresh;
+if($('ledgerBody')) $('ledgerBody').addEventListener('click', e=>{
+  const btn=e.target.closest('button.lexp'); if(!btn) return;
+  const tr=btn.closest('tr[data-seq]'); if(!tr || !LEDGER.view) return;
+  const seq=Number(tr.dataset.seq);
+  const prev=$('ledgerBody').querySelector('tr.ldetail');
+  const prevBtn=$('ledgerBody').querySelector('.lexp[aria-expanded="true"]');
+  if(prev) prev.remove();
+  if(prevBtn) prevBtn.setAttribute('aria-expanded','false');
+  if(LEDGER.expandedSeq===seq){ LEDGER.expandedSeq=null; return; }   // повторный клик — свернуть
+  const ev=LEDGER.view.events.find(x=>x.seq===seq); if(!ev) return;
+  tr.insertAdjacentHTML('afterend', ledgerDetailHtml(ev));
+  btn.setAttribute('aria-expanded','true');
+  LEDGER.expandedSeq=seq;
+});
+
+/* — экспорт: всегда ПОЛНЫЙ журнал позиции, независимо от фильтра/страниц — */
+async function ledgerExport(format, btn){
+  const id=LEDGER.posId || (tradeSelectedPosition()||{}).id;
+  if(!window.fa || typeof window.fa.exportLedger!=='function' || !id){ ledgerMsg('экспорт недоступен: нет моста fa', 'err'); return; }
+  const label=btn.textContent;
+  btn.disabled=true; btn.textContent=label+'…';
+  try{
+    const r=await window.fa.exportLedger({ id, format });
+    if(r && r.ok) ledgerMsg('✓ сохранено: '+r.filePath+' ('+(r.count||0).toLocaleString('en-US')+' операций)', 'ok', 6000);
+    else if(r && r.canceled) ledgerMsg('сохранение отменено', 'dim', 3000);
+    else ledgerMsg('не сохранено: '+((r&&r.error)||'неизвестная ошибка'), 'err');
+  }catch(e){ ledgerMsg('не сохранено: ошибка IPC '+String(e&&e.message||e).slice(0,60), 'err'); }
+  btn.disabled=false; btn.textContent=label;
+}
+if($('ledgerExportCsv'))  $('ledgerExportCsv').onclick=function(){ ledgerExport('csv', this); };
+if($('ledgerExportXlsx')) $('ledgerExportXlsx').onclick=function(){ ledgerExport('xlsx', this); };
+if($('ledgerExportJson')) $('ledgerExportJson').onclick=function(){ ledgerExport('json', this); };
+
+/* ── Запуск стратегии (Paper Trading): CTA в зоне Ⅰ → инлайн-тикет подтверждения ──
+   Клиентская валидация только включает/выключает кнопку; единственный источник истины —
+   валидация main-процесса (fa:startPaper), её ошибки показываются в тикете как есть. */
+function ticketRefresh(){
+  const cap=Number($('ticketCap').value), lev=Number($('ticketLev').value);
+  const capOk=Number.isFinite(cap)&&cap>0, levOk=Number.isFinite(lev)&&lev>0;
+  $('ticketCap').setAttribute('aria-invalid', capOk?'false':'true');
+  $('ticketLev').setAttribute('aria-invalid', levOk?'false':'true');
+  const notional=capOk&&levOk ? cap*lev : NaN;
+  $('ticketNotional').textContent=Number.isFinite(notional)?fmtUSD(notional,0):'—';
+  $('ticketCost').textContent=Number.isFinite(notional)
+    ? '−'+fmtUSDfull(oneOffCost(notional, state.strat==='one')).replace('+','') : '—';
+  const f=LIVE.fresh, g=$('ticketGate');
+  if(!f){ g.textContent='нет живых данных — дождитесь обновления'; g.className='num gate-warn'; }
+  else if(f.gateOk===false){ g.textContent='гейт знаков не пройден — запуск заблокирован'; g.className='num gate-bad'; }
+  else if(f.accrualOk===false){ g.textContent='живая нога недоступна — запуск заблокирован'; g.className='num gate-bad'; }
+  else if(f.stale){ g.textContent='данные устарели — обновите (⟳)'; g.className='num gate-warn'; }
+  else { g.textContent='гейт знаков OK · данные свежие'; g.className='num gate-ok'; }
+  $('ticketConfirm').disabled = !(capOk&&levOk);
+}
+function openTicket(){
+  const t=$('launchTicket'); if(!t) return;
+  $('ticketInst').textContent = state.asset;
+  $('ticketCfg').textContent = state.strat==='one' ? 'одна нога · GMX carry'
+    : ('2 ноги · '+(state.cfg==='A'?'A · short GMX + long HL':'B · long GMX + short HL'));
+  $('ticketCap').value=String(state.cap); $('ticketLev').value=String(state.lev);
+  $('ticketErr').hidden=true; $('ticketErr').textContent='';
+  ticketRefresh();
+  t.hidden=false; $('paperBtn').setAttribute('aria-expanded','true');
+  const inp=$('ticketCap'); inp.focus({preventScroll:true}); inp.select();
+}
+function closeTicket(focusBack){
+  const t=$('launchTicket'); if(!t || t.hidden) return;
+  t.hidden=true; $('paperBtn').setAttribute('aria-expanded','false');
+  if(focusBack) $('paperBtn').focus({preventScroll:true});
+}
+if($('paperBtn')) $('paperBtn').onclick = ()=>{ const t=$('launchTicket'); if(t && t.hidden) openTicket(); else closeTicket(true); };
+if($('ticketCap')) $('ticketCap').addEventListener('input', ticketRefresh);
+if($('ticketLev')) $('ticketLev').addEventListener('input', ticketRefresh);
+if($('ticketCancel')) $('ticketCancel').onclick = ()=> closeTicket(true);
+if($('ticketConfirm')) $('ticketConfirm').onclick = async ()=>{
+  const err=$('ticketErr');
+  if(!window.fa){ err.textContent='нет моста fa (режим file:// без main-процесса) — запуск недоступен'; err.hidden=false; return; }
+  const cap=Number($('ticketCap').value), lev=Number($('ticketLev').value);
+  const btn=$('ticketConfirm'); btn.disabled=true;
+  paperError=null; paperErrorFor=null;
+  try{
+    const r=await window.fa.startPaper({strat:state.strat, asset:state.asset, cfg:state.cfg, cap, lev});
+    if(r && r.error){ err.textContent=r.error; err.hidden=false; }
+    else{
+      if(r && r.id) tradeUi.selectedId=r.id; // новая позиция сразу выбрана в зоне Ⅱ
+      const ds=await window.fa.select({strat:state.strat, asset:state.asset, cfg:state.cfg, win:state.win});
+      applyDataset(ds);
+      closeTicket(false);
+      const z=$('zoneTrade');
+      if(z){
+        z.scrollIntoView({behavior:smoothOk()?'smooth':'auto'});
+        // 'reveal' обязан уйти: его rise-анимация держит opacity:1 только через forwards-филл,
+        // а класс zone-flash ЗАМЕНЯЕТ свойство animation — иначе после вспышки зона исчезнет
+        z.classList.remove('reveal','zone-flash'); void z.offsetWidth; z.classList.add('zone-flash');
+        z.focus({preventScroll:true});
+      }
+    }
+  }catch(e){ err.textContent='ошибка IPC: '+String(e && e.message || e).slice(0,80); err.hidden=false; console.warn('ticketConfirm', e); }
+  btn.disabled=false;
+};
+// закрытие позиции по id — общий путь для кнопки деталей и мини-кнопок таблицы
+async function closePaperById(id, btnEl){
+  if(!window.fa || !id) return;
+  if(btnEl) btnEl.disabled=true;
+  paperError=null; paperErrorFor=null;
+  try{
+    const r=await window.fa.closePaper(id);
+    if(r && r.error){ paperError=r.error; }
+    const ds=await window.fa.select({strat:state.strat, asset:state.asset, cfg:state.cfg, win:state.win});
+    applyDataset(ds);
+  }catch(e){ paperError='ошибка IPC: '+String(e && e.message || e).slice(0,80); console.warn('closePaper', e); renderTrade(); }
+  if(btnEl) btnEl.disabled=false;
+}
+if($('tradeCloseBtn')) $('tradeCloseBtn').onclick = function(){ closePaperById(this.dataset.id, this); };
+if($('tradeBody')) $('tradeBody').addEventListener('click', (e)=>{
+  const closeBtn = e.target.closest('button[data-close-id]');
+  if(closeBtn){ closePaperById(closeBtn.dataset.closeId, closeBtn); return; }
+  const tr = e.target.closest('tr[data-pos-id]');
+  if(tr){ tradeUi.selectedId = tr.dataset.posId; renderTrade(); }
+});
+// путь к запуску из зоны Ⅱ (полоса-заглушка И шапка зоны): скролл к CTA + открыть тикет
+function gotoLaunch(){
+  const b=$('paperBtn'); if(!b) return;
+  b.scrollIntoView({behavior:smoothOk()?'smooth':'auto', block:'center'});
+  openTicket();
+}
+if($('tradeGoto')) $('tradeGoto').onclick = gotoLaunch;
+if($('tradeNewBtn')) $('tradeNewBtn').onclick = gotoLaunch;
+
+/* ============================================================================
+   КОНТЕКСТНАЯ СПРАВКА — «?» у каждого раздела. Клик открывает поповер с
+   подробным объяснением: зачем раздел и что означает каждый его элемент.
+   Поведение: один поповер за раз; закрытие — клик вне, Esc, крестик, повторный
+   клик по «?»; позиционирование с учётом краёв окна (работает на macOS/Windows
+   одинаково — чистый Chromium, без нативных API).
+   ========================================================================== */
+const HELP = {
+  topbar: { t:'Статус данных и опрос бирж', b:
+    '<p>Верхняя панель показывает, насколько свежи живые данные, и управляет частотой их обновления.</p><ul>'+
+    '<li><b>«данные по состоянию на …»</b> — время (UTC) последнего успешного опроса GMX и Hyperliquid и его возраст. Все панели ниже рассчитаны именно на эти данные.</li>'+
+    '<li><b>Опрос 1м/5м/15м</b> — интервал автоматического опроса живых ставок. Он же задаёт шаг начисления бумажного теста: один живой шаг покрывает не более 3× интервала, всё сверх этого дозаполняется историей.</li>'+
+    '<li><b>Индикатор LIVE</b> — зелёный: данные свежие и полные; «ПРЕДУПР.»: один из источников/инструментов деградировал (детали — в подсказке статуса); «УСТАРЕЛО»: последний успешный опрос старше 15 минут. Клик по кнопке — немедленный внеочередной опрос.</li>'+
+    '<li><b>Бейдж PAPER</b> — приложение только читает публичные данные бирж: ордера не отправляются, API-ключи и реальный капитал не задействованы.</li></ul>' },
+  toolbar: { t:'Панель управления · параметры расчёта', b:
+    '<p>Все разделы страницы пересчитываются мгновенно под выбранные здесь параметры. Данные по всем инструментам собираются постоянно, поэтому переключение не требует ожидания.</p><ul>'+
+    '<li><b>Инструмент</b> — рынок GMX V2 (и для двуногой стратегии — парный перп Hyperliquid).</li>'+
+    '<li><b>Стратегия</b> — «2 ноги»: дельта-нейтральная пара GMX × Hyperliquid, доход = разница ставок финансирования при нулевой чувствительности к цене; «одна нога»: GMX carry без хеджа (есть ценовой риск).</li>'+
+    '<li><b>Конфигурация</b> — A: short GMX + long HL; B: long GMX + short HL. По умолчанию берётся конфигурация с бОльшим средним net APR за окно (выбор движка).</li>'+
+    '<li><b>Период</b> — окно истории (1/7/30/90/365 дней) для гипотезы, графиков и скринера. На бумажный счёт не влияет — он всегда считается от момента открытия позиции.</li>'+
+    '<li><b>Режим P&L</b> — «брутто»: только поток финансирования; «нетто»: минус разовые издержки входа-выхода (см. раздел «Транзакционные издержки»).</li>'+
+    '<li><b>Капитал и плечо</b> — выбираются кликом по матрице «Капитал × плечо» справа от главного показателя.</li>'+
+    '<li><b>⟳ Пересчёт</b> — принудительная полная пересинхронизация: текущие значения всех кнопок отправляются в движок, живые ставки опрашиваются заново, все разделы перерисовываются с нуля. Используйте, если после серии переключений какой-то раздел выглядит несогласованным.</li></ul>' },
+  hero: { t:'Главный показатель зоны анализа · гипотеза', b:
+    '<p>Крупное число — ВСЕГДА историческая оценка (гипотеза) по текущему выбору селекторов: сколько принёс бы выбранный капитал за выбранный период на фактической истории ставок. Знак «≈» и подпись «гипотеза» подчёркивают: это НЕ накопленная прибыль счёта.</p><ul>'+
+    '<li><b>Реализованный P&L</b> бумажных позиций показывает зона «Ⅱ · Торговля» вверху страницы — с момента запуска (t0), от периода и режима анализа он не зависит.</li>'+
+    '<li><b>Доходность за период</b> — P&L гипотезы к капиталу.</li>'+
+    '<li><b>APR</b> — в годовом выражении; рядом медианная оценка, устойчивая к выбросам.</li>'+
+    '<li><b>Ноционал на ногу</b> — капитал × плечо; именно на него начисляется финансирование каждой ноги.</li>'+
+    '<li><b>$/час</b> — средняя скорость накопления за окно.</li>'+
+    '<li><b>Макс. просадка</b> — наибольшее падение накопленного результата от пика.</li>'+
+    '<li><b>▶ Запустить стратегию (Paper Trading)</b> — открывает тикет подтверждения и запускает бумажную позицию по текущему выбору.</li></ul>' },
+  launch: { t:'Запуск стратегии (Paper Trading)', b:
+    '<p>Тикет подтверждения фиксирует параметры будущей позиции ДО запуска:</p><ul>'+
+    '<li><b>Инструмент, стратегия, конфигурация</b> — из текущего выбора селекторов анализа.</li>'+
+    '<li><b>Капитал и плечо</b> — предзаполнены выбранной ячейкой матрицы, редактируемы прямо в тикете (на выбор матрицы не влияют).</li>'+
+    '<li><b>Разовые издержки</b> — предварительная оценка по текущей модели издержек; фактические зафиксируются в момент открытия.</li>'+
+    '<li><b>Готовность данных</b> — гейт знаков и свежесть живых ставок. Движок повторно проверяет всё при подтверждении и вернёт ошибку, если запуск невозможен (например, по инструменту уже есть открытая позиция).</li>'+
+    '<li>После запуска позиция появляется в зоне «Ⅱ · Торговля» вверху; страница прокрутится к ней автоматически.</li></ul>' },
+  matrix: { t:'Матрица «Капитал × плечо»', b:
+    '<p>Сценарии «что если»: тот же период истории, пересчитанный под каждую комбинацию капитала ($1k–$1M) и плеча. Клик по ячейке делает её активной для ВСЕХ расчётов страницы — здесь же выбирается капитал бумажной позиции.</p><ul>'+
+    '<li>В ячейке — P&L за период (в текущем режиме брутто/нетто), ниже — APR.</li>'+
+    '<li>Плечо умножает ноционал, а значит и финансирование, И разовые издержки — и добавляет риск ликвидации, который carry-модель не учитывает.</li>'+
+    '<li>Это ИСТОРИЧЕСКАЯ гипотеза за окно, не бумажный счёт.</li></ul>' },
+  equity: { t:'Кривая капитала (гипотеза за окно)', b:
+    '<p>Накопленный результат гипотетической позиции, «прожитой» по фактическим почасовым ставкам выбранного окна.</p><ul>'+
+    '<li><b>Зелёная линия</b> — equity: капитал + накопленный P&L (в нетто-режиме из кривой один раз вычитаются издержки входа).</li>'+
+    '<li><b>Красная заливка</b> — просадка от пика.</li>'+
+    '<li>Гранулярность адаптивная: до 7 дней — почасовые точки, дольше — подневные.</li>'+
+    '<li>Наведите курсор — точные значения equity, P&L и просадки в каждой точке.</li></ul>' },
+  paper: { t:'Зона «Ⅱ · Торговля» · форвардный бумажный тест', b:
+    '<p>Реализованный результат бумажной торговли с момента запуска (t0). НЕ зависит от периода и режима брутто/нетто зоны анализа: кокпит всегда показывает НЕТТО после разовых издержек, расшифровка (брутто, издержки, Σ счёт) — строками ниже. Ledger ведётся из живых ставок по правилам модели:</p><ul>'+
+    '<li><b>GMX</b> — финансирование и заимствование непрерывно, по секундам, из текущих живых факторов.</li>'+
+    '<li><b>Hyperliquid</b> — расчёт раз в час, на границе часа (как на бирже).</li>'+
+    '<li><b>Разрывы</b> (приложение было закрыто) дозаполняются ИСТОРИЧЕСКИМИ почасовыми ставками, а не текущей ставкой; непокрытые данные честно показываются строкой «не начислено».</li>'+
+    '<li><b>Издержки входа-выхода</b> фиксируются в момент открытия; «реализовано (нетто)» = брутто − издержки.</li>'+
+    '<li><b>Таблица позиций</b> — все позиции счёта; клик по строке выбирает её для деталей и кривой (выбор не зависит от селекторов анализа), мини-кнопка «закрыть» закрывает открытую.</li>'+
+    '<li>Позиции сохраняются на диск и переживают перезапуск. Новая позиция запускается кнопкой «▶ Запустить стратегию (Paper Trading)» в зоне анализа; ось графика — реальное время.</li></ul>' },
+  gmx: { t:'GMX V2 · живые ставки и OI', b:
+    '<p>Первичные данные ноги GMX, как их отдаёт биржа (после приведения к канону).</p><ul>'+
+    '<li><b>funding/s</b> — фактор финансирования в секунду (/1e30). Соглашение о знаках: <span class="fx">f_short&gt;0 ⇒ доход короткой позиции</span>. Рядом — эквивалент в годовых (APR = factor·3600·8760).</li>'+
+    '<li><b>borrow/s</b> — ставка заимствования; всегда ИЗДЕРЖКА для своей стороны.</li>'+
+    '<li><b>Гейт знаков</b>: живые данные принимаются только если сходится тождество net = funding + borrow; при сбое начисление приостанавливается (см. предупреждение в шапке).</li>'+
+    '<li><b>Дисбаланс OI</b> — какая сторона рынка больше; преобладающая сторона платит финансирование, противоположная получает.</li></ul>' },
+  hl: { t:'Hyperliquid · живые ставки', b:
+    '<p>Первичные данные ноги Hyperliquid.</p><ul>'+
+    '<li><b>Ставка финансирования</b> — ЧАСОВАЯ (не годовая): расчёты между лонгами и шортами проходят раз в час. Знак: <span class="fx">rate&gt;0 ⇒ платят лонги, получает короткая позиция</span>. Рядом — эквиваленты в годовых для обеих сторон.</li>'+
+    '<li><b>Премия (index − mark)</b> — отклонение перпа от индекса; из неё протокол выводит ставку.</li>'+
+    '<li><b>Макс. плечо HL</b> — лимит биржи для этого рынка (обновляется живьём).</li>'+
+    '<li>Ставка протокольно ограничена (≈±4%/час); значение вне разумного диапазона трактуется как сбой данных и блокирует начисление (гейт).</li></ul>' },
+  spread: { t:'Чистый спред финансирования', b:
+    '<p>Сколько стратегия зарабатывает ДО издержек: net APR = финансирование получаемой ноги − заимствование GMX − финансирование платящей ноги, усреднённое по бакету.</p><ul>'+
+    '<li><b>Зелёные столбцы</b> — спред &gt; 0 (стратегия приносит доход), <b>красные</b> — спред &lt; 0 (стратегия платит).</li>'+
+    '<li>Бакет адаптивный: час (окно ≤ 7д) или день (длиннее) — подпись в тултипе.</li>'+
+    '<li>Именно этот спред интегрируется в кривую капитала и начисляется бумажной позиции.</li></ul>' },
+  legs: { t:'Декомпозиция по ногам', b:
+    '<p>Из чего складывается net APR: средний вклад каждой компоненты за группу (6ч/день/неделя/месяц — по длине окна).</p><ul>'+
+    '<li><b>Зелёное</b> — финансирование GMX (нога-получатель).</li>'+
+    '<li><b>Красное</b> — заимствование GMX (всегда минус).</li>'+
+    '<li><b>Синее</b> — финансирование Hyperliquid (знак зависит от конфигурации A/B).</li>'+
+    '<li>Помогает увидеть, какая нога делает результат и не «съедает» ли заимствование весь спред.</li></ul>' },
+  price: { t:'Справочная цена', b:
+    '<p>Одна справочная серия (Binance, дневные закрытия) — только контекст движения рынка.</p><ul>'+
+    '<li>Дельта-нейтральная стратегия в первом приближении НЕ чувствительна к цене: лонг и шорт равного ноционала взаимно компенсируются.</li>'+
+    '<li>Кросс-биржевой базис (GMX-оракул против HL-марка) здесь НЕ измеряется — честная одиночная серия вместо сфабрикованной пары (задача P3).</li></ul>' },
+  strategy: { t:'Сводка по стратегии', b:
+    '<p>Словами: какие ноги открыты, кто получает и кто платит при текущих ставках, и статистика окна.</p><ul>'+
+    '<li><b>Медиана net APR</b> — основная оценка (устойчива к выбросам тонких рынков); среднее приводится для сравнения.</li>'+
+    '<li><b>Доля часов &gt; 0</b> — как часто спред был доходным в окне.</li>'+
+    '<li><b>Смен знака</b> — сколько раз спред менял направление: мера стабильности edge.</li>'+
+    '<li>Конфигурация A/B по умолчанию выбирается движком по бОльшему среднему net APR за окно.</li></ul>' },
+  costs: { t:'Модель транзакционных издержек', b:
+    '<p>Разовые издержки входа-выхода, которые отличают брутто от нетто. Синие поля редактируемы — пересчёт мгновенный, значения сохраняются.</p><ul>'+
+    '<li><b>GMX открытие/закрытие</b> — комиссия в % ноционала за каждую операцию.</li>'+
+    '<li><b>Проскальзывание GMX</b> — price impact входа+выхода, % ноционала.</li>'+
+    '<li><b>Газ/keeper</b> — фиксированные $ за исполнение.</li>'+
+    '<li><b>Taker HL × стороны</b> — комиссия Hyperliquid за каждую из сторон (вход и выход); для одноногой стратегии не применяется.</li>'+
+    '<li>Позиция удерживается весь период, поэтому издержки РАЗОВЫЕ, не ежечасные. Бумажная позиция фиксирует их в момент открытия.</li></ul>' },
+  raw: { t:'Первичные данные по часам', b:
+    '<p>Инспектор исходных данных: последние 120 часов выбранного инструмента, новые сверху. Из этих строк строятся все графики и начисляется история.</p><ul>'+
+    '<li><b>f_long / f_short</b> — funding factor/сек (/1e30); <span class="fx">f_short&gt;0 ⇒ доход короткой позиции</span>.</li>'+
+    '<li><b>b_long / b_short</b> — borrow factor/сек; всегда издержка.</li>'+
+    '<li><b>hl_rate</b> — часовая ставка Hyperliquid.</li>'+
+    '<li>Производные колонки — те же величины в годовых: <span class="fx">APR = factor·3600·8760</span>, <span class="fx">HL APR = rate·8760</span>; net — итог выбранной конфигурации.</li></ul>' },
+  ledger: { t:'Журнал операций · двойная бухгалтерия позиции', b:
+    '<p>Каждая финансовая операция выбранной позиции — отдельной строкой: доход и расход раздельно, как в бухгалтерской книге. Позиция выбирается кликом в таблице позиций выше; селекторы зоны анализа (период/режим/капитал/плечо) на журнал не влияют.</p><ul>'+
+    '<li><b>Типы операций</b>: фандинг GMX (непрерывное начисление за тик опроса), борроу GMX (всегда расход), фандинг HL (расчёт на границе часа), издержки (разовые вход+выход, первая строка журнала — ˅ раскрывает детализацию), ◌ разрыв (период без данных — честный $0, ничего не начислено), ✎ корр. (ручная корректировка, зарезервировано).</li>'+
+    '<li><b>Баланс</b> — накопленный нетто-P&L после каждой операции. Последняя строка обязана сходиться с «реализовано (нетто)» позиции: статус сверки — в шапке журнала. <b class="neg">Расхождение — это баг</b>, а не рыночное событие.</li>'+
+    '<li><b>Источник</b>: без пометки — живой опрос; «·ист» — дозаполнено историческими почасовыми ставками после разрыва; «·проп» — интервал пропущен (см. строку «разрыв»).</li>'+
+    '<li><b>Итоги</b> сверху — всегда по ВСЕМ операциям позиции; фильтр по типам добавляет отдельный подытог, не подменяя итогов.</li>'+
+    '<li><b>Экспорт</b> CSV / XLSX / JSON — всегда полный журнал со всеми служебными полями (seq, источник, интервал, размер, детализация издержек), независимо от фильтра и показанных страниц.</li>'+
+    '<li>Журнал закрытой позиции хранится до ручного удаления: «удалить журнал…» в шапке (только для закрытых, с подтверждением, безвозвратно).</li></ul>' },
+  scanner: { t:'Скринер инструментов', b:
+    '<p>Все двуногие инструменты набора, отранжированные по МЕДИАННОМУ net APR за текущее окно (в лучшей конфигурации каждого).</p><ul>'+
+    '<li><b>Медиана против среднего</b>: на тонких рынках редкие выбросы завышают среднее в разы — медиана устойчива, поэтому ранжирование по ней.</li>'+
+    '<li><b>Доля &gt; 0</b> — процент доходных часов; <b>смен знака</b> — стабильность направления спреда.</li>'+
+    '<li><b>Статус</b> — «низколиквидный» при суммарном OI &lt; $1M: цифры честные, но исполнение такого размера нереалистично.</li>'+
+    '<li>Подсвеченная строка — текущий выбор.</li></ul>' },
+};
+
+let helpPop = null, helpBtnActive = null;
+function closeHelp(){
+  if(!helpPop) return;
+  helpPop.remove(); helpPop=null;
+  if(helpBtnActive){ helpBtnActive.setAttribute('aria-expanded','false'); helpBtnActive.focus(); helpBtnActive=null; }
+}
+function openHelp(btn){
+  const h = HELP[btn.dataset.help]; if(!h) return;
+  if(helpBtnActive===btn){ closeHelp(); return; }   // повторный клик по тому же «?» — закрыть
+  if(helpPop){ helpPop.remove(); helpPop=null; if(helpBtnActive) helpBtnActive.setAttribute('aria-expanded','false'); }
+  helpBtnActive = btn; btn.setAttribute('aria-expanded','true');
+  helpPop = document.createElement('div');
+  helpPop.className='help-pop'; helpPop.setAttribute('role','dialog'); helpPop.setAttribute('aria-label',h.t); helpPop.tabIndex=-1;
+  helpPop.innerHTML = '<h4>'+h.t+'<button class="x" aria-label="Закрыть справку">✕</button></h4>'+h.b;
+  document.body.appendChild(helpPop);
+  // позиционирование: под кнопкой; при нехватке места — над ней; по горизонтали прижать к краям окна
+  const r = btn.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+  const pw = helpPop.offsetWidth, ph = helpPop.offsetHeight;
+  let left = Math.min(Math.max(8, r.left - 12), vw - pw - 8);
+  let top  = r.bottom + 8;
+  if (top + ph > vh - 8) top = r.top - ph - 8;
+  top = Math.min(Math.max(8, top), Math.max(8, vh - ph - 8)); // финальный зажим в видимую область
+  helpPop.style.left = left+'px'; helpPop.style.top = top+'px';
+  helpPop.querySelector('.x').onclick = closeHelp;
+  helpPop.focus();
+}
+// делегирование кликов: «?» работают в статической разметке и в перерисовываемых блоках
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.help-btn');
+  if(btn){ e.stopPropagation(); openHelp(btn); return; }
+  if(helpPop && !helpPop.contains(e.target)) closeHelp();   // клик вне — закрыть
+});
+document.addEventListener('keydown', (e)=>{ if(e.key==='Escape'){ closeHelp(); closeTicket(true); } });
+window.addEventListener('resize', closeHelp);
+// прокрутка страницы закрывает поповер (позиция бы «уехала»); прокрутка ВНУТРИ поповера — нет
+window.addEventListener('scroll', (e)=>{ if(!(helpPop && helpPop.contains(e.target))) closeHelp(); }, true);
+// единые ARIA-атрибуты триггеров
+document.querySelectorAll('.help-btn').forEach(b=>{
+  if(!b.hasAttribute('aria-haspopup')) b.setAttribute('aria-haspopup','dialog');
+  if(!b.hasAttribute('aria-expanded')) b.setAttribute('aria-expanded','false');
+  if(!b.hasAttribute('aria-label')) b.setAttribute('aria-label','Справка по разделу');
+  b.title = 'Что это за раздел?';
+});
+
+/* init: первый рендер — «пустые» состояния (никаких сид-цифр), затем живые данные из main */
+render(); // включает renderTrade()
+updateFreshness();
+(async ()=>{
+  if(!window.fa){
+    // открыт как обычный file:// без main-процесса: живых данных НЕТ — показать это явно
+    const b=document.createElement('div');
+    b.style.cssText='position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:99;padding:8px 16px;'+
+      'background:var(--neg-bg);border:1px solid var(--neg);border-radius:8px;color:var(--neg-bri);font:600 12px var(--f-sans)';
+    b.textContent='ФАЙЛОВЫЙ РЕЖИМ: живые данные недоступны — запустите приложение (npm start)';
+    document.body.appendChild(b);
+    return;
+  }
+  try{
+    const ds=await window.fa.getState();
+    if(ds){
+      if(ds.selection){ state.strat=ds.selection.strat||state.strat; state.asset=ds.selection.asset||state.asset; state.cfg=ds.selection.cfg||state.cfg; state.win=ds.selection.win||state.win; }
+      if(ds.settings){ if(ds.settings.cap) state.cap=ds.settings.cap; if(ds.settings.lev) state.lev=ds.settings.lev; if(ds.settings.mode) state.mode=ds.settings.mode; }
+      // капитал теперь выбирается ТОЛЬКО из матрицы: сохранённое ручное значение прежних версий
+      // прижимаем к ближайшей строке CAPS, чтобы выбор в матрице всегда был подсвечен
+      if(!CAPS.includes(state.cap)){ state.cap = CAPS.reduce((a,b)=> Math.abs(b-state.cap)<Math.abs(a-state.cap)?b:a); persist(); }
+      applyDataset(ds);
+    }
+    window.fa.onPush(ds2=>applyDataset(ds2));
+  }catch(e){
+    console.warn('getState failed', e);
+    const stamp=$('stamp'); if(stamp) stamp.innerHTML='<b class="neg">ошибка соединения с main-процессом</b>';
+  }
+})();
+
+/* Robust chart painting: redraw whenever a chart container gets/changes its real
+   size. ResizeObserver fires on first observe (once layout exists) so canvases are
+   never left blank by a load-time layout/font race; debounced to coalesce bursts. */
+let rsz;
+function repaintCharts(){ clearTimeout(rsz); rsz=setTimeout(()=>{ renderCharts(); if(typeof renderTrade==='function') renderTrade(); }, 60); }
+if (window.ResizeObserver){
+  const ro = new ResizeObserver(repaintCharts);
+  ['equityCanvas','spreadCanvas','legsCanvas','priceCanvas','fwdCanvas']
+    .forEach(id => { const el=document.getElementById(id); if(el&&el.parentElement) ro.observe(el.parentElement); });
+} else {
+  window.addEventListener('resize', repaintCharts);
+}
+window.addEventListener('load', renderCharts);          // belt-and-suspenders for font swap
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(renderCharts);
+</script>
+</body>
+</html>

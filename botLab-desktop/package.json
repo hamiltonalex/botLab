@@ -1,0 +1,51 @@
+{
+  "name": "funding-arb-desktop",
+  "version": "0.1.0",
+  "description": "Live paper-trading desktop app for delta-neutral funding-rate arbitrage (GMX V2 x Hyperliquid). Phase 1: public read-only data, no orders, no keys.",
+  "type": "module",
+  "main": "src/main/main.js",
+  "scripts": {
+    "test": "node --test test/",
+    "oracle": "electron scripts/selector-oracle.mjs",
+    "smoke": "node scripts/smoke-live.mjs",
+    "verify:loris": "node scripts/verify-loris.mjs",
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
+  },
+  "author": "",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.dmitri.fundingarb",
+    "productName": "Funding-Arb Paper Simulator",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["universal"] }
+      ],
+      "category": "public.app-category.finance",
+      "identity": null
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

@@ -1,0 +1,5 @@
+node_modules/
+release/
+*.log
+.DS_Store
+# local data cache written at runtime lives in the OS userData dir, not the repo
