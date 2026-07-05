@@ -25,6 +25,12 @@ let phase = null; // "check" | "download" | "install" | null
 // A BACKGROUND check that fails (offline/DNS/5xx) is expected and stays silent; only a user-initiated
 // action surfaces the `error` state (§5.3, §13).
 let checkKind = null; // "manual" | "background" | null
+// electron-updater's `error` event is GLOBAL and context-free, so `phase`/`checkKind` above are only
+// attributable if exactly ONE operation is ever in flight. This token serializes updater operations:
+// the 6h scheduler yields while anything runs, and overlapping user actions no-op. Without it, a
+// background check rejecting mid-download would be mislabeled as a download error and would surface a
+// failure §5.3 requires to stay silent.
+let inFlight = null; // "check" | "download" | "install" | null — the single active operation
 
 function send(snapshot) {
   if (win && !win.isDestroyed()) win.webContents.send("fa:update:state", snapshot);
@@ -74,6 +80,11 @@ export function initUpdater({ window, enabled = app.isPackaged } = {}) {
 }
 
 async function runCheck(kind) {
+  if (inFlight) {
+    log.info(`[updater] ${kind} check skipped — "${inFlight}" already in flight`);
+    return; // a background tick that collides with any operation simply waits for the next one
+  }
+  inFlight = "check";
   checkKind = kind;
   phase = "check";
   try {
@@ -82,6 +93,8 @@ async function runCheck(kind) {
     // checkForUpdates() also rejects on network errors (the `error` event usually fires too); guard
     // here so a background check going offline never surfaces as an unhandledRejection.
     onUpdaterError(err);
+  } finally {
+    inFlight = null;
   }
 }
 
@@ -105,16 +118,22 @@ function wireIpc() {
   });
 
   ipcMain.handle("fa:update:download", async () => {
+    if (inFlight) return machine.get(); // a check/download already running — serialization guard
+    inFlight = "download";
     phase = "download";
     try {
       await autoUpdater.downloadUpdate();
     } catch (err) {
       onUpdaterError(err);
+    } finally {
+      inFlight = null;
     }
     return machine.get();
   });
 
   ipcMain.handle("fa:update:install", () => {
+    if (inFlight) return { ok: false }; // don't quit-and-install under an in-flight check/download
+    inFlight = "install"; // stays set — the app is quitting; cleared only if quitAndInstall throws
     phase = "install";
     machine.installing();
     // Records are synchronous + atomic and there are no before-quit holds, so nothing needs flushing
@@ -124,6 +143,7 @@ function wireIpc() {
       try {
         autoUpdater.quitAndInstall(true, true);
       } catch (err) {
+        inFlight = null; // install failed to launch — the app is still running, free the guard
         onUpdaterError(err);
       }
     });
