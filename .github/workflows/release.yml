@@ -49,7 +49,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        # macOS is added back (with `macos-latest`) once the Apple Developer ID signing secrets are
+        # configured — see docs/RELEASING.md §1. Until then a mac build can't sign/notarize and its
+        # OTA wouldn't work, so releases are Windows-only.
+        os: [windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
