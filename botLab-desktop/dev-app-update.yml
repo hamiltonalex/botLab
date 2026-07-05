@@ -1,0 +1,10 @@
+# Dev-only updater config (§17.3). electron-updater reads this when autoUpdater.forceDevUpdateConfig
+# is true — set by FA_UPDATER_DEV=1 in updater.js. So `FA_UPDATER_DEV=1 npm start` exercises the real
+# check/download path against GitHub Releases without a packaged build.
+#
+# NOT shipped in releases: electron-builder embeds app-update.yml (from build.publish) into the
+# packaged app, and this file lives at the repo root, outside the bundled `src/**` glob.
+owner: hamiltonalex
+repo: botLab
+provider: github
+updaterCacheDirName: botlab-updater
