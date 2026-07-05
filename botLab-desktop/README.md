@@ -108,13 +108,21 @@ npm run dist:win     # -> release/*.exe  (NSIS installer)
 npm run dist         # current platform
 ```
 
-Output lands in `release/`. Builds are **unsigned** (Phase 1). To run an unsigned build:
+Output lands in `release/`. **Production builds are made in CI from a tag** (`git push --tags` →
+GitHub Actions → signed + notarized macOS DMG/ZIP, Windows NSIS, attached to a draft release) — see
+[docs/RELEASING.md](docs/RELEASING.md). Local `npm run dist:*` builds are **unsigned**; to run one:
 
-- **macOS** — right-click the app → **Open** → **Open** (bypasses Gatekeeper once), or
-  `xattr -dr com.apple.quarantine "/Applications/BotLab.app"`.
-- **Windows** — SmartScreen → **More info** → **Run anyway**.
+- **macOS** — `CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac` builds unsigned; then right-click
+  the app → **Open** → **Open**, or `xattr -dr com.apple.quarantine "/Applications/BotLab.app"`.
+- **Windows** — SmartScreen → **More info** → **Run anyway** (Windows signing is deferred).
 
-Code-signing / notarization hooks are left for P6.
+## Updates (OTA)
+
+BotLab updates over the air from GitHub Releases via `electron-updater`: a **version pill** in the top
+bar shows the update state, downloads happen only on click, and installs are silent with a restart.
+macOS updates are gated on Developer ID signature + notarization and a SHA-512 integrity check;
+**positions and the ledger survive updates**. Version history lives in [CHANGELOG.md](CHANGELOG.md);
+the full release process is in [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Data & persistence
 
