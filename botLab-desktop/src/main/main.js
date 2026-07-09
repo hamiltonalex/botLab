@@ -24,7 +24,8 @@ import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts } 
 import { ledgerView, buildLedger } from "../engine/ledger.js";
 import { toLedgerCsv, toLedgerSheet, toLedgerJson, ledgerFileName, dialogFiltersFor } from "./export.js";
 import { buildXlsxBuffer } from "./xlsx-writer.js";
-import { loadPositions, savePositions, loadSettings, saveSettings, hasSettings } from "../engine/store.js";
+import { loadPositions, savePositions, loadSettings, saveSettings, hasSettings, loadBotState, saveBotState, loadBotSettings, saveBotSettings } from "../engine/store.js";
+import * as s1engine from "../engine/btcopt/engine.js";
 import { decimate } from "../engine/format.js";
 import { TWO_LEG, ONE_LEG, ALL_MARKETS, twoLegByKey, oneLegByKey, chainsInUse } from "../engine/universe.js";
 import { isolateSmokeProfile } from "./smoke-profile.js";
@@ -65,6 +66,9 @@ const state = {
   backfilling: new Set(), // cacheKeys currently fetching — surfaced to the UI
   prices: new Map(), // token -> { daily: number[], fetchedAt: ms }
   bootNotes: [],
+  // Bot 2 «BTC-опционы» (Strategy One) — isolated paper engine + live Deribit source (Phase 1).
+  // Read only by the s1:* handlers / assembleDataset1(); never leaks into assembleDataset()/fa:push.
+  btcOptions: { engine: null, source: null, settings: {}, snapshot: null, running: false, chain: null },
 };
 
 const pollSec = () => Math.min(15, Math.max(1, state.settings.pollMinutes || 5)) * 60;
@@ -377,6 +381,76 @@ function push() {
 }
 
 // ---------------------------------------------------------------------------
+// Bot 2 «BTC-опционы» (Strategy One) — isolated paper engine + live Deribit source.
+// Fully separate from the funding-arb loop above: its own state (state.btcOptions), IPC namespace
+// (s1:*), push channel (s1:push) and persistence files. NEVER touches positions.json/settings.json.
+// Phase 0: state + IPC skeleton + persistence. The Deribit source + hedge engine land in Phase 1;
+// the source (not main) will own the reprice timer and run only between s1:start and s1:stop.
+// ---------------------------------------------------------------------------
+const BTCOPT_ID = "btc-options";
+
+function loadOrInitBtcOptions() {
+  const settings = { ...s1engine.defaultSettings(), ...loadBotSettings(baseDir, BTCOPT_ID) };
+  let st = loadBotState(baseDir, BTCOPT_ID);
+  if (!st) {
+    st = s1engine.create({ settings, nowMs: Date.now() });
+    saveBotState(baseDir, BTCOPT_ID, st); // written once; "marker" = the file's own existence
+  } else if ((st.schemaVersion || 0) < s1engine.SCHEMA_VERSION) {
+    st.schemaVersion = s1engine.SCHEMA_VERSION; // forward-migration guard (no-op at v1)
+    saveBotState(baseDir, BTCOPT_ID, st);
+  }
+  state.btcOptions.engine = st;
+  state.btcOptions.settings = settings;
+}
+
+function assembleDataset1() {
+  const bo = state.btcOptions;
+  const eng = bo.engine || {};
+  return {
+    botId: BTCOPT_ID,
+    running: bo.running,
+    settings: bo.settings,
+    structure: eng.structure ?? null,
+    cycle: bo.snapshot ?? null, // last evaluate() cycle-snapshot (Phase 1)
+    account: null, // Phase 1
+    chain: bo.chain ?? null,
+    fresh: bo.source ? bo.source.status() : { source: "deribit-rest", ok: false, stale: true, ageSec: null },
+  };
+}
+
+function push1() {
+  if (win && !win.isDestroyed()) win.webContents.send("s1:push", assembleDataset1());
+}
+
+function wireIpcStrategy1() {
+  ipcMain.handle("s1:getState", async () => assembleDataset1());
+
+  ipcMain.handle("s1:setSettings", async (_e, s) => {
+    state.btcOptions.settings = { ...state.btcOptions.settings, ...(s || {}) };
+    saveBotSettings(baseDir, BTCOPT_ID, state.btcOptions.settings);
+    return assembleDataset1();
+  });
+
+  ipcMain.handle("s1:reset", async () => {
+    state.btcOptions.engine = s1engine.create({ settings: state.btcOptions.settings, nowMs: Date.now() });
+    state.btcOptions.snapshot = null;
+    saveBotState(baseDir, BTCOPT_ID, state.btcOptions.engine);
+    return assembleDataset1();
+  });
+
+  // Phase-1 stubs — the Deribit source + hedge engine are not built yet. Keep the bridge complete
+  // and SAFE so the renderer can wire onPush/getState today without rejects.
+  ipcMain.handle("s1:start", async () => assembleDataset1());
+  ipcMain.handle("s1:stop", async () => assembleDataset1());
+  ipcMain.handle("s1:refreshNow", async () => assembleDataset1());
+  ipcMain.handle("s1:openStructure", async () => ({ error: "модуль в разработке (Фаза 1)" }));
+  ipcMain.handle("s1:closeStructure", async () => ({ error: "нет открытой структуры" }));
+  ipcMain.handle("s1:getChain", async () => ({ error: "модуль в разработке (Фаза 1)" }));
+  ipcMain.handle("s1:getLedger", async () => ({ events: [], totalCount: 0, allCount: 0 }));
+  ipcMain.handle("s1:exportLedger", async () => ({ error: "модуль в разработке (Фаза 1)" }));
+}
+
+// ---------------------------------------------------------------------------
 // IPC
 // ---------------------------------------------------------------------------
 function wireIpc() {
@@ -628,6 +702,11 @@ app.whenReady().then(async () => {
 
   createWindow();
   wireIpc();
+  // Bot 2 «BTC-опционы»: load/create its isolated state, then wire its IPC (so s1:* is ready as
+  // early as fa:*). The Deribit source is NOT started here — the engine ticks only between
+  // s1:start and s1:stop (Phase 1). Purely additive; funding-arb boot is unaffected.
+  loadOrInitBtcOptions();
+  wireIpcStrategy1();
   // OTA updater (§5): registers the fa:update:* / fa:version IPC now; scheduled checks only run in a
   // packaged build. Skipped entirely under SMOKE (isolated profile, quits in <1s).
   if (!SMOKE) initUpdater({ window: win });
@@ -707,5 +786,6 @@ app.on("window-all-closed", () => {
 // timer. quitAndInstall() also fires before-quit, so an update install cleans up through here too.
 app.on("before-quit", () => {
   if (pollTimer) clearInterval(pollTimer);
+  if (state.btcOptions && state.btcOptions.source) state.btcOptions.source.stop(); // Phase 1: stop Deribit poll
   disposeUpdater();
 });

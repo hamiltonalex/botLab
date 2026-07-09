@@ -718,7 +718,7 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
     <div class="botswitch" id="botSwitch" role="tablist" aria-label="Основная навигация">
       <button role="tab" id="tab-home" aria-controls="view-home" aria-selected="true" tabindex="0" class="tab">Обзор</button>
       <button role="tab" id="tab-funding-arb" aria-controls="view-funding-arb" aria-selected="false" tabindex="-1" class="tab"><span class="bot-dot idle" aria-hidden="true"></span>Funding-arb<span class="sr-only" id="tabStatus-funding-arb">, не запущен</span></button>
-      <button role="tab" id="tab-basis-carry" aria-controls="view-basis-carry" aria-selected="false" tabindex="-1" class="tab soon"><span class="bot-dot pending" aria-hidden="true"></span>Basis-carry<span class="soon-badge">СКОРО</span></button>
+      <button role="tab" id="tab-btc-options" aria-controls="view-btc-options" aria-selected="false" tabindex="-1" class="tab"><span class="bot-dot idle" aria-hidden="true"></span>BTC-опционы<span class="sr-only" id="tabStatus-btc-options">, готовится</span></button>
     </div>
 
     <span class="spacer"></span>
@@ -775,16 +775,16 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
         </div>
       </button>
 
-      <button class="botcard soon" type="button" data-open="basis-carry">
+      <button class="botcard" type="button" data-open="btc-options">
         <div class="bc-top">
-          <span class="bot-dot pending" aria-hidden="true"></span>
-          <span class="bc-name">Basis-carry</span>
-          <span class="bc-tag soon">СКОРО</span>
+          <span class="bot-dot idle" id="card-dot-btc-options" aria-hidden="true"></span>
+          <span class="bc-name">BTC-опционы</span>
+          <span class="bc-tag soon" id="card-tag-btc-options">ГОТОВИТСЯ</span>
         </div>
-        <p class="bc-desc">Базисная торговля спот–фьючерс · отдельная логика и бумажный счёт</p>
+        <p class="bc-desc">Крылатый стрэддл на BTC-опционах + дельта-хедж перпом · живые данные Deribit</p>
         <div class="bc-foot">
-          <span>○ модуль в разработке — запуск позже</span>
-          <span class="bc-open">Подробнее <span class="arw">→</span></span>
+          <span id="card-status-btc-options">○ каркас модуля готов — UI по фазам</span>
+          <span class="bc-open">Открыть <span class="arw">→</span></span>
         </div>
       </button>
     </div>
@@ -1308,24 +1308,46 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
 
   </section><!-- /view-funding-arb -->
 
-  <!-- ═══════════════════════ ВИД · BASIS-CARRY (заглушка «СКОРО») ═══════════════════════ -->
-  <section id="view-basis-carry" role="tabpanel" aria-labelledby="tab-basis-carry" tabindex="-1" class="view" hidden>
-    <div class="soon-view card reveal">
-      <div class="glyph" aria-hidden="true">◌</div>
-      <h2>Basis-carry <span class="soon-badge">СКОРО</span></h2>
-      <p>Модуль в разработке. Здесь появится базисная стратегия (спот–фьючерс) с собственной
-         логикой позиций и отдельным бумажным счётом — независимо от модуля «Funding-arb».</p>
-      <ul class="whatnext">
-        <li>Скринер базиса по инструментам</li>
-        <li>Форвардный бумажный тест с t0</li>
-        <li>Журнал операций и сверка P&amp;L</li>
-      </ul>
-      <p class="faint">Пока доступен модуль «Funding-arb».</p>
-      <div class="acts">
-        <button type="button" class="ghost-btn" data-open="home">← К обзору</button>
-        <button type="button" class="recalc-btn" data-open="funding-arb">Открыть Funding-arb</button>
+  <!-- ═══════════════════════ ВИД · BTC-ОПЦИОНЫ (Strategy One) ═══════════════════════ -->
+  <!-- Фаза 0: каркас из двух зон-идиом; панели (структура/греки/хедж-движок/P&L/графики) — Фаза 1. -->
+  <section id="view-btc-options" role="tabpanel" aria-labelledby="tab-btc-options" tabindex="-1" class="view" hidden>
+
+    <section class="zone zone-trade reveal" style="animation-delay:.03s" aria-labelledby="optZoneTradeHead" tabindex="-1">
+      <div class="zone-head">
+        <span class="zn" id="optZoneTradeHead">Ⅱ · Хедж-движок · Paper Trading</span>
+        <span class="tag amber">форвард · с t0 · нетто</span>
+        <span class="rule"></span>
+        <span class="hint">структура не открыта</span>
       </div>
-    </div>
+      <div class="card" style="margin-top:12px">
+        <div class="sec-head"><h2>Модуль готовится · Фаза 1</h2><span class="rule"></span><span class="hint">каркас изоляции готов</span></div>
+        <p style="margin:6px 2px;color:var(--txt-dim)">Собран каркас: изолированный движок
+          (<span class="mono">src/engine/btcopt</span>), состояние (<span class="mono">btc-options.json</span>)
+          и мост данных (<span class="mono">window.s1</span>). Далее: живой клиент Deribit, форма открытия
+          структуры, хедж-движок (триггеры · фильтр издержек · решение) и атрибуция P&amp;L.</p>
+        <p class="faint" style="margin:6px 2px">Стратегия: крылатый стрэддл на BTC-опционах + дельта-хедж
+          перпетуалом. Живые публичные данные Deribit — без ключей и ордеров (paper).</p>
+        <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+          <button type="button" class="ghost-btn" data-open="home">← К обзору</button>
+          <button type="button" class="recalc-btn" data-open="funding-arb">Открыть Funding-arb</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="zone zone-analysis reveal" style="animation-delay:.08s" aria-labelledby="optZoneAnaHead" tabindex="-1">
+      <div class="zone-head">
+        <span class="zn" id="optZoneAnaHead">Ⅰ · Конструктор структуры</span>
+        <span class="tag">гипотеза · сценарий</span>
+        <span class="rule"></span>
+        <span class="hint">параметры и payoff — в Фазе 1</span>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <div class="sec-head"><h2>Payoff и параметры</h2><span class="rule"></span><span class="hint">Фаза 1</span></div>
+        <p class="faint" style="margin:6px 2px">Здесь появятся тулбар параметров (экспирация, крылья, дедбэнд, λ,
+          реприс, исполнение, блэкаут расчёта), диаграмма payoff крылатого стрэддла и форма открытия структуры.</p>
+      </div>
+    </section>
+
   </section>
 
 </div>
@@ -1464,7 +1486,7 @@ const state = {
   cap:   1000,        // selected capital — по умолчанию МИНИМАЛЬНЫЙ из матрицы (CAPS[0])
   lev:   1,           // selected leverage (matrix)
   live:  false,
-  view:  'home',      // активный вид оболочки: home | funding-arb | basis-carry
+  view:  'home',      // активный вид оболочки: home | funding-arb | btc-options
 };
 const CAPS = [1000, 10000, 100000, 1000000];
 const LEVS = [1, 10];
@@ -3230,12 +3252,12 @@ $('verPill').onclick = ()=>{
 })();
 
 /* ═══════════════════════ ОБОЛОЧКА · ПЕРЕКЛЮЧАТЕЛЬ ВИДОВ (боты как вкладки) ═══════════════════════ */
-/* Реестр модулей-ботов — единственный источник правды. Второй бот пока заглушка (ready:false);
-   реальное имя правится здесь и в разметке карточки/вкладки. Изоляция логики (namespace IPC,
-   botId состояния, отдельный движок) — этап 2, когда бот реально строится. */
+/* Реестр модулей-ботов — единственный источник правды. Второй бот «BTC-опционы» (Strategy One):
+   изоляция логики уже сделана (namespace IPC window.s1, отдельный движок src/engine/btcopt, свои
+   файлы состояния). ready:false, пока строится по фазам — станет true, когда UI Фазы 1 будет готов. */
 const BOTS = [
   { id:'funding-arb', ready:true  },
-  { id:'basis-carry', ready:false },
+  { id:'btc-options', ready:false }, // Phase 0: каркас; станет ready:true с UI Фазы 1
 ];
 const VIEW_IDS = ['home', ...BOTS.map(b=>b.id)];
 const isReadyBot = id => BOTS.some(b=>b.id===id && b.ready);
@@ -3363,6 +3385,19 @@ updateFreshness();
     console.warn('getState failed', e);
     const stamp=$('stamp'); if(stamp) stamp.innerHTML='<b class="neg">ошибка соединения с main-процессом</b>';
   }
+})();
+
+/* ── Bot 2 «BTC-опционы» (Strategy One) — мост живых данных из main ──────────────────────────────
+   Фаза 0: только устанавливаем связь (getState + onPush); панели #view-btc-options рисуются в Фазе 1. */
+let LIVE_S1 = null;
+function applyS1Dataset(ds){ LIVE_S1 = ds; /* Фаза 1: рендер панелей структуры/греков/хедж-движка/P&L */ }
+(async ()=>{
+  if(!window.s1) return; // файловый режим без main — панели bot 2 просто не оживают
+  try{
+    const ds = await window.s1.getState();
+    if(ds) applyS1Dataset(ds);
+    window.s1.onPush(applyS1Dataset);
+  }catch(e){ console.warn('s1 getState failed', e); }
 })();
 
 /* Robust chart painting: redraw whenever a chart container gets/changes its real

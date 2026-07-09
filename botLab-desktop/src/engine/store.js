@@ -77,6 +77,30 @@ export function saveSettings(baseDir, settings) {
   atomicWrite(settingsPath(baseDir), JSON.stringify(settings, null, 2));
 }
 
+// ---- per-bot state + settings (isolated modules; ADDITIVE) ----
+// A second bot (e.g. "btc-options") gets its OWN files so it never collides with funding-arb's
+// positions.json/settings.json — those are never read or written here (zero migration risk to the
+// working bot). Files: userData/<id>.json (paper state + cumulative ledger) and
+// userData/<id>-settings.json. Same atomic-write + tolerant-read discipline as above.
+const botStatePath = (b, id) => join(b, `${id}.json`);
+const botSettingsPath = (b, id) => join(b, `${id}-settings.json`);
+export function loadBotState(baseDir, id) {
+  ensureDir(baseDir);
+  return readJson(botStatePath(baseDir, id), null); // null = "no state yet" (first run)
+}
+export function saveBotState(baseDir, id, st) {
+  ensureDir(baseDir);
+  atomicWrite(botStatePath(baseDir, id), JSON.stringify(st, null, 2));
+}
+export function loadBotSettings(baseDir, id) {
+  ensureDir(baseDir);
+  return readJson(botSettingsPath(baseDir, id), {});
+}
+export function saveBotSettings(baseDir, id, s) {
+  ensureDir(baseDir);
+  atomicWrite(botSettingsPath(baseDir, id), JSON.stringify(s, null, 2));
+}
+
 // ---- trailing-history CSV cache (per instrument key) ----
 export function readCache(baseDir, key) {
   let p = cachePath(baseDir, key);

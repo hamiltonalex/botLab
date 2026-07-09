@@ -36,3 +36,25 @@ contextBridge.exposeInMainWorld("fa", {
   },
   version: () => ipcRenderer.invoke("fa:version"),
 });
+
+// ── Bot 2 «BTC-опционы» (Strategy One) — a PARALLEL bridge, fully isolated from `fa` above ──
+// Live Deribit public data + paper execution (no keys, no orders). The `fa` block is untouched.
+contextBridge.exposeInMainWorld("s1", {
+  getState: () => ipcRenderer.invoke("s1:getState"),
+  setSettings: (s) => ipcRenderer.invoke("s1:setSettings", s),
+  openStructure: (params) => ipcRenderer.invoke("s1:openStructure", params),
+  closeStructure: () => ipcRenderer.invoke("s1:closeStructure"),
+  start: () => ipcRenderer.invoke("s1:start"),
+  stop: () => ipcRenderer.invoke("s1:stop"),
+  refreshNow: () => ipcRenderer.invoke("s1:refreshNow"),
+  reset: () => ipcRenderer.invoke("s1:reset"),
+  getChain: (req) => ipcRenderer.invoke("s1:getChain", req), // instrument picker for manual entry
+  getLedger: (req) => ipcRenderer.invoke("s1:getLedger", req),
+  exportLedger: (req) => ipcRenderer.invoke("s1:exportLedger", req),
+  // main -> renderer live pushes (reprice ticks: greeks, hedge decision, P&L)
+  onPush: (cb) => {
+    const h = (_e, ds) => cb(ds);
+    ipcRenderer.on("s1:push", h);
+    return () => ipcRenderer.removeListener("s1:push", h);
+  },
+});
