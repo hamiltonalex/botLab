@@ -230,7 +230,7 @@ body::before{
 
 /* control toolbar */
 .toolbar{
-  position:sticky; top:51px; z-index:30;
+  position:sticky; top:var(--topbar-h, 51px); z-index:30;
   display:flex; align-items:flex-end; gap:18px 22px; flex-wrap:wrap;
   padding:13px 14px; margin-top:14px;
   background:linear-gradient(180deg, var(--panel-2), var(--panel));
@@ -265,6 +265,89 @@ body::before{
 button:focus-visible, input:focus-visible, [tabindex]:focus-visible{
   outline:2px solid var(--accent); outline-offset:2px; border-radius:6px;
 }
+
+/* ═══════════════════════ ОБОЛОЧКА · ПЕРЕКЛЮЧАТЕЛЬ БОТОВ (боты как вкладки) ═══════════════════════ */
+/* логотип как кнопка-домой — сохраняет вид .mark */
+.brand .markbtn{ background:transparent; border:0; padding:0; cursor:pointer; }
+.brand .markbtn:hover{ opacity:.85; }
+
+/* контролы живых данных Funding-arb — двигаются/прячутся единым блоком */
+.bot-tools{ display:inline-flex; align-items:center; gap:18px; min-width:0; }
+.bot-tools[hidden]{ display:none; }
+/* при нехватке ширины сжимаем штамп свежести (усечение …), а не переносим шапку на 2-ю строку */
+.bot-tools .stamp{ min-width:0; overflow:hidden; text-overflow:ellipsis; }
+
+/* переключатель (tablist) — словарь контейнера из .assetsel, НЕ синий toggle .seg */
+.botswitch{ display:inline-flex; gap:2px; background:var(--inset); border:1px solid var(--line);
+  border-radius:8px; padding:3px; }
+.botswitch .tab{ display:inline-flex; align-items:center; gap:7px; min-height:30px;
+  font:600 12.5px var(--f-sans); color:var(--txt-dim); background:transparent; border:0;
+  border-radius:6px; padding:6px 12px; cursor:pointer; transition:.15s; white-space:nowrap; }
+.botswitch .tab:hover{ color:var(--txt); background:rgba(126,148,184,.08); }
+.botswitch .tab[aria-selected="true"]{ color:var(--txt); background:var(--panel-2);
+  box-shadow:0 0 0 1px rgba(76,155,255,.30), 0 2px 10px rgba(0,0,0,.4); }
+.botswitch .tab.soon{ color:var(--txt-dim); }
+
+/* точки операционного статуса (отличны от синего кольца выбора) */
+.bot-dot{ width:7px; height:7px; border-radius:50%; flex:0 0 auto; }
+.bot-dot.run{ background:var(--pos); box-shadow:0 0 7px rgba(41,224,143,.6); }
+.bot-dot.idle{ background:#3a4254; }
+.bot-dot.pending{ background:transparent; box-shadow:inset 0 0 0 1.5px var(--txt-faint); }
+
+.soon-badge{ font:600 9px var(--f-mono); letter-spacing:.6px; text-transform:uppercase;
+  color:var(--neu); background:var(--neu-bg); border:1px solid rgba(255,176,46,.3);
+  border-radius:4px; padding:1px 5px; }
+
+/* виды-панели + мотив входа (переиспользует @keyframes rise; повторные открытия — без каскада) */
+.view{ scroll-margin-top:62px; }
+.view.settled .reveal{ animation:none; opacity:1; transform:none; }
+
+/* ОБЗОР */
+.home-head{ display:flex; flex-direction:column; gap:2px; margin:18px 4px 4px; }
+.home-head h1{ font:700 16px var(--f-mono); letter-spacing:.4px; color:var(--txt); margin:0; }
+.home-head .sub{ font-size:12px; color:var(--txt-dim); }
+.agg{ display:flex; flex-wrap:wrap; gap:26px 34px; margin-top:14px; }
+.agg .k{ font-size:10px; letter-spacing:.9px; text-transform:uppercase; color:var(--txt-faint); margin-bottom:5px; }
+.agg .v{ font:600 16px var(--f-mono); font-variant-numeric:tabular-nums; color:var(--txt); }
+
+.botgrid{ display:grid; gap:14px; margin-top:14px;
+  grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); }
+.botcard{ text-align:left; width:100%; cursor:pointer; font-family:var(--f-sans);
+  background:linear-gradient(180deg, var(--panel-2), var(--panel));
+  border:1px solid var(--line); border-radius:var(--r); padding:var(--pad);
+  box-shadow:0 1px 0 rgba(255,255,255,.02) inset, 0 6px 22px -16px rgba(0,0,0,.8);
+  transition:border-color .18s, box-shadow .18s, transform .18s; }
+.botcard:hover{ border-color:var(--line-2); box-shadow:0 10px 30px -18px rgba(0,0,0,.9); }
+.botcard .bc-top{ display:flex; align-items:center; gap:9px; }
+.botcard .bc-name{ font:600 14px var(--f-mono); color:var(--txt); }
+.botcard .bc-tag{ margin-left:auto; font:600 10px var(--f-mono); letter-spacing:.6px;
+  text-transform:uppercase; padding:3px 8px; border-radius:20px; border:1px solid var(--line); color:var(--txt-dim); }
+.botcard .bc-tag.run{ color:var(--pos); background:var(--pos-bg); border-color:rgba(41,224,143,.4); }
+.botcard .bc-tag.soon{ color:var(--neu); background:var(--neu-bg); border-color:rgba(255,176,46,.3); }
+.botcard .bc-desc{ margin:9px 0 0; font-size:12px; color:var(--txt-dim); line-height:1.5; }
+.botcard .bc-foot{ display:flex; align-items:center; gap:10px; margin-top:12px;
+  padding-top:11px; border-top:1px solid var(--line-soft);
+  font:500 12px var(--f-mono); font-variant-numeric:tabular-nums; color:var(--txt-dim); }
+.botcard .bc-open{ margin-left:auto; color:var(--accent); font-weight:600; white-space:nowrap; }
+.botcard .bc-open .arw{ display:inline-block; transition:transform .22s cubic-bezier(.2,.7,.2,1); }
+.botcard:hover .bc-open .arw{ transform:translateX(2px); }
+.botcard.soon{ border-style:dashed; opacity:.9; }
+.botcard.soon .bc-name{ color:var(--txt-dim); }
+.botcard.soon .bc-foot{ color:var(--txt-faint); }
+
+/* заглушка «СКОРО» */
+.soon-view{ max-width:560px; margin:56px auto; text-align:center; padding:32px 28px; }
+.soon-view .glyph{ font-size:26px; color:var(--txt-faint); line-height:1; }
+.soon-view h2{ font:700 16px var(--f-mono); color:var(--txt); margin:12px 0 0;
+  display:inline-flex; align-items:center; gap:10px; justify-content:center; }
+.soon-view p{ color:var(--txt-dim); font-size:13px; line-height:1.6; margin:12px 0 0; }
+.soon-view .whatnext{ text-align:left; display:inline-block; margin:16px 0 0; color:var(--txt-dim);
+  font-size:12.5px; line-height:1.7; padding-left:18px; }
+.soon-view .acts{ display:flex; gap:10px; justify-content:center; margin-top:22px; flex-wrap:wrap; }
+.ghost-btn{ font:700 11.5px var(--f-sans); letter-spacing:.7px; text-transform:uppercase;
+  padding:10px 20px; border-radius:8px; cursor:pointer; color:var(--txt-dim);
+  background:transparent; border:1px solid var(--line-2); transition:.15s; }
+.ghost-btn:hover{ color:var(--txt); border-color:var(--accent); }
 
 /* ───────────────────────── CARDS / SECTIONS ───────────────────────── */
 .grid{ display:grid; gap:14px; margin-top:14px; }
@@ -628,29 +711,87 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
   <!-- ══════════════════ TOP BAR (C: бейдж + Live + штамп) ══════════════════ -->
   <header class="topbar">
     <div class="brand">
-      <span class="mark">BOT<span class="dot">·</span>LAB</span>
-      <span class="sub">Дельта-нейтральный арбитраж ставок финансирования · GMX&nbsp;V2 (Arbitrum) × Hyperliquid</span>
+      <button class="mark markbtn" id="homeMark" aria-label="BOT·LAB — к обзору">BOT<span class="dot">·</span>LAB</button>
     </div>
+
+    <!-- переключатель модулей-ботов: «Обзор» + активные боты + заглушки (WAI-ARIA tabs) -->
+    <div class="botswitch" id="botSwitch" role="tablist" aria-label="Основная навигация">
+      <button role="tab" id="tab-home" aria-controls="view-home" aria-selected="true" tabindex="0" class="tab">Обзор</button>
+      <button role="tab" id="tab-funding-arb" aria-controls="view-funding-arb" aria-selected="false" tabindex="-1" class="tab"><span class="bot-dot idle" aria-hidden="true"></span>Funding-arb<span class="sr-only" id="tabStatus-funding-arb">, не запущен</span></button>
+      <button role="tab" id="tab-basis-carry" aria-controls="view-basis-carry" aria-selected="false" tabindex="-1" class="tab soon"><span class="bot-dot pending" aria-hidden="true"></span>Basis-carry<span class="soon-badge">СКОРО</span></button>
+    </div>
+
     <span class="spacer"></span>
     <span class="badge-paper"><span class="blip"></span>PAPER · без реального капитала</span>
-    <div class="pollctl" title="Интервал опроса живых данных — как часто обновляется бумажный тест">
-      <span class="lbl">опрос</span>
-      <div class="seg" id="pollSel" role="group" aria-label="Интервал опроса живых данных">
-        <button data-v="1"  aria-pressed="false">1м</button>
-        <button data-v="5"  aria-pressed="true">5м</button>
-        <button data-v="15" aria-pressed="false">15м</button>
-      </div>
-    </div>
-    <button class="live" id="liveBtn" title="Обновить живые данные сейчас (опрос идёт автоматически по выбранному интервалу)">
-      <span class="led"></span><span id="liveTxt">ЗАГРУЗКА…</span><span aria-hidden="true" style="opacity:.55">⟳</span>
-    </button>
-    <button class="help-btn" data-help="topbar" aria-haspopup="dialog" aria-expanded="false" aria-label="Справка: статус данных и опрос">?</button>
+
     <button class="verpill" id="verPill" aria-haspopup="dialog" aria-expanded="false" aria-label="Версия и статус обновления">
       <span class="vdot"></span><span id="verPillTxt">—</span>
     </button>
     <button class="help-btn" data-help="updater" aria-haspopup="dialog" aria-expanded="false" aria-label="Справка: обновления приложения">?</button>
-    <span class="stamp">данные по состоянию на <b id="stamp">ожидание живых данных…</b></span>
+
+    <!-- контролы живых данных Funding-arb: контекстные, скрыты вне его вида; при нехватке ширины
+         переносятся на вторую строку единым блоком (персистентная хром-часть остаётся на строке 1) -->
+    <div class="bot-tools" id="botTools">
+      <div class="pollctl" title="Интервал опроса живых данных — как часто обновляется бумажный тест">
+        <span class="lbl">опрос</span>
+        <div class="seg" id="pollSel" role="group" aria-label="Интервал опроса живых данных">
+          <button data-v="1"  aria-pressed="false">1м</button>
+          <button data-v="5"  aria-pressed="true">5м</button>
+          <button data-v="15" aria-pressed="false">15м</button>
+        </div>
+      </div>
+      <button class="live" id="liveBtn" title="Обновить живые данные сейчас (опрос идёт автоматически по выбранному интервалу)">
+        <span class="led"></span><span id="liveTxt">ЗАГРУЗКА…</span><span aria-hidden="true" style="opacity:.55">⟳</span>
+      </button>
+      <button class="help-btn" data-help="topbar" aria-haspopup="dialog" aria-expanded="false" aria-label="Справка: статус данных и опрос">?</button>
+      <span class="stamp">данные по состоянию на <b id="stamp">ожидание живых данных…</b></span>
+    </div>
   </header>
+
+  <!-- ═══════════════════════ ВИД · ОБЗОР (home) ═══════════════════════ -->
+  <section id="view-home" role="tabpanel" aria-labelledby="tab-home" tabindex="-1" class="view reveal">
+    <div class="home-head">
+      <h1>Обзор</h1>
+      <span class="sub">Модули стратегий и их состояние · бумажный тест, без реального капитала</span>
+    </div>
+
+    <div class="card agg" aria-live="polite">
+      <div><div class="k">Готовых модулей</div><div class="v" id="aggReady">— / —</div></div>
+      <div><div class="k">Открытых позиций</div><div class="v" id="aggOpen">—</div></div>
+      <div><div class="k">Суммарный P&amp;L · нетто</div><div class="v" id="aggPnl">—</div></div>
+    </div>
+
+    <div class="botgrid">
+      <button class="botcard" type="button" data-open="funding-arb">
+        <div class="bc-top">
+          <span class="bot-dot idle" id="card-dot-funding-arb" aria-hidden="true"></span>
+          <span class="bc-name">Funding-arb</span>
+          <span class="bc-tag idle" id="card-tag-funding-arb">НЕ ЗАПУЩЕН</span>
+        </div>
+        <p class="bc-desc">Дельта-нейтральный арбитраж ставок финансирования · GMX&nbsp;V2 (Arbitrum) × Hyperliquid</p>
+        <div class="bc-foot">
+          <span id="card-status-funding-arb">○ не запущен — нет открытых позиций</span>
+          <span class="bc-open">Открыть <span class="arw">→</span></span>
+        </div>
+      </button>
+
+      <button class="botcard soon" type="button" data-open="basis-carry">
+        <div class="bc-top">
+          <span class="bot-dot pending" aria-hidden="true"></span>
+          <span class="bc-name">Basis-carry</span>
+          <span class="bc-tag soon">СКОРО</span>
+        </div>
+        <p class="bc-desc">Базисная торговля спот–фьючерс · отдельная логика и бумажный счёт</p>
+        <div class="bc-foot">
+          <span>○ модуль в разработке — запуск позже</span>
+          <span class="bc-open">Подробнее <span class="arw">→</span></span>
+        </div>
+      </button>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════ ВИД · FUNDING-ARB (оборачивает существующий стек без изменений) ═══════════════════════ -->
+  <section id="view-funding-arb" role="tabpanel" aria-labelledby="tab-funding-arb" tabindex="-1" class="view" hidden>
 
   <!-- ══════════════════ ЗОНА Ⅱ · ТОРГОВЛЯ · PAPER TRADING (форвард, с t0) ══════════════════ -->
   <section id="zoneTrade" class="zone zone-trade reveal" style="animation-delay:.03s" aria-labelledby="zoneTradeHead" tabindex="-1">
@@ -1165,6 +1306,28 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
     </div>
   </footer>
 
+  </section><!-- /view-funding-arb -->
+
+  <!-- ═══════════════════════ ВИД · BASIS-CARRY (заглушка «СКОРО») ═══════════════════════ -->
+  <section id="view-basis-carry" role="tabpanel" aria-labelledby="tab-basis-carry" tabindex="-1" class="view" hidden>
+    <div class="soon-view card reveal">
+      <div class="glyph" aria-hidden="true">◌</div>
+      <h2>Basis-carry <span class="soon-badge">СКОРО</span></h2>
+      <p>Модуль в разработке. Здесь появится базисная стратегия (спот–фьючерс) с собственной
+         логикой позиций и отдельным бумажным счётом — независимо от модуля «Funding-arb».</p>
+      <ul class="whatnext">
+        <li>Скринер базиса по инструментам</li>
+        <li>Форвардный бумажный тест с t0</li>
+        <li>Журнал операций и сверка P&amp;L</li>
+      </ul>
+      <p class="faint">Пока доступен модуль «Funding-arb».</p>
+      <div class="acts">
+        <button type="button" class="ghost-btn" data-open="home">← К обзору</button>
+        <button type="button" class="recalc-btn" data-open="funding-arb">Открыть Funding-arb</button>
+      </div>
+    </div>
+  </section>
+
 </div>
 
 <script>
@@ -1286,6 +1449,7 @@ function applyDataset(ds){
   if(ds.settings && ds.settings.costs && !costFocusActive()) Object.assign(COSTS, ds.settings.costs);
   updateFreshness();
   if(typeof render==='function') render(); // render() now includes renderTrade()
+  if(typeof refreshOverview==='function') refreshOverview(); // свод «Обзора» + статус карточки/вкладки Funding-arb
 }
 
 /* ============================================================================
@@ -1300,6 +1464,7 @@ const state = {
   cap:   1000,        // selected capital — по умолчанию МИНИМАЛЬНЫЙ из матрицы (CAPS[0])
   lev:   1,           // selected leverage (matrix)
   live:  false,
+  view:  'home',      // активный вид оболочки: home | funding-arb | basis-carry
 };
 const CAPS = [1000, 10000, 100000, 1000000];
 const LEVS = [1, 10];
@@ -3063,6 +3228,112 @@ $('verPill').onclick = ()=>{
     renderVerpill();
   });
 })();
+
+/* ═══════════════════════ ОБОЛОЧКА · ПЕРЕКЛЮЧАТЕЛЬ ВИДОВ (боты как вкладки) ═══════════════════════ */
+/* Реестр модулей-ботов — единственный источник правды. Второй бот пока заглушка (ready:false);
+   реальное имя правится здесь и в разметке карточки/вкладки. Изоляция логики (namespace IPC,
+   botId состояния, отдельный движок) — этап 2, когда бот реально строится. */
+const BOTS = [
+  { id:'funding-arb', ready:true  },
+  { id:'basis-carry', ready:false },
+];
+const VIEW_IDS = ['home', ...BOTS.map(b=>b.id)];
+const isReadyBot = id => BOTS.some(b=>b.id===id && b.ready);
+const tabEl  = id => $('tab-'  + id);
+const viewEl = id => $('view-' + id);
+
+function setView(id, opts){
+  opts = opts || {};
+  if(!VIEW_IDS.includes(id)) id = 'home';
+  state.view = id;
+  // 1) tablist: aria-selected + roving tabindex
+  VIEW_IDS.forEach(v=>{ const t=tabEl(v); if(!t) return;
+    const on=v===id; t.setAttribute('aria-selected', on?'true':'false'); t.tabIndex = on?0:-1; });
+  // 2) показать целевой вид, спрятать остальные
+  VIEW_IDS.forEach(v=>{ const el=viewEl(v); if(el) el.hidden = (v!==id); });
+  // 3) контекстные контролы Funding-arb — только на готовом боте
+  const bt=$('botTools'); if(bt) bt.hidden = !isReadyBot(id);
+  syncTopbarH(); // высота шапки меняется вместе с видимостью botTools
+  // 4) мотив: один корневой rise (реплей как в кодовой базе), без повторных внутренних каскадов
+  const el = viewEl(id);
+  if(el){
+    if(smoothOk()){ el.classList.remove('reveal'); void el.offsetWidth; el.classList.add('reveal'); }
+    if(el.classList.contains('seen')) el.classList.add('settled'); else el.classList.add('seen');
+    window.scrollTo({ top:0, behavior: smoothOk()?'smooth':'auto' });
+  }
+  // 5) фокус: клавиатурная активация оставляет фокус на вкладке (APG); клик по карточке уводит внутрь вида
+  if(opts.focusView && el) el.focus({ preventScroll:true });
+}
+
+const botSwitch = $('botSwitch');
+if(botSwitch){
+  // клик по вкладке (мышь) — фокус остаётся на вкладке (APG)
+  botSwitch.addEventListener('click', e=>{
+    const t = e.target.closest('[role="tab"]'); if(!t) return;
+    setView(t.id.replace('tab-',''));
+  });
+  // roving-стрелки, ручная активация (Enter/Space) — виды тяжёлые, по стрелке не перерисовываем
+  botSwitch.addEventListener('keydown', e=>{
+    const tabs = [...botSwitch.querySelectorAll('[role="tab"]')];
+    const i = tabs.indexOf(document.activeElement); if(i<0) return;
+    let n = i;
+    if(e.key==='ArrowRight') n=(i+1)%tabs.length;
+    else if(e.key==='ArrowLeft') n=(i-1+tabs.length)%tabs.length;
+    else if(e.key==='Home') n=0;
+    else if(e.key==='End') n=tabs.length-1;
+    else if(e.key==='Enter'||e.key===' '){ e.preventDefault(); setView(tabs[i].id.replace('tab-','')); return; }
+    else return;
+    e.preventDefault(); tabs[n].focus();
+  });
+}
+
+// карточки «Обзора» и кнопки заглушки → открыть вид, увести фокус внутрь
+document.addEventListener('click', e=>{
+  const o = e.target.closest('[data-open]'); if(!o) return;
+  setView(o.dataset.open, { focusView:true });
+});
+// логотип BOT·LAB → к «Обзору» (фокус остаётся на логотипе в шапке)
+const homeMark = $('homeMark');
+if(homeMark) homeMark.addEventListener('click', ()=> setView('home'));
+
+/* Сводка «Обзора»: свод-полоса + статус карточки/точки вкладки Funding-arb из живого счёта.
+   Вызывается из applyDataset — карточка и точка живут в реальном времени. */
+function refreshOverview(){
+  const acc = LIVE.account;
+  const open = acc ? acc.open : 0;
+  const running = open>0;
+  const aggReady=$('aggReady'), aggOpen=$('aggOpen'), aggPnl=$('aggPnl');
+  if(aggReady) aggReady.textContent = BOTS.filter(b=>b.ready).length + ' / ' + BOTS.length;
+  if(aggOpen)  aggOpen.textContent = String(open);
+  if(aggPnl){
+    if(acc && acc.count>0){ aggPnl.textContent = fmtUSDfull(acc.netPnl); aggPnl.className = 'v '+clsSign(acc.netPnl); }
+    else { aggPnl.textContent = 'нет открытых позиций'; aggPnl.className = 'v faint'; }
+  }
+  // точка вкладки + карточка Funding-arb
+  const tab = tabEl('funding-arb');
+  const dotTab = tab && tab.querySelector('.bot-dot');
+  const dotCard=$('card-dot-funding-arb'), tag=$('card-tag-funding-arb');
+  const st=$('card-status-funding-arb'), srt=$('tabStatus-funding-arb');
+  [dotTab, dotCard].forEach(d=>{ if(d) d.className = 'bot-dot' + (running?' run':' idle'); });
+  if(tag){ tag.textContent = running?'ЗАПУЩЕН':'НЕ ЗАПУЩЕН'; tag.className = 'bc-tag' + (running?' run':' idle'); }
+  if(srt) srt.textContent = running?', запущен':', не запущен';
+  if(st){
+    if(running) st.innerHTML = open+' откр. из '+acc.count+' · P&L нетто <span class="'+clsSign(acc.netPnl)+'">'+fmtUSDfull(acc.netPnl)+'</span>';
+    else if(acc && acc.count>0) st.textContent = 'нет открытых позиций · закрытых: '+acc.count;
+    else st.textContent = '○ не запущен — нет открытых позиций';
+  }
+}
+
+// высота шапки (одна/две строки — зависит от вида и ширины окна) → CSS-переменная,
+// чтобы липкий тулбар анализа всегда стоял точно под шапкой при прокрутке
+function syncTopbarH(){
+  const tb = document.querySelector('.topbar');
+  if(tb) document.documentElement.style.setProperty('--topbar-h', tb.offsetHeight + 'px');
+}
+window.addEventListener('resize', syncTopbarH);
+
+// стартовый вид — всегда «Обзор» (последний открытый бот не запоминаем)
+setView('home', { force:true });
 
 /* init: первый рендер — «пустые» состояния (никаких сид-цифр), затем живые данные из main */
 render(); // включает renderTrade()

@@ -113,6 +113,16 @@ async function run() {
   });
   await win.loadFile(join(HERE, "..", "src", "renderer", "index.html"));
 
+  // BotLab shell: the app now boots into the "Обзор" (home) view with the funding-arb view hidden.
+  // This oracle drives the funding-arb DOM directly (computed-style + help-popover visibility checks),
+  // so make every view (and the funding-arb-only #botTools) visible up front — restoring the
+  // single-page visibility the checks below rely on.
+  await win.webContents.executeJavaScript(`(() => {
+    document.querySelectorAll('section.view').forEach(v => { v.hidden = false; });
+    const bt = document.getElementById('botTools'); if (bt) bt.hidden = false;
+    return true;
+  })()`);
+
   const cases = selectionCases();
   const datasets = {};
   let comboChecks = 0;

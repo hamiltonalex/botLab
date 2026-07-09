@@ -552,7 +552,7 @@ function createWindow() {
     minHeight: 720,
     show: !SMOKE,
     backgroundColor: "#07090d",
-    title: "Funding-Arb Paper Simulator",
+    title: "BotLab",
     webPreferences: {
       preload: join(HERE, "preload.cjs"),
       contextIsolation: true,
