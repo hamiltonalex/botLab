@@ -21,6 +21,7 @@ import { decideHedge, applyFill } from "./hedge.js";
 import { markStructure, markPerp, accrueFunding, attribute, noHedgeAttribute, appendLedger } from "./pnl.js";
 import { initMetrics, foldCycle, summarize } from "./metrics.js";
 import { structureMargin } from "./margin.js";
+import { computeScenarios } from "./stress.js";
 
 export const BOT_ID = "btc-options";
 export const SCHEMA_VERSION = 1;
@@ -259,6 +260,11 @@ export function evaluate(state, snapshot, nowMs) {
     });
   }
 
+  // ── Stress scenarios (Phase 2d): pure what-if from net greeks + payoff geometry. Deterministic.
+  const stress = structure
+    ? { scenarios: computeScenarios(structure, snapshot, greeks, state.perpState, cfg) }
+    : { scenarios: [] };
+
   return {
     ts: snapshot.ts ?? nowMs,
     underlying_price: snapshot.underlying ?? null,
@@ -289,6 +295,7 @@ export function evaluate(state, snapshot, nowMs) {
     pnl,
     hedge_vs,
     metrics: summarize(state.metrics),
+    stress,
     blackout: decision.blackout ?? { active: false, reason: null },
     gate: { ok: gateOk, reason: gateOk ? null : "greeks-missing" },
     payoff,
