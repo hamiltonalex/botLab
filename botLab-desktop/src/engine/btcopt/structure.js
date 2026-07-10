@@ -1,7 +1,8 @@
 // structure.js — «BTC-опционы» (Strategy One) 4-leg winged-straddle STRUCTURE builder + net-greek/debit
-// aggregators. PURE: no fetch / fs / DOM / Date.now — deterministic and unit-testable. The structure is
-// the paper position (long ATM call + long ATM put − short OTM call − short OTM put); market greeks come
-// FROM the composite snapshot (Deribit), never priced here. engine.js later stamps id/createdAt — NOT here.
+// aggregators + pre-trade gates (pickExpiry / structureRejections). PURE: no fetch / fs / DOM / Date.now —
+// time comes in as nowMs, so everything is deterministic and unit-testable. The structure is the paper
+// position (long ATM call + long ATM put − short OTM call − short OTM put); market greeks come FROM the
+// composite snapshot (Deribit), never priced here. engine.js later stamps id/createdAt — NOT here.
 
 // Accept a raw chain array OR a { instruments:[...] } envelope (get_instruments result shape).
 const asMetas = (chain) => (Array.isArray(chain) ? chain : chain?.instruments ?? []);
@@ -9,6 +10,22 @@ const asMetas = (chain) => (Array.isArray(chain) ? chain : chain?.instruments ??
 // The listed strike closest to a target (first/lowest wins on a tie — irrelevant on a real grid).
 const nearest = (arr, target) =>
   arr.reduce((best, s) => (Math.abs(s - target) < Math.abs(best - target) ? s : best), arr[0]);
+
+// pickExpiry(chain, nowMs, { maxDays, minLeadMs }) — the nearest LIVE expiry for auto-construct: the
+// smallest distinct expiration_timestamp strictly after nowMs + minLeadMs and at most maxDays·24h out
+// (boundary inclusive). minLeadMs lets the caller skip expiries already inside the pre-expiry blackout
+// (opening into delta decay is never right — the NEXT expiry is the honest auto-pick then).
+// Accepts the same chain shapes as buildStructure. Returns the timestamp (ms) or null if none qualify.
+export function pickExpiry(chain, nowMs, { maxDays = 3, minLeadMs = 0 } = {}) {
+  const horizon = nowMs + maxDays * 86400000;
+  let best = null;
+  for (const m of asMetas(chain)) {
+    const t = m?.expiration_timestamp;
+    if (!Number.isFinite(t) || t <= nowMs + minLeadMs || t > horizon) continue;
+    if (best === null || t < best) best = t;
+  }
+  return best;
+}
 
 // Build the 4-leg structure from strategy params + an option chain + a live snapshot.
 // params = { expiry(ms), callOffsetPct, putOffsetPct, qty, execStyle }. Returns { error } (Russian) if a
@@ -102,23 +119,46 @@ export function netDebit(structure, snapshot) {
   return { debitUsd };
 }
 
-// Pre-open sanity checks against the instrument metas. metaByInstrument = { [instrument]: meta }.
-// errors are short Russian strings; ok is true only when empty.
-export function validateStructure(structure, metaByInstrument = {}) {
-  const errors = [];
+// structureRejections(structure, metaByInstrument) — the pre-open sanity checks as STRUCTURED
+// rejections [{ code, severity, detail }] for the pre-trade panel: "structure" (экспирации ног
+// расходятся / нет метаданных), "min_size" (кол-во ниже минимального лота Deribit), "step_size"
+// (кол-во не на сетке лота). severity is always "block" — every rejection forbids opening. All legs
+// carry the same params.qty, so the list is deduped to one rejection per code (the first offending
+// leg names the detail); a leg below the minimal lot reports min_size only (off-grid follows anyway).
+export function structureRejections(structure, metaByInstrument = {}) {
+  const rejections = [];
+  const seen = new Set();
+  const push = (code, detail) => {
+    if (seen.has(code)) return; // one entry per reason — duplicates across legs add only noise
+    seen.add(code);
+    rejections.push({ code, severity: "block", detail });
+  };
+
   const legs = structure?.legs ?? [];
   const exp0 = legs[0]?.expiryMs;
-  if (legs.some((l) => l.expiryMs !== exp0)) errors.push("Экспирации ног не совпадают");
+  if (legs.some((l) => l.expiryMs !== exp0)) push("structure", "Экспирации ног не совпадают");
   for (const l of legs) {
     const meta = metaByInstrument[l.instrument];
     const min = meta?.min_trade_amount ?? l.minTradeAmount;
     if (!Number.isFinite(min)) {
-      errors.push(`${l.instrument}: нет метаданных инструмента`);
+      push("structure", `${l.instrument}: нет метаданных инструмента`);
       continue;
     }
-    if (l.qtyAbs < min) errors.push(`${l.instrument}: кол-во меньше минимального лота`);
+    if (l.qtyAbs < min) {
+      push("min_size", `${l.instrument}: кол-во ${l.qtyAbs} ниже минимального лота ${min} (Deribit)`);
+      continue;
+    }
     const steps = l.qtyAbs / min;
-    if (Math.abs(steps - Math.round(steps)) > 1e-9) errors.push(`${l.instrument}: кол-во не кратно шагу лота`);
+    if (Math.abs(steps - Math.round(steps)) > 1e-9)
+      push("step_size", `${l.instrument}: кол-во ${l.qtyAbs} не кратно шагу ${min}`);
   }
+  return rejections;
+}
+
+// Pre-open sanity checks against the instrument metas. metaByInstrument = { [instrument]: meta }.
+// errors are short Russian strings; ok is true only when empty. Kept as the stable { ok, errors }
+// contract for engine.js / main.js — a thin wrapper over the structured rejections above.
+export function validateStructure(structure, metaByInstrument = {}) {
+  const errors = structureRejections(structure, metaByInstrument).map((r) => r.detail);
   return { ok: errors.length === 0, errors };
 }

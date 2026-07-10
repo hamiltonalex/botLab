@@ -15,9 +15,9 @@
 //   account                          — paper equity/margin estimate.
 // All time-dependent behaviour takes an explicit nowMs (never Date.now()) so tests are reproducible.
 
-import { buildStructure, optionDeltaTotal, netGreeks, netDebit, validateStructure } from "./structure.js";
+import { buildStructure, optionDeltaTotal, netGreeks, netDebit, pickExpiry, structureRejections } from "./structure.js";
 import { payoffCurve } from "./payoff.js";
-import { decideHedge, applyFill } from "./hedge.js";
+import { decideHedge, applyFill, settlementBlackout } from "./hedge.js";
 import { markStructure, markPerp, accrueFunding, attribute, noHedgeAttribute, appendLedger } from "./pnl.js";
 import { initMetrics, foldCycle, summarize } from "./metrics.js";
 import { structureMargin } from "./margin.js";
@@ -303,16 +303,56 @@ export function evaluate(state, snapshot, nowMs) {
   };
 }
 
-// ── Open a manual structure. Validates against the chain metas; stamps id/createdAt (engine owns these).
+// ── Pre-trade check (Phase 3a): the structured go/no-go for opening THIS structure at THIS moment.
+// Composes the pure structure checks (min lot / lot step / expiry coherence — "block"), the settlement
+// blackout at the open moment ("block"; PDF p.14 "invalid due to … settlement state" — skipped when the
+// user disabled the blackout), and the real Deribit IM vs paper equity ("warn" — user decision: surfaced
+// with real numbers, opening still allowed; consistent with 2c's over_deposit honesty).
+export function preTradeCheck(state, structure, metaByInstrument, snapshot, nowMs) {
+  const cfg = buildCfg(state.settings);
+  const rejections = [...structureRejections(structure, metaByInstrument)];
+  if (cfg.settlementBlackout !== false) {
+    const b = settlementBlackout(nowMs, structure.expiryMs, cfg);
+    if (b.active)
+      rejections.push({
+        code: "settlement",
+        severity: "block",
+        detail:
+          b.reason === "pre-expiry"
+            ? "<30 мин до экспирации — открытие в блэкаут запрещено"
+            : "окно расчёта 08:00 UTC — открытие в блэкаут запрещено",
+      });
+  }
+  const equity = (cfg.paperEquityUsd ?? 100) + attribute(state, snapshot).net_total;
+  const im = structureMargin(structure, snapshot).initial;
+  if (im > equity)
+    rejections.push({
+      code: "margin",
+      severity: "warn",
+      detail: `IM $${Math.round(im)} > депозит $${Math.round(equity)} — структура не помещается в депозит`,
+    });
+  return rejections;
+}
+
+// ── Open a structure (manual or auto). Auto-construction (Phase 3a): expiry == null ⇒ the engine picks
+// the nearest live expiry itself (≤3d, skipping any already inside the pre-expiry blackout — opening into
+// delta decay is never right). Gated by preTradeCheck; "warn" rejections ride along in the OK response.
 export function openStructure(state, params, chain, snapshot, nowMs) {
+  if (params && params.expiry == null) {
+    const cfg = buildCfg(state.settings);
+    const exp = pickExpiry(chain, nowMs, { minLeadMs: (cfg.preExpirySec ?? 1800) * 1000 });
+    if (exp == null) return { error: "нет живых экспираций ≤3д — авто-подбор невозможен" };
+    params = { ...params, expiry: exp };
+  }
   const built = buildStructure(params, chain, snapshot);
   if (built.error) return built;
 
   const metas = Array.isArray(chain) ? chain : chain?.instruments ?? [];
   const metaByInstrument = {};
   for (const l of built.legs) metaByInstrument[l.instrument] = metas.find((m) => m.instrument_name === l.instrument);
-  const v = validateStructure(built, metaByInstrument);
-  if (!v.ok) return { error: v.errors.join("; ") };
+  const rejections = preTradeCheck(state, built, metaByInstrument, snapshot, nowMs);
+  const blocks = rejections.filter((r) => r.severity === "block");
+  if (blocks.length) return { error: blocks.map((r) => r.detail).join("; "), rejections };
 
   built.id = `s1-${built.expiryMs}-${built.strikes.atm}-${nowMs}`;
   built.createdAt = nowMs;
@@ -327,7 +367,7 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
     priceRef: snapshot.underlying ?? 0,
     note: `winged straddle Kp${built.strikes.kp}/K${built.strikes.atm}/Kc${built.strikes.kc} · x${built.legs[0].qtyAbs}`,
   });
-  return { ok: true, structure: built };
+  return { ok: true, structure: built, rejections };
 }
 
 // ── Close the structure: flatten the perp (realize inverse P&L), lock in the option MtM, keep the

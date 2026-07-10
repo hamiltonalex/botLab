@@ -27,7 +27,7 @@ import { buildXlsxBuffer } from "./xlsx-writer.js";
 import { loadPositions, savePositions, loadSettings, saveSettings, hasSettings, loadBotState, saveBotState, loadBotSettings, saveBotSettings } from "../engine/store.js";
 import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
-import { buildStructure as s1buildStructure, validateStructure as s1validateStructure } from "../engine/btcopt/structure.js";
+import { buildStructure as s1buildStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry } from "../engine/btcopt/structure.js";
 import { payoffCurve as s1payoffCurve } from "../engine/btcopt/payoff.js";
 import { decimate } from "../engine/format.js";
 import { TWO_LEG, ONE_LEG, ALL_MARKETS, twoLegByKey, oneLegByKey, chainsInUse } from "../engine/universe.js";
@@ -512,9 +512,20 @@ const btcOptLedgerJson = (eng) =>
 
 // Resolve a live structure for open/preview: cached chain → underlying (perp index) → the 4 legs → a full
 // snapshot with entry marks. Shared by s1:openStructure and s1:previewStructure (which never opens).
+// Auto-construction (Phase 3a): expiry == null ⇒ pick the nearest live expiry HERE (the instrument probe
+// needs a concrete expiry), mirroring the engine's own pick (skip anything inside the pre-expiry blackout)
+// so both layers always agree. Returns the resolved params so callers use the same pick.
 async function resolveBtcOptStructureLive(params) {
   const bo = state.btcOptions;
   const chain = await ensureBtcOptChain();
+  let autoPicked = false;
+  if (!params || params.expiry == null) {
+    const s = bo.settings || {};
+    const exp = s1pickExpiry(chain, Date.now(), { minLeadMs: (s.preExpirySec ?? 1800) * 1000 });
+    if (exp == null) return { error: "нет живых экспираций ≤3д — авто-подбор невозможен" };
+    params = { ...(params || {}), expiry: exp };
+    autoPicked = true;
+  }
   const perpTk = await deribit.getTicker(deribit.PERP_INSTRUMENT, { testnet: !!bo.settings.testnet });
   const probe = s1buildStructure(params, chain, { underlying: perpTk.index_price });
   if (probe.error) return { error: probe.error };
@@ -523,7 +534,7 @@ async function resolveBtcOptStructureLive(params) {
   if (!snap.perp || Object.keys(snap.legs).length < legInstruments.length) {
     return { error: "не удалось получить котировки всех ног (Deribit)" };
   }
-  return { chain, snap };
+  return { chain, snap, params, autoPicked };
 }
 
 function wireIpcStrategy1() {
@@ -598,16 +609,21 @@ function wireIpcStrategy1() {
     try {
       const res = await resolveBtcOptStructureLive(params);
       if (res.error) return { error: res.error };
-      const built = s1buildStructure(params, res.chain, res.snap); // now with entry marks
+      const built = s1buildStructure(res.params, res.chain, res.snap); // now with entry marks
       if (built.error) return { error: built.error };
       const metaByInstrument = {};
       for (const l of built.legs) metaByInstrument[l.instrument] = res.chain.instruments.find((m) => m.instrument_name === l.instrument);
       const v = s1validateStructure(built, metaByInstrument);
+      // Pre-trade preview (3a): the same structured rejections the open gate applies — the ticket shows
+      // the block/warn reasons BEFORE confirm (min lot / step / blackout / IM-vs-deposit with real numbers).
+      const rejections = s1engine.preTradeCheck(bo.engine, built, metaByInstrument, res.snap, Date.now());
       const payoff = s1payoffCurve(built, { min: res.snap.underlying * 0.75, max: res.snap.underlying * 1.25, n: 96 });
       return {
         ok: true,
         underlying: res.snap.underlying,
         strikes: built.strikes,
+        chosenExpiry: built.expiryMs, // the concrete expiry (engine-picked in auto mode)
+        auto: res.autoPicked,
         entryDebitUsd: built.entryDebitUsd,
         maxLossUsd: Math.abs(built.entryDebitUsd), // defined-risk: max loss at expiry = the net debit
         maxProfitUsd: payoff.plateau,
@@ -615,6 +631,7 @@ function wireIpcStrategy1() {
         payoff,
         valid: v.ok,
         validationErrors: v.errors,
+        rejections,
         legs: built.legs.map((l) => ({ instrument: l.instrument, side: l.side, type: l.type, strike: l.strike, entryMark: l.entryMark })),
         fresh: res.snap.fresh,
       };
@@ -628,14 +645,14 @@ function wireIpcStrategy1() {
     try {
       const res = await resolveBtcOptStructureLive(params);
       if (res.error) return { error: res.error };
-      const r = s1engine.openStructure(bo.engine, params, res.chain, res.snap, Date.now());
-      if (r.error) return { error: r.error };
+      const r = s1engine.openStructure(bo.engine, res.params, res.chain, res.snap, Date.now());
+      if (r.error) return { error: r.error, rejections: r.rejections ?? [] };
       bo.lastSnapshot = res.snap;
       bo.snapshot = s1engine.evaluate(bo.engine, res.snap, Date.now());
       ensureBtcOptSource(); // start / re-point the source at the new legs for live updates
       saveBotState(baseDir, BTCOPT_ID, bo.engine);
       push1();
-      return { ok: true, structureId: bo.engine.structure?.id };
+      return { ok: true, structureId: bo.engine.structure?.id, chosenExpiry: bo.engine.structure?.expiryMs, rejections: r.rejections ?? [] };
     } catch (e) {
       return { error: `Deribit: ${String(e.message || e)}` };
     }
@@ -1028,13 +1045,14 @@ app.whenReady().then(async () => {
       await win.webContents.executeJavaScript("typeof setView==='function' && setView('btc-options')");
       const chain = await win.webContents.executeJavaScript("window.s1.getChain()");
       const exps = (chain && chain.expiries) || [];
-      const exp = exps.find((e) => e.days >= 0.4 && e.days <= 3) || exps[0];
-      const params = { expiry: exp && exp.expiry, callOffsetPct: 10, putOffsetPct: 10, qty: 0.01, execStyle: "limit" };
+      // Phase 3a: full-stack AUTO-construction — expiry:null makes the engine pick the nearest live
+      // expiry itself; the response reports chosenExpiry + the structured pre-trade rejections.
+      const params = { expiry: null, auto: true, callOffsetPct: 10, putOffsetPct: 10, qty: 0.01, execStyle: "limit" };
       const open = await win.webContents.executeJavaScript(`window.s1.openStructure(${JSON.stringify(params)})`);
-      console.log("[s1smoke] getChain expiries:", exps.length, "| open:", JSON.stringify(open));
+      console.log("[s1smoke] getChain expiries:", exps.length, "| auto-open:", JSON.stringify(open));
       await new Promise((r) => setTimeout(r, 9000)); // a few live reprice ticks arrive via s1:push
       const dom = await win.webContents.executeJavaScript(
-        "JSON.stringify({decision:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.decision, netDelta:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.net_option_delta_bs, futDelta:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.current_futures_delta, perpQty:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.perp_position&&LIVE_S1.cycle.perp_position.contracts, net:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.pnl&&LIVE_S1.cycle.pnl.net_total, equity:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.account&&LIVE_S1.cycle.account.equity, ledger:LIVE_S1&&LIVE_S1.ledgerMeta&&LIVE_S1.ledgerMeta.count, hedgeVs:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.hedge_vs&&LIVE_S1.cycle.hedge_vs.hedge_contribution, sharpe:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.metrics&&LIVE_S1.cycle.metrics.sharpe, maxDD:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.metrics&&LIVE_S1.cycle.metrics.maxDrawdown, im:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.account&&LIVE_S1.cycle.account.initial_margin, mu:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.account&&LIVE_S1.cycle.account.maintenance_utilisation, overDep:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.account&&LIVE_S1.cycle.account.over_deposit, stressN:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.stress&&LIVE_S1.cycle.stress.scenarios&&LIVE_S1.cycle.stress.scenarios.length, running:LIVE_S1&&LIVE_S1.running, deltaShown:(document.getElementById('optNetDeltaBs')||{}).textContent, decisionShown:(document.getElementById('optDecision')||{}).textContent})",
+        "JSON.stringify({decision:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.decision, netDelta:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.net_option_delta_bs, futDelta:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.current_futures_delta, perpQty:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.perp_position&&LIVE_S1.cycle.perp_position.contracts, net:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.pnl&&LIVE_S1.cycle.pnl.net_total, equity:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.account&&LIVE_S1.cycle.account.equity, ledger:LIVE_S1&&LIVE_S1.ledgerMeta&&LIVE_S1.ledgerMeta.count, hedgeVs:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.hedge_vs&&LIVE_S1.cycle.hedge_vs.hedge_contribution, sharpe:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.metrics&&LIVE_S1.cycle.metrics.sharpe, maxDD:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.metrics&&LIVE_S1.cycle.metrics.maxDrawdown, im:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.account&&LIVE_S1.cycle.account.initial_margin, mu:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.account&&LIVE_S1.cycle.account.maintenance_utilisation, overDep:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.account&&LIVE_S1.cycle.account.over_deposit, stressN:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.stress&&LIVE_S1.cycle.stress.scenarios&&LIVE_S1.cycle.stress.scenarios.length, running:LIVE_S1&&LIVE_S1.running, autoExpiry:LIVE_S1&&LIVE_S1.structure&&LIVE_S1.structure.expiryMs, deltaShown:(document.getElementById('optNetDeltaBs')||{}).textContent, decisionShown:(document.getElementById('optDecision')||{}).textContent})",
       );
       console.log("[s1smoke] live-rendered via push:", dom);
       try { win.setContentSize(1500, 1700); await new Promise((r) => setTimeout(r, 300)); } catch {}

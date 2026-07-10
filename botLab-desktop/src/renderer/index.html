@@ -1678,6 +1678,9 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
             </div>
             <div class="launch-row">
               <button id="optOpenBtn" class="paperbtn open" aria-expanded="false" aria-controls="optLaunchTicket">▶ Открыть структуру (Paper Trading)</button>
+              <button id="optAutoBtn" class="paperbtn" aria-expanded="false" aria-controls="optLaunchTicket"
+                      title="Движок сам выберет ближайшую экспирацию ≤3д и ATM-страйки — подтверждение в тикете">▶ Старт (авто)</button>
+              <button class="help-btn" data-help="opt-auto">?</button>
               <span class="hint">winged straddle + дельта-хедж перпом · результат — в зоне «Хедж-движок» вверху</span>
             </div>
             <div id="optLaunchTicket" class="ticket" role="group" aria-label="Подтверждение открытия структуры (Paper Trading)" hidden>
@@ -1690,6 +1693,7 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
               <div class="trow"><span class="k">нетто-дебет (оценка)</span><span class="num neu" id="optTicketDebit">—</span></div>
               <div class="trow"><span class="k">макс. убыток · макс. прибыль</span><span class="num" id="optTicketMaxLoss">—</span></div>
               <div class="trow"><span class="k">готовность данных</span><span class="num" id="optTicketGate">—</span></div>
+              <div id="optTicketRejects" role="list" aria-label="Причины пре-трейд проверки" hidden></div>
               <div id="optTicketErr" class="ticket-err" role="alert" hidden></div>
               <div class="ticket-actions">
                 <button id="optTicketConfirm" class="paperbtn open">Подтвердить · открыть структуру</button>
@@ -3546,9 +3550,15 @@ const HELP_FUNDING_ARB = {
 };
 // Union of the namespaces — future bots add `...HELP_<BOT>`. Key collisions are caught by the oracle's
 // helpCoverage check (§16.4). This is the object the popover mechanism reads.
-// HELP_BTC_OPTIONS = the «BTC-опционы» bot's panels (Strategy One). 11 Phase-1 keys, namespaced `opt-*`
-// so they never collide with funding-arb keys. Oracle enforces the bijection: each key ↔ a live .help-btn.
+// HELP_BTC_OPTIONS = the «BTC-опционы» bot's panels (Strategy One), namespaced `opt-*` so they never
+// collide with funding-arb keys. Oracle enforces the bijection: each key ↔ a live .help-btn.
 const HELP_BTC_OPTIONS = {
+  'opt-auto': { t:'Старт (авто) · авто-подбор структуры', b:
+    '<p>«Старт (авто)» просит движок собрать структуру самостоятельно: ближайшая живая экспирация ≤3д, ATM-страйк по текущему underlying; крылья, количество и параметры движка берутся из конструктора. Открытие всё равно подтверждается тикетом.</p><ul>'+
+    '<li><b>Что выбирает движок</b> — экспирацию (<span class="fx">public/get_instruments</span>, ближайшая ≤3д, минуя окно &lt;30 мин до экспирации) и страйки <span class="fx">K/Kc/Kp</span>; строка «эксп. авто → 12JUL» в тикете показывает выбор, конструктор синхронизируется с ним.</li>'+
+    '<li><b>Пре-трейд проверки</b> — движок возвращает структурированные причины: <b class="neg">✕ блок</b> (минимальный лот, кратность шагу, блэкаут расчёта) блокирует кнопку; <b>⚠ предупр.</b> (например «IM $122 &gt; депозит $100») открытие не запрещает.</li>'+
+    '<li>Ручная правка экспирации в конструкторе снимает пометку «авто» — тикет всегда показывает фактический источник выбора.</li>'+
+    '<li>Авто-подбор меняет только гипотезу Зоны Ⅰ — живой счёт не затрагивается до «Подтвердить · открыть структуру».</li></ul>' },
   'opt-hedge': { t:'Хедж-движок · триггеры, фильтр, решение', b:
     '<p>Движок держит дельту около нуля дешёвым способом: сначала проверяет, есть ли повод хеджировать (триггеры), затем — стоит ли (фильтр издержек), и только потом решает.</p><ul>'+
     '<li><b>Триггеры</b> — хедж рассматривается, если сработал хотя бы один: <span class="fx">|Δ-избыток| &gt; дедбэнд</span>, движение цены с последнего хеджа &gt; порога, либо истёк временной интервал реприса.</li>'+
@@ -3596,7 +3606,8 @@ const HELP_BTC_OPTIONS = {
     '<li><b>Экспирация и страйки</b> — из выбора конструктора (K привязан к ATM, Kc/Kp — по офсету крыльев), только для чтения.</li>'+
     '<li><b>Кол-во</b> — единственное обязательное поле; проверяется на минимальный размер и шаг Deribit. Кнопка блокируется с видимой причиной.</li>'+
     '<li><b>Нетто-дебет D</b> и <b>макс. убыток/прибыль</b> — предварительная оценка по маркам цепочки; фактические зафиксируются при открытии.</li>'+
-    '<li><b>Готовность данных</b> — гейт греков и свежесть. После подтверждения структура появляется в зоне «Ⅱ · Хедж-движок» вверху; страница прокрутится к ней.</li></ul>' },
+    '<li><b>Готовность данных</b> — гейт греков и свежесть. После подтверждения структура появляется в зоне «Ⅱ · Хедж-движок» вверху; страница прокрутится к ней.</li>'+
+    '<li><b>Причины отказа</b> — структурированный список под «готовностью данных»: <b class="neg">✕ блок</b> (открытие запрещено — минимальный лот, шаг, блэкаут) и <b>⚠ предупр.</b> (открытие возможно — например, IM больше депозита). Кнопка блокируется только «блоками», причина всегда видна.</li></ul>' },
   'opt-conn': { t:'Подключение к Deribit · свежесть и гейт греков', b:
     '<p>Модуль читает публичный API Deribit (mark, mark_iv, greeks, underlying/index) — без ключей и ордеров. Кластер показывает свежесть данных и статус гейта.</p><ul>'+
     '<li><b>Индикатор</b>: <b>LIVE</b> (зелёный) — данные свежие и полные; <b>ПРЕДУПР.</b> (амбер) — частичная деградация; <b>УСТАРЕЛО</b> (красный) — последний опрос слишком стар; <b>НЕТ ДАННЫХ</b> — источник не запущен.</li>'+
@@ -3968,6 +3979,7 @@ updateFreshness();
    ════════════════════════════════════════════════════════════════════════════════════════════════ */
 let LIVE_S1 = null;
 let optPreviewCache = null, optPreviewErr = null; // гипотеза из s1.previewStructure (Зона Ⅰ)
+let optAutoPick = null, optAutoBusy = false;      // 3a: { expiry } — провенанс пилюли «эксп. авто → …»
 let optDeltaRing = [], optLastStructId = null;     // локальное окно Total Δ (main серию не шлёт)
 let optChainLoaded = false, optHydrated = false;
 const optSel = { expiry:null, wing:10, qty:0.01, deadband:'normal', priceTrig:0.5,
@@ -4307,6 +4319,7 @@ function renderOptExpiries(chain){
   sel.innerHTML = exps.map(e=>'<button type="button" data-v="'+e.expiry+'" aria-pressed="'+(e.expiry===optSel.expiry?'true':'false')+'">'+optExpLabel(e.expiry)+'</button>').join('');
   sel.querySelectorAll('button').forEach(b=> b.onclick=()=>{ if(!b.dataset.v) return;
     sel.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed','false')); b.setAttribute('aria-pressed','true');
+    optAutoPick=null; // ручной выбор снимает пометку «авто» — пилюля никогда не врёт
     optSel.expiry=Number(b.dataset.v); onOptStructParamChange(); });
 }
 
@@ -4329,7 +4342,10 @@ function renderOptStructPreview(){
   $('optStructStrikes').textContent = strikesTxt;
   $('optStructDebit').textContent = debit!=null?optDollars(debit):'—';
   $('optStructMax').textContent = maxTxt;
-  $('optTicketExpiry').textContent = expLabel||'—';
+  // 3a: авто-подобранная экспирация помечается пилюлей-провенансом (accent = выбор движка)
+  if(optAutoPick && expLabel && !ds.structure && optAutoPick.expiry===optSel.expiry)
+    $('optTicketExpiry').innerHTML='<span class="cfg-pill">эксп. авто → <b>'+expLabel+'</b></span>';
+  else $('optTicketExpiry').textContent = expLabel||'—';
   $('optTicketStrikes').textContent = strikesTxt;
   $('optTicketDebit').textContent = debit!=null?optDollars(debit):'—';
   $('optTicketMaxLoss').textContent = maxTxt;
@@ -4562,14 +4578,52 @@ function wireOptSeg(id, key, cast, opt){ const el=$(id); if(!el) return;
   }); }
 
 /* ── тикет открытия структуры (паттерн #launchTicket) ── */
+/* 3a: структурированные причины пре-трейд проверки (previewStructure/openStructure → rejections[]).
+   ✕ блок (gate-bad) запрещает открытие; ⚠ предупр. (gate-warn, напр. «IM > депозит») — нет.
+   role=list БЕЗ aria-live: список перерисовывается с дебаунс-превью, live-регион болтал бы. */
+function renderOptTicketRejections(list){
+  const box=$('optTicketRejects'); if(!box) return; list=list||[];
+  box.hidden=!list.length;
+  box.innerHTML=list.map(r=>{ const bad=r.severity!=='warn';
+    return '<div class="trow" style="grid-template-columns:auto 1fr" role="listitem">'+
+      '<span class="k '+(bad?'gate-bad':'gate-warn')+'" style="white-space:nowrap">'+(bad?'✕ блок':'⚠ предупр.')+'</span>'+
+      '<span class="mono '+(bad?'gate-bad':'gate-warn')+'" style="font-size:11.5px">'+r.detail+'</span></div>'; }).join('');
+}
 function optGateReady(){ const f=(LIVE_S1&&LIVE_S1.fresh), g=$('optTicketGate'); if(!g) return false;
+  const rej=(optPreviewCache&&optPreviewCache.rejections)||[];
+  renderOptTicketRejections(rej); // и пустой список тоже — устаревшие строки не должны залипать
   if(!window.s1){ g.textContent='нет моста s1 (file://) — открытие недоступно'; g.className='num gate-bad'; return false; }
   if(!f){ g.textContent='нет данных Deribit — нажмите «Пересчёт»'; g.className='num gate-warn'; return false; }
   if(f.gateOk===false){ g.textContent='гейт греков не пройден — открытие заблокировано'; g.className='num gate-bad'; return false; }
   if(optPreviewErr){ g.textContent=optPreviewErr; g.className='num gate-bad'; return false; }
+  if(rej.some(r=>r.severity!=='warn')){ g.textContent='запуск заблокирован — причины ниже'; g.className='num gate-bad'; return false; }
   if(optPreviewCache && optPreviewCache.valid===false){ g.textContent=(optPreviewCache.validationErrors||[]).join('; ')||'структура не валидна'; g.className='num gate-bad'; return false; }
   if(f.stale){ g.textContent='данные устарели — нажмите «Пересчёт»'; g.className='num gate-warn'; return false; }
+  if(rej.length){ g.textContent='есть предупреждения — открытие возможно'; g.className='num gate-warn'; return true; }
   g.textContent='гейт греков OK · данные свежие'; g.className='num gate-ok'; return true; }
+/* 3a: «Старт (авто)» — движок выбирает экспирацию/ATM (previewStructure с expiry:null); крылья/кол-во —
+   из конструктора; подтверждение — тем же тикетом (шаг подтверждения не пропускается никогда). */
+async function openOptTicketAuto(){
+  if(optAutoBusy) return;
+  const b=$('optAutoBtn'), label=b?b.textContent:'';
+  if(!window.s1){ openOptTicket(); return; } // gate-строка объяснит режим file://
+  optAutoBusy=true; if(b){ b.disabled=true; b.textContent='подбор…'; } // занятость словом, не спиннером
+  try{
+    const pv=await window.s1.previewStructure({ ...optStructParams(), expiry:null, auto:true });
+    if(pv && pv.ok){
+      optPreviewCache=pv; optPreviewErr=null;
+      if(pv.chosenExpiry!=null){ // синхронизировать гипотезу Зоны Ⅰ: тулбар/тикет/payoff не расходятся
+        optSel.expiry=pv.chosenExpiry; optAutoPick={ expiry:pv.chosenExpiry };
+        const sel=$('optExpirySel'); if(sel) sel.querySelectorAll('button').forEach(x=>
+          x.setAttribute('aria-pressed', Number(x.dataset.v)===optSel.expiry?'true':'false'));
+      }
+      renderOptCharts();
+    } else { optPreviewCache=null; optAutoPick=null;
+             optPreviewErr=(pv&&pv.error)||'авто-подбор не удался — нет живых экспираций ≤3д'; }
+  }catch(e){ optAutoPick=null; optPreviewErr='ошибка IPC: '+String(e&&e.message||e).slice(0,80); }
+  optAutoBusy=false; if(b){ b.disabled=false; b.textContent=label; }
+  openOptTicket(); // существующий фокус на qty + валидация + рендер превью
+}
 function optTicketValidate(o){ o=o||{}; const qi=$('optTicketQty'), q=Number(qi.value);
   const min=0.01, step=0.01;
   let reason=''; if(!(Number.isFinite(q)&&q>0)) reason='введите размер (контрактов)';
@@ -4587,15 +4641,21 @@ function openOptTicket(){ const t=$('optLaunchTicket'); if(!t) return;
   $('optTicketQty').value=String(optSel.qty); $('optTicketErr').hidden=true; $('optTicketErr').textContent='';
   renderOptStructPreview(); optTicketValidate({showErrors:false});
   t.hidden=false; $('optOpenBtn').setAttribute('aria-expanded','true');
+  if($('optAutoBtn')) $('optAutoBtn').setAttribute('aria-expanded','true');
   const inp=$('optTicketQty'); inp.focus({preventScroll:true}); inp.select(); }
 function closeOptTicket(focusBack){ const t=$('optLaunchTicket'); if(!t || t.hidden) return;
-  t.hidden=true; $('optOpenBtn').setAttribute('aria-expanded','false'); if(focusBack) $('optOpenBtn').focus({preventScroll:true}); }
+  t.hidden=true; $('optOpenBtn').setAttribute('aria-expanded','false');
+  if($('optAutoBtn')) $('optAutoBtn').setAttribute('aria-expanded','false');
+  if(focusBack) $('optOpenBtn').focus({preventScroll:true}); }
 async function confirmOptStructure(){ const err=$('optTicketErr');
   if(!window.s1){ err.textContent='нет моста s1 (режим file:// без main-процесса) — открытие недоступно'; err.hidden=false; return; }
   if(!optTicketValidate({showErrors:true})){ $('optTicketQty').focus(); return; }
   const btn=$('optTicketConfirm'); btn.disabled=true;
   try{ const r=await window.s1.openStructure(optStructParams());
-    if(r && r.error){ err.textContent=r.error; err.hidden=false; }
+    if(r && r.error){ // 3a: движок — источник истины; его структурированные причины показываем как есть
+      if(r.rejections){ if(optPreviewCache) optPreviewCache.rejections=r.rejections;
+        renderOptTicketRejections(r.rejections); optGateReady(); }
+      err.textContent=r.error; err.hidden=false; $('optTicketQty').focus({preventScroll:true}); }
     else{ const ds=await window.s1.getState(); if(ds) applyS1Dataset(ds);
       closeOptTicket(false); const z=$('optZoneTrade');
       if(z){ z.scrollIntoView({behavior:smoothOk()?'smooth':'auto'});
@@ -4655,6 +4715,7 @@ function initOpt(){ if(!$('view-btc-options')) return;
     $('optLambdaEcho').textContent=optSel.lambda; pushOptSetting('lambda', optSel.lambda); });
   if($('optRecalcBtn')) $('optRecalcBtn').onclick=optRecalc;
   if($('optOpenBtn')) $('optOpenBtn').onclick=()=>{ const t=$('optLaunchTicket'); (t&&t.hidden)?openOptTicket():closeOptTicket(true); };
+  if($('optAutoBtn')) $('optAutoBtn').onclick=openOptTicketAuto;
   if($('optCloseBtn')) $('optCloseBtn').onclick=armOptClose;
   if($('optTicketCancel')) $('optTicketCancel').onclick=()=>closeOptTicket(true);
   if($('optTicketQty')){ $('optTicketQty').addEventListener('input', ()=>optTicketValidate({showErrors:false}));
