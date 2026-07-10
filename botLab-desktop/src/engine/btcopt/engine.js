@@ -18,7 +18,7 @@
 import { buildStructure, optionDeltaTotal, netGreeks, netDebit, validateStructure } from "./structure.js";
 import { payoffCurve } from "./payoff.js";
 import { decideHedge, applyFill } from "./hedge.js";
-import { markStructure, markPerp, accrueFunding, attribute, appendLedger } from "./pnl.js";
+import { markStructure, markPerp, accrueFunding, attribute, noHedgeAttribute, appendLedger } from "./pnl.js";
 
 export const BOT_ID = "btc-options";
 export const SCHEMA_VERSION = 1;
@@ -172,6 +172,20 @@ export function evaluate(state, snapshot, nowMs) {
   const pnl = attribute(state, snapshot);
   const acct = account(state, snapshot);
 
+  // ── Hedge vs no-hedge (Phase 2a): a real shadow book (perpQty ≡ 0) run in parallel. Its net is the
+  // options-only, after-costs outcome; hedge_contribution is the hedge program's true net contribution
+  // (perp realized + funding − perp fees) — positive means hedging helped after costs, negative means it
+  // only cost money (a common outcome on tiny size). Derived, stored nowhere, appends no ledger row.
+  const shadow = noHedgeAttribute(state, snapshot);
+  const hedgeContribution = pnl.net_total - shadow.net_total;
+  const hedge_vs = {
+    hedged_net: pnl.net_total,
+    no_hedge_net: shadow.net_total,
+    hedge_contribution: hedgeContribution,
+    components: { futures_upl: pnl.futures_upl, funding_total: pnl.funding_total, perp_fees: pnl.fees_total },
+    helped: hedgeContribution > 0,
+  };
+
   const option_legs = structure
     ? structure.legs.map((l) => {
         const g = snapshot.legs?.[l.instrument] || {};
@@ -255,6 +269,7 @@ export function evaluate(state, snapshot, nowMs) {
     last_hedge: lastHedge,
     account: acct,
     pnl,
+    hedge_vs,
     blackout: decision.blackout ?? { active: false, reason: null },
     gate: { ok: gateOk, reason: gateOk ? null : "greeks-missing" },
     payoff,

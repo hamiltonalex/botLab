@@ -1725,8 +1725,14 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
       <section class="grid reveal" style="animation-delay:.2s">
         <div class="two-col">
           <div class="card" id="optHedgeVs"><div class="sec-head"><h2>Хедж vs без-хеджа</h2>
-            <span class="tag amber">Фаза 2</span><span class="rule"></span></div>
-            <p class="faint" style="margin:6px 2px">Реализованный P&amp;L с хеджем против теневого прогона без хеджа — отвечает: улучшает ли хедж результат после издержек.</p></div>
+            <button class="help-btn" data-help="opt-hedgevs">?</button><span class="rule"></span>
+            <span class="hint">теневой прогон · перп обнулён</span></div>
+            <div class="dl" id="optHedgeVsRows">
+              <div class="row"><span class="k">с хеджем · нетто</span><span class="v num" id="optHvHedged">—</span></div>
+              <div class="row"><span class="k">без хеджа (тень) · нетто</span><span class="v num" id="optHvNaked">—</span></div>
+              <div class="row"><span class="k">вклад хеджа · <span class="faint">перп+фандинг−комиссии</span></span><span class="v num" id="optHvDelta">—</span></div>
+            </div>
+            <div class="opt-verdict" id="optHvVerdict" style="margin-top:8px" aria-live="polite">—</div></div>
           <div class="card" id="optMetrics"><div class="sec-head"><h2>Метрики прогона</h2>
             <span class="tag amber">Фаза 2</span><span class="rule"></span></div>
             <p class="faint" style="margin:6px 2px">Sharpe по цикловым доходностям, доля прибыльных, макс. просадка, средний размер хеджа, наибольшее отклонение дельты до хеджа.</p></div>
@@ -3535,6 +3541,11 @@ const HELP_BTC_OPTIONS = {
     '<li><b>Ожидаемая выгода</b> <span class="fx">|Δ-избыток|·S·m</span>, где m — минимальное неблагоприятное движение, которое хедж защищает (порядка ценового триггера).</li>'+
     '<li><b>Издержки</b> <span class="fx">комиссия + спред + проскальзывание + фандинг_горизонт</span>: комиссия и проскальзывание от размера и марка перпа, спред из стакана, фандинг за горизонт удержания.</li>'+
     '<li><b>Гейт</b> <span class="fx">выгода ≥ λ·издержки</span> (λ≈1.25): на малом размере фильтр экономит edge, но оставляет остаточную дельту внутри дедбэнда.</li></ul>' },
+  'opt-hedgevs': { t:'Хедж vs без-хеджа', b:
+    '<p>Сравнивает реализованный нетто открытой структуры <b>с хеджем</b> против теневого прогона <b>без хеджа</b> (та же структура, перп-нога обнулена).</p><ul>'+
+    '<li><b>без хеджа (тень)</b> — нетто равен MTM опционов: перп не открыт, комиссий и фандинга нет.</li>'+
+    '<li><b>вклад хеджа</b> <span class="fx">= реализ.перп + фандинг − комиссии</span>: положительный — хедж окупил издержки, отрицательный — на этом прогоне хедж только стоил денег (частый исход на малом размере).</li>'+
+    '<li>Это ключевой вопрос стратегии: улучшает ли хедж результат ПОСЛЕ издержек?</li></ul>' },
 };
 const HELP = { ...HELP_CORE, ...HELP_FUNDING_ARB, ...HELP_BTC_OPTIONS };
 
@@ -3938,6 +3949,7 @@ function renderOpt(){
     renderOptHedge(cyc);
     renderOptCost(cyc);
     renderOptLedger(cyc);
+    renderOptHedgeVs(cyc);
   }
   const c=optEngineCfg(); const em=$('optEngineMode'); if(em) em.textContent='реприс '+c.rep+'с · λ'+c.lam;
   renderOptStructPreview();
@@ -3957,6 +3969,19 @@ function renderOptCockpit(cyc){
     tradeRow('═ нетто', optDollars(p.net_total||0), clsSign(p.net_total||0));
   $('optEquity').textContent = acc.equity!=null ? fmtUSD(acc.equity,0) : '—';
   $('optMargin').textContent = acc.maintenance_margin!=null ? fmtUSD(acc.maintenance_margin,0) : '—';
+}
+
+/* — Фаза 2a: хедж vs без-хеджа (теневой прогон, перп обнулён; вклад = перп+фандинг−комиссии) — */
+function renderOptHedgeVs(cyc){
+  const hv=cyc.hedge_vs; if(!hv || !$('optHvHedged')) return;
+  const set=(id,v)=>{ optSetNum(id, optDollars(v||0)); const el=$(id); if(el) el.className='v num '+clsSign(v||0); };
+  set('optHvHedged', hv.hedged_net);
+  set('optHvNaked',  hv.no_hedge_net);
+  set('optHvDelta',  hv.hedge_contribution);
+  const v=$('optHvVerdict'); if(!v) return;
+  if(Math.abs(hv.hedge_contribution||0) < 1e-6){ v.textContent='хедж пока не влиял на результат'; v.className='opt-verdict'; }
+  else { v.textContent = hv.helped ? 'хедж улучшил результат после издержек' : 'хедж ухудшил результат после издержек';
+         v.className='opt-verdict '+(hv.helped?'pass':'fail'); }
 }
 
 /* — 4 ноги + перп-нога — */

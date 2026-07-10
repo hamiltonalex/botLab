@@ -9,6 +9,7 @@ import {
   markPerp,
   accrueFunding,
   attribute,
+  noHedgeAttribute,
   appendLedger,
   ledgerReconciles,
 } from "../src/engine/btcopt/pnl.js";
@@ -144,6 +145,31 @@ test("attribute: folds live inverse mark into futures_upl", () => {
   };
   const a = attribute(st, goldenSnapshot); // perp.mark 60000
   near(a.futures_upl, 100 + 6.190476, 1e-5, "futures_upl = realized + mark"); // 100 + inverse upl
+});
+
+// ── noHedgeAttribute (Phase 2a shadow book — perp zeroed) ────────────────────────────────────────
+test("noHedgeAttribute: shadow net ≡ options_upl, and (hedged − shadow) ≡ vs_no_hedge", () => {
+  const st = goldenState();
+  const hedged = attribute(st, goldenSnapshot);
+  const shadow = noHedgeAttribute(st, goldenSnapshot);
+  assert.equal(shadow.net_total, 1890); // options only — no perp realized/funding/fees
+  assert.equal(shadow.net_total, hedged.options_upl);
+  near(hedged.net_total - shadow.net_total, hedged.vs_no_hedge, 1e-9, "contribution ≡ vs_no_hedge");
+});
+
+test("noHedgeAttribute: 'over-hedged choppy day' — hedging turns +0.90 options into −0.05 net", () => {
+  // spec pp.9: options MTM +0.90, futures +0.35, fees+funding −1.30 → net −0.05; the hedge COST 0.95.
+  const st = {
+    structure: { legs: [{ instrument: "C", qtySigned: 1, entryMark: 200, contractSize: 1 }] },
+    realizedOptionsUsd: 0,
+    perpState: { qty: 0, avgEntry: 0, realizedUsd: 0.35, fundingCum: -0.1, feesCum: 1.2 },
+  };
+  const snap = { legs: { C: { mark: 200.9 } }, perp: { mark: 60000, contractSize: 10 } };
+  const hedged = attribute(st, snap);
+  const shadow = noHedgeAttribute(st, snap);
+  near(shadow.net_total, 0.9, 1e-9, "no-hedge net = options only +0.90");
+  near(hedged.net_total, -0.05, 1e-9, "hedged net −0.05");
+  near(hedged.net_total - shadow.net_total, -0.95, 1e-9, "hedge cost 0.95 net (helped=false)");
 });
 
 test("ledgerReconciles: golden reconciles (ok true, all deltas 0)", () => {

@@ -86,6 +86,21 @@ export function attribute(engineState, snapshot) {
   return { options_upl, futures_upl, fees_total, funding_total, net_total, vs_no_hedge };
 }
 
+// ── No-hedge shadow book (Phase 2a) ───────────────────────────────────────────────────────────────
+// noHedgeAttribute(engineState, snapshot) → the SAME 6-key attribution shape for a SHADOW book holding
+// the identical option structure but with NO perp hedge (perpQty ≡ 0). Because option MtM is independent
+// of the hedge and markPerp short-circuits to zero for a flat perp, net_total ≡ options_upl — the true
+// "options-only, after-costs" comparison that pnl.vs_no_hedge only proxied. Pure; re-uses attribute() on
+// a zeroed-perp overlay (no second engine), so it reconciles by construction.
+export function noHedgeAttribute(engineState, snapshot) {
+  const shadow = {
+    structure: engineState.structure,
+    realizedOptionsUsd: engineState.realizedOptionsUsd || 0,
+    perpState: { qty: 0, avgEntry: 0, feesCum: 0, fundingCum: 0, realizedUsd: 0 },
+  };
+  return attribute(shadow, snapshot);
+}
+
 // ── Ledger append (sequenced, numeric-safe) ─────────────────────────────────────────────────────
 // appendLedger(engineState, event) → assigns seq = ledger.length+1, pushes a normalized event with
 // every numeric field defaulted to 0 (so downstream sums never see undefined), returns the stored row.

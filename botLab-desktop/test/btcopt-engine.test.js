@@ -113,6 +113,16 @@ test("evaluate emits the full cycle-snapshot with the spec's net greeks (−0.00
   near(cyc.payoff.minPi, -777, 1e-9, "min payoff = −D at S=K");
 });
 
+test("evaluate: cycle carries the 2a hedge_vs shadow (no_hedge_net ≡ options_upl)", () => {
+  const { st, snap } = opened();
+  engine.ingest(st, snap, NOON);
+  const cyc = engine.evaluate(st, snap, NOON);
+  assert.ok(cyc.hedge_vs, "hedge_vs present");
+  near(cyc.hedge_vs.no_hedge_net, cyc.pnl.options_upl, 1e-9, "no_hedge_net = options_upl");
+  near(cyc.hedge_vs.hedge_contribution, cyc.hedge_vs.hedged_net - cyc.hedge_vs.no_hedge_net, 1e-9, "contribution identity");
+  assert.equal(typeof cyc.hedge_vs.helped, "boolean");
+});
+
 test("the HEDGE fill is a side-effect that takes effect on the NEXT tick (pre-fill snapshot)", () => {
   const { st, snap } = opened();
   engine.ingest(st, snap, NOON);
