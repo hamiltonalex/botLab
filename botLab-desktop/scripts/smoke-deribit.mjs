@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import {
   getInstruments,
   getTicker,
+  getVolatilityIndexData,
   buildDeribitSnapshot,
   PERP_INSTRUMENT,
   OPTION_CURRENCY,
@@ -80,6 +81,18 @@ const nearest = (arr, target) => arr.reduce((best, x) => (Math.abs(x - target) <
   console.log(`  perp ${snap.perp?.instrument} mark=${snap.perp?.mark} funding_8h=${snap.perp?.funding8h} inverse=${snap.perp?.inverse} cs=${snap.perp?.contractSize}`);
   console.log(`  Σ net option delta (unit qty, long−short) = ${netDelta.toFixed(4)} BTC`);
   console.log(`  liquidity: bid=${snap.liquidity?.bid} ask=${snap.liquidity?.ask} halfSpread=${snap.liquidity?.halfSpread}`);
+
+  // 5b) DVOL (Phase 3b IV regime): latest hourly close next to the ATM mark_iv it contextualises.
+  try {
+    const end = Date.now();
+    const dv = await getVolatilityIndexData({ currency: "BTC", start_timestamp: end - 48 * 3600000, end_timestamp: end, resolution: "3600", testnet: TESTNET });
+    const rows = Array.isArray(dv?.data) ? dv.data : [];
+    const last = rows[rows.length - 1];
+    const atmIv = snap.legs[legInstruments[0]]?.markIv;
+    console.log(`  DVOL: ${rows.length} hourly points over 48h · latest close=${last ? last[4] : "—"} · ATM mark_iv=${atmIv ?? "—"}`);
+  } catch (e) {
+    console.log(`  DVOL: FAILED — ${String(e?.message || e)}`);
+  }
 
   // 6) Optionally record live-shape references (NOT the golden fixtures — those are hand-crafted in step 2).
   if (RECORD) {

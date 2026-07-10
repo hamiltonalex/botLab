@@ -22,6 +22,7 @@ import { markStructure, markPerp, accrueFunding, attribute, noHedgeAttribute, ap
 import { initMetrics, foldCycle, summarize } from "./metrics.js";
 import { structureMargin } from "./margin.js";
 import { computeScenarios } from "./stress.js";
+import { computeRegime } from "./regime.js";
 
 export const BOT_ID = "btc-options";
 export const SCHEMA_VERSION = 1;
@@ -60,6 +61,8 @@ export function defaultSettings() {
     testnet: false, // public data source: prod (www.deribit.com) vs test.deribit.com
     paperEquityUsd: 100, // starting paper deposit (USD); equity = this + cumulative net P&L
     marginAlertPct: 0.8, // alert when maintenance-margin utilisation ≥ this fraction of equity (Phase 2c)
+    ivWindowSec: 86400, // IV-regime rolling window (Phase 3b) — rank ATM IV within the last 24h
+    ivEntryMaxRank: 0.35, // entry favorable when IV-rank ≤ this (long-vol thesis: enter when IV is LOW)
   };
 }
 
@@ -265,6 +268,23 @@ export function evaluate(state, snapshot, nowMs) {
     ? { scenarios: computeScenarios(structure, snapshot, greeks, state.perpState, cfg) }
     : { scenarios: [] };
 
+  // ── IV regime (Phase 3b): the entry signal, computed from the caller-attached IV history — the ring
+  // lives in the MAIN process (snapshot.ivContext), never in this persisted state (O(1)-per-tick law).
+  // LIVE settings, not the frozen engineCfg: entry advice must follow the CURRENT knobs even while an
+  // old structure still runs — and the signal matters most while FLAT (structure == null).
+  let iv_regime = null;
+  if (snapshot.ivContext && Array.isArray(snapshot.ivContext.series)) {
+    const liveCfg = buildCfg(state.settings);
+    iv_regime = computeRegime(snapshot.ivContext.series, { nowMs, cfg: liveCfg });
+    // The same ranking applied to the DVOL series: its history is backfilled 24–48h from the public
+    // volatility-index endpoint, so this rank is meaningful from the first minutes of a session while
+    // the ATM window is still filling. Context only — `favorable` stays ATM-driven.
+    iv_regime.dvol_rank = computeRegime(
+      snapshot.ivContext.series.map((e) => ({ ts: e.ts, atmIv: e.dvol })),
+      { nowMs, cfg: liveCfg },
+    ).iv_rank;
+  }
+
   return {
     ts: snapshot.ts ?? nowMs,
     underlying_price: snapshot.underlying ?? null,
@@ -296,6 +316,7 @@ export function evaluate(state, snapshot, nowMs) {
     hedge_vs,
     metrics: summarize(state.metrics),
     stress,
+    iv_regime,
     blackout: decision.blackout ?? { active: false, reason: null },
     gate: { ok: gateOk, reason: gateOk ? null : "greeks-missing" },
     payoff,

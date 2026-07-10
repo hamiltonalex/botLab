@@ -1645,6 +1645,25 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
       </nav>
 
       <!-- ── HERO: Payoff (гипотеза) + превью/тикет ── -->
+      <!-- ── Фаза 3b: IV-режим — сигнал входа (Зона Ⅰ, над конструктором) ── -->
+      <section class="grid reveal" style="animation-delay:.1s">
+        <div class="card" id="optIvCard">
+          <div class="sec-head">
+            <h2>IV-режим · сигнал входа</h2>
+            <button class="help-btn" data-help="opt-iv">?</button>
+            <span class="tag amber">гипотеза · не влияет на движок</span>
+            <span class="rule"></span>
+            <span class="hint" id="optIvMeta">окно — · наблюдений —</span>
+          </div>
+          <div class="hero-kpis" style="grid-template-columns:repeat(3,1fr)" aria-live="polite">
+            <div class="kpi"><div class="lbl">ATM IV</div><div class="v num" id="optIvAtm">—</div><div class="sub">mark_iv ATM-ног</div></div>
+            <div class="kpi"><div class="lbl">DVOL</div><div class="v num" id="optIvDvol">—</div><div class="sub" id="optIvDvolSub">индекс Deribit · 30д</div></div>
+            <div class="kpi"><div class="lbl">IV-ранг</div><div class="v num" id="optIvRank">—</div><div class="sub" id="optIvRankSub">позиция в окне 0…1</div></div>
+          </div>
+          <div class="opt-verdict dim" id="optIvVerdict" style="margin-top:10px" aria-live="polite">мало данных</div>
+        </div>
+      </section>
+
       <section class="grid reveal" style="animation-delay:.12s">
         <div class="hero">
           <div class="card">
@@ -1805,6 +1824,30 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
               <thead><tr><th class="lft" scope="col">Сценарий</th><th scope="col">Сдвиг</th><th class="lft" scope="col">Режим</th><th scope="col">P&amp;L</th></tr></thead>
               <tbody id="optStressBody"></tbody>
             </table>
+          </div>
+        </div>
+        <div class="card flush" id="optSweep">
+          <div class="sec-head" style="padding:16px 16px 0;margin-bottom:8px"><h2>Свип параметров</h2>
+            <button class="help-btn" data-help="opt-sweep">?</button>
+            <span class="tag amber">Фаза 3 · гипотеза</span><span class="rule"></span>
+            <span class="stamp" id="optSweepStamp" role="status">свип не запускался</span>
+            <button id="optSweepRun" class="paperbtn mini" style="margin-left:10px">запустить свип</button></div>
+          <div id="optSweepCaption" class="ledger-msg dim">перебор «крылья × дедбэнд × триггер × λ» на накопленной истории снапшотов · это прошлое, не прогноз</div>
+          <div id="optSweepMsg" class="ledger-msg" role="status" hidden></div>
+          <div class="table-scroll" style="max-height:260px">
+            <table class="scan" id="optSweepTable">
+              <caption class="sr-only">Результаты свипа параметров; комбинации отранжированы по цели</caption>
+              <thead><tr>
+                <th class="lft" scope="col">Ранг</th><th scope="col">Крылья</th><th scope="col">Дедбэнд, BTC</th>
+                <th scope="col">Триггер</th><th scope="col">λ</th><th scope="col">Sharpe</th><th scope="col">Нетто</th>
+                <th scope="col">Макс. DD</th><th scope="col">Хеджей</th><th class="lft" scope="col">Маржа</th>
+              </tr></thead>
+              <tbody id="optSweepBody"><tr><td class="lft faint" colspan="10">свип ещё не запускался — нажмите «запустить свип»</td></tr></tbody>
+            </table>
+          </div>
+          <div class="ledger-foot">
+            <span class="hint">применение меняет только конструктор (Зона Ⅰ) — открытая структура и её замороженные параметры не изменятся</span>
+            <button id="optSweepApply" class="paperbtn mini" style="margin-left:auto" disabled>применить лучшие параметры</button>
           </div>
         </div>
       </section>
@@ -3559,6 +3602,18 @@ const HELP_BTC_OPTIONS = {
     '<li><b>Пре-трейд проверки</b> — движок возвращает структурированные причины: <b class="neg">✕ блок</b> (минимальный лот, кратность шагу, блэкаут расчёта) блокирует кнопку; <b>⚠ предупр.</b> (например «IM $122 &gt; депозит $100») открытие не запрещает.</li>'+
     '<li>Ручная правка экспирации в конструкторе снимает пометку «авто» — тикет всегда показывает фактический источник выбора.</li>'+
     '<li>Авто-подбор меняет только гипотезу Зоны Ⅰ — живой счёт не затрагивается до «Подтвердить · открыть структуру».</li></ul>' },
+  'opt-iv': { t:'IV-режим · сигнал входа', b:
+    '<p>Оценка «дешева или дорога волатильность сейчас» относительно скользящего окна. Стратегия покупает волатильность (длинный стрэддл), поэтому вход выгоднее, когда IV ниже своего режима — это заменяет жёсткое правило «IV ниже 25».</p><ul>'+
+    '<li><b>ATM IV</b> — <span class="fx">mark_iv</span> ATM-ног с Deribit; <b>DVOL</b> — индекс 30-дневной подразумеваемой волатильности Deribit (история подтягивается за 48ч, поэтому DVOL-ранг осмыслен с первых минут). Оба в процентных пунктах.</li>'+
+    '<li><b>IV-ранг</b> <span class="fx">(IV − min) / (max − min)</span> по окну: 0 — у низа окна, 1 — у верха; окно и число наблюдений — в подписи справа.</li>'+
+    '<li><b>Вердикт</b>: «вход благоприятен» (зелёный) — IV-ранг ≤ порога; «вход неблагоприятен» (амбер — это пауза, не убыток) — IV выше режима; «мало данных» — окно ещё копится.</li>'+
+    '<li>Сигнал действует только в Зоне Ⅰ: открытие не запрещает и на работающий хедж-движок не влияет.</li></ul>' },
+  'opt-sweep': { t:'Свип параметров · перебор на истории', b:
+    '<p>По накопленной истории снапшотов движок перебирает комбинации «крылья × дедбэнд × ценовой триггер × λ» и ранжирует их по цели (Sharpe цикловых доходностей). Это гипотеза на прошлом ряде — не прогноз.</p><ul>'+
+    '<li><b>Строки</b> — комбинации по убыванию цели; лучшая подсвечена и помечена словом «лучший». Цель, длина ряда, число комбинаций и исключённые (нет котировок крыла в ряде) — в подписи под заголовком.</li>'+
+    '<li><b>Метрики</b> — Sharpe, нетто-P&L, макс. просадка и число хеджей, посчитанные тем же движком и той же математикой, что «Метрики прогона», на одном и том же ряде снапшотов.</li>'+
+    '<li><b>Маржа</b> — <b class="neg">«IM &gt; деп.»</b> означает: начальная маржа комбинации превышает депозит — на живом счёте такую структуру открыть нельзя; применение лучшей в этом случае отключено.</li>'+
+    '<li><b>«Применить лучшие параметры»</b> — двухшаговое подтверждение; записывает значения ТОЛЬКО в конструктор (Зона Ⅰ). Открытая структура и её замороженные параметры не меняются — новые значения подействуют при следующем открытии через тикет.</li></ul>' },
   'opt-hedge': { t:'Хедж-движок · триггеры, фильтр, решение', b:
     '<p>Движок держит дельту около нуля дешёвым способом: сначала проверяет, есть ли повод хеджировать (триггеры), затем — стоит ли (фильтр издержек), и только потом решает.</p><ul>'+
     '<li><b>Триггеры</b> — хедж рассматривается, если сработал хотя бы один: <span class="fx">|Δ-избыток| &gt; дедбэнд</span>, движение цены с последнего хеджа &gt; порога, либо истёк временной интервал реприса.</li>'+
@@ -4040,6 +4095,8 @@ function renderOpt(){
   updateOptFreshness(ds.fresh, ds.running);
   if(ds.chain) renderOptExpiries(ds.chain);
   renderOptChain(ds.chain, ds.fresh);
+  renderOptIvRegime(cyc);  // 3b: и без цикла тоже — пустое состояние рендерится детерминированно
+  renderOptSweep(ds);      // 3b: читает ds.sweep, не cycle
   const zone=$('optZoneTrade'); if(zone) zone.classList.toggle('idle', !cyc);
   const closeBtn=$('optCloseBtn'); if(closeBtn){ const open=!!(cyc && cyc.structure_id); closeBtn.hidden=!open; if(!open) disarmOptClose(); }
   if(cyc){
@@ -4288,6 +4345,105 @@ function renderOptChain(chain, fresh){
 }
 
 /* — кластер подключения (updateFreshness-паттерн, свой словарь) — */
+/* ── Фаза 3b: IV-режим (cycle.iv_regime) — сигнал входа Зоны Ⅰ, null-безопасный ── */
+function renderOptIvRegime(cyc){
+  if(!$('optIvAtm')) return;
+  const iv=cyc&&cyc.iv_regime, v=$('optIvVerdict'), meta=$('optIvMeta');
+  if(!iv){
+    ['optIvAtm','optIvDvol','optIvRank'].forEach(id=>optSetNum(id,'—'));
+    $('optIvRankSub').textContent='позиция в окне 0…1';
+    $('optIvDvolSub').textContent='индекс Deribit · 30д';
+    if(meta) meta.textContent='окно — · наблюдений —';
+    optCrossfade(v,'мало данных — источник не запущен','opt-verdict dim');
+    return;
+  }
+  optSetNum('optIvAtm',  Number.isFinite(iv.atm_iv)? iv.atm_iv.toFixed(1)+'%' : '—');
+  optSetNum('optIvDvol', Number.isFinite(iv.dvol)?   iv.dvol.toFixed(1)+'%'   : '—');
+  optSetNum('optIvRank', Number.isFinite(iv.iv_rank)? iv.iv_rank.toFixed(2)   : '—');
+  $('optIvRankSub').textContent = !Number.isFinite(iv.iv_rank) ? 'позиция в окне 0…1'
+    : (iv.iv_rank<0.33 ? 'у низа окна' : iv.iv_rank<0.67 ? 'середина окна' : 'у верха окна');
+  $('optIvDvolSub').textContent = Number.isFinite(iv.dvol_rank) ? 'DVOL-ранг '+iv.dvol_rank.toFixed(2)+' · 48ч' : 'индекс Deribit · 30д';
+  if(meta){ const w = iv.window_sec>=3600 ? Math.round(iv.window_sec/3600)+'ч' : Math.round(iv.window_sec/60)+'м';
+    meta.textContent='окно '+w+' · '+(iv.n||0)+' набл.'; }
+  if(iv.favorable===true)       optCrossfade(v,'вход благоприятен · IV ниже режима','opt-verdict pass');
+  else if(iv.favorable===false) optCrossfade(v,'вход неблагоприятен · IV выше режима','opt-verdict neu');
+  else                          optCrossfade(v,'мало данных — режим ещё копится','opt-verdict dim');
+}
+
+/* ── Фаза 3b: свип параметров — on-demand s1.runSweep(); результат едет в ds.sweep ── */
+let optSweepBusy=false, optSweepApplyArmed=false, optSweepApplyTimer=null;
+const OPT_SWEEP_OBJ={ sharpe:'Sharpe цикловых доходностей', net:'нетто-P&L' };
+function optSweepNote(t,cls,ms){ const el=$('optSweepMsg'); if(!el) return;
+  el.textContent=t; el.className='ledger-msg '+(cls||''); el.hidden=false;
+  if(ms) setTimeout(()=>{ el.hidden=true; }, ms); }
+function renderOptSweep(ds){
+  const body=$('optSweepBody'); if(!body) return;
+  if(optSweepBusy) return; // в полёте не перерисовываем под руками — прежние результаты остаются
+  const sw=ds&&ds.sweep, cap=$('optSweepCaption'), stamp=$('optSweepStamp'), apply=$('optSweepApply');
+  if(!sw){ body.innerHTML='<tr><td class="lft faint" colspan="10">свип ещё не запускался — нажмите «запустить свип»</td></tr>';
+    if(apply) apply.disabled=true; return; }
+  if(stamp) stamp.textContent='свип '+optClock(sw.ranAt)+' UTC';
+  if(!sw.combos || !sw.combos.length){
+    body.innerHTML='<tr><td class="lft faint" colspan="10">история снапшотов пуста — запустите источник (LIVE) и подождите несколько минут</td></tr>';
+    if(cap){ cap.textContent='цель: '+(OPT_SWEEP_OBJ[sw.objective]||sw.objective)+' · '+(sw.seriesLen||0)+' снапшотов'
+      +((sw.excluded&&sw.excluded.length)?(' · исключено '+sw.excluded.length):''); }
+    if(apply) apply.disabled=true; return; }
+  const bi=Number.isInteger(sw.best)?sw.best:0;
+  if(cap) cap.textContent='цель: '+(OPT_SWEEP_OBJ[sw.objective]||sw.objective)+' · '+sw.seriesLen+' снапшотов · '
+    +sw.combos.length+' комбинаций'+((sw.excluded&&sw.excluded.length)?(' · исключено '+sw.excluded.length):'')+' · отсортировано по цели';
+  body.innerHTML=sw.combos.map((c,i)=>{
+    const mOk=c.marginOk!==false;
+    return '<tr'+(i===bi?' class="me"':'')+'>'+
+      '<td class="lft num">'+(i+1)+(i===bi?' <span class="chip B">лучший</span>':'')+'</td>'+
+      '<td class="n">±'+c.wingPct+'%</td><td class="n">±'+(c.deadbandBtc||0).toFixed(4)+'</td>'+
+      '<td class="n">'+c.priceTriggerPct.toFixed(1)+'%</td><td class="n">'+c.lambda+'</td>'+
+      '<td class="n '+clsSign(c.sharpe)+'">'+c.sharpe.toFixed(2)+'</td>'+
+      '<td class="n '+clsSign(c.net)+'">'+optDollars(c.net)+'</td>'+
+      '<td class="n neg">'+optDollars(c.maxDD)+'</td><td class="n">'+(c.hedges||0)+'</td>'+
+      '<td class="lft"><span class="num '+(mOk?'pos':'neg')+'">'+(mOk?'в лимите':'IM &gt; деп.')+'</span></td></tr>'; }).join('');
+  const bestOk=sw.combos[bi] && sw.combos[bi].marginOk!==false;
+  if(apply) apply.disabled=!bestOk;
+  if(!bestOk) optSweepNote('лучшая комбинация не помещается в депозит (IM > деп.) — применение отключено','dim');
+}
+async function runOptSweep(){
+  if(optSweepBusy) return;
+  if(!window.s1 || typeof window.s1.runSweep!=='function'){ optSweepNote('свип недоступен: нет моста s1 (file://)','err'); return; }
+  const b=$('optSweepRun'), card=$('optSweep');
+  optSweepBusy=true; if(b){ b.disabled=true; b.textContent='идёт свип…'; } if(card) card.setAttribute('aria-busy','true');
+  optSweepNote('идёт свип — обычно несколько секунд; прежние результаты остаются ниже','dim');
+  try{
+    const r=await window.s1.runSweep();
+    if(r && r.error) optSweepNote('свип не выполнен: '+r.error,'err');
+    else { optSweepBusy=false; const ds=await window.s1.getState(); if(ds) applyS1Dataset(ds); // ds.sweep → штатный рендер
+           optSweepNote('✓ свип завершён','ok',4000); }
+  }catch(e){ optSweepNote('ошибка IPC: '+String(e&&e.message||e).slice(0,60),'err'); }
+  optSweepBusy=false; if(b){ b.disabled=false; b.textContent='запустить свип'; } if(card) card.removeAttribute('aria-busy');
+}
+/* применение лучших параметров: двухшаговое подтверждение (идиома armOptClose), пишет ТОЛЬКО Зону Ⅰ */
+function disarmSweepApply(){ const b=$('optSweepApply'); optSweepApplyArmed=false;
+  if(optSweepApplyTimer) clearTimeout(optSweepApplyTimer); if(b) b.textContent='применить лучшие параметры'; }
+function armSweepApply(){ const b=$('optSweepApply'); if(!b) return;
+  if(!optSweepApplyArmed){ optSweepApplyArmed=true; b.textContent='заменить параметры конструктора?';
+    if(optSweepApplyTimer) clearTimeout(optSweepApplyTimer); optSweepApplyTimer=setTimeout(disarmSweepApply,3500); return; }
+  disarmSweepApply(); applySweepBest(); }
+function applySweepBest(){
+  const sw=LIVE_S1&&LIVE_S1.sweep; if(!sw||!sw.combos||!sw.combos.length) return;
+  const c=sw.combos[Number.isInteger(sw.best)?sw.best:0];
+  optSel.wing=c.wingPct;              optSegPress('optWingSel', c.wingPct);
+  optSel.priceTrig=c.priceTriggerPct; optSegPress('optPriceTrigSel', c.priceTriggerPct.toFixed(1));
+  optSel.lambda=c.lambda; if($('optLambda')) $('optLambda').value=String(c.lambda);
+  if($('optLambdaEcho')) $('optLambdaEcho').textContent=c.lambda;
+  if(c.deadbandPreset){ optSel.deadband=c.deadbandPreset; optSegPress('optDeadbandSel', c.deadbandPreset); }
+  // ВАЖНО: один комбинированный патч, минуя pushOptSetting — его общий debounce-таймер затирает
+  // предыдущий patch при серии вызовов подряд (каждый вызов строит {k:v} и clearTimeout'ит прежний).
+  if(window.s1) window.s1.setSettings({ priceTriggerPct:c.priceTriggerPct, lambda:c.lambda,
+    ...(c.deadbandPreset?{deadbandPreset:c.deadbandPreset, deadbandBtc:c.deadbandBtc}:{}) })
+    .then(ds=>{ if(ds&&!ds.error) applyS1Dataset(ds); }).catch(e=>console.warn('s1 setSettings', e));
+  onOptStructParamChange(); // payoff-гипотеза перерисуется под новые крылья
+  optSweepNote('✓ параметры применены к конструктору — открытие по-прежнему через тикет','ok',6000);
+  const tb=$('optToolbar'); if(tb) tb.scrollIntoView({behavior:smoothOk()?'smooth':'auto', block:'center'});
+}
+
 function updateOptFreshness(f, running){
   const btn=$('optLiveBtn'), led=btn&&btn.querySelector('.led'), txt=$('optLiveTxt'), stamp=$('optConnStamp');
   let state, ledCol;
@@ -4716,6 +4872,8 @@ function initOpt(){ if(!$('view-btc-options')) return;
   if($('optRecalcBtn')) $('optRecalcBtn').onclick=optRecalc;
   if($('optOpenBtn')) $('optOpenBtn').onclick=()=>{ const t=$('optLaunchTicket'); (t&&t.hidden)?openOptTicket():closeOptTicket(true); };
   if($('optAutoBtn')) $('optAutoBtn').onclick=openOptTicketAuto;
+  if($('optSweepRun')) $('optSweepRun').onclick=runOptSweep;
+  if($('optSweepApply')) $('optSweepApply').onclick=armSweepApply;
   if($('optCloseBtn')) $('optCloseBtn').onclick=armOptClose;
   if($('optTicketCancel')) $('optTicketCancel').onclick=()=>closeOptTicket(true);
   if($('optTicketQty')){ $('optTicketQty').addEventListener('input', ()=>optTicketValidate({showErrors:false}));

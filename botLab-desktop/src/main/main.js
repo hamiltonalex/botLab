@@ -29,6 +29,7 @@ import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
 import { buildStructure as s1buildStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry } from "../engine/btcopt/structure.js";
 import { payoffCurve as s1payoffCurve } from "../engine/btcopt/payoff.js";
+import { runSweep as s1runSweep } from "../engine/btcopt/sweep.js";
 import { decimate } from "../engine/format.js";
 import { TWO_LEG, ONE_LEG, ALL_MARKETS, twoLegByKey, oneLegByKey, chainsInUse } from "../engine/universe.js";
 import { isolateSmokeProfile } from "./smoke-profile.js";
@@ -72,7 +73,12 @@ const state = {
   bootNotes: [],
   // Bot 2 «BTC-опционы» (Strategy One) — isolated paper engine + live Deribit source (Phase 1).
   // Read only by the s1:* handlers / assembleDataset1(); never leaks into assembleDataset()/fa:push.
-  btcOptions: { engine: null, source: null, settings: {}, snapshot: null, running: false, chain: null, lastSnapshot: null },
+  // Phase 3b: bounded history RINGS live HERE (never in the persisted engine state — it re-serializes
+  // every tick): ivHistory (30s-sampled {ts, atmIv, dvol}, cap 2880 ≈ 24h, flushed to its own
+  // btc-options-history.json) and snapshotHistory (raw composite snapshots for the sweep, cap 600,
+  // session-scoped). band = the polled ATM±{5,10,15}% instrument set; dvol = the cached index value.
+  btcOptions: { engine: null, source: null, settings: {}, snapshot: null, running: false, chain: null, lastSnapshot: null,
+    ivHistory: [], snapshotHistory: [], band: null, dvol: null, dvolBackfilled: false, sweepResult: null, histDirtyAt: 0, histFlushedAt: 0 },
 };
 
 const pollSec = () => Math.min(15, Math.max(1, state.settings.pollMinutes || 5)) * 60;
@@ -405,6 +411,143 @@ function loadOrInitBtcOptions() {
   }
   state.btcOptions.engine = st;
   state.btcOptions.settings = settings;
+  // Phase 3b: the persisted IV history (its OWN file — never inside btc-options.json) survives
+  // restarts so the 24h regime window doesn't start empty every session.
+  const hist = loadBotState(baseDir, `${BTCOPT_ID}-history`);
+  if (Array.isArray(hist?.ivHistory)) state.btcOptions.ivHistory = hist.ivHistory.slice(-IV_HISTORY_CAP);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3b — market-history capture (main-process rings; the engine stays O(1)-per-tick).
+// The source polls an ATM BAND (the ATM straddle + the ±5/10/15% wings, ∪ the open structure's legs)
+// so (a) the IV regime has a live ATM mark_iv even while FLAT — entry signals matter most then — and
+// (b) recorded snapshots carry quotes for every wing the sweep can pick (PDF p.14: "record its own
+// live chain snapshots"). The greeks gate stays scoped to the OPEN structure via primaryInstruments.
+// ---------------------------------------------------------------------------
+const IV_HISTORY_CAP = 2880; // 30s-sampled ⇒ ≈ 24h — matches the default ivWindowSec
+const IV_SAMPLE_MS = 30000;
+const SNAP_HISTORY_CAP = 600; // per-tick raw snapshots ⇒ ≈ 30 min at the 3s default cadence
+const HIST_FLUSH_MS = 60000;
+const DVOL_REFRESH_MS = 300000; // the chain-cache cadence — DVOL is slow-moving
+const BAND_DRIFT_PCT = 0.02; // re-derive the band when the underlying moved 2% from its anchor
+
+// Derive the band instrument set from the cached chain: three pure buildStructure probes (5/10/15%).
+// Returns null when no live expiry qualifies (the source then just polls the open legs / nothing).
+function btcOptBand(chain, underlying, nowMs) {
+  const s = state.btcOptions.settings || {};
+  const expiry = s1pickExpiry(chain, nowMs, { minLeadMs: (s.preExpirySec ?? 1800) * 1000 });
+  if (expiry == null || !Number.isFinite(underlying)) return null;
+  const names = new Set();
+  let atmCall = null, atmPut = null;
+  for (const wing of [5, 10, 15]) {
+    const probe = s1buildStructure({ expiry, callOffsetPct: wing, putOffsetPct: wing, qty: 0.01, execStyle: "limit" }, chain, { underlying });
+    if (probe.error) continue;
+    for (const l of probe.legs) names.add(l.instrument);
+    atmCall = probe.legs[0].instrument; // [atmCall, atmPut, otmCall, otmPut] — order is load-bearing
+    atmPut = probe.legs[1].instrument;
+  }
+  if (!names.size) return null;
+  return { expiry, instruments: [...names], atmCall, atmPut, atUnderlying: underlying, chainFetchedAt: chain.fetchedAt };
+}
+
+// Point the source at band ∪ open-structure legs; the structure's legs are the gate-relevant primary.
+function pointBtcOptSource() {
+  const bo = state.btcOptions;
+  if (!bo.source) return;
+  const structLegs = bo.engine?.structure ? bo.engine.structure.legs.map((l) => l.instrument) : [];
+  const union = [...new Set([...structLegs, ...(bo.band?.instruments ?? [])])];
+  bo.source.setInstruments(union, structLegs);
+}
+
+// Re-derive the band when it's missing, the chain refreshed, the ATM drifted 2%, or the expiry rolled.
+function refreshBtcOptBand(underlying) {
+  const bo = state.btcOptions;
+  if (!bo.chain || !Number.isFinite(underlying)) return;
+  const b = bo.band;
+  const stale =
+    !b ||
+    b.chainFetchedAt !== bo.chain.fetchedAt ||
+    b.expiry <= Date.now() ||
+    Math.abs(underlying - b.atUnderlying) / b.atUnderlying > BAND_DRIFT_PCT;
+  if (!stale) return;
+  const next = btcOptBand(bo.chain, underlying, Date.now());
+  if (next) {
+    bo.band = next;
+    pointBtcOptSource();
+  }
+}
+
+// Record the tick into the rings. The snapshot copy is taken BEFORE ivContext is attached, so history
+// entries never carry (or share) the ring they came from.
+function recordBtcOptHistory(snap) {
+  const bo = state.btcOptions;
+  bo.snapshotHistory.push({ ...snap });
+  if (bo.snapshotHistory.length > SNAP_HISTORY_CAP) bo.snapshotHistory.shift();
+
+  const last = bo.ivHistory[bo.ivHistory.length - 1];
+  if (last && Number.isFinite(snap.ts) && snap.ts - last.ts < IV_SAMPLE_MS) return;
+  const ivOf = (name) => (name && Number.isFinite(snap.legs?.[name]?.markIv) ? snap.legs[name].markIv : null);
+  // ATM IV = the mean of the ATM call/put mark_iv (either alone when only one is quoted). The ATM pair
+  // comes from the band; with no band yet, fall back to the open structure's ATM legs [0]/[1].
+  const st = bo.engine?.structure;
+  const cIv = ivOf(bo.band?.atmCall) ?? ivOf(st?.legs?.[0]?.instrument);
+  const pIv = ivOf(bo.band?.atmPut) ?? ivOf(st?.legs?.[1]?.instrument);
+  const atmIv = cIv != null && pIv != null ? (cIv + pIv) / 2 : cIv ?? pIv;
+  if (atmIv == null && !Number.isFinite(bo.dvol?.value)) return; // nothing to record yet
+  bo.ivHistory.push({ ts: snap.ts ?? Date.now(), atmIv, dvol: bo.dvol?.value ?? null });
+  if (bo.ivHistory.length > IV_HISTORY_CAP) bo.ivHistory.shift();
+  bo.histDirtyAt = Date.now();
+}
+
+// Throttled flush of the IV history to its own file (+ once more at quit). Never throws into the tick.
+function flushBtcOptHistory(force) {
+  const bo = state.btcOptions;
+  if (!bo.histDirtyAt || bo.histDirtyAt <= bo.histFlushedAt) return;
+  if (!force && Date.now() - bo.histFlushedAt < HIST_FLUSH_MS) return;
+  try {
+    saveBotState(baseDir, `${BTCOPT_ID}-history`, { schemaVersion: 1, botId: BTCOPT_ID, ivHistory: bo.ivHistory });
+    bo.histFlushedAt = Date.now();
+  } catch (e) {
+    console.error("[s1] history flush error:", e);
+  }
+}
+
+// DVOL (public/get_volatility_index_data, currency BTC): cached on the chain cadence; the FIRST fetch
+// also backfills 48h of hourly closes into ivHistory ({ts, dvol} entries) so the DVOL rank is
+// meaningful from the first minutes of a session. Fire-and-forget from the tick (never throws into it).
+let dvolInFlight = false;
+async function ensureBtcOptDvol() {
+  const bo = state.btcOptions;
+  if (dvolInFlight || (bo.dvol && Date.now() - bo.dvol.fetchedAt < DVOL_REFRESH_MS)) return;
+  dvolInFlight = true;
+  try {
+    const end = Date.now();
+    const res = await deribit.getVolatilityIndexData({
+      currency: "BTC",
+      start_timestamp: end - 48 * 3600000,
+      end_timestamp: end,
+      resolution: "3600",
+      testnet: !!bo.settings.testnet,
+    });
+    const rows = Array.isArray(res?.data) ? res.data : [];
+    const lastClose = rows.length ? rows[rows.length - 1][4] : null;
+    if (Number.isFinite(lastClose)) bo.dvol = { value: lastClose, fetchedAt: Date.now() };
+    if (!bo.dvolBackfilled && rows.length) {
+      const firstTs = bo.ivHistory.length ? bo.ivHistory[0].ts : Infinity;
+      const backfill = rows
+        .map(([ts, , , , close]) => ({ ts, atmIv: null, dvol: Number.isFinite(close) ? close : null }))
+        .filter((e) => Number.isFinite(e.ts) && e.dvol != null && e.ts < firstTs);
+      if (backfill.length) {
+        bo.ivHistory = [...backfill, ...bo.ivHistory].slice(-IV_HISTORY_CAP);
+        bo.histDirtyAt = Date.now();
+      }
+      bo.dvolBackfilled = true;
+    }
+  } catch (e) {
+    console.warn("[s1] dvol fetch:", String(e?.message || e));
+  } finally {
+    dvolInFlight = false;
+  }
 }
 
 function assembleDataset1() {
@@ -428,6 +571,7 @@ function assembleDataset1() {
       realizedOptions: eng.realizedOptionsUsd ?? 0,
     },
     chain: bo.chain ? groupBtcOptChain(bo.chain, cycle?.underlying_price ?? bo.lastSnapshot?.underlying) : null,
+    sweep: bo.sweepResult ?? null, // Phase 3b: the last runSweep result rides every dataset (re-render safe)
     fresh: bo.source
       ? bo.source.status()
       : { source: "deribit-rest", running: false, ok: false, stale: true, gateOk: false, ageSec: null, notes: [] },
@@ -438,22 +582,29 @@ function push1() {
   if (win && !win.isDestroyed()) win.webContents.send("s1:push", assembleDataset1());
 }
 
-// The source tick: raw composite snapshot → ingest (funding) → evaluate (hedge + P&L) → persist → push.
+// The source tick: raw composite snapshot → record history (3b) → attach the IV context → ingest
+// (funding) → evaluate (hedge + P&L + iv_regime) → persist → push → maintain the band/DVOL caches.
 // Wrapped so a bad tick (network hiccup, unexpected shape) can never crash the app.
 function onBtcOptSnapshot(snap) {
   try {
     const bo = state.btcOptions;
     bo.lastSnapshot = snap;
+    recordBtcOptHistory(snap); // copies BEFORE ivContext is attached — history entries stay context-free
+    snap.ivContext = { series: bo.ivHistory }; // → evaluate() computes cycle.iv_regime from this
     s1engine.ingest(bo.engine, snap, Date.now());
     bo.snapshot = s1engine.evaluate(bo.engine, snap, Date.now());
     saveBotState(baseDir, BTCOPT_ID, bo.engine);
     push1();
+    refreshBtcOptBand(snap.underlying); // may re-point the source for the NEXT tick
+    flushBtcOptHistory(false);
+    ensureBtcOptDvol(); // async, self-gated to the 5-min cadence, never throws into the tick
   } catch (e) {
     console.error("[s1] tick error:", e);
   }
 }
 
-// Create the Deribit REST source (if absent) and start it (if idle); point it at the open legs. Idempotent.
+// Create the Deribit REST source (if absent) and start it (if idle); point it at the ATM band ∪ the
+// open legs (the legs are the gate-relevant primary — see pointBtcOptSource). Idempotent.
 function ensureBtcOptSource() {
   const bo = state.btcOptions;
   const cfg = bo.settings || {};
@@ -464,9 +615,13 @@ function ensureBtcOptSource() {
       staleAfterSec: Math.max(15, (cfg.repriceSec || 3) * 5),
     });
   }
-  // Point the source at the open legs BEFORE start() — start() fires an immediate tick, so the very
-  // first fetch must already target the right instruments (else it clobbers the just-opened cycle).
-  bo.source.setInstruments(bo.engine.structure ? bo.engine.structure.legs.map((l) => l.instrument) : []);
+  // Point the source BEFORE start() — start() fires an immediate tick, so the very first fetch must
+  // already target the right instruments (else it clobbers the just-opened cycle). The band may not
+  // exist yet (needs an underlying) — the first tick's perp index seeds it via refreshBtcOptBand.
+  if (!bo.band && bo.chain && Number.isFinite(bo.lastSnapshot?.underlying)) {
+    bo.band = btcOptBand(bo.chain, bo.lastSnapshot.underlying, Date.now());
+  }
+  pointBtcOptSource();
   if (!bo.running) {
     bo.source.start(onBtcOptSnapshot);
     bo.running = true;
@@ -670,6 +825,28 @@ function wireIpcStrategy1() {
     saveBotState(baseDir, BTCOPT_ID, bo.engine);
     push1();
     return { ok: true };
+  });
+
+  // Phase 3b: the parameter sweep — a PURE replay of the captured snapshot ring through a fresh engine
+  // per combo (sweep.js), ranked by Sharpe. Synchronous CPU work of a few seconds — user-initiated,
+  // button shows «идёт свип…»; a starved source tick during it is harmless (dedup-by-ts).
+  ipcMain.handle("s1:runSweep", async () => {
+    const bo = state.btcOptions;
+    try {
+      const series = (bo.snapshotHistory || []).slice();
+      const expiryMs = bo.engine?.structure?.expiryMs ?? bo.band?.expiry ?? null;
+      if (!series.length || expiryMs == null) {
+        bo.sweepResult = { ranAt: Date.now(), seriesLen: 0, objective: "sharpe", combos: [], best: null, excluded: [] };
+        push1();
+        return bo.sweepResult;
+      }
+      const r = s1runSweep({ series, chain: bo.chain, expiryMs, baseSettings: bo.settings });
+      bo.sweepResult = { ranAt: Date.now(), ...r };
+      push1();
+      return bo.sweepResult;
+    } catch (e) {
+      return { error: String(e.message || e) };
+    }
   });
 
   ipcMain.handle("s1:getLedger", async (_e, req) => {
@@ -1055,6 +1232,17 @@ app.whenReady().then(async () => {
         "JSON.stringify({decision:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.decision, netDelta:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.net_option_delta_bs, futDelta:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.current_futures_delta, perpQty:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.perp_position&&LIVE_S1.cycle.perp_position.contracts, net:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.pnl&&LIVE_S1.cycle.pnl.net_total, equity:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.account&&LIVE_S1.cycle.account.equity, ledger:LIVE_S1&&LIVE_S1.ledgerMeta&&LIVE_S1.ledgerMeta.count, hedgeVs:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.hedge_vs&&LIVE_S1.cycle.hedge_vs.hedge_contribution, sharpe:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.metrics&&LIVE_S1.cycle.metrics.sharpe, maxDD:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.metrics&&LIVE_S1.cycle.metrics.maxDrawdown, im:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.account&&LIVE_S1.cycle.account.initial_margin, mu:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.account&&LIVE_S1.cycle.account.maintenance_utilisation, overDep:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.account&&LIVE_S1.cycle.account.over_deposit, stressN:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.stress&&LIVE_S1.cycle.stress.scenarios&&LIVE_S1.cycle.stress.scenarios.length, running:LIVE_S1&&LIVE_S1.running, autoExpiry:LIVE_S1&&LIVE_S1.structure&&LIVE_S1.structure.expiryMs, deltaShown:(document.getElementById('optNetDeltaBs')||{}).textContent, decisionShown:(document.getElementById('optDecision')||{}).textContent})",
       );
       console.log("[s1smoke] live-rendered via push:", dom);
+      // Phase 3b: exercise the sweep over the snapshots captured during the wait, then read the
+      // IV-regime + sweep fields the renderer binds.
+      const sweep = await win.webContents.executeJavaScript("window.s1.runSweep()");
+      console.log(
+        "[s1smoke] sweep:",
+        sweep && sweep.error ? sweep.error : sweep ? `combos ${sweep.combos.length} · excluded ${sweep.excluded.length} · series ${sweep.seriesLen}` : "null",
+      );
+      const p3 = await win.webContents.executeJavaScript(
+        "JSON.stringify({ivRank:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.iv_regime&&LIVE_S1.cycle.iv_regime.iv_rank, ivN:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.iv_regime&&LIVE_S1.cycle.iv_regime.n, dvol:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.iv_regime&&LIVE_S1.cycle.iv_regime.dvol, sweepN:LIVE_S1&&LIVE_S1.sweep&&LIVE_S1.sweep.combos&&LIVE_S1.sweep.combos.length, ivShown:(document.getElementById('optIvAtm')||{}).textContent, sweepShown:!!document.querySelector('#optSweepBody tr')})",
+      );
+      console.log("[s1smoke] phase3:", p3);
       try { win.setContentSize(1500, 1700); await new Promise((r) => setTimeout(r, 300)); } catch {}
       const img = await win.webContents.capturePage();
       writeFileSync(shot, img.toPNG());
@@ -1083,5 +1271,6 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   if (pollTimer) clearInterval(pollTimer);
   if (state.btcOptions && state.btcOptions.source) state.btcOptions.source.stop(); // Phase 1: stop Deribit poll
+  try { flushBtcOptHistory(true); } catch {} // Phase 3b: final IV-history flush
   disposeUpdater();
 });

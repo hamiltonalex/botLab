@@ -65,6 +65,12 @@ export const getTicker = (instrument_name, { testnet = false } = {}) =>
 export const getOrderBook = (instrument_name, { depth = 5, testnet = false } = {}) =>
   rpc("public/get_order_book", { instrument_name, depth }, { testnet });
 
+// DVOL — Deribit's 30-day implied-volatility index (Phase 3b IV regime). PUBLIC endpoint; a BTC-currency
+// query returning { data: [[ts, open, high, low, close], …] } at the given resolution (seconds: "1" |
+// "60" | "3600" | "43200" | "1D"). Slow-moving — callers cache it like the chain (never per tick).
+export const getVolatilityIndexData = ({ currency = "BTC", start_timestamp, end_timestamp, resolution = "3600", testnet = false } = {}) =>
+  rpc("public/get_volatility_index_data", { currency, start_timestamp, end_timestamp, resolution }, { testnet });
+
 // The canonical option family: BTC linear USDC options discovered under currency=USDC.
 export const PERP_INSTRUMENT = "BTC-PERPETUAL";
 export const OPTION_CURRENCY = "USDC";
@@ -144,11 +150,14 @@ export function greeksGateOk(legs) {
 }
 
 // ---------------------------------------------------------------------------
-// Composite snapshot builder (IMPURE). Fetches the perp + the open legs, maps to canonical, and returns
+// Composite snapshot builder (IMPURE). Fetches the perp + the polled legs, maps to canonical, and returns
 // the engine's sole input contract. NEVER throws — per-fetch failures land in errors[]/fresh.notes.
 // Liquidity is derived from the perp ticker's best bid/ask (no extra order-book call per tick).
+// Phase 3b: legInstruments may include an auxiliary ATM band (IV regime + sweep capture) beyond the open
+// structure's legs. `primaryInstruments` names the legs the greeks gate / ok flag protect (default: all)
+// — a missing band quote must never pause the hedge engine or flip LIVE to warn; it only lands in notes.
 // ---------------------------------------------------------------------------
-export async function buildDeribitSnapshot({ legInstruments = [], perpName = PERP_INSTRUMENT, metaCache, testnet = false, nowMs } = {}) {
+export async function buildDeribitSnapshot({ legInstruments = [], primaryInstruments = null, perpName = PERP_INSTRUMENT, metaCache, testnet = false, nowMs } = {}) {
   const errors = [];
   const meta = metaCache || new Map();
   const getMeta = async (name) => {
@@ -184,8 +193,15 @@ export async function buildDeribitSnapshot({ legInstruments = [], perpName = PER
   const tsList = [...legArr.map((l) => l.ts), perp?.ts].filter((x) => Number.isFinite(x));
   const ts = tsList.length ? Math.max(...tsList) : (nowMs ?? null);
   const liquidity = perp ? bookToLiquidity(perp) : null;
-  const gateOk = greeksGateOk(legs);
-  const ok = !!perp && errors.length === 0 && gateOk;
+  // Gate + ok are judged over the PRIMARY legs only (the open structure); auxiliary band failures stay
+  // visible in notes but never degrade the hedge engine's inputs-quality verdict.
+  const primaryNames = Array.isArray(primaryInstruments) ? primaryInstruments : legInstruments;
+  const primarySet = new Set(primaryNames);
+  const primaryLegs = {};
+  for (const name of primaryNames) if (legs[name]) primaryLegs[name] = legs[name];
+  const gateOk = greeksGateOk(primaryLegs);
+  const primaryErrors = errors.filter((e) => e.instrument === perpName || primarySet.has(e.instrument));
+  const ok = !!perp && primaryErrors.length === 0 && gateOk;
 
   return {
     ts,
@@ -217,6 +233,7 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
   let running = false;
   let onSnapshot = null;
   let legInstruments = [];
+  let primaryInstruments = null; // 3b: the gate-relevant subset (open structure); null = all polled legs
   let lastTs = null;
   let lastSnap = null;
   let lastError = null;
@@ -226,7 +243,7 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
 
   const tick = async () => {
     try {
-      const snap = await buildDeribitSnapshot({ legInstruments, metaCache, testnet, nowMs: Date.now() });
+      const snap = await buildDeribitSnapshot({ legInstruments, primaryInstruments, metaCache, testnet, nowMs: Date.now() });
       if (snap.errors.length) {
         lastError = snap.errors[0].message;
         errorStreak++;
@@ -264,8 +281,11 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
     refreshNow() {
       if (running) tick();
     },
-    setInstruments(names) {
+    setInstruments(names, primary) {
       legInstruments = Array.isArray(names) ? names.slice() : [];
+      // Optional 2nd arg: the gate-relevant (open-structure) subset. Omitted ⇒ every polled leg gates
+      // (the pre-band behaviour); [] ⇒ nothing gates (flat, band-only polling).
+      primaryInstruments = Array.isArray(primary) ? primary.slice() : null;
     },
     status() {
       const ageSec = lastTs != null ? Math.round((Date.now() - lastTs) / 1000) : null;

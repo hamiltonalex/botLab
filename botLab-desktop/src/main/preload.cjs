@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld("s1", {
   refreshNow: () => ipcRenderer.invoke("s1:refreshNow"),
   reset: () => ipcRenderer.invoke("s1:reset"),
   getChain: (req) => ipcRenderer.invoke("s1:getChain", req), // instrument picker for manual entry
+  runSweep: () => ipcRenderer.invoke("s1:runSweep"), // Phase 3b: parameter sweep over the captured history
   getLedger: (req) => ipcRenderer.invoke("s1:getLedger", req),
   exportLedger: (req) => ipcRenderer.invoke("s1:exportLedger", req),
   // main -> renderer live pushes (reprice ticks: greeks, hedge decision, P&L)
