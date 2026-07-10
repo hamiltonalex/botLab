@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld("fa", {
 contextBridge.exposeInMainWorld("s1", {
   getState: () => ipcRenderer.invoke("s1:getState"),
   setSettings: (s) => ipcRenderer.invoke("s1:setSettings", s),
+  previewStructure: (params) => ipcRenderer.invoke("s1:previewStructure", params), // hypothesis: debit/payoff/gate, no open
   openStructure: (params) => ipcRenderer.invoke("s1:openStructure", params),
   closeStructure: () => ipcRenderer.invoke("s1:closeStructure"),
   start: () => ipcRenderer.invoke("s1:start"),

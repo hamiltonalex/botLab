@@ -1,0 +1,48 @@
+{
+  "perp": "BTC-PERPETUAL",
+  "expiry": 1783756800000,
+  "atm": 64000,
+  "kc": 70000,
+  "kp": 58000,
+  "legInstruments": [
+    "BTC_USDC-11JUL26-64000-C",
+    "BTC_USDC-11JUL26-64000-P",
+    "BTC_USDC-11JUL26-70000-C",
+    "BTC_USDC-11JUL26-58000-P"
+  ],
+  "sampleMeta": {
+    "state": "open",
+    "price_index": "btc_usdc",
+    "kind": "option",
+    "instrument_name": "BTC_USDC-11JUL26-56000-C",
+    "maker_commission": 0.0003,
+    "taker_commission": 0.0003,
+    "instrument_type": "linear",
+    "expiration_timestamp": 1783756800000,
+    "is_active": true,
+    "underlying_type": "crypto",
+    "creation_timestamp": 1783411213000,
+    "instrument_id": 657592,
+    "tick_size": 5,
+    "contract_size": 1,
+    "strike": 56000,
+    "base_currency": "BTC",
+    "quote_currency": "USDC",
+    "settlement_currency": "USDC",
+    "option_type": "call",
+    "min_trade_amount": 0.01,
+    "block_trade_commission": 0.0003,
+    "block_trade_min_trade_amount": 25,
+    "block_trade_tick_size": 5,
+    "settlement_period": "day",
+    "counter_currency": "USDC",
+    "tick_size_steps": [
+      {
+        "tick_size": 20,
+        "above_price": 1000
+      }
+    ],
+    "base_currency_uuid": "5b71fc48-3dd3-540c-809b-f8c94d0e68b5",
+    "quote_currency_uuid": "2b92315d-eab7-5bef-84fa-089a131333f5"
+  }
+}

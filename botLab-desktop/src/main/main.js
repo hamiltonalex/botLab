@@ -26,6 +26,9 @@ import { toLedgerCsv, toLedgerSheet, toLedgerJson, ledgerFileName, dialogFilters
 import { buildXlsxBuffer } from "./xlsx-writer.js";
 import { loadPositions, savePositions, loadSettings, saveSettings, hasSettings, loadBotState, saveBotState, loadBotSettings, saveBotSettings } from "../engine/store.js";
 import * as s1engine from "../engine/btcopt/engine.js";
+import * as deribit from "../engine/btcopt/deribit.js";
+import { buildStructure as s1buildStructure, validateStructure as s1validateStructure } from "../engine/btcopt/structure.js";
+import { payoffCurve as s1payoffCurve } from "../engine/btcopt/payoff.js";
 import { decimate } from "../engine/format.js";
 import { TWO_LEG, ONE_LEG, ALL_MARKETS, twoLegByKey, oneLegByKey, chainsInUse } from "../engine/universe.js";
 import { isolateSmokeProfile } from "./smoke-profile.js";
@@ -34,7 +37,8 @@ import { initUpdater, disposeUpdater } from "./updater.js";
 import { decideChangelogOpen } from "./updater-state.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SMOKE = process.env.FA_SMOKE === "1"; // hidden-window self-test: boot, poll, print, quit
+const S1_SMOKE = process.env.S1_SMOKE === "1"; // bot-2 self-test: open→live ticks→close through the real s1 IPC
+const SMOKE = process.env.FA_SMOKE === "1" || S1_SMOKE; // isolate profile + hidden window + skip updater
 isolateSmokeProfile(app, { enabled: SMOKE });
 const instFor = (strat, key) => (strat === "one" ? oneLegByKey(key) : twoLegByKey(key));
 const cacheKeyFor = (strat, key) => (strat === "one" ? `${key}__oneleg` : key);
@@ -68,7 +72,7 @@ const state = {
   bootNotes: [],
   // Bot 2 «BTC-опционы» (Strategy One) — isolated paper engine + live Deribit source (Phase 1).
   // Read only by the s1:* handlers / assembleDataset1(); never leaks into assembleDataset()/fa:push.
-  btcOptions: { engine: null, source: null, settings: {}, snapshot: null, running: false, chain: null },
+  btcOptions: { engine: null, source: null, settings: {}, snapshot: null, running: false, chain: null, lastSnapshot: null },
 };
 
 const pollSec = () => Math.min(15, Math.max(1, state.settings.pollMinutes || 5)) * 60;
@@ -406,15 +410,27 @@ function loadOrInitBtcOptions() {
 function assembleDataset1() {
   const bo = state.btcOptions;
   const eng = bo.engine || {};
+  const cycle = bo.snapshot ?? null;
+  const ps = eng.perpState || {};
   return {
     botId: BTCOPT_ID,
     running: bo.running,
-    settings: bo.settings,
+    settings: bo.settings, // live toolbar params (drive the Zone-Ⅰ hypothesis)
+    selection: eng.structure?.engineCfg ?? eng.structure?.params ?? null, // frozen params of the open structure
     structure: eng.structure ?? null,
-    cycle: bo.snapshot ?? null, // last evaluate() cycle-snapshot (Phase 1)
-    account: null, // Phase 1
-    chain: bo.chain ?? null,
-    fresh: bo.source ? bo.source.status() : { source: "deribit-rest", ok: false, stale: true, ageSec: null },
+    cycle, // last evaluate() cycle-snapshot
+    account: cycle?.account ?? null,
+    ledgerMeta: {
+      count: eng.ledger?.length ?? 0,
+      feesTotal: ps.feesCum ?? 0,
+      fundingTotal: ps.fundingCum ?? 0,
+      realizedPerp: ps.realizedUsd ?? 0,
+      realizedOptions: eng.realizedOptionsUsd ?? 0,
+    },
+    chain: bo.chain ? groupBtcOptChain(bo.chain, cycle?.underlying_price ?? bo.lastSnapshot?.underlying) : null,
+    fresh: bo.source
+      ? bo.source.status()
+      : { source: "deribit-rest", running: false, ok: false, stale: true, gateOk: false, ageSec: null, notes: [] },
   };
 }
 
@@ -422,32 +438,265 @@ function push1() {
   if (win && !win.isDestroyed()) win.webContents.send("s1:push", assembleDataset1());
 }
 
+// The source tick: raw composite snapshot → ingest (funding) → evaluate (hedge + P&L) → persist → push.
+// Wrapped so a bad tick (network hiccup, unexpected shape) can never crash the app.
+function onBtcOptSnapshot(snap) {
+  try {
+    const bo = state.btcOptions;
+    bo.lastSnapshot = snap;
+    s1engine.ingest(bo.engine, snap, Date.now());
+    bo.snapshot = s1engine.evaluate(bo.engine, snap, Date.now());
+    saveBotState(baseDir, BTCOPT_ID, bo.engine);
+    push1();
+  } catch (e) {
+    console.error("[s1] tick error:", e);
+  }
+}
+
+// Create the Deribit REST source (if absent) and start it (if idle); point it at the open legs. Idempotent.
+function ensureBtcOptSource() {
+  const bo = state.btcOptions;
+  const cfg = bo.settings || {};
+  if (!bo.source) {
+    bo.source = deribit.createRestSource({
+      testnet: !!cfg.testnet,
+      intervalMs: Math.max(1000, (cfg.repriceSec || 3) * 1000),
+      staleAfterSec: Math.max(15, (cfg.repriceSec || 3) * 5),
+    });
+  }
+  // Point the source at the open legs BEFORE start() — start() fires an immediate tick, so the very
+  // first fetch must already target the right instruments (else it clobbers the just-opened cycle).
+  bo.source.setInstruments(bo.engine.structure ? bo.engine.structure.legs.map((l) => l.instrument) : []);
+  if (!bo.running) {
+    bo.source.start(onBtcOptSnapshot);
+    bo.running = true;
+  }
+}
+
+// Cached option-chain fetch (Deribit rate-limits get_instruments; refresh at most every 5 min).
+async function ensureBtcOptChain() {
+  const bo = state.btcOptions;
+  const cfg = bo.settings || {};
+  if (!bo.chain || Date.now() - (bo.chain.fetchedAt || 0) > 300000) {
+    const all = await deribit.getInstruments({ currency: deribit.OPTION_CURRENCY, kind: "option", testnet: !!cfg.testnet });
+    bo.chain = { instruments: all.filter((i) => deribit.isBtcUsdcOption(i.instrument_name)), fetchedAt: Date.now() };
+  }
+  return bo.chain;
+}
+
+// Group the chain by live expiry (future only) for the expiry selector + chain card.
+function groupBtcOptChain(chain, underlying) {
+  const now = Date.now();
+  const byExp = new Map();
+  for (const m of chain.instruments || []) {
+    if (m.expiration_timestamp <= now) continue;
+    if (!byExp.has(m.expiration_timestamp)) byExp.set(m.expiration_timestamp, []);
+    byExp.get(m.expiration_timestamp).push(m);
+  }
+  const expiries = [...byExp.keys()]
+    .sort((a, b) => a - b)
+    .map((e) => ({ expiry: e, days: (e - now) / 86400000, count: byExp.get(e).length, strikes: [...new Set(byExp.get(e).map((m) => m.strike))].sort((a, b) => a - b) }));
+  return { expiries, fetchedAt: chain.fetchedAt, underlying: underlying ?? null };
+}
+
+// Bot-2 ledger export (own column set — export.js's LEDGER_COLUMNS are funding-arb-specific).
+const BTCOPT_LEDGER_HEADER = ["seq", "time_utc", "type", "side", "contracts", "price_ref", "delta_btc", "fee_usd", "funding_usd", "realized_usd", "note"];
+const btcOptLedgerRows = (eng) =>
+  (eng.ledger || []).map((e) => [e.seq, e.t ? new Date(e.t).toISOString() : "", e.type ?? "", e.side ?? "", e.contracts ?? 0, e.priceRef ?? 0, e.deltaBtc ?? 0, e.feeUsd ?? 0, e.fundingUsd ?? 0, e.realizedUsd ?? 0, e.note ?? ""]);
+function btcOptLedgerCsv(eng) {
+  const esc = (v) => { const s = String(v ?? ""); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  return "﻿" + [BTCOPT_LEDGER_HEADER, ...btcOptLedgerRows(eng)].map((r) => r.map(esc).join(",")).join("\r\n") + "\r\n";
+}
+const btcOptLedgerJson = (eng) =>
+  JSON.stringify({ format: "btc-options-ledger", version: 1, botId: BTCOPT_ID, exportedAt: new Date().toISOString(), perpState: eng.perpState, realizedOptionsUsd: eng.realizedOptionsUsd, events: eng.ledger || [] }, null, 2);
+
+// Resolve a live structure for open/preview: cached chain → underlying (perp index) → the 4 legs → a full
+// snapshot with entry marks. Shared by s1:openStructure and s1:previewStructure (which never opens).
+async function resolveBtcOptStructureLive(params) {
+  const bo = state.btcOptions;
+  const chain = await ensureBtcOptChain();
+  const perpTk = await deribit.getTicker(deribit.PERP_INSTRUMENT, { testnet: !!bo.settings.testnet });
+  const probe = s1buildStructure(params, chain, { underlying: perpTk.index_price });
+  if (probe.error) return { error: probe.error };
+  const legInstruments = probe.legs.map((l) => l.instrument);
+  const snap = await deribit.buildDeribitSnapshot({ legInstruments, testnet: !!bo.settings.testnet, nowMs: Date.now() });
+  if (!snap.perp || Object.keys(snap.legs).length < legInstruments.length) {
+    return { error: "не удалось получить котировки всех ног (Deribit)" };
+  }
+  return { chain, snap };
+}
+
 function wireIpcStrategy1() {
   ipcMain.handle("s1:getState", async () => assembleDataset1());
 
   ipcMain.handle("s1:setSettings", async (_e, s) => {
-    state.btcOptions.settings = { ...state.btcOptions.settings, ...(s || {}) };
-    saveBotSettings(baseDir, BTCOPT_ID, state.btcOptions.settings);
+    const bo = state.btcOptions;
+    bo.settings = { ...bo.settings, ...(s || {}) };
+    saveBotSettings(baseDir, BTCOPT_ID, bo.settings);
+    // Apply cadence/testnet changes to a live source by rebuilding it (params stay live only pre-open).
+    if (bo.source && bo.running) {
+      bo.source.stop();
+      bo.source = null;
+      ensureBtcOptSource();
+    }
     return assembleDataset1();
   });
 
   ipcMain.handle("s1:reset", async () => {
-    state.btcOptions.engine = s1engine.create({ settings: state.btcOptions.settings, nowMs: Date.now() });
-    state.btcOptions.snapshot = null;
-    saveBotState(baseDir, BTCOPT_ID, state.btcOptions.engine);
+    const bo = state.btcOptions;
+    bo.source?.stop();
+    bo.source = null;
+    bo.running = false;
+    bo.engine = s1engine.create({ settings: bo.settings, nowMs: Date.now() });
+    bo.snapshot = null;
+    bo.lastSnapshot = null;
+    saveBotState(baseDir, BTCOPT_ID, bo.engine);
     return assembleDataset1();
   });
 
-  // Phase-1 stubs — the Deribit source + hedge engine are not built yet. Keep the bridge complete
-  // and SAFE so the renderer can wire onPush/getState today without rejects.
-  ipcMain.handle("s1:start", async () => assembleDataset1());
-  ipcMain.handle("s1:stop", async () => assembleDataset1());
-  ipcMain.handle("s1:refreshNow", async () => assembleDataset1());
-  ipcMain.handle("s1:openStructure", async () => ({ error: "модуль в разработке (Фаза 1)" }));
-  ipcMain.handle("s1:closeStructure", async () => ({ error: "нет открытой структуры" }));
-  ipcMain.handle("s1:getChain", async () => ({ error: "модуль в разработке (Фаза 1)" }));
-  ipcMain.handle("s1:getLedger", async () => ({ events: [], totalCount: 0, allCount: 0 }));
-  ipcMain.handle("s1:exportLedger", async () => ({ error: "модуль в разработке (Фаза 1)" }));
+  ipcMain.handle("s1:start", async () => {
+    try {
+      ensureBtcOptSource();
+    } catch (e) {
+      return { error: String(e.message || e) };
+    }
+    return assembleDataset1();
+  });
+
+  ipcMain.handle("s1:stop", async () => {
+    const bo = state.btcOptions;
+    bo.source?.stop();
+    bo.running = false;
+    return assembleDataset1();
+  });
+
+  ipcMain.handle("s1:refreshNow", async () => {
+    const bo = state.btcOptions;
+    try {
+      if (bo.source && bo.running) bo.source.refreshNow();
+      else ensureBtcOptSource();
+    } catch (e) {
+      return { error: String(e.message || e) };
+    }
+    return assembleDataset1();
+  });
+
+  ipcMain.handle("s1:getChain", async () => {
+    try {
+      const chain = await ensureBtcOptChain();
+      push1();
+      return groupBtcOptChain(chain, state.btcOptions.lastSnapshot?.underlying);
+    } catch (e) {
+      return { error: `Deribit: ${String(e.message || e)}` };
+    }
+  });
+
+  // A hypothesis preview: resolve the structure live and return its debit / max-loss / payoff / gate
+  // WITHOUT opening it (Zone-Ⅰ payoff preview + the launch-ticket estimates). Debounced by the renderer.
+  ipcMain.handle("s1:previewStructure", async (_e, params) => {
+    const bo = state.btcOptions;
+    try {
+      const res = await resolveBtcOptStructureLive(params);
+      if (res.error) return { error: res.error };
+      const built = s1buildStructure(params, res.chain, res.snap); // now with entry marks
+      if (built.error) return { error: built.error };
+      const metaByInstrument = {};
+      for (const l of built.legs) metaByInstrument[l.instrument] = res.chain.instruments.find((m) => m.instrument_name === l.instrument);
+      const v = s1validateStructure(built, metaByInstrument);
+      const payoff = s1payoffCurve(built, { min: res.snap.underlying * 0.75, max: res.snap.underlying * 1.25, n: 96 });
+      return {
+        ok: true,
+        underlying: res.snap.underlying,
+        strikes: built.strikes,
+        entryDebitUsd: built.entryDebitUsd,
+        maxLossUsd: Math.abs(built.entryDebitUsd), // defined-risk: max loss at expiry = the net debit
+        maxProfitUsd: payoff.plateau,
+        breakEvens: payoff.breakEvens,
+        payoff,
+        valid: v.ok,
+        validationErrors: v.errors,
+        legs: built.legs.map((l) => ({ instrument: l.instrument, side: l.side, type: l.type, strike: l.strike, entryMark: l.entryMark })),
+        fresh: res.snap.fresh,
+      };
+    } catch (e) {
+      return { error: `Deribit: ${String(e.message || e)}` };
+    }
+  });
+
+  ipcMain.handle("s1:openStructure", async (_e, params) => {
+    const bo = state.btcOptions;
+    try {
+      const res = await resolveBtcOptStructureLive(params);
+      if (res.error) return { error: res.error };
+      const r = s1engine.openStructure(bo.engine, params, res.chain, res.snap, Date.now());
+      if (r.error) return { error: r.error };
+      bo.lastSnapshot = res.snap;
+      bo.snapshot = s1engine.evaluate(bo.engine, res.snap, Date.now());
+      ensureBtcOptSource(); // start / re-point the source at the new legs for live updates
+      saveBotState(baseDir, BTCOPT_ID, bo.engine);
+      push1();
+      return { ok: true, structureId: bo.engine.structure?.id };
+    } catch (e) {
+      return { error: `Deribit: ${String(e.message || e)}` };
+    }
+  });
+
+  ipcMain.handle("s1:closeStructure", async () => {
+    const bo = state.btcOptions;
+    const snap = bo.lastSnapshot;
+    if (!bo.engine.structure) return { error: "нет открытой структуры" };
+    if (!snap) return { error: "нет рыночных данных — запустите источник" };
+    const r = s1engine.closeStructure(bo.engine, snap, Date.now());
+    if (r.error) return r;
+    bo.source?.setInstruments([]);
+    bo.snapshot = s1engine.evaluate(bo.engine, snap, Date.now());
+    saveBotState(baseDir, BTCOPT_ID, bo.engine);
+    push1();
+    return { ok: true };
+  });
+
+  ipcMain.handle("s1:getLedger", async (_e, req) => {
+    const bo = state.btcOptions;
+    const eng = bo.engine || {};
+    const all = eng.ledger || [];
+    const { offset = 0, limit = 200, order = "desc", types = null } = req || {};
+    let events = types && types.length ? all.filter((e) => types.includes(e.type)) : all.slice();
+    const allCount = all.length;
+    const totalCount = events.length;
+    if (order === "desc") events = events.slice().reverse();
+    events = events.slice(offset, offset + limit);
+    return {
+      events,
+      totalCount,
+      allCount,
+      totals: {
+        feesTotal: eng.perpState?.feesCum ?? 0,
+        fundingTotal: eng.perpState?.fundingCum ?? 0,
+        realizedPerp: eng.perpState?.realizedUsd ?? 0,
+        realizedOptions: eng.realizedOptionsUsd ?? 0,
+      },
+    };
+  });
+
+  ipcMain.handle("s1:exportLedger", async (_e, req) => {
+    const bo = state.btcOptions;
+    const eng = bo.engine || {};
+    const format = (req && req.format) || "csv";
+    try {
+      const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12); // YYYYMMDDHHMM
+      const { canceled, filePath } = await dialog.showSaveDialog(win, { defaultPath: `btcopt-ledger_${stamp}.${format}`, filters: dialogFiltersFor(format) });
+      if (canceled || !filePath) return { canceled: true };
+      let payload;
+      if (format === "csv") payload = btcOptLedgerCsv(eng);
+      else if (format === "json") payload = btcOptLedgerJson(eng);
+      else if (format === "xlsx") payload = buildXlsxBuffer("Ledger", BTCOPT_LEDGER_HEADER, btcOptLedgerRows(eng));
+      else return { error: "неизвестный формат" };
+      writeFileSync(filePath, payload);
+      return { ok: true, filePath, count: (eng.ledger || []).length };
+    } catch (e) {
+      return { error: String(e.message || e) };
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -721,7 +970,7 @@ app.whenReady().then(async () => {
 
   if (!SMOKE) warmFrames();
 
-  if (SMOKE) {
+  if (SMOKE && !S1_SMOKE) {
     const smokeKey = state.settings.asset; // default two-leg instrument (ETH)
     await ensureFrame(state.settings.strat, smokeKey).catch(() => {});
     const ds = assembleDataset({});
@@ -769,6 +1018,35 @@ app.whenReady().then(async () => {
       rmSync(scratch, { recursive: true, force: true });
     }
     setTimeout(() => app.quit(), 800);
+  }
+
+  // Bot-2 full-stack self-test: drive the REAL s1 IPC path through the renderer's window.s1
+  // (invoke → ipcMain.handle → engine → push1 → applyS1Dataset), then screenshot + close.
+  if (S1_SMOKE) {
+    const shot = join(tmpdir(), "s1-smoke-view.png");
+    try {
+      await win.webContents.executeJavaScript("typeof setView==='function' && setView('btc-options')");
+      const chain = await win.webContents.executeJavaScript("window.s1.getChain()");
+      const exps = (chain && chain.expiries) || [];
+      const exp = exps.find((e) => e.days >= 0.4 && e.days <= 3) || exps[0];
+      const params = { expiry: exp && exp.expiry, callOffsetPct: 10, putOffsetPct: 10, qty: 0.01, execStyle: "limit" };
+      const open = await win.webContents.executeJavaScript(`window.s1.openStructure(${JSON.stringify(params)})`);
+      console.log("[s1smoke] getChain expiries:", exps.length, "| open:", JSON.stringify(open));
+      await new Promise((r) => setTimeout(r, 9000)); // a few live reprice ticks arrive via s1:push
+      const dom = await win.webContents.executeJavaScript(
+        "JSON.stringify({decision:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.decision, netDelta:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.net_option_delta_bs, futDelta:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.current_futures_delta, perpQty:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.perp_position&&LIVE_S1.cycle.perp_position.contracts, net:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.pnl&&LIVE_S1.cycle.pnl.net_total, equity:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.account&&LIVE_S1.cycle.account.equity, ledger:LIVE_S1&&LIVE_S1.ledgerMeta&&LIVE_S1.ledgerMeta.count, running:LIVE_S1&&LIVE_S1.running, deltaShown:(document.getElementById('optNetDeltaBs')||{}).textContent, decisionShown:(document.getElementById('optDecision')||{}).textContent})",
+      );
+      console.log("[s1smoke] live-rendered via push:", dom);
+      try { win.setContentSize(1500, 1700); await new Promise((r) => setTimeout(r, 300)); } catch {}
+      const img = await win.webContents.capturePage();
+      writeFileSync(shot, img.toPNG());
+      console.log("[s1smoke] screenshot:", shot);
+      const close = await win.webContents.executeJavaScript("window.s1.closeStructure()");
+      console.log("[s1smoke] close:", JSON.stringify(close));
+    } catch (e) {
+      console.error("[s1smoke] ERROR:", (e && e.message) || e);
+    }
+    setTimeout(() => app.quit(), 600);
   }
 
   app.on("activate", () => {

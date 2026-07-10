@@ -2,19 +2,45 @@
 // PURE: no electron / DOM / fs / fetch — deterministic, unit-testable. Isolated from the
 // funding-arb engine (paper.js/ledger.js are carry-accrual only; options P&L is mark-to-market).
 //
-// Phase 0: create() / defaultSettings() only — a persist-round-trippable skeleton state.
-// Phase 1 adds ingest(snapshot) + evaluate() -> cycle-snapshot (the hedge engine + P&L attribution).
-//
 // The strategy: a 4-leg BTC options "winged straddle" (long ATM call + long ATM put + short OTM call
-// + short OTM put) delta-hedged with a BTC perpetual. Greeks come FROM Deribit (public/ticker);
-// this module never prices options itself except (later) the theoretical payoff curve.
+// + short OTM put), one expiry, delta-hedged with a BTC perpetual. Greeks come FROM Deribit
+// (public/ticker); this module never prices options itself. The option legs are LINEAR USDC
+// (BTC_USDC-*, marks in USD); the hedge leg is the INVERSE BTC-PERPETUAL ($10 contract) — the perp's
+// inverse mark-to-market / funding is localized to hedge.js/pnl.js.
+//
+// This module composes the pure sub-modules into the tick lifecycle:
+//   ingest(state, snapshot, nowMs)   — accrue funding on the held perp; stamp clocks.
+//   evaluate(state, snapshot, nowMs) — net greeks + hedge decision + (paper) fill + P&L → the cycle-snapshot.
+//   openStructure / closeStructure   — manual entry / exit.
+//   account                          — paper equity/margin estimate.
+// All time-dependent behaviour takes an explicit nowMs (never Date.now()) so tests are reproducible.
+
+import { buildStructure, optionDeltaTotal, netGreeks, netDebit, validateStructure } from "./structure.js";
+import { payoffCurve } from "./payoff.js";
+import { decideHedge, applyFill } from "./hedge.js";
+import { markStructure, markPerp, accrueFunding, attribute, appendLedger } from "./pnl.js";
 
 export const BOT_ID = "btc-options";
 export const SCHEMA_VERSION = 1;
 
+// Cost-model rates + blackout windows the hedge engine needs but that aren't user-facing knobs. Merged
+// under the persisted settings at evaluate time (settings win if they ever override one).
+const HEDGE_CONSTANTS = {
+  takerFeeRate: 0.0005, // 5 bps taker (Deribit illustrative)
+  slippageRate: 0.0002, // flat slippage rate on the perp mark
+  fundingHorizonSec: 28800, // one 8h funding period
+  dailyWindowSec: 600, // ±10 min around 08:00 UTC settlement
+  preExpirySec: 1800, // last 30 min before expiry
+  fundingMaxGapSec: 300, // anti-catch-up clamp for a sleep/wake gap
+};
+
+// Merge the persisted user settings over the engine cost constants → the cfg the hedge engine consumes.
+function buildCfg(settings) {
+  return { ...HEDGE_CONSTANTS, ...(settings || {}) };
+}
+
 // Default engine/strategy settings (spec defaults). Persisted to <BOT_ID>-settings.json.
-// Ranges (clamped at use, Phase 1): deadband 0.0005..0.003, priceTrigger 0.5..1.0, reprice 0.25..5s,
-// lambda 1.0..2.0, wing offset 10..15%.
+// qty default is the linear-USDC option minimum (0.01) — right-sized for the $100 paper deposit.
 export function defaultSettings() {
   return {
     deadbandPreset: "normal", // aggressive | normal | conservative
@@ -22,13 +48,14 @@ export function defaultSettings() {
     priceTriggerPct: 0.5, // % move since last hedge that arms the price trigger
     rehedgeSec: 60, // time-trigger interval (a prompt to re-price, not a must-trade)
     lambda: 1.25, // hedge cost multiplier (gate: benefit > cost * lambda)
-    repriceSec: 3, // Deribit poll cadence (0.25..5s)
+    repriceSec: 3, // Deribit poll cadence (source owns the timer)
     callOffsetPct: 10, // short call strike ~ spot * (1 + off)
     putOffsetPct: 10, // short put  strike ~ spot * (1 - off)
-    qty: 0.1, // option contracts per leg (validated vs min_trade_amount at open)
+    qty: 0.01, // option contracts per leg (Deribit BTC_USDC min lot = 0.01; validated at open)
     execStyle: "limit", // limit (post-only) | market
     settlementBlackout: true, // pause hedging at 08:00 UTC settlement + last 30 min before expiry
     testnet: false, // public data source: prod (www.deribit.com) vs test.deribit.com
+    paperEquityUsd: 100, // starting paper deposit (USD); equity = this + cumulative net P&L
   };
 }
 
@@ -40,9 +67,265 @@ export function create(params) {
     botId: BOT_ID,
     createdAt: params.nowMs ?? null, // stamped by the caller (no Date.now() in a pure module)
     settings: { ...defaultSettings(), ...(params.settings || {}) },
-    structure: null, // the open 4-leg structure (set by openStructure() in Phase 1)
-    perpState: { qty: 0, avgEntry: 0, feesCum: 0, fundingCum: 0 }, // BTC-perp hedge leg (paper)
-    ledger: [], // cumulative hedge/accrual events — independent of any exchange session reset
+    structure: null, // the open 4-leg structure (set by openStructure())
+    perpState: { qty: 0, avgEntry: 0, feesCum: 0, fundingCum: 0, realizedUsd: 0 }, // inverse BTC-perp hedge (qty in $10 contracts)
+    realizedOptionsUsd: 0, // option MtM locked in by closed structures (cumulative)
+    ledger: [], // cumulative hedge/accrual/open/close events — independent of any exchange session reset
+    lastHedgeAt: null, // ms of the last executed hedge (time/price trigger baseline)
+    lastHedgeUnderlying: null, // BTC price at the last hedge (price trigger baseline)
+    lastIngestAt: null, // ms of the last ingest (funding-accrual dt baseline)
+    lastUnderlying: null, // last seen BTC price
     metrics: {}, // run metrics (Phase 2)
+  };
+}
+
+// Reconciliation/risk monitor only (never drives hedging): Deribit's account delta_total ≈
+// Σ qᵢ·(BS δᵢ − mark_in_BTC) + futures. For linear USDC options mark is USD → convert at the index.
+function exchangeDeltaTotal(structure, snapshot, Qperp) {
+  if (!structure) return Qperp;
+  const idx = snapshot.index || snapshot.underlying || 0;
+  let ntd = 0;
+  for (const l of structure.legs) {
+    const g = snapshot.legs?.[l.instrument];
+    if (!g) continue;
+    const markBtc = l.markInUsd && idx ? (g.mark ?? 0) / idx : g.mark ?? 0;
+    ntd += l.qtySigned * ((g.delta ?? 0) - markBtc);
+  }
+  return ntd + Qperp;
+}
+
+// ── Ingest: accrue funding on a held perp, refresh clocks. Called once per market tick before evaluate.
+export function ingest(state, snapshot, nowMs) {
+  const cfg = buildCfg(state.settings);
+  if (state.perpState.qty !== 0 && snapshot.perp && Number.isFinite(snapshot.perp.funding8h)) {
+    const last = state.lastIngestAt ?? nowMs;
+    const dtSec = Math.max(0, (nowMs - last) / 1000);
+    if (dtSec > 0) accrueFunding(state.perpState, snapshot.perp, dtSec, { maxDtSec: cfg.fundingMaxGapSec });
+  }
+  state.lastIngestAt = nowMs;
+  state.lastUnderlying = snapshot.underlying;
+  return state;
+}
+
+// ── Evaluate: the full per-cycle computation → the §5 cycle-snapshot (drives the whole view).
+// Recomputes net greeks, runs the hedge decision, executes a paper fill on HEDGE, and attributes P&L.
+export function evaluate(state, snapshot, nowMs) {
+  const structure = state.structure;
+  // Engine params are FROZEN at structure open (the running structure hedges by the params it was
+  // opened with; the live toolbar settings only drive the Zone-Ⅰ hypothesis until the next open).
+  const cfg = buildCfg(structure?.engineCfg ?? state.settings);
+  const perp = snapshot.perp || null;
+  const gateOk = snapshot.fresh?.gateOk !== false;
+
+  const optionDelta = structure ? optionDeltaTotal(structure, snapshot) : 0;
+  const greeks = structure ? netGreeks(structure, snapshot) : { delta: 0, gamma: 0, vega: 0, theta: 0 };
+  const mp = markPerp(state.perpState, perp || {});
+  const Qperp = mp.futuresDeltaBtc;
+  const totalDelta = optionDelta + Qperp;
+  const liquidity = snapshot.liquidity || { bid: perp?.bid ?? null, ask: perp?.ask ?? null, halfSpread: 0 };
+  const step = perp && perp.mark ? perp.contractSize / perp.mark : 0; // BTC per $10 contract
+
+  // Hedge decision. Only run when a structure is open, the perp is priced, and the greeks gate is OK;
+  // otherwise stand pat (a degraded snapshot must never trigger a trade on bad data).
+  let decision;
+  if (structure && perp && step > 0 && gateOk) {
+    decision = decideHedge({
+      optionDelta,
+      Qperp,
+      snapshot,
+      liquidity,
+      cfg,
+      nowMs,
+      expiryMs: structure.expiryMs,
+      createdAt: structure.createdAt,
+      lastHedgeAt: state.lastHedgeAt,
+      lastHedgeUnderlying: state.lastHedgeUnderlying,
+      step,
+    });
+  } else {
+    decision = {
+      decision: "SKIP",
+      trigger_reason: [],
+      estimated_cost: null,
+      estimated_benefit: 0,
+      hedge_order: null,
+      target_futures_delta: -optionDelta,
+      delta_excess: Math.max(0, Math.abs(totalDelta) - cfg.deadbandBtc),
+      blackout: { active: false, reason: null },
+    };
+  }
+
+  // ── Cycle fields are a PRE-fill decision snapshot: the spec's sample cycle-JSON reports
+  // current_futures_delta as the pre-hedge value, then the hedge takes visible effect next tick.
+  // Capture the pre-fill position, price-move and P&L now; the fill is applied below as a side-effect.
+  const perp_position = {
+    contracts: state.perpState.qty,
+    btc: Qperp,
+    avgEntry: state.perpState.avgEntry,
+    notionalUsd: mp.notionalUsd,
+    upl_usd: mp.upl_usd,
+  };
+  const priceMovePct =
+    state.lastHedgeUnderlying && Number.isFinite(snapshot.underlying)
+      ? (100 * Math.abs(snapshot.underlying - state.lastHedgeUnderlying)) / state.lastHedgeUnderlying
+      : 0;
+  const pnl = attribute(state, snapshot);
+  const acct = account(state, snapshot);
+
+  const option_legs = structure
+    ? structure.legs.map((l) => {
+        const g = snapshot.legs?.[l.instrument] || {};
+        const mark = g.mark ?? l.entryMark ?? null;
+        return {
+          instrument: l.instrument,
+          type: l.type,
+          side: l.side,
+          strike: l.strike,
+          qty: l.qtySigned,
+          bid: g.bid ?? null,
+          ask: g.ask ?? null,
+          mark,
+          mark_iv: g.markIv ?? null,
+          delta: g.delta ?? null,
+          gamma: g.gamma ?? null,
+          vega: g.vega ?? null,
+          theta: g.theta ?? null,
+          delta_contrib: l.qtySigned * (g.delta ?? 0),
+          value_usd: l.qtySigned * (mark ?? 0) * l.contractSize,
+        };
+      })
+    : [];
+
+  const payoff =
+    structure && Number.isFinite(snapshot.underlying)
+      ? payoffCurve(structure, { min: snapshot.underlying * 0.75, max: snapshot.underlying * 1.25, n: 96 })
+      : null;
+
+  // ── Side-effect: execute the paper fill on HEDGE (takes effect next tick), book it, advance clocks.
+  if (decision.decision === "HEDGE" && decision.hedge_order && perp) {
+    const priceRef = decision.hedge_order.side === "buy" ? liquidity.ask ?? perp.mark : liquidity.bid ?? perp.mark;
+    const fill = applyFill(state.perpState, decision.hedge_order, priceRef, perp, cfg);
+    state.lastHedgeAt = nowMs;
+    state.lastHedgeUnderlying = snapshot.underlying;
+    appendLedger(state, {
+      t: nowMs,
+      type: "hedge",
+      side: decision.hedge_order.side,
+      contracts: fill.filledContracts,
+      priceRef,
+      deltaBtc: (decision.hedge_order.side === "buy" ? 1 : -1) * decision.hedge_order.amount_rounded_btc,
+      feeUsd: fill.feeUsd,
+      realizedUsd: fill.realizedUsd,
+      note: decision.trigger_reason.join("+"),
+    });
+  }
+
+  // The last executed hedge (decision panel's "последний хедж") — derived from the ledger AFTER the
+  // fill, so it reflects this tick's hedge even though the position fields above are pre-fill.
+  const lastHedgeEv = [...state.ledger].reverse().find((e) => e.type === "hedge");
+  const lastHedge = lastHedgeEv
+    ? { seq: lastHedgeEv.seq, t: lastHedgeEv.t, side: lastHedgeEv.side, amount_rounded_btc: Math.abs(lastHedgeEv.deltaBtc), priceRef: lastHedgeEv.priceRef, realizedUsd: lastHedgeEv.realizedUsd }
+    : null;
+
+  return {
+    ts: snapshot.ts ?? nowMs,
+    underlying_price: snapshot.underlying ?? null,
+    index_price: snapshot.index ?? null,
+    structure_id: structure?.id ?? null,
+    option_legs,
+    net_option_delta_bs: optionDelta,
+    net_gamma: greeks.gamma,
+    net_vega: greeks.vega,
+    net_theta: greeks.theta,
+    net_debit: structure?.entryDebitUsd ?? 0,
+    current_net_value_usd: structure ? netDebit(structure, snapshot).debitUsd : 0,
+    total_delta_bs: totalDelta,
+    current_futures_delta: Qperp,
+    perp_position,
+    exchange_delta_total: exchangeDeltaTotal(structure, snapshot, Qperp),
+    target_futures_delta: decision.target_futures_delta,
+    hedge_deadband_btc: cfg.deadbandBtc,
+    delta_excess: decision.delta_excess,
+    price_move_since_last_hedge_pct: priceMovePct,
+    trigger_reason: decision.trigger_reason,
+    estimated_cost: decision.estimated_cost,
+    estimated_benefit: decision.estimated_benefit,
+    decision: decision.decision,
+    hedge_order: decision.hedge_order,
+    last_hedge: lastHedge,
+    account: acct,
+    pnl,
+    blackout: decision.blackout ?? { active: false, reason: null },
+    gate: { ok: gateOk, reason: gateOk ? null : "greeks-missing" },
+    payoff,
+    fresh: snapshot.fresh ?? null,
+  };
+}
+
+// ── Open a manual structure. Validates against the chain metas; stamps id/createdAt (engine owns these).
+export function openStructure(state, params, chain, snapshot, nowMs) {
+  const built = buildStructure(params, chain, snapshot);
+  if (built.error) return built;
+
+  const metas = Array.isArray(chain) ? chain : chain?.instruments ?? [];
+  const metaByInstrument = {};
+  for (const l of built.legs) metaByInstrument[l.instrument] = metas.find((m) => m.instrument_name === l.instrument);
+  const v = validateStructure(built, metaByInstrument);
+  if (!v.ok) return { error: v.errors.join("; ") };
+
+  built.id = `s1-${built.expiryMs}-${built.strikes.atm}-${nowMs}`;
+  built.createdAt = nowMs;
+  built.engineCfg = { ...state.settings }; // freeze the engine params at open (read-only while running)
+  state.structure = built;
+  state.lastHedgeAt = null; // reset the hedge clock to structure open
+  state.lastHedgeUnderlying = snapshot.underlying ?? null;
+  appendLedger(state, {
+    t: nowMs,
+    type: "open",
+    priceRef: snapshot.underlying ?? 0,
+    note: `winged straddle Kp${built.strikes.kp}/K${built.strikes.atm}/Kc${built.strikes.kc} · x${built.legs[0].qtyAbs}`,
+  });
+  return { ok: true, structure: built };
+}
+
+// ── Close the structure: flatten the perp (realize inverse P&L), lock in the option MtM, keep the
+// cumulative P&L (realizedOptionsUsd survives, so net P&L is not reset by closing).
+export function closeStructure(state, snapshot, nowMs) {
+  if (!state.structure) return { error: "нет открытой структуры" };
+  const cfg = buildCfg(state.settings);
+  const perp = snapshot.perp || null;
+
+  if (state.perpState.qty !== 0 && perp && perp.mark) {
+    const closeBtc = (-state.perpState.qty * perp.contractSize) / perp.mark; // BTC to bring perp → flat
+    const side = closeBtc > 0 ? "buy" : "sell";
+    const order = { side, amount_btc: Math.abs(closeBtc), amount_rounded_btc: Math.abs(closeBtc), order_type: "market", post_only: false };
+    const priceRef = side === "buy" ? snapshot.liquidity?.ask ?? perp.mark : snapshot.liquidity?.bid ?? perp.mark;
+    const fill = applyFill(state.perpState, order, priceRef, perp, cfg);
+    appendLedger(state, { t: nowMs, type: "close-perp", side, contracts: fill.filledContracts, priceRef, feeUsd: fill.feeUsd, realizedUsd: fill.realizedUsd });
+  }
+
+  const optMtm = markStructure(state.structure, snapshot).upl_usd;
+  state.realizedOptionsUsd = (state.realizedOptionsUsd || 0) + optMtm;
+  appendLedger(state, { t: nowMs, type: "close-options", realizedUsd: optMtm, note: `closed ${state.structure.id}` });
+
+  state.structure = null;
+  state.lastHedgeAt = null;
+  state.lastHedgeUnderlying = null;
+  return { ok: true };
+}
+
+// ── Paper account estimate. Equity = deposit + cumulative net P&L. The winged straddle is defined-risk
+// (max loss at expiry = the net debit), so the debit is a conservative Phase-1 initial-margin proxy;
+// full Deribit margin (short-option formulas, portfolio netting) lands in Phase 2c.
+export function account(state, snapshot) {
+  const cfg = buildCfg(state.settings);
+  const pnl = attribute(state, snapshot);
+  const equity = (cfg.paperEquityUsd ?? 100) + pnl.net_total;
+  const debit = state.structure ? Math.abs(state.structure.entryDebitUsd) : 0;
+  return {
+    equity,
+    margin_balance: equity,
+    initial_margin: debit,
+    maintenance_margin: debit * 0.5,
   };
 }
