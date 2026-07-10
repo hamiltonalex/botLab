@@ -1240,7 +1240,7 @@ app.whenReady().then(async () => {
         sweep && sweep.error ? sweep.error : sweep ? `combos ${sweep.combos.length} · excluded ${sweep.excluded.length} · series ${sweep.seriesLen}` : "null",
       );
       const p3 = await win.webContents.executeJavaScript(
-        "JSON.stringify({ivRank:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.iv_regime&&LIVE_S1.cycle.iv_regime.iv_rank, ivN:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.iv_regime&&LIVE_S1.cycle.iv_regime.n, dvol:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.iv_regime&&LIVE_S1.cycle.iv_regime.dvol, sweepN:LIVE_S1&&LIVE_S1.sweep&&LIVE_S1.sweep.combos&&LIVE_S1.sweep.combos.length, ivShown:(document.getElementById('optIvAtm')||{}).textContent, sweepShown:!!document.querySelector('#optSweepBody tr')})",
+        "JSON.stringify({ivRank:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.iv_regime&&LIVE_S1.cycle.iv_regime.iv_rank, ivN:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.iv_regime&&LIVE_S1.cycle.iv_regime.n, dvol:LIVE_S1&&LIVE_S1.cycle&&LIVE_S1.cycle.iv_regime&&LIVE_S1.cycle.iv_regime.dvol, sweepN:LIVE_S1&&LIVE_S1.sweep&&LIVE_S1.sweep.combos&&LIVE_S1.sweep.combos.length, ivShown:(document.getElementById('optIvAtm')||{}).textContent, sweepShown:!!document.querySelector('#optSweepBody tr'), transport:LIVE_S1&&LIVE_S1.fresh&&LIVE_S1.fresh.source, rttMs:LIVE_S1&&LIVE_S1.fresh&&LIVE_S1.fresh.rttMs, usDiffMs:LIVE_S1&&LIVE_S1.fresh&&LIVE_S1.fresh.usDiffMs})",
       );
       console.log("[s1smoke] phase3:", p3);
       try { win.setContentSize(1500, 1700); await new Promise((r) => setTimeout(r, 300)); } catch {}

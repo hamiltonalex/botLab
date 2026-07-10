@@ -4458,8 +4458,12 @@ function updateOptFreshness(f, running){
   if(stamp){
     if(f && f.atIso){ const iso=f.atIso.replace('T',' ').slice(0,19)+' UTC';
       const age=(f.ageSec==null)?'—':((f.ageSec<90?Math.round(f.ageSec)+'с':Math.round(f.ageSec/60)+'м')+' назад');
-      stamp.innerHTML='данные Deribit по состоянию на '+iso+' · '+age+(f.gateOk===false?' · <b class="neg">⚠ гейт греков</b>':''); }
-    else stamp.textContent='источник не запущен — откройте структуру, чтобы начать опрос Deribit';
+      const chan=f.source?(' · канал '+(f.source==='deribit-ws'?'WS':'REST')):''; // 3c: фактический канал
+      stamp.innerHTML='данные Deribit по состоянию на '+iso+' · '+age+chan+(f.gateOk===false?' · <b class="neg">⚠ гейт греков</b>':'');
+      // 3c-телеметрия: RTT последнего опроса + серверное время биржи (usDiff) — в подсказке штампа
+      stamp.title = Number.isFinite(f.rttMs) ? ('RTT '+Math.round(f.rttMs)+'мс'+(Number.isFinite(f.usDiffMs)?(' · биржа '+f.usDiffMs.toFixed(1)+'мс'):'')) : '';
+    }
+    else { stamp.textContent='источник не запущен — откройте структуру, чтобы начать опрос Deribit'; stamp.title=''; }
   }
 }
 

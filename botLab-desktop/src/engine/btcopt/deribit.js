@@ -19,6 +19,14 @@ const UA = "Mozilla/5.0 (botlab-btc-options)";
 const SLEEP = (ms) => new Promise((r) => setTimeout(r, ms));
 const BASE = (testnet) => (testnet ? "https://test.deribit.com/api/v2" : "https://www.deribit.com/api/v2");
 
+// Phase 3c telemetry: the last successful call's round-trip + Deribit's server-side processing time
+// (the envelope's usDiff, microseconds). Module-held like metaCache — the impure client's own stat.
+// In a Promise.all tick every fetch starts together, so the LAST writer is the slowest of the batch:
+// lastRpcStats.rttMs ≈ that tick's worst RTT. This is the evidence base for any future "REST lags"
+// case (the WS transport was assessed 2026-07 and DEFERRED — no lag/rate-limit pressure existed).
+const lastRpcStats = { rttMs: null, usDiffMs: null, at: null };
+export const getRpcStats = () => ({ ...lastRpcStats });
+
 // ---------------------------------------------------------------------------
 // JSON-RPC-over-HTTPS-GET with retry/backoff (mirrors sources.js getJson; 429 backs off harder).
 // ---------------------------------------------------------------------------
@@ -32,6 +40,7 @@ export async function rpc(method, params = {}, { testnet = false, retries = 2, t
   let lastErr;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
+      const t0 = Date.now();
       const signal = AbortSignal.timeout(timeoutMs);
       const r = await fetch(url, { headers: { "User-Agent": UA }, signal });
       if (r.status === 429) {
@@ -41,6 +50,9 @@ export async function rpc(method, params = {}, { testnet = false, retries = 2, t
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
       if (j && j.error) throw new Error(`Deribit ${j.error.code}: ${j.error.message}`);
+      lastRpcStats.rttMs = Date.now() - t0; // 3c telemetry — successful calls only
+      lastRpcStats.usDiffMs = Number.isFinite(j?.usDiff) ? j.usDiff / 1000 : null;
+      lastRpcStats.at = Date.now();
       return j.result;
     } catch (e) {
       lastErr = e;
@@ -290,6 +302,7 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
     status() {
       const ageSec = lastTs != null ? Math.round((Date.now() - lastTs) / 1000) : null;
       const stale = ageSec == null || ageSec > staleAfterSec;
+      const rpcStats = getRpcStats(); // 3c: worst-of-batch RTT + Deribit usDiff (see the stats note)
       return {
         source: "deribit-rest",
         testnet,
@@ -301,6 +314,8 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
         lastTs,
         atIso: lastTs != null ? new Date(lastTs).toISOString() : null,
         intervalMs,
+        rttMs: rpcStats.rttMs,
+        usDiffMs: rpcStats.usDiffMs,
         instruments: legInstruments.slice(),
         notes: lastSnap ? lastSnap.fresh.notes.slice() : notes.slice(),
       };

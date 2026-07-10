@@ -250,11 +250,29 @@ The big one: reaches the live Deribit public API and builds the real view + hedg
 - [ ] **2d — stress scenarios:** `src/engine/btcopt/stress.js` (IV crush/expansion, trend day ±5%, tail move >±10%, funding stress) as a what-if overlay on payoff/greeks; `#optStress` panel.
 - Each sub-step: new `HELP` `opt-*` key + button, tests, CHANGELOG line, green gates.
 
-### ☐ Phase 3 — automation & optimization
+### ✅ Phase 3 — automation & optimization (DONE, 2026-07-10; commits 3a `8575f8d` · 3b `b02853c` · 3c below)
 
-- [ ] **Auto-construction:** `structure.js` auto-picks nearest expiry / ATM / wings at "Start" (the spec's Phase 2); user only tunes params.
-- [ ] **IV-aware entry + systematic sweep:** score entries against a rolling IV regime (`mark_iv`/vol index); sweep expiry/wing/deadband/trigger/λ/close rules.
-- [ ] **WebSocket transport:** `createWsSource` behind the `MarketSource` seam (`ticker.{instrument}.100ms`); adds a `ws` dep (Node 20 has no global WebSocket) — evaluate only if REST rate-limits/latency demand it.
+- [x] **Auto-construction (3a):** «▶ Старт (авто)» — the engine picks the nearest live expiry ≤3d itself
+  (`pickExpiry`, skipping expiries inside the pre-expiry blackout) + ATM/wings via `buildStructure`;
+  structured pre-trade gate at open (`preTradeCheck`): `min_size`/`step_size`/`settlement` = block,
+  `margin` IM-vs-equity = warn («IM $122 > депозит $100», user decision — opening proceeds). Rejections
+  ride previews AND open responses; ticket renders them before confirm. HELP `opt-auto`.
+- [x] **IV-aware entry + systematic sweep (3b):** ATM-band polling (ATM ± {5,10,15}% ∪ open legs; greeks
+  gate stays scoped to the open structure via `primaryInstruments`); main-process history rings (IV 30s ×
+  24h persisted to `btc-options-history.json`; snapshots 600 ticks in-session); DVOL cached + 48h backfill;
+  pure `regime.js` → `cycle.iv_regime` (IV-rank ≤ `ivEntryMaxRank` 0.35 = favorable — replaces "IV below
+  25"); pure `sweep.js` behind `s1:runSweep` — honest engine replay per combo (wing × deadband × trigger ×
+  λ = 108), Sharpe objective, unquoted-wing combos excluded, IM>deposit flagged; «применить лучшие
+  параметры» writes only the Zone-Ⅰ constructor. HELP `opt-iv`/`opt-sweep`.
+- [x] **WebSocket transport (3c): assessed & DEFERRED** (user decision, 2026-07-10). Evidence: REST
+  steady-state = 5 GETs/tick (1 perp + 4 legs; metas cached; no order-book call) at the 3s default ≈ 1.7
+  req/s — far under Deribit public limits; zero 429s observed through Phases 1–3; the rate-limited chain
+  endpoint is on a 5-min cache. Cost side: Electron 33 main (Node 20.18) + system Node 20 have NO global
+  WebSocket → WS requires the `ws` dep. Instead 3c ships the missing evidence base: `rpc` now captures
+  round-trip ms + the envelope's `usDiff` → `createRestSource.status().rttMs/usDiffMs` → the connection
+  stamp shows «канал REST» with an RTT tooltip, and S1_SMOKE reads both. If live use ever shows RTT/staleness
+  pain, `createWsSource` drops behind the same `{start,stop,refreshNow,setInstruments,status}` seam with a
+  toolbar `transport` seg (`wireOptSeg` recipe) — nothing else changes.
 
 ### ☐ Release (only after bot 2 is fully ready)
 
