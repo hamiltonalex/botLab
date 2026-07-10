@@ -1773,6 +1773,23 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
             <div class="chart-tip" id="optPriceTip"></div>
           </div>
         </div>
+        <div class="card" id="optMarginCard">
+          <div class="sec-head"><h2>Маржа и риск</h2>
+            <button class="help-btn" data-help="opt-margin">?</button>
+            <span class="tag amber">Фаза 2</span><span class="rule"></span>
+            <span class="hint">Deribit · короткие ноги · станд. маржа</span></div>
+          <div class="dl">
+            <div class="row"><span class="k">начальная маржа (IM)</span><span class="v num" id="optMarginIM">—</span></div>
+            <div class="row"><span class="k">поддерживающая (MM)</span><span class="v num" id="optMarginMM">—</span></div>
+          </div>
+          <div class="opt-bar cost" style="margin-top:10px"><div class="lbl"><span>утилизация MM · тек.</span><span class="num" id="optMarginMuPct">—</span></div>
+            <div class="track"><div class="fill" id="optMarginMuBar"></div></div></div>
+          <div class="dl">
+            <div class="row"><span class="k">худшая утилизация MM</span><span class="v num" id="optMarginWorst">—</span></div>
+            <div class="row"><span class="k">депозит · equity</span><span class="v num" id="optMarginEquity">—</span></div>
+          </div>
+          <div class="opt-verdict" id="optMarginAlert" style="margin-top:8px" aria-live="polite">—</div>
+        </div>
       </section>
     </section><!-- /optZoneAnalysis -->
 
@@ -3591,6 +3608,11 @@ const HELP_BTC_OPTIONS = {
     '<p>Путь базовой цены BTC от t0 с <b>синими метками</b> в моменты исполнения хеджа — на каких движениях цены движок перебалансировал перп.</p><ul>'+
     '<li>Метки совпадают с решениями ХЕДЖ в журнале и на графике дельты.</li>'+
     '<li>Наведите курсор — время, цена и признак хеджа в точке.</li></ul>' },
+  'opt-margin': { t:'Маржа и риск · алерты', b:
+    '<p>Начальная (IM) и поддерживающая (MM) маржа <b>коротких</b> ног по публичным формулам Deribit (линейные USDC-опционы BTC, стандартная маржа без неттинга). Длинные ноги маржу не требуют — премия уплачена полностью.</p><ul>'+
+    '<li><b>IM короткого колла</b> <span class="fx">(max(0.15−OTM/U, 0.10)·index + mark)·кол-во</span>; у пута пол <span class="fx">0.10·strike</span>, а MM <span class="fx">0.075·min(index,strike)</span>.</li>'+
+    '<li><b>Утилизация</b> = маржа / equity; <b>худшая</b> — пик за прогон. Алерт при поддерж. утилизации ≥ порога (80%, ликвидация — при 100%).</li>'+
+    '<li>На малом размере ($100 депозит, мин. лот 0.01) IM крылатого стрэддла может <b>превышать депозит</b> — показано честным алертом. Открытие при этом <b>не блокируется</b> (paper).</li></ul>' },
 };
 const HELP = { ...HELP_CORE, ...HELP_FUNDING_ARB, ...HELP_BTC_OPTIONS };
 
@@ -3999,6 +4021,7 @@ function renderOpt(){
     renderOptLedger(cyc);
     renderOptHedgeVs(cyc);
     renderOptMetrics(cyc);
+    renderOptMargin(cyc);
   }
   const c=optEngineCfg(); const em=$('optEngineMode'); if(em) em.textContent='реприс '+c.rep+'с · λ'+c.lam;
   renderOptStructPreview();
@@ -4042,6 +4065,22 @@ function renderOptMetrics(cyc){
   optSetNum('optMxHedges', (m.hedgeCount||0)+' · '+(m.avgHedgeSizeBtc||0).toFixed(4)+' BTC');
   optSetNum('optMxExcursion', (m.peakDeltaExcursion||0).toFixed(4)+' BTC');
   optSetNum('optMxCycles', String(m.cycles||0));
+}
+
+/* — Фаза 2c: маржа и риск (реальная станд. маржа Deribit коротких ног; честный алерт превышения) — */
+function renderOptMargin(cyc){
+  const a=cyc.account; if(!a || !$('optMarginIM')) return;
+  optSetNum('optMarginIM', a.initial_margin!=null?fmtUSD(a.initial_margin,2):'—');
+  optSetNum('optMarginMM', a.maintenance_margin!=null?fmtUSD(a.maintenance_margin,2):'—');
+  const mu=a.maintenance_utilisation||0;
+  optSetNum('optMarginMuPct', (mu*100).toFixed(0)+'%');
+  const bar=$('optMarginMuBar'); if(bar) bar.style.transform='scaleX('+Math.max(0,Math.min(1,mu))+')';
+  optSetNum('optMarginWorst', ((a.worst_utilisation||0)*100).toFixed(0)+'%');
+  optSetNum('optMarginEquity', a.equity!=null?fmtUSD(a.equity,2):'—');
+  const al=$('optMarginAlert'); if(!al) return;
+  if(a.over_deposit){ al.textContent='⚠ маржа '+fmtUSD(a.initial_margin,0)+' превышает депозит '+fmtUSD(a.equity,0)+' — структура вне лимита'; al.className='opt-verdict neg'; }
+  else if(a.margin_alert){ al.textContent='⚠ поддерж. маржа '+(mu*100).toFixed(0)+'% депозита — близко к пределу'; al.className='opt-verdict neg'; }
+  else { al.textContent='✓ маржа в пределах депозита'; al.className='opt-verdict pos'; }
 }
 
 /* — 4 ноги + перп-нога — */

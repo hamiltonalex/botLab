@@ -20,6 +20,7 @@ import { payoffCurve } from "./payoff.js";
 import { decideHedge, applyFill } from "./hedge.js";
 import { markStructure, markPerp, accrueFunding, attribute, noHedgeAttribute, appendLedger } from "./pnl.js";
 import { initMetrics, foldCycle, summarize } from "./metrics.js";
+import { structureMargin } from "./margin.js";
 
 export const BOT_ID = "btc-options";
 export const SCHEMA_VERSION = 1;
@@ -57,6 +58,7 @@ export function defaultSettings() {
     settlementBlackout: true, // pause hedging at 08:00 UTC settlement + last 30 min before expiry
     testnet: false, // public data source: prod (www.deribit.com) vs test.deribit.com
     paperEquityUsd: 100, // starting paper deposit (USD); equity = this + cumulative net P&L
+    marginAlertPct: 0.8, // alert when maintenance-margin utilisation ≥ this fraction of equity (Phase 2c)
   };
 }
 
@@ -253,6 +255,7 @@ export function evaluate(state, snapshot, nowMs) {
       hedgeSizeBtc: decision.hedge_order?.amount_rounded_btc ?? 0,
       feesCum: state.perpState.feesCum,
       fundingCum: state.perpState.fundingCum,
+      maintUtil: acct.maintenance_utilisation,
     });
   }
 
@@ -346,18 +349,28 @@ export function closeStructure(state, snapshot, nowMs) {
   return { ok: true };
 }
 
-// ── Paper account estimate. Equity = deposit + cumulative net P&L. The winged straddle is defined-risk
-// (max loss at expiry = the net debit), so the debit is a conservative Phase-1 initial-margin proxy;
-// full Deribit margin (short-option formulas, portfolio netting) lands in Phase 2c.
+// ── Paper account estimate. Equity = deposit + cumulative net P&L. Margin (Phase 2c) is the REAL Deribit
+// Standard-Margin requirement of the SHORT option legs (linear/USDC formulas, per-leg sum, no netting) —
+// replacing the Phase-1 debit proxy. On tiny size vs a $100 deposit the min-size straddle's initial margin
+// can EXCEED the deposit; that is surfaced honestly (over_deposit + the utilisation figures), not gated.
+// margin_alert keys on MAINTENANCE utilisation (the liquidation-relevant figure), not initial.
 export function account(state, snapshot) {
   const cfg = buildCfg(state.settings);
   const pnl = attribute(state, snapshot);
   const equity = (cfg.paperEquityUsd ?? 100) + pnl.net_total;
-  const debit = state.structure ? Math.abs(state.structure.entryDebitUsd) : 0;
+  const m = state.structure ? structureMargin(state.structure, snapshot) : { initial: 0, maintenance: 0 };
+  const denom = Math.max(1e-9, equity);
+  const initial_utilisation = m.initial / denom;
+  const maintenance_utilisation = m.maintenance / denom;
   return {
     equity,
     margin_balance: equity,
-    initial_margin: debit,
-    maintenance_margin: debit * 0.5,
+    initial_margin: m.initial,
+    maintenance_margin: m.maintenance,
+    initial_utilisation,
+    maintenance_utilisation,
+    worst_utilisation: Math.max(maintenance_utilisation, state.metrics?.worstMaintUtil ?? 0),
+    over_deposit: m.initial > equity,
+    margin_alert: maintenance_utilisation >= (cfg.marginAlertPct ?? 0.8),
   };
 }

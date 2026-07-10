@@ -104,9 +104,12 @@ test("evaluate emits the full cycle-snapshot with the spec's net greeks (−0.00
   assert.equal(cyc.hedge_order.order_type, "limit");
   assert.equal(cyc.hedge_order.post_only, true);
 
-  // account: equity = deposit + net (≈0 at open, marks == entry marks); initial margin ≈ net debit
+  // account: equity = deposit + net (≈0 at open); REAL Deribit Standard margin on the two SHORT legs
+  // (Phase 2c): short 67000-C (mark 30) IM 6130/MM 4605 + short 55000-P (mark 28) IM 5528/MM 4153.
   near(cyc.account.equity, 100, 1e-6, "equity ≈ deposit");
-  near(cyc.account.initial_margin, 777, 1e-9, "defined-risk margin ≈ debit");
+  near(cyc.account.initial_margin, 11658, 1e-9, "real IM = 6130 + 5528");
+  near(cyc.account.maintenance_margin, 8758, 1e-9, "real MM = 4605 + 4153");
+  assert.equal(cyc.account.over_deposit, true, "min-size structure's IM exceeds the $100 deposit");
 
   // payoff geometry present
   assert.ok(Array.isArray(cyc.payoff.pts) && cyc.payoff.pts.length === 96);
