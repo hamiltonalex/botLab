@@ -19,6 +19,7 @@ import { buildStructure, optionDeltaTotal, netGreeks, netDebit, validateStructur
 import { payoffCurve } from "./payoff.js";
 import { decideHedge, applyFill } from "./hedge.js";
 import { markStructure, markPerp, accrueFunding, attribute, noHedgeAttribute, appendLedger } from "./pnl.js";
+import { initMetrics, foldCycle, summarize } from "./metrics.js";
 
 export const BOT_ID = "btc-options";
 export const SCHEMA_VERSION = 1;
@@ -75,7 +76,7 @@ export function create(params) {
     lastHedgeUnderlying: null, // BTC price at the last hedge (price trigger baseline)
     lastIngestAt: null, // ms of the last ingest (funding-accrual dt baseline)
     lastUnderlying: null, // last seen BTC price
-    metrics: {}, // run metrics (Phase 2)
+    metrics: initMetrics(), // run-metrics accumulators (Phase 2b) — O(1) scalars, reset at each structure open
   };
 }
 
@@ -241,6 +242,20 @@ export function evaluate(state, snapshot, nowMs) {
     ? { seq: lastHedgeEv.seq, t: lastHedgeEv.t, side: lastHedgeEv.side, amount_rounded_btc: Math.abs(lastHedgeEv.deltaBtc), priceRef: lastHedgeEv.priceRef, realizedUsd: lastHedgeEv.realizedUsd }
     : null;
 
+  // ── Run metrics (Phase 2b): fold this reprice cycle into the O(1) accumulators. Only while a
+  // structure is open (idle flat ticks would dilute Sharpe/hit-rate). maintUtil is wired in 2c.
+  if (typeof state.metrics?.n !== "number") state.metrics = initMetrics(); // forward-migrate old {} state
+  if (structure) {
+    foldCycle(state.metrics, {
+      net: pnl.net_total,
+      totalDelta,
+      decision: decision.decision,
+      hedgeSizeBtc: decision.hedge_order?.amount_rounded_btc ?? 0,
+      feesCum: state.perpState.feesCum,
+      fundingCum: state.perpState.fundingCum,
+    });
+  }
+
   return {
     ts: snapshot.ts ?? nowMs,
     underlying_price: snapshot.underlying ?? null,
@@ -270,6 +285,7 @@ export function evaluate(state, snapshot, nowMs) {
     account: acct,
     pnl,
     hedge_vs,
+    metrics: summarize(state.metrics),
     blackout: decision.blackout ?? { active: false, reason: null },
     gate: { ok: gateOk, reason: gateOk ? null : "greeks-missing" },
     payoff,
@@ -294,6 +310,7 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   state.structure = built;
   state.lastHedgeAt = null; // reset the hedge clock to structure open
   state.lastHedgeUnderlying = snapshot.underlying ?? null;
+  state.metrics = initMetrics(); // run metrics scope to THIS structure's run (Phase 2b)
   appendLedger(state, {
     t: nowMs,
     type: "open",
