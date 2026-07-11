@@ -359,6 +359,10 @@ export function preTradeCheck(state, structure, metaByInstrument, snapshot, nowM
 // the nearest live expiry itself (≤3d, skipping any already inside the pre-expiry blackout — opening into
 // delta decay is never right). Gated by preTradeCheck; "warn" rejections ride along in the OK response.
 export function openStructure(state, params, chain, snapshot, nowMs) {
+  // One structure at a time: a second open would silently orphan the first (its MtM is realized only
+  // via closeStructure) and leave the perp hedge sized for the discarded legs. The IPC resolve path is
+  // async, so a double-click/retried invoke CAN land here twice — the guard, not the UI, is the invariant.
+  if (state.structure) return { error: "структура уже открыта — сначала закройте текущую" };
   if (params && params.expiry == null) {
     const cfg = buildCfg(state.settings);
     const exp = pickExpiry(chain, nowMs, { minLeadMs: (cfg.preExpirySec ?? 1800) * 1000 });

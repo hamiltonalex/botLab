@@ -244,6 +244,20 @@ test("margin warn disappears when the deposit covers the IM (paperEquityUsd 1000
   assert.deepEqual(r.rejections, []);
 });
 
+test("openStructure refuses a second open while a structure is running (no silent clobber)", () => {
+  const st = create({ nowMs: NOW });
+  const r1 = openStructure(st, { ...AUTO_PARAMS, expiry: E1 }, chain2, snap2, NOW);
+  assert.equal(r1.ok, true);
+  const id1 = st.structure.id;
+  const ledgerLen = st.ledger.length;
+  // A second open (double-click / retried IPC) must NOT orphan the running structure: its MtM is
+  // realized only via closeStructure, and the perp hedge is sized for ITS legs.
+  const r2 = openStructure(st, { ...AUTO_PARAMS, expiry: E2 }, chain2, snap2, NOW + 1000);
+  assert.ok(r2.error && r2.error.includes("уже открыта"), r2.error);
+  assert.equal(st.structure.id, id1, "first structure untouched");
+  assert.equal(st.ledger.length, ledgerLen, "no extra open row in the ledger");
+});
+
 test("preTradeCheck composes: sub-min qty + blackout together (both blocks reported)", () => {
   const st = create({ nowMs: NOW });
   const at = Date.UTC(2026, 6, 10, 8, 3, 0);
