@@ -3739,7 +3739,7 @@ document.addEventListener('click', (e)=>{
   // the updater popover closes on any outside click too — but NOT on the pill itself (that toggles it)
   if(UPD.pop && !UPD.pop.contains(e.target) && !e.target.closest('#verPill')) closeUpdaterPop();
 });
-document.addEventListener('keydown', (e)=>{ if(e.key==='Escape'){ closeHelp(); closeUpdaterPop(); closeTicket(true); } });
+document.addEventListener('keydown', (e)=>{ if(e.key==='Escape'){ closeHelp(); closeUpdaterPop(); closeTicket(true); closeOptTicket(true); } });
 window.addEventListener('resize', ()=>{ closeHelp(); closeUpdaterPop(); });
 // прокрутка страницы закрывает поповер (позиция бы «уехала»); прокрутка ВНУТРИ поповера — нет
 window.addEventListener('scroll', (e)=>{
