@@ -481,8 +481,14 @@ function refreshBtcOptBand(underlying) {
 // entries never carry (or share) the ring they came from.
 function recordBtcOptHistory(snap) {
   const bo = state.btcOptions;
-  bo.snapshotHistory.push({ ...snap });
-  if (bo.snapshotHistory.length > SNAP_HISTORY_CAP) bo.snapshotHistory.shift();
+  // Only snapshots that actually carry option quotes belong in the sweep ring. When the source is
+  // started BEFORE any chain/band exists (LIVE first, ticket later — the normal browse flow), the
+  // first ticks are perp-only; such a tick at series[0] trips the sweep's honest-data gate and
+  // excludes EVERY combo («нет котировки в series[0]») until the ring turns over (~30 min).
+  if (snap.legs && Object.keys(snap.legs).length) {
+    bo.snapshotHistory.push({ ...snap });
+    if (bo.snapshotHistory.length > SNAP_HISTORY_CAP) bo.snapshotHistory.shift();
+  }
 
   const last = bo.ivHistory[bo.ivHistory.length - 1];
   if (last && Number.isFinite(snap.ts) && snap.ts - last.ts < IV_SAMPLE_MS) return;

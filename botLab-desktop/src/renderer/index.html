@@ -4393,7 +4393,10 @@ function renderOptSweep(ds){
     if(apply) apply.disabled=true; return; }
   if(stamp) stamp.textContent='свип '+optClock(sw.ranAt)+' UTC';
   if(!sw.combos || !sw.combos.length){
-    body.innerHTML='<tr><td class="lft faint" colspan="10">история снапшотов пуста — запустите источник (LIVE) и подождите несколько минут</td></tr>';
+    /* пустой результат ≠ пустая история: при непустом ряде с полным исключением честно назвать причину */
+    body.innerHTML='<tr><td class="lft faint" colspan="10">'+((sw.seriesLen>0 && sw.excluded && sw.excluded.length)
+      ? 'все комбинации исключены — в начале ряда нет котировок ног (подождите новые снапшоты и повторите свип)'
+      : 'история снапшотов пуста — запустите источник (LIVE) и подождите несколько минут')+'</td></tr>';
     if(cap){ cap.textContent='цель: '+(OPT_SWEEP_OBJ[sw.objective]||sw.objective)+' · '+(sw.seriesLen||0)+' снапшотов'
       +((sw.excluded&&sw.excluded.length)?(' · исключено '+sw.excluded.length):''); }
     if(apply) apply.disabled=true; return; }
