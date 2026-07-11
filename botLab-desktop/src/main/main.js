@@ -703,6 +703,7 @@ function wireIpcStrategy1() {
     if (bo.source && bo.running) {
       bo.source.stop();
       bo.source = null;
+      bo.running = false; // ensureBtcOptSource() only start()s while this is false — without the reset the rebuilt source never polls
       ensureBtcOptSource();
     }
     return assembleDataset1();
