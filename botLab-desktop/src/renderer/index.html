@@ -4324,9 +4324,11 @@ async function fetchOptLedgerRows(){
   try{
     const r=await window.s1.getLedger({ offset:0, limit:200, order:'desc' });
     if(r && r.events){
-      const tl={ hedge:'хедж', funding:'фандинг перпа', fee:'комиссия', open:'открытие', close:'закрытие' };
+      /* только реально эмитируемые движком типы (engine.js appendLedger): фандинг — накопительный
+         perpState.fundingCum, комиссии — поле feeUsd на строках hedge/close-perp, отдельных строк нет */
+      const tl={ open:'открытие', hedge:'хедж', 'close-perp':'закрытие перпа', 'close-options':'фиксация опционов' };
       $('optLedgerBody').innerHTML = r.events.map(ev=>{
-        const pnlVal = ev.type==='funding' ? (ev.fundingUsd||0) : (ev.realizedUsd||0);
+        const pnlVal = ev.realizedUsd||0;
         return '<tr><td class="lft ts">'+optClock(ev.t)+'</td><td class="lft">'+(tl[ev.type]||ev.type)+'</td>'+
           '<td class="num">'+(ev.deltaBtc!=null?optSigned(ev.deltaBtc,4):'—')+'</td>'+
           '<td class="num">'+(ev.contracts!=null?ev.contracts:'—')+'</td>'+
