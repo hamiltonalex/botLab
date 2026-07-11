@@ -4756,7 +4756,7 @@ function renderOptTicketRejections(list){
   box.innerHTML=list.map(r=>{ const bad=r.severity!=='warn';
     return '<div class="trow" style="grid-template-columns:auto 1fr" role="listitem">'+
       '<span class="k '+(bad?'gate-bad':'gate-warn')+'" style="white-space:nowrap">'+(bad?'✕ блок':'⚠ предупр.')+'</span>'+
-      '<span class="mono '+(bad?'gate-bad':'gate-warn')+'" style="font-size:11.5px">'+r.detail+'</span></div>'; }).join('');
+      '<span class="mono '+(bad?'gate-bad':'gate-warn')+'" style="font-size:11.5px">'+ledgerEsc(r.detail)+'</span></div>'; }).join('');
 }
 function optGateReady(){ const f=(LIVE_S1&&LIVE_S1.fresh), g=$('optTicketGate'); if(!g) return false;
   const rej=(optPreviewCache&&optPreviewCache.rejections)||[];
