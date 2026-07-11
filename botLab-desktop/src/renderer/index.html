@@ -4075,7 +4075,16 @@ function applyS1Dataset(ds){
   LIVE_S1 = ds;
   const cyc = ds.cycle || null;
   const sid = cyc && cyc.structure_id;
-  if(!cyc || sid!==optLastStructId){ optDeltaRing=[]; optLastStructId=sid||null; } // сброс на смене/закрытии
+  if(!cyc || sid!==optLastStructId){ // сброс на смене/закрытии
+    if(optLastStructId && !sid){
+      /* структура закрылась: превью Зоны Ⅰ заморожено со времён её открытия (onOptStructParamChange
+         не пересчитывает гипотезу при открытой структуре) — сбросить кэш и «эксп. авто» и пересчитать
+         по текущему рынку, иначе старые страйки/дебет/причины выдаются за текущие */
+      optPreviewCache=null; optPreviewErr=null; optAutoPick=null;
+      requestOptPreview();
+    }
+    optDeltaRing=[]; optLastStructId=sid||null;
+  }
   if(cyc && Number.isFinite(cyc.total_delta_bs)){
     // одно кольцо (сброс на смене структуры) питает три графика: дельта, P&L-атрибуция, цена+маркеры
     const p=cyc.pnl||{};
