@@ -18,12 +18,16 @@ export function payoffAt(structure, S_T) {
   return unitOf(structure) * intrinsic - structure.entryDebitUsd;
 }
 
-// The two break-evens either side of the ATM floor: [ K − D/(q·cs), K + D/(q·cs) ].
+// The break-evens either side of the ATM floor — K ± D/(q·cs) — but ONLY where the tent actually
+// crosses zero. Past a wing the curve is flat (plateau = wing width − debit), so a debit wider than a
+// wing has NO break-even on that side: the naive K ± D point would sit inside the flat loss region — a
+// phantom marker the chart must never draw. Position-stable [lower|null, upper|null] (the renderer
+// reads be[0]/be[1] as BE↓/BE↑). A credit (D<0) never crosses zero from above → both null.
 export function breakEvens(structure) {
-  const K = structure.strikes.atm;
+  const { atm: K, kc: Kc, kp: Kp } = structure.strikes;
   const D = structure.entryDebitUsd;
-  const unit = unitOf(structure);
-  return [K - D / unit, K + D / unit];
+  const d = D / unitOf(structure); // per-unit debit in price terms
+  return [d >= 0 && d <= K - Kp ? K - d : null, d >= 0 && d <= Kc - K ? K + d : null];
 }
 
 // Sampled payoff curve over [min,max] (n inclusive points) plus the shape's key levels.
