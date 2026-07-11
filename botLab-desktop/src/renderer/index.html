@@ -4796,7 +4796,7 @@ function optTicketValidate(o){ o=o||{}; const qi=$('optTicketQty'), q=Number(qi.
   if(Number.isFinite(q)&&q>0 && q!==optSel.qty){ optSel.qty=q; if($('optQty')) $('optQty').value=String(q); onOptStructParamChange(); }
   const gate=optGateReady();
   $('optTicketConfirm').disabled = !(ok&&gate);
-  return ok; }
+  return ok&&gate; } /* qty-валидность И гейт: confirm-guard не должен пропускать hard block */
 function openOptTicket(){ const t=$('optLaunchTicket'); if(!t) return;
   $('optTicketQty').value=String(optSel.qty); $('optTicketErr').hidden=true; $('optTicketErr').textContent='';
   renderOptStructPreview(); optTicketValidate({showErrors:false});
@@ -4821,7 +4821,9 @@ async function confirmOptStructure(){ const err=$('optTicketErr');
       if(z){ z.scrollIntoView({behavior:smoothOk()?'smooth':'auto'});
         z.classList.remove('reveal','zone-flash'); void z.offsetWidth; z.classList.add('zone-flash'); z.focus({preventScroll:true}); } }
   }catch(e){ err.textContent='ошибка IPC: '+String(e&&e.message||e).slice(0,80); err.hidden=false; console.warn('s1 openStructure', e); }
-  btn.disabled=false; }
+  /* не включать безусловно: после отказа движка validate пересчитает гейт по свежим rejections —
+     hard block держит кнопку заблокированной (успех закрыл тикет, там состояние кнопки не играет) */
+  btn.disabled=false; if($('optLaunchTicket') && !$('optLaunchTicket').hidden) optTicketValidate({showErrors:false}); }
 
 /* ── закрытие структуры: двухшаговое подтверждение (как удаление в журнале) → s1.closeStructure ── */
 let optCloseArmed=false, optCloseTimer=null;
