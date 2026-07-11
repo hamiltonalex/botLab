@@ -821,7 +821,10 @@ function wireIpcStrategy1() {
     if (!snap) return { error: "нет рыночных данных — запустите источник" };
     const r = s1engine.closeStructure(bo.engine, snap, Date.now());
     if (r.error) return r;
-    bo.source?.setInstruments([]);
+    // Re-point at band-only polling (primary = [] — flat gates nothing). setInstruments([]) here would
+    // silence the WHOLE band: refreshBtcOptBand won't re-derive a band it still considers fresh (same
+    // chain, <2% drift), so the IV-regime card would go blind until spot drifts or the app restarts.
+    pointBtcOptSource();
     bo.snapshot = s1engine.evaluate(bo.engine, snap, Date.now());
     saveBotState(baseDir, BTCOPT_ID, bo.engine);
     push1();
