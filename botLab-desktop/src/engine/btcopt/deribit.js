@@ -155,10 +155,18 @@ export function bookToLiquidity(src) {
 }
 
 // Whether an open structure's legs all carry finite greeks (the "greeks gate" — hedging pauses if false).
-export function greeksGateOk(legs) {
-  const arr = Object.values(legs || {});
-  if (!arr.length) return true; // no structure open → nothing to gate
-  return arr.every((l) => [l.delta, l.gamma, l.vega, l.theta, l.mark].every((v) => Number.isFinite(v)));
+// requiredNames (optional) is the list of legs that MUST be present: a leg whose fetch failed entirely is
+// absent from `legs`, and judging only the survivors would pass the gate on a partial snapshot — the
+// engine would then hedge off an understated option delta (missing legs default to δ 0). No list ⇒ the
+// legacy behaviour: validate whatever is present; empty either way ⇒ true (nothing to gate).
+export function greeksGateOk(legs, requiredNames = null) {
+  const map = legs || {};
+  const names = Array.isArray(requiredNames) ? requiredNames : Object.keys(map);
+  if (!names.length) return true; // no structure open → nothing to gate
+  return names.every((n) => {
+    const l = map[n];
+    return !!l && [l.delta, l.gamma, l.vega, l.theta, l.mark].every((v) => Number.isFinite(v));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -206,12 +214,12 @@ export async function buildDeribitSnapshot({ legInstruments = [], primaryInstrum
   const ts = tsList.length ? Math.max(...tsList) : (nowMs ?? null);
   const liquidity = perp ? bookToLiquidity(perp) : null;
   // Gate + ok are judged over the PRIMARY legs only (the open structure); auxiliary band failures stay
-  // visible in notes but never degrade the hedge engine's inputs-quality verdict.
+  // visible in notes but never degrade the hedge engine's inputs-quality verdict. The gate demands the
+  // PRESENCE of every primary leg, not just finite greeks on the survivors — a leg whose fetch failed
+  // must pause hedging (its delta would otherwise silently count as 0 in the net).
   const primaryNames = Array.isArray(primaryInstruments) ? primaryInstruments : legInstruments;
   const primarySet = new Set(primaryNames);
-  const primaryLegs = {};
-  for (const name of primaryNames) if (legs[name]) primaryLegs[name] = legs[name];
-  const gateOk = greeksGateOk(primaryLegs);
+  const gateOk = greeksGateOk(legs, primaryNames);
   const primaryErrors = errors.filter((e) => e.instrument === perpName || primarySet.has(e.instrument));
   const ok = !!perp && primaryErrors.length === 0 && gateOk;
 
