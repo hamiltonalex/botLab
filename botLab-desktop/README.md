@@ -110,7 +110,7 @@ npm run dist         # current platform
 
 Output lands in `release/`. **Production builds are made in CI from a tag** (`git push --tags` →
 GitHub Actions → signed + notarized macOS DMG/ZIP, Windows NSIS, attached to a draft release) — see
-[docs/RELEASING.md](docs/RELEASING.md). Local `npm run dist:*` builds are **unsigned**; to run one:
+the maintainer’s `RELEASING.md` notes (kept outside the repo). Local `npm run dist:*` builds are **unsigned**; to run one:
 
 - **macOS** — `CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac` builds unsigned; then right-click
   the app → **Open** → **Open**, or `xattr -dr com.apple.quarantine "/Applications/BotLab.app"`.
@@ -122,7 +122,7 @@ BotLab updates over the air from GitHub Releases via `electron-updater`: a **ver
 bar shows the update state, downloads happen only on click, and installs are silent with a restart.
 macOS updates are gated on Developer ID signature + notarization and a SHA-512 integrity check;
 **positions and the ledger survive updates**. Version history lives in [CHANGELOG.md](CHANGELOG.md);
-the full release process is in [docs/RELEASING.md](docs/RELEASING.md).
+the full release process is in the maintainer’s `RELEASING.md` notes (kept outside the repo).
 
 ## Data & persistence
 
