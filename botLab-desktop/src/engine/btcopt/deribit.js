@@ -261,7 +261,11 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
   const metaCache = new Map();
   const notes = [];
 
+  let inFlight = false; // one tick at a time: rpc's retry/backoff (1.5s/8s sleeps) routinely outlives
+  // the 3s interval, and overlapping ticks could deliver an OLDER snapshot after a newer one
   const tick = async () => {
+    if (inFlight) return;
+    inFlight = true;
     try {
       const snap = await buildDeribitSnapshot({ legInstruments, primaryInstruments, metaCache, testnet, nowMs: Date.now() });
       if (snap.errors.length) {
@@ -271,8 +275,9 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
         lastError = null;
         errorStreak = 0;
       }
-      // Dedup by exchange timestamp — the same tick shouldn't re-fire the render/save loop.
-      if (snap.ts != null && snap.ts === lastTs) return;
+      // Dedup by exchange timestamp, MONOTONIC: equal ts shouldn't re-fire the render/save loop, and
+      // an older-than-accepted ts (e.g. a refreshNow racing the interval) must never regress state.
+      if (snap.ts != null && lastTs != null && snap.ts <= lastTs) return;
       lastTs = snap.ts;
       lastSnap = snap;
       if (onSnapshot) onSnapshot(snap);
@@ -282,6 +287,8 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
       errorStreak++;
       if (notes.length > 20) notes.shift();
       notes.push(lastError);
+    } finally {
+      inFlight = false;
     }
   };
 
