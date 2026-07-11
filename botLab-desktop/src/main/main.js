@@ -704,6 +704,11 @@ function wireIpcStrategy1() {
   ipcMain.handle("s1:setSettings", async (_e, s) => {
     const bo = state.btcOptions;
     bo.settings = { ...bo.settings, ...(s || {}) };
+    // Mirror into the ENGINE's own settings copy (created once at bootstrap/reset): preTradeCheck,
+    // account() and the NEXT openStructure's engineCfg freeze all read state.settings — without the
+    // mirror, applied sweep params / deposit changes never reach the engine until an app restart.
+    // The running structure stays untouched: it hedges by its frozen engineCfg, exactly as designed.
+    if (bo.engine) bo.engine.settings = { ...bo.engine.settings, ...(s || {}) };
     saveBotSettings(baseDir, BTCOPT_ID, bo.settings);
     // Apply cadence/testnet changes to a live source by rebuilding it (params stay live only pre-open).
     if (bo.source && bo.running) {
