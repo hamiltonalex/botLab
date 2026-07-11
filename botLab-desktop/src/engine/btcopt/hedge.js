@@ -69,13 +69,15 @@ export function expectedBenefit({ deltaExcess, underlying, m }) {
 // Itemized $ cost of the hedge. fee is round-trip (2x taker) on the traded size; spread is the
 // half-spread paid on the traded size; slippage scales with mark; funding_horizon is the expected
 // funding carried on the *target* futures position over cfg.fundingHorizonSec (normalized to the
-// 8h funding period). total is the plain sum.
+// 8h funding period) — SIGNED: a long target (δ>0) pays positive funding (a cost), a short target
+// RECEIVES it (negative cost) — the cost-side view of pnl.accrueFunding's −qty·… convention. total
+// is the plain sum and may therefore be reduced by favorable funding.
 export function estimateCost({ hedgeQty, targetQty, perp, liquidity, cfg }) {
   const fee = 2 * Math.abs(hedgeQty) * perp.mark * cfg.takerFeeRate;
   const spread = Math.abs(hedgeQty) * liquidity.halfSpread;
   const slippage = Math.abs(hedgeQty) * perp.mark * cfg.slippageRate;
   const funding_horizon =
-    Math.abs(targetQty) * perp.mark * perp.funding8h * (cfg.fundingHorizonSec / 28800);
+    targetQty * perp.mark * perp.funding8h * (cfg.fundingHorizonSec / 28800);
   const total = fee + spread + slippage + funding_horizon;
   return { fee, spread, slippage, funding_horizon, total };
 }

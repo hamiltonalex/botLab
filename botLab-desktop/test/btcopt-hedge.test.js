@@ -106,6 +106,30 @@ test("estimateCost itemizes fee/spread/slippage/funding and sums total", () => {
   near(c.total, 0.128, 1e-9, "total");
 });
 
+test("estimateCost funding term is SIGNED: a short target receiving positive funding lowers total", () => {
+  // SHORT target −0.01 BTC, positive funding 2 bps/8h over the 1-period horizon:
+  // funding_horizon = −0.01·63000·0.0002 = −$0.126 — a benefit, mirroring pnl.accrueFunding where a
+  // short with positive funding8h RECEIVES. Math.abs(target) would have flipped it into a phantom cost.
+  const c = estimateCost({
+    hedgeQty: 0.002,
+    targetQty: -0.01,
+    perp: { mark: 63000, funding8h: 0.0002, contractSize: 10 },
+    liquidity: { halfSpread: 1 },
+    cfg: baseCfg,
+  });
+  near(c.funding_horizon, -0.126, 1e-9, "funding_horizon (received)");
+  near(c.total, 0.126 + 0.002 + 0 - 0.126, 1e-9, "total net of received funding");
+  // The mirror: a LONG target paying the same rate keeps it a genuine cost.
+  const l = estimateCost({
+    hedgeQty: 0.002,
+    targetQty: 0.01,
+    perp: { mark: 63000, funding8h: 0.0002, contractSize: 10 },
+    liquidity: { halfSpread: 1 },
+    cfg: baseCfg,
+  });
+  near(l.funding_horizon, 0.126, 1e-9, "funding_horizon (paid)");
+});
+
 test("decideHedge HEDGE case — benefit clears cost·lambda", () => {
   const r = decideHedge({
     optionDelta: -0.002,
