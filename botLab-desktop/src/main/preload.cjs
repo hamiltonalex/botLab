@@ -37,6 +37,13 @@ contextBridge.exposeInMainWorld("fa", {
   version: () => ipcRenderer.invoke("fa:version"),
 });
 
+// ── UI chrome bridge (shell-level, bot-agnostic): the dark/light theme. getThemeSync is
+// intentionally sendSync — the inline <head> script must know the theme BEFORE first paint (no FOUC).
+contextBridge.exposeInMainWorld("ui", {
+  getThemeSync: () => ipcRenderer.sendSync("ui:getTheme"),
+  setTheme: (t) => ipcRenderer.invoke("ui:setTheme", t),
+});
+
 // ── Bot 2 «BTC-опционы» (Strategy One) — a PARALLEL bridge, fully isolated from `fa` above ──
 // Live Deribit public data + paper execution (no keys, no orders). The `fa` block is untouched.
 contextBridge.exposeInMainWorld("s1", {

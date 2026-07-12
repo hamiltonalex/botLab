@@ -44,6 +44,9 @@ isolateSmokeProfile(app, { enabled: SMOKE });
 const instFor = (strat, key) => (strat === "one" ? oneLegByKey(key) : twoLegByKey(key));
 const cacheKeyFor = (strat, key) => (strat === "one" ? `${key}__oneleg` : key);
 const MAX_CURVE_POINTS = 1200; // IPC payload cap; full resolution stays on disk
+// Anti-FOUC window background per theme — must equal each theme's --bg in the renderer CSS.
+const THEME_BG = { dark: "#07090d", light: "#eef1f6" };
+const uiTheme = () => (state.settings.ui && state.settings.ui.theme === "light" ? "light" : "dark");
 
 process.on("uncaughtException", (e) => console.error("[main] uncaughtException:", e));
 process.on("unhandledRejection", (e) => console.error("[main] unhandledRejection:", e));
@@ -911,6 +914,21 @@ function wireIpcStrategy1() {
 // ---------------------------------------------------------------------------
 // IPC
 // ---------------------------------------------------------------------------
+// Shell-level UI IPC (theme). Wired BEFORE createWindow: the renderer's inline <head> script asks
+// for the theme synchronously while the page is still parsing — the handler must already exist.
+function wireIpcUi() {
+  ipcMain.on("ui:getTheme", (e) => {
+    e.returnValue = uiTheme();
+  });
+  ipcMain.handle("ui:setTheme", async (_e, t) => {
+    const theme = t === "light" ? "light" : "dark";
+    state.settings.ui = { ...(state.settings.ui || {}), theme };
+    saveSettings(baseDir, state.settings);
+    if (win && !win.isDestroyed()) win.setBackgroundColor(THEME_BG[theme]); // live: resize/overscroll flashes match
+    return { ok: true, theme };
+  });
+}
+
 function wireIpc() {
   // Non-blocking: return what we have NOW; backfills arrive via push (audit M14).
   ipcMain.handle("fa:getState", async () => {
@@ -1083,7 +1101,7 @@ function createWindow() {
     minWidth: 1080,
     minHeight: 720,
     show: !SMOKE,
-    backgroundColor: "#07090d",
+    backgroundColor: THEME_BG[uiTheme()], // settings are loaded BEFORE createWindow (anti-FOUC chain)
     title: "BotLab",
     webPreferences: {
       preload: join(HERE, "preload.cjs"),
@@ -1158,6 +1176,7 @@ app.whenReady().then(async () => {
   // a phantom open forever; the closure is surfaced as a boot note.
   closeOrphanedPositions();
 
+  wireIpcUi(); // before createWindow: the inline head script sendSync's the theme during page parse
   createWindow();
   wireIpc();
   // Bot 2 «BTC-опционы»: load/create its isolated state, then wire its IPC (so s1:* is ready as
