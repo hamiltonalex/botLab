@@ -1,6 +1,6 @@
 {
   "name": "botlab-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Live paper-trading desktop app for delta-neutral funding-rate arbitrage (GMX V2 x Hyperliquid). Phase 1: public read-only data, no orders, no keys.",
   "type": "module",
   "main": "src/main/main.js",
