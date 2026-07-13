@@ -66,15 +66,20 @@ export function expectedBenefit({ deltaExcess, underlying, m }) {
   return Math.abs(deltaExcess) * underlying * m;
 }
 
-// Itemized $ cost of the hedge. fee is round-trip (2x taker) on the traded size; spread is the
-// half-spread paid on the traded size; slippage scales with mark; funding_horizon is the expected
-// funding carried on the *target* futures position over cfg.fundingHorizonSec (normalized to the
-// 8h funding period) — SIGNED: a long target (δ>0) pays positive funding (a cost), a short target
-// RECEIVES it (negative cost) — the cost-side view of pnl.accrueFunding's −qty·… convention. total
-// is the plain sum and may therefore be reduced by favorable funding.
+// Itemized $ cost of the hedge, execution-style aware (mirrors the fill semantics in engine.js):
+// market — fee is round-trip (2x taker) on the traded size and the half-spread is paid; limit
+// (post-only) — maker rate (Deribit BTC-perp 0.00%) and NO spread term (the fill models mid).
+// slippage stays in BOTH branches as a non-zero cost floor: a real resting order still carries
+// non-fill / adverse-selection risk, and a zero total would degenerate the λ filter. funding_horizon
+// is the expected funding carried on the *target* futures position over cfg.fundingHorizonSec
+// (normalized to the 8h funding period) — SIGNED: a long target (δ>0) pays positive funding (a
+// cost), a short target RECEIVES it (negative cost) — the cost-side view of pnl.accrueFunding's
+// −qty·… convention. total is the plain sum and may therefore be reduced by favorable funding.
 export function estimateCost({ hedgeQty, targetQty, perp, liquidity, cfg }) {
-  const fee = 2 * Math.abs(hedgeQty) * perp.mark * cfg.takerFeeRate;
-  const spread = Math.abs(hedgeQty) * liquidity.halfSpread;
+  const limit = cfg.execStyle === "limit";
+  const feeRate = limit ? cfg.makerFeeRate ?? 0 : cfg.takerFeeRate;
+  const fee = 2 * Math.abs(hedgeQty) * perp.mark * feeRate;
+  const spread = limit ? 0 : Math.abs(hedgeQty) * liquidity.halfSpread;
   const slippage = Math.abs(hedgeQty) * perp.mark * cfg.slippageRate;
   const funding_horizon =
     targetQty * perp.mark * perp.funding8h * (cfg.fundingHorizonSec / 28800);
@@ -212,7 +217,10 @@ export function applyFill(perpState, hedge_order, priceRef, meta, cfg) {
   perpState.qty += contractsDelta;
   if (perpState.qty === 0) perpState.avgEntry = 0;
   perpState.realizedUsd = (perpState.realizedUsd || 0) + realized;
-  const feeUsd = Math.abs(contractsDelta) * cs * cfg.takerFeeRate;
+  // Fee rate follows the ORDER's execution style (not cfg.execStyle): flatten orders are always
+  // order_type "market" (taker) even when the structure hedges with post-only limits.
+  const feeRate = hedge_order.order_type === "limit" ? cfg.makerFeeRate ?? 0 : cfg.takerFeeRate;
+  const feeUsd = Math.abs(contractsDelta) * cs * feeRate;
   perpState.feesCum = (perpState.feesCum || 0) + feeUsd;
 
   return { filledContracts: contractsDelta, priceRef, feeUsd, realizedUsd: realized };

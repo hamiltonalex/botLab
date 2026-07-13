@@ -101,3 +101,22 @@ test("forward-migration guard bumps an older schemaVersion and persists", () => 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("lastRunMetrics: survives the JSON round-trip; a pre-fix state file WITHOUT the field loads fine", () => {
+  const dir = mkdtempSync(join(tmpdir(), "btcopt-store-"));
+  try {
+    const st = engine.create({ nowMs: 42 });
+    st.lastRunMetrics = { structureId: "s1-x", openedAt: 42, closedAt: 99, sharpe: 1.25, cycles: 7 };
+    saveBotState(dir, "btc-options", st);
+    const back = loadBotState(dir, "btc-options");
+    assert.deepEqual(back.lastRunMetrics, st.lastRunMetrics, "frozen run summary round-trips");
+
+    // pre-fix shape: the field is absent entirely — loading must not throw and readers null-guard
+    delete back.lastRunMetrics;
+    saveBotState(dir, "btc-options", back);
+    const old = loadBotState(dir, "btc-options");
+    assert.equal(old.lastRunMetrics, undefined, "absent field stays absent (additive schema)");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

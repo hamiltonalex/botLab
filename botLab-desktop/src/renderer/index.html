@@ -4431,7 +4431,7 @@ async function fetchOptLedgerRows(){
     if(r && r.events){
       /* только реально эмитируемые движком типы (engine.js appendLedger): фандинг — накопительный
          perpState.fundingCum, комиссии — поле feeUsd на строках hedge/close-perp, отдельных строк нет */
-      const tl={ open:'открытие', hedge:'хедж', 'close-perp':'закрытие перпа', 'close-options':'фиксация опционов' };
+      const tl={ open:'открытие', hedge:'хедж', 'close-perp':'закрытие перпа', 'close-options':'фиксация опционов', 'settle-options':'расчёт на экспирации' };
       $('optLedgerBody').innerHTML = r.events.map(ev=>{
         const pnlVal = ev.realizedUsd||0;
         return '<tr><td class="lft ts">'+optClock(ev.t)+'</td><td class="lft">'+(tl[ev.type]||ev.type)+'</td>'+
@@ -4873,7 +4873,10 @@ function optGateReady(){ const f=(LIVE_S1&&LIVE_S1.fresh), g=$('optTicketGate');
   renderOptTicketRejections(rej); // и пустой список тоже — устаревшие строки не должны залипать
   if(!window.s1){ g.textContent='нет моста s1 (file://) — открытие недоступно'; g.className='num gate-bad'; return false; }
   if(!f){ g.textContent='нет данных Deribit — нажмите «Пересчёт»'; g.className='num gate-warn'; return false; }
-  if(f.gateOk===false){ g.textContent='гейт греков не пройден — открытие заблокировано'; g.className='num gate-bad'; return false; }
+  if(f.gateOk===false){ const bad=f.gateFailed||[]; /* имена виновных ног из первоисточника (deribit.js) */
+    g.textContent='гейт греков не пройден — открытие заблокировано'+(bad.length?' · '+bad.slice(0,2).join(', ')+(bad.length>2?' и ещё '+(bad.length-2):''):'');
+    g.title=[...bad,...(f.notes||[])].join('\n');
+    g.className='num gate-bad'; return false; }
   if(optPreviewErr){ g.textContent=optPreviewErr; g.className='num gate-bad'; return false; }
   if(rej.some(r=>r.severity!=='warn')){ g.textContent='запуск заблокирован — причины ниже'; g.className='num gate-bad'; return false; }
   if(optPreviewCache && optPreviewCache.valid===false){ g.textContent=(optPreviewCache.validationErrors||[]).join('; ')||'структура не валидна'; g.className='num gate-bad'; return false; }
@@ -4986,7 +4989,7 @@ function optRecalc(){ const b=$('optRecalcBtn'); const t=b.textContent; b.disabl
 /* ── init: навесить статические контролы один раз ── */
 function initOpt(){ if(!$('view-btc-options')) return;
   wireOptSeg('optWingSel','wing', v=>parseFloat(v), { struct:true });
-  wireOptSeg('optExecSel','exec', null, {});
+  wireOptSeg('optExecSel','exec', null, { setting:'execStyle' });
   wireOptSeg('optDeadbandSel','deadband', null, { setting:'deadbandPreset' });
   wireOptSeg('optPriceTrigSel','priceTrig', v=>parseFloat(v), { setting:'priceTriggerPct', settingCast:v=>parseFloat(v) });
   wireOptSeg('optRepriceSel','reprice', v=>parseInt(v,10), { setting:'repriceSec', settingCast:v=>parseInt(v,10) });

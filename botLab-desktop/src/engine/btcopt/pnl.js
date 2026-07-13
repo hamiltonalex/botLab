@@ -123,9 +123,15 @@ export function appendLedger(engineState, event = {}) {
 }
 
 // ── Reconciliation ──────────────────────────────────────────────────────────────────────────────
-// ledgerReconciles(engineState, snapshot) → { ok, identityDelta, feesDelta, realizedDelta,
-//   fundingDelta }. Checks the attribution identity closes AND that the running perpState accumulators
-//   equal the independent sums of the ledger rows. ok = every delta < 1e-6·max(1, |net_total|).
+// ledgerReconciles(engineState, snapshot) → { ok, identityDelta, feesDelta, realizedDelta }.
+// Checks the attribution identity closes AND that the ledger's independent sums equal the running
+// accumulators. ok = every delta < 1e-6·max(1, |net_total|).
+//   • Funding is deliberately NOT reconciled against rows: accrual is accumulator-only
+//     (perpState.fundingCum) and the journal carries no funding rows by design (guide §8) — a
+//     sum-vs-accumulator check here would fail on every session that ever accrued funding.
+//   • realizedUsd rows come from TWO sources — hedge/close-perp (→ perpState.realizedUsd) and
+//     close-options/settle-options (→ engineState.realizedOptionsUsd) — so the row sum reconciles
+//     against the SUM of both accumulators, not the perp one alone.
 export function ledgerReconciles(engineState, snapshot) {
   const a = attribute(engineState, snapshot);
   const identityDelta = Math.abs(
@@ -135,9 +141,10 @@ export function ledgerReconciles(engineState, snapshot) {
   const sum = (key) => ledger.reduce((acc, e) => acc + (e[key] || 0), 0);
   const perpState = engineState.perpState;
   const feesDelta = Math.abs(sum("feeUsd") - (perpState.feesCum || 0));
-  const realizedDelta = Math.abs(sum("realizedUsd") - (perpState.realizedUsd || 0));
-  const fundingDelta = Math.abs(sum("fundingUsd") - (perpState.fundingCum || 0));
+  const realizedDelta = Math.abs(
+    sum("realizedUsd") - ((perpState.realizedUsd || 0) + (engineState.realizedOptionsUsd || 0)),
+  );
   const tol = 1e-6 * Math.max(1, Math.abs(a.net_total));
-  const ok = identityDelta < tol && feesDelta < tol && realizedDelta < tol && fundingDelta < tol;
-  return { ok, identityDelta, feesDelta, realizedDelta, fundingDelta };
+  const ok = identityDelta < tol && feesDelta < tol && realizedDelta < tol;
+  return { ok, identityDelta, feesDelta, realizedDelta };
 }

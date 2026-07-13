@@ -33,3 +33,42 @@ test("greeks gate: legacy 1-arg form validates whatever is present (empty map �
   assert.equal(greeksGateOk({ A: leg() }), true);
   assert.equal(greeksGateOk({ A: leg({ theta: undefined }) }), false);
 });
+
+// ── greeksGateFailures: the culprit list the ticket names ────────────────────────────────────────
+// The boolean gate is DEFINED as failures.length === 0, so these tests also pin the equivalence.
+import { greeksGateFailures } from "../src/engine/btcopt/deribit.js";
+
+test("gate failures: full greeks → empty list", () => {
+  assert.deepEqual(greeksGateFailures({ A: leg(), B: leg() }, ["A", "B"]), []);
+});
+
+test("gate failures: names the MISSING required leg (fetch-failed)", () => {
+  assert.deepEqual(greeksGateFailures({ A: leg(), B: leg() }, ["A", "B", "D"]), ["D"]);
+});
+
+test("gate failures: names a PRESENT leg with a non-finite greek or mark", () => {
+  assert.deepEqual(greeksGateFailures({ A: leg(), B: leg({ vega: null }) }, ["A", "B"]), ["B"]);
+  assert.deepEqual(greeksGateFailures({ A: leg({ mark: NaN }) }, ["A"]), ["A"]);
+});
+
+test("gate failures: order follows requiredNames; band legs outside required never appear", () => {
+  const legs = { A: leg({ delta: null }), BAND: leg({ mark: NaN }), C: leg() };
+  assert.deepEqual(greeksGateFailures(legs, ["C", "A"]), ["A"]); // BAND is not required → not blamed
+});
+
+test("gate failures: empty required list → [] (flat, band-only polling gates nothing)", () => {
+  assert.deepEqual(greeksGateFailures({ A: leg({ delta: null }) }, []), []);
+});
+
+test("gate ok ≡ (failures.length === 0) across the fixture matrix", () => {
+  const cases = [
+    [{ A: leg(), B: leg() }, ["A", "B"]],
+    [{ A: leg() }, ["A", "B"]],
+    [{ A: leg({ theta: undefined }) }, null],
+    [{}, null],
+    [{ A: leg({ delta: null }) }, []],
+  ];
+  for (const [legs, req] of cases) {
+    assert.equal(greeksGateOk(legs, req), greeksGateFailures(legs, req).length === 0);
+  }
+});

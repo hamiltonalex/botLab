@@ -16,7 +16,7 @@
 // All time-dependent behaviour takes an explicit nowMs (never Date.now()) so tests are reproducible.
 
 import { buildStructure, optionDeltaTotal, netGreeks, netDebit, pickExpiry, structureRejections } from "./structure.js";
-import { payoffCurve } from "./payoff.js";
+import { payoffCurve, payoffAt } from "./payoff.js";
 import { decideHedge, applyFill, settlementBlackout } from "./hedge.js";
 import { markStructure, markPerp, accrueFunding, attribute, noHedgeAttribute, appendLedger } from "./pnl.js";
 import { initMetrics, foldCycle, summarize } from "./metrics.js";
@@ -31,6 +31,7 @@ export const SCHEMA_VERSION = 1;
 // under the persisted settings at evaluate time (settings win if they ever override one).
 const HEDGE_CONSTANTS = {
   takerFeeRate: 0.0005, // 5 bps taker (Deribit illustrative)
+  makerFeeRate: 0, // Deribit BTC-perp maker 0.00% — the limit (post-only) execution branch
   slippageRate: 0.0002, // flat slippage rate on the perp mark
   fundingHorizonSec: 28800, // one 8h funding period
   dailyWindowSec: 600, // ±10 min around 08:00 UTC settlement
@@ -41,6 +42,25 @@ const HEDGE_CONSTANTS = {
 // Merge the persisted user settings over the engine cost constants → the cfg the hedge engine consumes.
 function buildCfg(settings) {
   return { ...HEDGE_CONSTANTS, ...(settings || {}) };
+}
+
+// The canonical preset → ±BTC half-width table. Single source of truth: the settings toolbar (via
+// normalizeDeadband at the s1:setSettings boundary) and the sweep grid both read THIS table, so the
+// preset label and the width the hedge engine actually uses can never drift apart again.
+export const DEADBAND_PRESETS = {
+  aggressive: 0.0005,
+  normal: 0.001,
+  conservative: 0.002,
+};
+
+// Normalize a settings patch: a known deadbandPreset that arrives WITHOUT its width gains the table
+// width; an explicit deadbandBtc in the same patch always wins (sweep-apply and custom sweep grids
+// send consistent pairs and must stay byte-identical). Unknown preset → patch returned untouched.
+export function normalizeDeadband(patch) {
+  const p = patch || {};
+  const width = DEADBAND_PRESETS[p.deadbandPreset];
+  if (width == null || p.deadbandBtc != null) return p;
+  return { ...p, deadbandBtc: width };
 }
 
 // Default engine/strategy settings (spec defaults). Persisted to <BOT_ID>-settings.json.
@@ -83,6 +103,7 @@ export function create(params) {
     lastIngestAt: null, // ms of the last ingest (funding-accrual dt baseline)
     lastUnderlying: null, // last seen BTC price
     metrics: initMetrics(), // run-metrics accumulators (Phase 2b) — O(1) scalars, reset at each structure open
+    lastRunMetrics: null, // frozen summary of the LAST finished run — the only survivor of openStructure's metrics reset
   };
 }
 
@@ -117,6 +138,9 @@ export function ingest(state, snapshot, nowMs) {
 // ── Evaluate: the full per-cycle computation → the §5 cycle-snapshot (drives the whole view).
 // Recomputes net greeks, runs the hedge decision, executes a paper fill on HEDGE, and attributes P&L.
 export function evaluate(state, snapshot, nowMs) {
+  // Expiry settlement runs FIRST — before anything reads state.structure — so a tick that crosses the
+  // expiry settles the book and the rest of the cycle computes flat (no hedging a dead structure).
+  if (state.structure && nowMs >= state.structure.expiryMs) settleStructure(state, snapshot, nowMs);
   const structure = state.structure;
   // Engine params are FROZEN at structure open (the running structure hedges by the params it was
   // opened with; the live toolbar settings only drive the Zone-Ⅰ hypothesis until the next open).
@@ -129,7 +153,9 @@ export function evaluate(state, snapshot, nowMs) {
   const mp = markPerp(state.perpState, perp || {});
   const Qperp = mp.futuresDeltaBtc;
   const totalDelta = optionDelta + Qperp;
-  const liquidity = snapshot.liquidity || { bid: perp?.bid ?? null, ask: perp?.ask ?? null, halfSpread: 0 };
+  const liquidity =
+    snapshot.liquidity ||
+    { bid: perp?.bid ?? null, ask: perp?.ask ?? null, mid: perp?.bid != null && perp?.ask != null ? (perp.bid + perp.ask) / 2 : perp?.bid ?? perp?.ask ?? null, halfSpread: 0 };
   const step = perp && perp.mark ? perp.contractSize / perp.mark : 0; // BTC per $10 contract
 
   // Hedge decision. Only run when a structure is open, the perp is priced, and the greeks gate is OK;
@@ -223,8 +249,17 @@ export function evaluate(state, snapshot, nowMs) {
       : null;
 
   // ── Side-effect: execute the paper fill on HEDGE (takes effect next tick), book it, advance clocks.
+  // Fill price follows the order's execution style: market crosses the spread (buy@ask / sell@bid);
+  // limit (post-only) fills at MID — a deliberate proxy that grants half the passive-price edge in
+  // exchange for the unmodeled non-fill risk of a real resting order. applyFill picks the fee rate
+  // (maker vs taker) off the same order_type, so price and fee can't disagree.
   if (decision.decision === "HEDGE" && decision.hedge_order && perp) {
-    const priceRef = decision.hedge_order.side === "buy" ? liquidity.ask ?? perp.mark : liquidity.bid ?? perp.mark;
+    const priceRef =
+      decision.hedge_order.order_type === "limit"
+        ? liquidity.mid ?? perp.mark
+        : decision.hedge_order.side === "buy"
+          ? liquidity.ask ?? perp.mark
+          : liquidity.bid ?? perp.mark;
     const fill = applyFill(state.perpState, decision.hedge_order, priceRef, perp, cfg);
     state.lastHedgeAt = nowMs;
     state.lastHedgeUnderlying = snapshot.underlying;
@@ -315,6 +350,7 @@ export function evaluate(state, snapshot, nowMs) {
     pnl,
     hedge_vs,
     metrics: summarize(state.metrics),
+    last_run_metrics: state.lastRunMetrics ?? null,
     stress,
     iv_regime,
     blackout: decision.blackout ?? { active: false, reason: null },
@@ -395,30 +431,87 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   return { ok: true, structure: built, rejections };
 }
 
+// ── Flatten the perp hedge at market (immediacy over price — always order_type "market", so the
+// taker rate applies regardless of the structure's execStyle). Shared by closeStructure and
+// settleStructure so the two exit paths can never drift in math.
+function flattenPerp(state, snapshot, nowMs, cfg) {
+  const perp = snapshot.perp || null;
+  if (state.perpState.qty === 0 || !perp || !perp.mark) return;
+  const closeBtc = (-state.perpState.qty * perp.contractSize) / perp.mark; // BTC to bring perp → flat
+  const side = closeBtc > 0 ? "buy" : "sell";
+  const order = { side, amount_btc: Math.abs(closeBtc), amount_rounded_btc: Math.abs(closeBtc), order_type: "market", post_only: false };
+  const priceRef = side === "buy" ? snapshot.liquidity?.ask ?? perp.mark : snapshot.liquidity?.bid ?? perp.mark;
+  const fill = applyFill(state.perpState, order, priceRef, perp, cfg);
+  appendLedger(state, { t: nowMs, type: "close-perp", side, contracts: fill.filledContracts, priceRef, feeUsd: fill.feeUsd, realizedUsd: fill.realizedUsd });
+}
+
+// Freeze the finished run's metrics BEFORE the structure ref is dropped — openStructure wipes
+// state.metrics at the next open, so this snapshot is the only survivor of a completed run.
+function snapshotRunMetrics(state, nowMs) {
+  return {
+    structureId: state.structure?.id ?? null,
+    openedAt: state.structure?.createdAt ?? null,
+    closedAt: nowMs,
+    ...summarize(state.metrics),
+  };
+}
+
 // ── Close the structure: flatten the perp (realize inverse P&L), lock in the option MtM, keep the
 // cumulative P&L (realizedOptionsUsd survives, so net P&L is not reset by closing).
 export function closeStructure(state, snapshot, nowMs) {
   if (!state.structure) return { error: "нет открытой структуры" };
   const cfg = buildCfg(state.settings);
-  const perp = snapshot.perp || null;
-
-  if (state.perpState.qty !== 0 && perp && perp.mark) {
-    const closeBtc = (-state.perpState.qty * perp.contractSize) / perp.mark; // BTC to bring perp → flat
-    const side = closeBtc > 0 ? "buy" : "sell";
-    const order = { side, amount_btc: Math.abs(closeBtc), amount_rounded_btc: Math.abs(closeBtc), order_type: "market", post_only: false };
-    const priceRef = side === "buy" ? snapshot.liquidity?.ask ?? perp.mark : snapshot.liquidity?.bid ?? perp.mark;
-    const fill = applyFill(state.perpState, order, priceRef, perp, cfg);
-    appendLedger(state, { t: nowMs, type: "close-perp", side, contracts: fill.filledContracts, priceRef, feeUsd: fill.feeUsd, realizedUsd: fill.realizedUsd });
-  }
+  flattenPerp(state, snapshot, nowMs, cfg);
 
   const optMtm = markStructure(state.structure, snapshot).upl_usd;
   state.realizedOptionsUsd = (state.realizedOptionsUsd || 0) + optMtm;
   appendLedger(state, { t: nowMs, type: "close-options", realizedUsd: optMtm, note: `closed ${state.structure.id}` });
 
+  state.lastRunMetrics = snapshotRunMetrics(state, nowMs);
   state.structure = null;
   state.lastHedgeAt = null;
   state.lastHedgeUnderlying = null;
   return { ok: true };
+}
+
+// ── Expiry settlement: a structure that reaches its expiry cash-settles instead of freezing. Without
+// this the legs vanish from the API, the greeks gate fails forever and markStructure falls back to
+// entry marks — i.e. the UI would show a phantom ≈0 MtM instead of the real terminal payoff.
+// Settlement price S = snapshot.index (perp index once the option tickers are gone) — an honest PROXY
+// of Deribit's real delivery price (the 30-min index TWAP before 08:00 UTC), noted in the ledger row.
+// Options settle at intrinsic value: the realized amount is exactly payoffAt(structure, S) — the same
+// terminal "tent" the payoff chart promises. A degraded tick (no finite index, or an unpriced perp
+// while a hedge is still held) does NOT settle — settling on garbage is worse than settling late; the
+// next priced tick picks it up. A LATE settle (app was closed over the expiry) uses the then-current
+// index and says so in the note.
+export function settleStructure(state, snapshot, nowMs) {
+  const structure = state.structure;
+  if (!structure || !(nowMs >= structure.expiryMs)) return { settled: false };
+  const S = snapshot.index ?? snapshot.underlying;
+  const perpPriced = state.perpState.qty === 0 || (snapshot.perp && snapshot.perp.mark);
+  if (!Number.isFinite(S) || !perpPriced) return { settled: false };
+
+  const cfg = buildCfg(state.settings);
+  flattenPerp(state, snapshot, nowMs, cfg);
+
+  const optSettleUsd = payoffAt(structure, S);
+  state.realizedOptionsUsd = (state.realizedOptionsUsd || 0) + optSettleUsd;
+  const lateH = Math.floor((nowMs - structure.expiryMs) / 3600000);
+  appendLedger(state, {
+    t: nowMs,
+    type: "settle-options",
+    priceRef: S,
+    realizedUsd: optSettleUsd,
+    note:
+      `экспирация ${structure.id} · расчёт по индексу (прокси delivery-цены Deribit)` +
+      (lateH >= 1 ? ` · поздний расчёт +${lateH}ч (приложение не работало в момент экспирации)` : ""),
+  });
+
+  state.lastRunMetrics = snapshotRunMetrics(state, nowMs);
+  state.structure = null;
+  state.lastHedgeAt = null;
+  state.lastHedgeUnderlying = null;
+  return { settled: true, priceRef: S, realizedUsd: optSettleUsd };
 }
 
 // ── Paper account estimate. Equity = deposit + cumulative net P&L. Margin (Phase 2c) is the REAL Deribit

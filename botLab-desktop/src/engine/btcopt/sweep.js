@@ -19,20 +19,16 @@
 // carried internally, stripped from the returned combos). best = 0 (the ranked head) whenever any
 // combo scored.
 
-import { create, openStructure, ingest, evaluate } from "./engine.js";
+import { create, openStructure, ingest, evaluate, DEADBAND_PRESETS } from "./engine.js";
 import { summarize } from "./metrics.js";
 import { structureMargin } from "./margin.js";
 
-// The default grid. Deadband pairs the UI preset label with its ±BTC half-width (the same
-// aggressive/normal/conservative values the settings toolbar offers).
+// The default grid. The deadband axis is DERIVED from the engine's canonical preset table
+// (DEADBAND_PRESETS) — the same pairs the settings toolbar applies — so grid and toolbar can't drift.
 export function defaultGrid() {
   return {
     wingPct: [5, 10, 15],
-    deadband: [
-      { preset: "aggressive", btc: 0.0005 },
-      { preset: "normal", btc: 0.001 },
-      { preset: "conservative", btc: 0.002 },
-    ],
+    deadband: Object.entries(DEADBAND_PRESETS).map(([preset, btc]) => ({ preset, btc })),
     priceTriggerPct: [0.5, 1.0, 1.5],
     lambda: [1.0, 1.25, 1.5, 2.0],
   };
@@ -112,6 +108,10 @@ export function runSweep({ series, chain, expiryMs, grid = {}, baseSettings = {}
               continue;
             }
 
+            // Margin fit is judged AT ENTRY (structure vs deposit on the first snapshot) — captured
+            // before the replay because a series that crosses the expiry settles the structure to null.
+            const marginOk = structureMargin(state.structure, first).initial <= (settings.paperEquityUsd ?? 100);
+
             // Deterministic replay: each snapshot is both the market AND the clock (nowMs = its ts).
             let cycle = evaluate(state, first, first.ts);
             for (let i = 1; i < snaps.length; i++) {
@@ -126,7 +126,7 @@ export function runSweep({ series, chain, expiryMs, grid = {}, baseSettings = {}
               net: cycle.pnl.net_total,
               maxDD: summary.maxDrawdown,
               hedges: summary.hedgeCount,
-              marginOk: structureMargin(state.structure, first).initial <= (settings.paperEquityUsd ?? 100),
+              marginOk,
               gridIndex: idx,
             });
           }

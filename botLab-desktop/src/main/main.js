@@ -30,6 +30,7 @@ import * as deribit from "../engine/btcopt/deribit.js";
 import { buildStructure as s1buildStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry } from "../engine/btcopt/structure.js";
 import { payoffCurve as s1payoffCurve } from "../engine/btcopt/payoff.js";
 import { runSweep as s1runSweep } from "../engine/btcopt/sweep.js";
+import { summarize as s1summarize } from "../engine/btcopt/metrics.js";
 import { decimate } from "../engine/format.js";
 import { TWO_LEG, ONE_LEG, ALL_MARKETS, twoLegByKey, oneLegByKey, chainsInUse } from "../engine/universe.js";
 import { isolateSmokeProfile } from "./smoke-profile.js";
@@ -404,6 +405,16 @@ const BTCOPT_ID = "btc-options";
 
 function loadOrInitBtcOptions() {
   const settings = { ...s1engine.defaultSettings(), ...loadBotSettings(baseDir, BTCOPT_ID) };
+  // One-shot heal of pre-fix profiles: the toolbar used to persist the deadband PRESET without its
+  // width, so settings.json may carry e.g. preset='aggressive' with the stale 0.001 width. The preset
+  // is the user's recorded intent — realign the width to the canonical table. Sweep-applied pairs are
+  // table-consistent by construction, so this is a no-op for them.
+  const healWidth = s1engine.DEADBAND_PRESETS[settings.deadbandPreset];
+  const healed = healWidth != null && settings.deadbandBtc !== healWidth;
+  if (healed) {
+    settings.deadbandBtc = healWidth;
+    saveBotSettings(baseDir, BTCOPT_ID, settings);
+  }
   let st = loadBotState(baseDir, BTCOPT_ID);
   if (!st) {
     st = s1engine.create({ settings, nowMs: Date.now() });
@@ -412,6 +423,9 @@ function loadOrInitBtcOptions() {
     st.schemaVersion = s1engine.SCHEMA_VERSION; // forward-migration guard (no-op at v1)
     saveBotState(baseDir, BTCOPT_ID, st);
   }
+  // Mirror the healed pair into the ENGINE's settings copy (next open freezes engineCfg from it).
+  // The frozen engineCfg of an ALREADY-open structure is deliberately untouched (frozen-at-open law).
+  if (healed && st.settings) st.settings = { ...st.settings, deadbandPreset: settings.deadbandPreset, deadbandBtc: settings.deadbandBtc };
   state.btcOptions.engine = st;
   state.btcOptions.settings = settings;
   // Phase 3b: the persisted IV history (its OWN file — never inside btc-options.json) survives
@@ -601,7 +615,11 @@ function onBtcOptSnapshot(snap) {
     recordBtcOptHistory(snap); // copies BEFORE ivContext is attached — history entries stay context-free
     snap.ivContext = { series: bo.ivHistory }; // → evaluate() computes cycle.iv_regime from this
     s1engine.ingest(bo.engine, snap, Date.now());
+    const hadStructure = !!bo.engine.structure;
     bo.snapshot = s1engine.evaluate(bo.engine, snap, Date.now());
+    // Expiry settlement inside evaluate() may have flattened the book — re-point the source so the
+    // now-dead legs stop being the gate-relevant primary (band-only polling, like after a close).
+    if (hadStructure && !bo.engine.structure) pointBtcOptSource();
     saveBotState(baseDir, BTCOPT_ID, bo.engine);
     push1();
     refreshBtcOptBand(snap.underlying); // may re-point the source for the NEXT tick
@@ -672,7 +690,32 @@ function btcOptLedgerCsv(eng) {
   return "﻿" + [BTCOPT_LEDGER_HEADER, ...btcOptLedgerRows(eng)].map((r) => r.map(esc).join(",")).join("\r\n") + "\r\n";
 }
 const btcOptLedgerJson = (eng) =>
-  JSON.stringify({ format: "btc-options-ledger", version: 1, botId: BTCOPT_ID, exportedAt: new Date().toISOString(), perpState: eng.perpState, realizedOptionsUsd: eng.realizedOptionsUsd, events: eng.ledger || [] }, null, 2);
+  JSON.stringify(
+    {
+      format: "btc-options-ledger",
+      version: 1, // additive keys only (metrics/lastRunMetrics) — existing consumers keep parsing
+      botId: BTCOPT_ID,
+      exportedAt: new Date().toISOString(),
+      perpState: eng.perpState,
+      realizedOptionsUsd: eng.realizedOptionsUsd,
+      metrics: s1summarize(eng.metrics), // the current (or just-finished) run at export time
+      lastRunMetrics: eng.lastRunMetrics ?? null, // survives the next openStructure's metrics reset
+      events: eng.ledger || [],
+    },
+    null,
+    2,
+  );
+
+// Run-metrics block appended after the ledger rows in the XLSX export (the sheet tolerates ragged
+// rows). Three columns: metric | current run | last finished run — so the numbers the «Метрики
+// прогона» card wipes at the next open survive in the export.
+function btcOptMetricsRows(eng) {
+  const cur = s1summarize(eng.metrics);
+  const last = eng.lastRunMetrics || {};
+  const rows = [[], ["— метрики прогона —", "текущий прогон", "последний завершённый"]];
+  for (const k of Object.keys(cur)) rows.push([k, cur[k], last[k] ?? ""]);
+  return rows;
+}
 
 // Resolve a live structure for open/preview: cached chain → underlying (perp index) → the 4 legs → a full
 // snapshot with entry marks. Shared by s1:openStructure and s1:previewStructure (which never opens).
@@ -706,12 +749,16 @@ function wireIpcStrategy1() {
 
   ipcMain.handle("s1:setSettings", async (_e, s) => {
     const bo = state.btcOptions;
-    bo.settings = { ...bo.settings, ...(s || {}) };
+    // A preset arriving without its width (the toolbar sends only deadbandPreset) gains the canonical
+    // ±BTC value here — otherwise the engine keeps hedging by the stale width while the ticket shows
+    // the new preset name. Explicit widths (sweep-apply) pass through untouched.
+    const patch = s1engine.normalizeDeadband(s || {});
+    bo.settings = { ...bo.settings, ...patch };
     // Mirror into the ENGINE's own settings copy (created once at bootstrap/reset): preTradeCheck,
     // account() and the NEXT openStructure's engineCfg freeze all read state.settings — without the
     // mirror, applied sweep params / deposit changes never reach the engine until an app restart.
     // The running structure stays untouched: it hedges by its frozen engineCfg, exactly as designed.
-    if (bo.engine) bo.engine.settings = { ...bo.engine.settings, ...(s || {}) };
+    if (bo.engine) bo.engine.settings = { ...bo.engine.settings, ...patch };
     saveBotSettings(baseDir, BTCOPT_ID, bo.settings);
     // Apply cadence/testnet changes to a live source by rebuilding it (params stay live only pre-open).
     if (bo.source && bo.running) {
@@ -901,7 +948,7 @@ function wireIpcStrategy1() {
       let payload;
       if (format === "csv") payload = btcOptLedgerCsv(eng);
       else if (format === "json") payload = btcOptLedgerJson(eng);
-      else if (format === "xlsx") payload = buildXlsxBuffer("Ledger", BTCOPT_LEDGER_HEADER, btcOptLedgerRows(eng));
+      else if (format === "xlsx") payload = buildXlsxBuffer("Ledger", BTCOPT_LEDGER_HEADER, [...btcOptLedgerRows(eng), ...btcOptMetricsRows(eng)]);
       else return { error: "неизвестный формат" };
       writeFileSync(filePath, payload);
       return { ok: true, filePath, count: (eng.ledger || []).length };

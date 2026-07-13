@@ -91,19 +91,36 @@ test("expectedBenefit = |deltaExcess|·underlying·m", () => {
   near(expectedBenefit({ deltaExcess: 0.002, underlying: 63000, m: 0.005 }), 0.63, 1e-9, "benefit");
 });
 
-test("estimateCost itemizes fee/spread/slippage/funding and sums total", () => {
+// The golden worked numbers (taker fee + half-spread) are MARKET-branch semantics.
+const mktCfg = { ...baseCfg, execStyle: "market" };
+
+test("estimateCost (market) itemizes fee/spread/slippage/funding and sums total", () => {
   const c = estimateCost({
     hedgeQty: 0.002,
     targetQty: 0.002,
     perp: { mark: 63000, funding8h: 0, contractSize: 10 },
     liquidity: { halfSpread: 1 },
-    cfg: baseCfg,
+    cfg: mktCfg,
   });
   near(c.fee, 0.126, 1e-9, "fee");
   near(c.spread, 0.002, 1e-9, "spread");
   near(c.slippage, 0, 1e-9, "slippage");
   near(c.funding_horizon, 0, 1e-9, "funding_horizon");
   near(c.total, 0.128, 1e-9, "total");
+});
+
+test("estimateCost (limit): maker fee, no spread term, slippage survives as the cost floor", () => {
+  const c = estimateCost({
+    hedgeQty: 0.002,
+    targetQty: 0.002,
+    perp: { mark: 63000, funding8h: 0, contractSize: 10 },
+    liquidity: { halfSpread: 1 },
+    cfg: { ...baseCfg, slippageRate: 0.0002 }, // execStyle "limit" from baseCfg
+  });
+  near(c.fee, 0, 1e-12, "fee (maker 0.00%)");
+  near(c.spread, 0, 1e-12, "spread (mid fill crosses nothing)");
+  near(c.slippage, 0.002 * 63000 * 0.0002, 1e-9, "slippage (kept in both branches)");
+  near(c.total, c.slippage, 1e-9, "total = slippage only");
 });
 
 test("estimateCost funding term is SIGNED: a short target receiving positive funding lowers total", () => {
@@ -115,7 +132,7 @@ test("estimateCost funding term is SIGNED: a short target receiving positive fun
     targetQty: -0.01,
     perp: { mark: 63000, funding8h: 0.0002, contractSize: 10 },
     liquidity: { halfSpread: 1 },
-    cfg: baseCfg,
+    cfg: mktCfg,
   });
   near(c.funding_horizon, -0.126, 1e-9, "funding_horizon (received)");
   near(c.total, 0.126 + 0.002 + 0 - 0.126, 1e-9, "total net of received funding");
@@ -125,7 +142,7 @@ test("estimateCost funding term is SIGNED: a short target receiving positive fun
     targetQty: 0.01,
     perp: { mark: 63000, funding8h: 0.0002, contractSize: 10 },
     liquidity: { halfSpread: 1 },
-    cfg: baseCfg,
+    cfg: mktCfg,
   });
   near(l.funding_horizon, 0.126, 1e-9, "funding_horizon (paid)");
 });
@@ -136,7 +153,7 @@ test("decideHedge HEDGE case — benefit clears cost·lambda", () => {
     Qperp: 0,
     snapshot: { underlying: 63000, perp: { mark: 63000, funding8h: 0, contractSize: 10 } },
     liquidity: { bid: 62999, ask: 63001, halfSpread: 1 },
-    cfg: baseCfg,
+    cfg: mktCfg,
     nowMs: NOON,
     expiryMs: EXPIRY_FAR,
     createdAt: null,
@@ -152,9 +169,30 @@ test("decideHedge HEDGE case — benefit clears cost·lambda", () => {
   assert.equal(r.hedge_order.side, "buy");
   near(r.hedge_order.amount_rounded_btc, 0.002, 1e-9, "amount_rounded_btc");
   near(r.target_futures_delta, 0.002, 1e-9, "target_futures_delta");
+  assert.equal(r.hedge_order.order_type, "market");
+  assert.equal(r.hedge_order.post_only, false);
+  assert.deepEqual(r.trigger_reason, ["delta"]);
+});
+
+test("decideHedge (limit) — the order rides post-only and the cost model follows the branch", () => {
+  const r = decideHedge({
+    optionDelta: -0.002,
+    Qperp: 0,
+    snapshot: { underlying: 63000, perp: { mark: 63000, funding8h: 0, contractSize: 10 } },
+    liquidity: { bid: 62999, ask: 63001, halfSpread: 1 },
+    cfg: baseCfg, // execStyle "limit"
+    nowMs: NOON,
+    expiryMs: EXPIRY_FAR,
+    createdAt: null,
+    lastHedgeAt: null,
+    lastHedgeUnderlying: null,
+    step: 0.0005,
+  });
+  assert.equal(r.decision, "HEDGE");
   assert.equal(r.hedge_order.order_type, "limit");
   assert.equal(r.hedge_order.post_only, true);
-  assert.deepEqual(r.trigger_reason, ["delta"]);
+  near(r.estimated_cost.fee, 0, 1e-12, "fee (maker)");
+  near(r.estimated_cost.spread, 0, 1e-12, "spread (mid fill)");
 });
 
 test("decideHedge SKIP case — cost filter blocks the hedge", () => {
@@ -163,7 +201,7 @@ test("decideHedge SKIP case — cost filter blocks the hedge", () => {
     Qperp: 0,
     snapshot: { underlying: 63000, perp: { mark: 63000, funding8h: 0, contractSize: 10 } },
     liquidity: { bid: 62870, ask: 63130, halfSpread: 130 },
-    cfg: { ...baseCfg, slippageRate: 0.001 },
+    cfg: { ...mktCfg, slippageRate: 0.001 },
     nowMs: NOON,
     expiryMs: EXPIRY_FAR,
     createdAt: null,

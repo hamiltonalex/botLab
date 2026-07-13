@@ -198,3 +198,14 @@ test("paperEquityUsd 1 → every combo marginOk:false, still fully ranked, best 
     if (p.sharpe === c.sharpe) assert.ok(p.net >= c.net, `net tiebreak broken at ${i}`);
   }
 });
+
+// ── Anti-drift coupling: the sweep's deadband axis IS the engine's canonical preset table ────────
+import { DEADBAND_PRESETS } from "../src/engine/btcopt/engine.js";
+import { defaultGrid } from "../src/engine/btcopt/sweep.js";
+
+test("defaultGrid deadband axis derives from DEADBAND_PRESETS (toolbar and grid can't drift)", () => {
+  assert.deepEqual(
+    defaultGrid().deadband,
+    Object.entries(DEADBAND_PRESETS).map(([preset, btc]) => ({ preset, btc })),
+  );
+});

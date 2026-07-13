@@ -113,11 +113,14 @@ test("accrueFunding: successive calls accumulate into fundingCum", () => {
 });
 
 // ── attribute + ledgerReconciles (the golden end-to-end) ────────────────────────────────────────
+// NOTE the fixture is engine-real: funding lives ONLY in perpState.fundingCum — the journal carries
+// no funding rows by design (accrueFunding never appends). A reconcile that summed a fundingUsd
+// column would fail on exactly this shape; keeping fundingCum ≠ 0 here is the regression assert.
 function goldenState() {
   return {
     structure: { legs: [{ instrument: "C", qtySigned: 1, entryMark: 200, contractSize: 1 }] },
     perpState: { qty: 0, avgEntry: 0, realizedUsd: -310, fundingCum: -200, feesCum: 140 },
-    ledger: [{ feeUsd: 140, realizedUsd: -310, fundingUsd: -200 }],
+    ledger: [{ feeUsd: 140, realizedUsd: -310 }],
   };
 }
 const goldenSnapshot = { legs: { C: { mark: 2090 } }, perp: { mark: 60000, contractSize: 10 } };
@@ -172,13 +175,32 @@ test("noHedgeAttribute: 'over-hedged choppy day' — hedging turns +0.90 options
   near(hedged.net_total - shadow.net_total, -0.95, 1e-9, "hedge cost 0.95 net (helped=false)");
 });
 
-test("ledgerReconciles: golden reconciles (ok true, all deltas 0)", () => {
+test("ledgerReconciles: golden reconciles (ok true, all deltas 0; fundingCum ≠ 0 with NO funding rows)", () => {
   const r = ledgerReconciles(goldenState(), goldenSnapshot);
   assert.equal(r.ok, true);
   near(r.identityDelta, 0, 1e-9, "identityDelta");
   near(r.feesDelta, 0, 1e-9, "feesDelta");
   near(r.realizedDelta, 0, 1e-9, "realizedDelta");
-  near(r.fundingDelta, 0, 1e-9, "fundingDelta");
+  assert.equal("fundingDelta" in r, false, "funding is deliberately not row-reconciled");
+});
+
+test("ledgerReconciles: close/settle-options realized rows reconcile via realizedOptionsUsd", () => {
+  // realizedUsd rows come from TWO accumulators: perp (hedge/close-perp) and options
+  // (close-options/settle-options). The row sum must reconcile against their SUM.
+  const st = {
+    structure: null,
+    realizedOptionsUsd: 52.94,
+    perpState: { qty: 0, avgEntry: 0, realizedUsd: -310, fundingCum: -200, feesCum: 140 },
+    ledger: [
+      { type: "hedge", feeUsd: 140, realizedUsd: -310 },
+      { type: "settle-options", realizedUsd: 52.94 },
+    ],
+  };
+  const r = ledgerReconciles(st, goldenSnapshot);
+  assert.equal(r.ok, true);
+  near(r.realizedDelta, 0, 1e-9, "realizedDelta (perp + options accumulators)");
+  // …and a reconcile that compared against the perp accumulator alone would NOT balance:
+  assert.ok(Math.abs(-310 + 52.94 - st.perpState.realizedUsd) > 1, "options leg breaks the perp-only sum");
 });
 
 test("ledgerReconciles: a ledger that disagrees with the accumulators fails", () => {
@@ -213,12 +235,13 @@ test("appendLedger: assigns 1-based seq and defaults every numeric field to 0", 
 test("appendLedger: rows feed ledgerReconciles cleanly (built, not hand-crafted)", () => {
   const st = {
     structure: null,
+    realizedOptionsUsd: 25,
     perpState: { qty: 0, avgEntry: 0, realizedUsd: -310, fundingCum: -200, feesCum: 140 },
     ledger: [],
   };
-  appendLedger(st, { type: "fee", feeUsd: 140 });
-  appendLedger(st, { type: "realized", realizedUsd: -310 });
-  appendLedger(st, { type: "funding", fundingUsd: -200 });
+  // Engine-real event shapes: fees/realized ride hedge & close rows; funding stays accumulator-only.
+  appendLedger(st, { type: "hedge", feeUsd: 140, realizedUsd: -310 });
+  appendLedger(st, { type: "close-options", realizedUsd: 25 });
   const r = ledgerReconciles(st, goldenSnapshot);
   assert.equal(r.ok, true);
 });

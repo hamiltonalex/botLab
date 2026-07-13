@@ -154,19 +154,27 @@ export function bookToLiquidity(src) {
   return { bid, ask, mid, halfSpread, bidDepth: depth(bids), askDepth: depth(asks), levels: { bids, asks } };
 }
 
-// Whether an open structure's legs all carry finite greeks (the "greeks gate" — hedging pauses if false).
-// requiredNames (optional) is the list of legs that MUST be present: a leg whose fetch failed entirely is
-// absent from `legs`, and judging only the survivors would pass the gate on a partial snapshot — the
-// engine would then hedge off an understated option delta (missing legs default to δ 0). No list ⇒ the
-// legacy behaviour: validate whatever is present; empty either way ⇒ true (nothing to gate).
-export function greeksGateOk(legs, requiredNames = null) {
+// Names of the legs that FAIL the greeks gate: absent from `legs` entirely (fetch failed) or present
+// with a non-finite delta/gamma/vega/theta/mark. requiredNames (optional) is the list of legs that
+// MUST be present: a leg whose fetch failed entirely is absent from `legs`, and judging only the
+// survivors would pass the gate on a partial snapshot — the engine would then hedge off an
+// understated option delta (missing legs default to δ 0). No list ⇒ the legacy behaviour: validate
+// whatever is present; empty either way ⇒ [] (nothing to gate). Order follows requiredNames, so the
+// ticket can name the culprits deterministically.
+export function greeksGateFailures(legs, requiredNames = null) {
   const map = legs || {};
   const names = Array.isArray(requiredNames) ? requiredNames : Object.keys(map);
-  if (!names.length) return true; // no structure open → nothing to gate
-  return names.every((n) => {
+  return names.filter((n) => {
     const l = map[n];
-    return !!l && [l.delta, l.gamma, l.vega, l.theta, l.mark].every((v) => Number.isFinite(v));
+    return !(l && [l.delta, l.gamma, l.vega, l.theta, l.mark].every((v) => Number.isFinite(v)));
   });
+}
+
+// Whether an open structure's legs all carry finite greeks (the "greeks gate" — hedging pauses if
+// false). Defined AS greeksGateFailures().length === 0 — one iteration, no drift between the boolean
+// and the culprit list.
+export function greeksGateOk(legs, requiredNames = null) {
+  return greeksGateFailures(legs, requiredNames).length === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +227,8 @@ export async function buildDeribitSnapshot({ legInstruments = [], primaryInstrum
   // must pause hedging (its delta would otherwise silently count as 0 in the net).
   const primaryNames = Array.isArray(primaryInstruments) ? primaryInstruments : legInstruments;
   const primarySet = new Set(primaryNames);
-  const gateOk = greeksGateOk(legs, primaryNames);
+  const gateFailed = greeksGateFailures(legs, primaryNames); // culprit names — band legs never appear here
+  const gateOk = gateFailed.length === 0;
   const primaryErrors = errors.filter((e) => e.instrument === perpName || primarySet.has(e.instrument));
   const ok = !!perp && primaryErrors.length === 0 && gateOk;
 
@@ -235,6 +244,7 @@ export async function buildDeribitSnapshot({ legInstruments = [], primaryInstrum
       stale: false,
       ok,
       gateOk,
+      gateFailed,
       source: "deribit-rest",
       testnet,
       notes: errors.map((e) => `${e.instrument}: ${e.message}`),
@@ -325,6 +335,7 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
         ok: !!lastSnap && !lastError && errorStreak < 3,
         stale,
         gateOk: lastSnap ? lastSnap.fresh.gateOk : false,
+        gateFailed: lastSnap ? (lastSnap.fresh.gateFailed || []).slice() : [],
         ageSec,
         lastTs,
         atIso: lastTs != null ? new Date(lastTs).toISOString() : null,

@@ -205,3 +205,154 @@ test("greeks gate: a snapshot with gateOk=false pauses hedging (SKIP, no fill)",
   assert.equal(cyc.gate.ok, false);
   assert.equal(st.perpState.qty, 0, "no fill when the greeks gate is closed");
 });
+
+// ── Expiry settlement (settleStructure + the evaluate() trigger) ────────────────────────────────
+// The oracle: options settle at intrinsic, so the realized amount ≡ payoffAt(structure, S) — the
+// same terminal tent the payoff chart promises (payoff.js).
+import { payoffAt } from "../src/engine/btcopt/payoff.js";
+
+// A post-expiry snapshot: option legs are GONE from the API (exactly what Deribit does), only the
+// perp survives and carries the settlement-price proxy via its index.
+function expiredSnapshot(S, ts = EXPIRY + 60_000) {
+  return {
+    ts,
+    underlying: S,
+    index: S,
+    legs: {},
+    perp: { instrument: "BTC-PERPETUAL", mark: S, index: S, bid: S - 1, ask: S + 1, funding8h: 0.0001, inverse: true, contractSize: 10, tickSize: 0.5, minTradeAmount: 10 },
+    liquidity: { bid: S - 1, ask: S + 1, mid: S, halfSpread: 1 },
+    fresh: { ageSec: 0, stale: false, ok: false, gateOk: false, gateFailed: [], source: "deribit-rest", testnet: false, notes: [] },
+    errors: [],
+  };
+}
+
+test("expiry settlement: evaluate() past expiry settles at intrinsic ≡ payoffAt, flattens the perp, books settle-options", () => {
+  const { st, snap } = opened();
+  engine.ingest(st, snap, NOON);
+  engine.evaluate(st, snap, NOON); // hedge → qty 12
+  assert.equal(st.perpState.qty, 12);
+  const structure = st.structure;
+
+  const S = 68_500; // beyond the 67000 wing → the plateau pays
+  const expected = payoffAt(structure, S);
+  const cyc = engine.evaluate(st, expiredSnapshot(S), EXPIRY + 60_000);
+
+  assert.equal(st.structure, null, "structure settled away");
+  assert.equal(st.perpState.qty, 0, "perp flattened at settlement");
+  const settle = st.ledger.find((e) => e.type === "settle-options");
+  assert.ok(settle, "settle-options row booked");
+  near(settle.realizedUsd, expected, 1e-9, "settled amount ≡ payoffAt(S)");
+  near(settle.priceRef, S, 1e-9, "settlement price recorded");
+  near(st.realizedOptionsUsd, expected, 1e-9, "realizedOptionsUsd carries the terminal payoff");
+  assert.ok(st.ledger.some((e) => e.type === "close-perp"), "perp exit booked");
+  // the same tick already reports a FLAT book — no hedging of a dead structure
+  assert.equal(cyc.structure_id, null);
+  assert.equal(cyc.option_legs.length, 0);
+});
+
+test("expiry settlement: three tent points — plateau beyond the wing, −debit at ATM, between BE and wing", () => {
+  for (const S of [70_000, 61_000, 64_000]) {
+    const { st, snap } = opened();
+    engine.evaluate(st, snap, NOON);
+    const expected = payoffAt(st.structure, S);
+    engine.evaluate(st, expiredSnapshot(S), EXPIRY + 1);
+    const settle = st.ledger.find((e) => e.type === "settle-options");
+    near(settle.realizedUsd, expected, 1e-9, `settled ≡ payoffAt(${S})`);
+  }
+  // sanity anchors of the tent itself (unit qty, debit 777):
+  const { st } = opened();
+  near(payoffAt(st.structure, 61_000), -777, 1e-9, "ATM pin loses exactly the debit");
+  near(payoffAt(st.structure, 70_000), 6_000 - 777, 1e-9, "plateau = wing width − debit");
+});
+
+test("expiry settlement: a degraded tick (no index) does NOT settle; the next priced tick does", () => {
+  const { st, snap } = opened();
+  engine.evaluate(st, snap, NOON); // hedge → holds a perp
+  const degraded = expiredSnapshot(61_000);
+  degraded.index = null;
+  degraded.underlying = null;
+  engine.evaluate(st, degraded, EXPIRY + 60_000);
+  assert.ok(st.structure, "no settlement on a garbage price");
+
+  engine.evaluate(st, expiredSnapshot(61_000), EXPIRY + 120_000);
+  assert.equal(st.structure, null, "settled on the next priced tick");
+});
+
+test("expiry settlement: a LATE settle (app closed over expiry) notes the lag", () => {
+  const { st, snap } = opened();
+  engine.evaluate(st, snap, NOON);
+  engine.evaluate(st, expiredSnapshot(61_000, EXPIRY + 7_200_000), EXPIRY + 7_200_000); // +2h
+  const settle = st.ledger.find((e) => e.type === "settle-options");
+  assert.ok(settle.note.includes("поздний расчёт"), "late-settlement lag noted");
+});
+
+// ── lastRunMetrics: the finished run's summary survives the next open ───────────────────────────
+test("lastRunMetrics: frozen at close, survives the next openStructure's metrics reset", () => {
+  const { st, snap } = opened();
+  engine.ingest(st, snap, NOON);
+  engine.evaluate(st, snap, NOON);
+  engine.evaluate(st, mkSnapshot(1_700_000_060_000), NOON + 60_000); // a second cycle → n ≥ 1
+  const structureId = st.structure.id;
+
+  engine.closeStructure(st, snap, NOON + 120_000);
+  assert.ok(st.lastRunMetrics, "snapshot taken at close");
+  assert.equal(st.lastRunMetrics.structureId, structureId);
+  assert.equal(st.lastRunMetrics.openedAt, NOON);
+  assert.equal(st.lastRunMetrics.closedAt, NOON + 120_000);
+  assert.ok(Number.isFinite(st.lastRunMetrics.sharpe), "summary fields ride along");
+  const frozen = { ...st.lastRunMetrics };
+
+  // the next open resets state.metrics but must NOT touch the frozen snapshot
+  const r = engine.openStructure(st, PARAMS, mkChain(), snap, NOON + 180_000);
+  assert.equal(r.ok, true, r.error);
+  assert.equal(st.metrics.n, 0, "run metrics reset at open");
+  assert.deepEqual(st.lastRunMetrics, frozen, "lastRunMetrics untouched by the reset");
+
+  // …and the cycle payload exposes it
+  const cyc = engine.evaluate(st, snap, NOON + 180_000);
+  assert.deepEqual(cyc.last_run_metrics, frozen);
+});
+
+test("lastRunMetrics: expiry settlement also freezes the finished run", () => {
+  const { st, snap } = opened();
+  engine.evaluate(st, snap, NOON);
+  engine.evaluate(st, expiredSnapshot(64_000), EXPIRY + 1);
+  assert.ok(st.lastRunMetrics, "settlement is an end-of-run too");
+  assert.equal(st.lastRunMetrics.closedAt, EXPIRY + 1);
+});
+
+// ── Deadband presets: the canonical table and the normalize helper ──────────────────────────────
+test("DEADBAND_PRESETS is the canonical aggressive/normal/conservative table", () => {
+  assert.deepEqual(engine.DEADBAND_PRESETS, { aggressive: 0.0005, normal: 0.001, conservative: 0.002 });
+});
+
+test("normalizeDeadband: a bare preset gains the table width; explicit width always wins", () => {
+  assert.deepEqual(engine.normalizeDeadband({ deadbandPreset: "aggressive" }), { deadbandPreset: "aggressive", deadbandBtc: 0.0005 });
+  assert.deepEqual(
+    engine.normalizeDeadband({ deadbandPreset: "conservative", deadbandBtc: 0.004 }),
+    { deadbandPreset: "conservative", deadbandBtc: 0.004 }, // sweep-apply / custom grids pass through
+  );
+  assert.deepEqual(engine.normalizeDeadband({ deadbandPreset: "weird" }), { deadbandPreset: "weird" });
+  assert.deepEqual(engine.normalizeDeadband({ lambda: 1.5 }), { lambda: 1.5 });
+  assert.deepEqual(engine.normalizeDeadband(null), {});
+});
+
+// ── Execution style reaches the paper fill (price + fee) ────────────────────────────────────────
+test("exec style: limit fills at MID with maker fee 0; market crosses the spread and pays taker", () => {
+  // limit (default PARAMS/engineCfg): buy fills at liquidity.mid, fee 0
+  const lim = opened();
+  engine.evaluate(lim.st, lim.snap, NOON);
+  const limFill = lim.st.ledger.find((e) => e.type === "hedge");
+  assert.equal(limFill.priceRef, 61000, "limit fill at mid");
+  near(limFill.feeUsd, 0, 1e-12, "maker fee 0.00%");
+
+  // market: same book, execStyle market frozen at open via state.settings
+  const st = engine.create({ nowMs: NOON, settings: { execStyle: "market" } });
+  const snap = mkSnapshot();
+  const r = engine.openStructure(st, { ...PARAMS, execStyle: "market" }, mkChain(), snap, NOON);
+  assert.equal(r.ok, true, r.error);
+  engine.evaluate(st, snap, NOON);
+  const mktFill = st.ledger.find((e) => e.type === "hedge");
+  assert.equal(mktFill.priceRef, 61001, "market buy crosses to the ask");
+  near(mktFill.feeUsd, Math.abs(mktFill.contracts) * 10 * 0.0005, 1e-12, "taker 0.05%");
+});
