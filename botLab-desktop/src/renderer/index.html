@@ -4234,7 +4234,9 @@ function renderOpt(){
 function renderOptCockpit(cyc){
   const p=cyc.pnl||{}, acc=cyc.account||{};
   setBigPnl($('optNetPnl'), p.net_total, false);
-  $('optTradeStatus').textContent='ОТКР.'; $('optTradeStatus').className='tag amber';
+  const optOpen = !!cyc.structure_id; // cycle приходит и для закрытой структуры (накопленный P&L) — чип не должен показывать «ОТКР.» без позиции
+  $('optTradeStatus').textContent = optOpen ? 'ОТКР.' : 'нет структуры';
+  $('optTradeStatus').className = optOpen ? 'tag amber' : 'tag';
   $('optPnlBreak').innerHTML =
     tradeRow('опционы · MTM (ν/γ/θ)', optDollars(p.options_upl||0), clsSign(p.options_upl||0))+
     tradeRow('хедж · реализовано (перп)', optDollars(p.futures_upl||0), clsSign(p.futures_upl||0))+
@@ -4315,7 +4317,8 @@ function renderOptLegs(cyc){
       '<td class="n '+clsSign(l.gamma)+'">'+optSigned(l.gamma,4)+'</td>'+
       '<td class="n '+clsSign(l.vega)+'">'+optSigned(l.vega,1)+'</td>'+
       '<td class="n '+clsSign(l.theta)+'">'+optSigned(l.theta,1)+'</td></tr>';
-  }).join('') : '<tr><td class="lft faint" colspan="12">загрузка цепочки Deribit…</td></tr>';
+  }).join('') : ('<tr><td class="lft faint" colspan="12">'+
+    (cyc.structure_id ? 'загрузка цепочки Deribit…' : 'структура не открыта · показан накопленный итог')+'</td></tr>');
   const pp=cyc.perp_position;
   $('optHedgeLegTxt').textContent = pp ? ('BTC-PERPETUAL · '+(cyc.current_futures_delta<0?'short ':'long ')+
     Math.abs(pp.btc||0).toFixed(3)+' BTC · δ_fut '+optSigned(cyc.current_futures_delta,3)) : '—';
