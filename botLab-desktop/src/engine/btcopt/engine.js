@@ -428,7 +428,12 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
 
   built.id = `s1-${built.expiryMs}-${built.strikes.atm}-${nowMs}`;
   built.createdAt = nowMs;
-  built.engineCfg = { ...state.settings }; // freeze the engine params at open (read-only while running)
+  // Freeze the engine params at open (read-only while running). The ACTUAL open params (ticket
+  // qty/offsets/execStyle) overlay the settings snapshot: the toolbar pushes settings through a
+  // debounce, so a confirm racing a just-toggled control could otherwise freeze a stale value —
+  // the position must hedge by what the ticket showed, not by what the settings file caught up to.
+  const actualParams = Object.fromEntries(Object.entries(built.params).filter(([, v]) => v != null));
+  built.engineCfg = { ...state.settings, ...actualParams };
   state.structure = built;
   state.lastHedgeAt = null; // reset the hedge clock to structure open
   state.lastHedgeUnderlying = snapshot.underlying ?? null;

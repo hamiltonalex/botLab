@@ -392,3 +392,19 @@ test("closeStructure with a FLAT perp closes fine even without a priced perp (no
   assert.equal(r.ok, true, r.error);
   assert.equal(st.structure, null);
 });
+
+// ── engineCfg freeze (audit №10): the position hedges by the ACTUAL open params, not by settings ─
+test("engineCfg overlays the ticket's actual params over settings (debounce-race honesty)", () => {
+  // settings still say limit (the debounced push hasn't landed), but the ticket opened as market
+  const st = engine.create({ nowMs: NOON, settings: { execStyle: "limit" } });
+  const snap = mkSnapshot();
+  const r = engine.openStructure(st, { ...PARAMS, execStyle: "market", qty: 2 }, mkChain(), snap, NOON);
+  assert.equal(r.ok, true, r.error);
+  assert.equal(st.structure.engineCfg.execStyle, "market", "frozen exec = the ticket's, not settings'");
+  assert.equal(st.structure.engineCfg.qty, 2, "frozen qty echoes the actual open size");
+
+  engine.evaluate(st, snap, NOON); // the paper fill must follow the frozen (actual) style
+  const fill = st.ledger.find((e) => e.type === "hedge");
+  assert.ok(fill, "hedge executed");
+  assert.equal(fill.priceRef, 61001, "market buy crosses to the ask — not the limit-mid fill");
+});
