@@ -4556,9 +4556,10 @@ function applySweepBest(){
   optSel.lambda=c.lambda; if($('optLambda')) $('optLambda').value=String(c.lambda);
   if($('optLambdaEcho')) $('optLambdaEcho').textContent=c.lambda;
   if(c.deadbandPreset){ optSel.deadband=c.deadbandPreset; optSegPress('optDeadbandSel', c.deadbandPreset); }
-  // ВАЖНО: один комбинированный патч, минуя pushOptSetting — его общий debounce-таймер затирает
-  // предыдущий patch при серии вызовов подряд (каждый вызов строит {k:v} и clearTimeout'ит прежний).
+  // Один комбинированный патч без дебаунса (применение — разовое действие, а не серия правок);
+  // крылья входят в патч, чтобы применённые свипом параметры ПОЛНОСТЬЮ переживали перезапуск.
   if(window.s1) window.s1.setSettings({ priceTriggerPct:c.priceTriggerPct, lambda:c.lambda,
+    callOffsetPct:c.wingPct, putOffsetPct:c.wingPct,
     ...(c.deadbandPreset?{deadbandPreset:c.deadbandPreset, deadbandBtc:c.deadbandBtc}:{}) })
     .then(ds=>{ if(ds&&!ds.error) applyS1Dataset(ds); }).catch(e=>console.warn('s1 setSettings', e));
   onOptStructParamChange(); // payoff-гипотеза перерисуется под новые крылья
@@ -4826,14 +4827,23 @@ function requestOptPreview(){
   }, 500);
 }
 function onOptStructParamChange(){ if(!(LIVE_S1&&LIVE_S1.structure)) requestOptPreview(); else renderOptStructPreview(); }
-let optSetTimer;
-function pushOptSetting(k, v){
+let optSetTimer, optSetPending=null;
+/* дебаунс СЛИВАЕТ подряд идущие патчи (раньше clearTimeout молча ронял предыдущий — быстрая серия
+   правок теряла все, кроме последней); один setSettings уносит объединённый патч */
+function pushOptSettings(patch){
   if(!window.s1) return;
-  const patch={}; patch[k]=v;
+  optSetPending = { ...(optSetPending||{}), ...patch };
   clearTimeout(optSetTimer);
-  optSetTimer=setTimeout(()=>{ window.s1.setSettings(patch)
-    .then(ds=>{ if(ds && !ds.error) applyS1Dataset(ds); })
-    .catch(e=>console.warn('s1 setSettings', e)); }, 250);
+  optSetTimer=setTimeout(()=>{ const p=optSetPending; optSetPending=null;
+    window.s1.setSettings(p)
+      .then(ds=>{ if(ds && !ds.error) applyS1Dataset(ds); })
+      .catch(e=>console.warn('s1 setSettings', e)); }, 250);
+}
+function pushOptSetting(k, v){ const patch={}; patch[k]=v; pushOptSettings(patch); }
+/* qty уходит в настройки только валидным (мин. лот 0.01, шаг 0.01 — как в тикете): мусор из
+   инпута не должен попадать в персист и base-настройки свипа */
+function pushOptQty(q){
+  if(Number.isFinite(q) && q>=0.01 && Math.abs(Math.round(q/0.01)*0.01-q)<=1e-9) pushOptSettings({ qty:q });
 }
 function hydrateOptToolbar(s){
   if(optHydrated || !s) return; optHydrated=true;
@@ -4857,6 +4867,7 @@ function wireOptSeg(id, key, cast, opt){ const el=$(id); if(!el) return;
     optSegPress(id, b.dataset.v);
     optSel[key]= cast ? cast(b.dataset.v) : b.dataset.v;
     if(opt && opt.setting) pushOptSetting(opt.setting, opt.settingCast ? opt.settingCast(b.dataset.v) : optSel[key]);
+    if(opt && opt.patch) pushOptSettings(opt.patch(b.dataset.v)); // мультиключевые настройки (офсет крыльев)
     if(opt && opt.struct) onOptStructParamChange();
     if(id==='optExecSel') onOptStructParamChange(); // execStyle входит в структуру
   }); }
@@ -4920,7 +4931,8 @@ function optTicketValidate(o){ o=o||{}; const qi=$('optTicketQty'), q=Number(qi.
   if(o.showErrors){ qi.setAttribute('aria-invalid', ok?'false':'true');
     const hint=$('optTicketQtyHint'); if(reason){ hint.textContent=reason; hint.className='k gate-bad'; }
     else { hint.textContent='мин. 0.01 · шаг 0.01 (Deribit)'; hint.className='k faint'; } }
-  if(Number.isFinite(q)&&q>0 && q!==optSel.qty){ optSel.qty=q; if($('optQty')) $('optQty').value=String(q); onOptStructParamChange(); }
+  if(Number.isFinite(q)&&q>0 && q!==optSel.qty){ optSel.qty=q; if($('optQty')) $('optQty').value=String(q);
+    pushOptQty(q); onOptStructParamChange(); }
   const gate=optGateReady();
   $('optTicketConfirm').disabled = !(ok&&gate);
   return ok&&gate; } /* qty-валидность И гейт: confirm-guard не должен пропускать hard block */
@@ -4993,13 +5005,15 @@ function optRecalc(){ const b=$('optRecalcBtn'); const t=b.textContent; b.disabl
 
 /* ── init: навесить статические контролы один раз ── */
 function initOpt(){ if(!$('view-btc-options')) return;
-  wireOptSeg('optWingSel','wing', v=>parseFloat(v), { struct:true });
+  wireOptSeg('optWingSel','wing', v=>parseFloat(v), { struct:true,
+    patch:v=>({ callOffsetPct:parseFloat(v), putOffsetPct:parseFloat(v) }) }); // персист: переживает рестарт, питает свип
   wireOptSeg('optExecSel','exec', null, { setting:'execStyle' });
   wireOptSeg('optDeadbandSel','deadband', null, { setting:'deadbandPreset' });
   wireOptSeg('optPriceTrigSel','priceTrig', v=>parseFloat(v), { setting:'priceTriggerPct', settingCast:v=>parseFloat(v) });
   wireOptSeg('optRepriceSel','reprice', v=>parseInt(v,10), { setting:'repriceSec', settingCast:v=>parseInt(v,10) });
   wireOptSeg('optBlackoutSel','blackout', null, { setting:'settlementBlackout', settingCast:v=>v==='on' });
-  if($('optQty')) $('optQty').addEventListener('input', ()=>{ optSel.qty=Number($('optQty').value); onOptStructParamChange(); });
+  if($('optQty')) $('optQty').addEventListener('input', ()=>{ optSel.qty=Number($('optQty').value);
+    pushOptQty(optSel.qty); onOptStructParamChange(); });
   if($('optLambda')) $('optLambda').addEventListener('input', ()=>{ optSel.lambda=Number($('optLambda').value)||1.25;
     $('optLambdaEcho').textContent=optSel.lambda; pushOptSetting('lambda', optSel.lambda); });
   if($('optRecalcBtn')) $('optRecalcBtn').onclick=optRecalc;
