@@ -764,6 +764,7 @@ function wireIpcStrategy1() {
     // ±BTC value here — otherwise the engine keeps hedging by the stale width while the ticket shows
     // the new preset name. Explicit widths (sweep-apply) pass through untouched.
     const patch = s1engine.normalizeDeadband(s || {});
+    const before = { repriceSec: bo.settings?.repriceSec, testnet: !!bo.settings?.testnet };
     bo.settings = { ...bo.settings, ...patch };
     // Mirror into the ENGINE's own settings copy (created once at bootstrap/reset): preTradeCheck,
     // account() and the NEXT openStructure's engineCfg freeze all read state.settings — without the
@@ -771,8 +772,12 @@ function wireIpcStrategy1() {
     // The running structure stays untouched: it hedges by its frozen engineCfg, exactly as designed.
     if (bo.engine) bo.engine.settings = { ...bo.engine.settings, ...patch };
     saveBotSettings(baseDir, BTCOPT_ID, bo.settings);
-    // Apply cadence/testnet changes to a live source by rebuilding it (params stay live only pre-open).
-    if (bo.source && bo.running) {
+    // Rebuild the live source ONLY when a parameter it owns actually changed (cadence / testnet).
+    // Rebuilding drops lastTs/metaCache, so an unconditional rebuild made every λ/deadband tweak
+    // flash the badge to УСТАРЕЛО and fire a spurious immediate tick; engine-side params never
+    // touch the source.
+    const sourceChanged = bo.settings.repriceSec !== before.repriceSec || !!bo.settings.testnet !== before.testnet;
+    if (sourceChanged && bo.source && bo.running) {
       bo.source.stop();
       bo.source = null;
       bo.running = false; // ensureBtcOptSource() only start()s while this is false — without the reset the rebuilt source never polls
