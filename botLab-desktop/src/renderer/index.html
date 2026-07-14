@@ -1849,7 +1849,7 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
               <span class="hint">выгода ≥ λ·издержки</span></div>
             <div class="dl" id="optCostRows">
               <div class="row"><span class="k">ожидаемая выгода <small>|Δ-избыток|·S·m</small></span><span class="v num pos" id="optCostBenefit">—</span></div>
-              <div class="row"><span class="k">комиссия</span><span class="v num neg" id="optCostFee">—</span></div>
+              <div class="row"><span class="k">комиссия <small>вход+выход</small></span><span class="v num neg" id="optCostFee">—</span></div>
               <div class="row"><span class="k">спред</span><span class="v num neg" id="optCostSpread">—</span></div>
               <div class="row"><span class="k">проскальзывание</span><span class="v num neg" id="optCostSlip">—</span></div>
               <div class="row"><span class="k">фандинг (горизонт)</span><span class="v num neg" id="optCostFunding">—</span></div>
@@ -3776,7 +3776,7 @@ const HELP_BTC_OPTIONS = {
   'opt-cost': { t:'Модель издержек хеджа и λ', b:
     '<p>Каждый хедж стоит денег, поэтому движок сравнивает выгоду и издержки перед исполнением.</p><ul>'+
     '<li><b>Ожидаемая выгода</b> <span class="fx">|Δ-избыток|·S·m</span>, где m — минимальное неблагоприятное движение, которое хедж защищает (порядка ценового триггера).</li>'+
-    '<li><b>Издержки</b> <span class="fx">комиссия + спред + проскальзывание + фандинг_горизонт</span>: состав следует за стилем исполнения — рыночное несёт тейкер-комиссию и полспреда, лимитное обе статьи обнуляет (филл по mid, мейкер 0%); проскальзывание — ненулевой пол в обоих режимах.</li>'+
+    '<li><b>Издержки</b> <span class="fx">комиссия + спред + проскальзывание + фандинг_горизонт</span>: состав следует за стилем исполнения — рыночное несёт тейкер-комиссию и полспреда, лимитное обе статьи обнуляет (филл по mid, мейкер 0%); проскальзывание — ненулевой пол в обоих режимах. Комиссия в фильтре оценивается за полный оборот (вход + будущий выход хеджа), поэтому она вдвое больше комиссии одного исполнения в журнале.</li>'+
     '<li><b>Гейт</b> <span class="fx">выгода ≥ λ·издержки</span> (λ≈1.25): на малом размере фильтр экономит edge, но оставляет остаточную дельту внутри дедбэнда.</li></ul>' },
   'opt-hedgevs': { t:'Хедж vs без-хеджа', b:
     '<p>Сравнивает реализованный нетто открытой структуры <b>с хеджем</b> против теневого прогона <b>без хеджа</b> (та же структура, перп-нога обнулена).</p><ul>'+
@@ -4371,7 +4371,7 @@ function renderOptHedge(cyc){
         '<div class="track"><div class="fill" style="transform:scaleX('+(ben/scale).toFixed(3)+')"></div></div></div>'+
       '<div class="opt-bar cost"><div class="lbl"><span>Издержки ×λ'+lam+'</span><span class="num neg">'+optDollars(hurdle)+'</span></div>'+
         '<div class="track"><div class="fill" style="transform:scaleX('+(hurdle/scale).toFixed(3)+')"></div></div>'+
-        '<div class="faint" style="font-size:10.5px;margin-top:3px">комиссия '+optDollars(c.fee||0)+' · спред '+optDollars(c.spread||0)+' · проскальз. '+optDollars(c.slippage||0)+' · фандинг '+optDollars(c.funding_horizon||0)+'</div></div>'+
+        '<div class="faint" style="font-size:10.5px;margin-top:3px">комиссия (вход+выход) '+optDollars(c.fee||0)+' · спред '+optDollars(c.spread||0)+' · проскальз. '+optDollars(c.slippage||0)+' · фандинг '+optDollars(c.funding_horizon||0)+'</div></div>'+
       '<div class="opt-verdict '+(pass?'pass':'fail')+'">'+optDollars(ben)+(pass?' ≥ ':' &lt; ')+optDollars(hurdle)+' → '+(pass?'ПРОХОДИТ':'НЕ ПРОХОДИТ')+'</div>';
   }
   $('optLambdaEcho').textContent = lam;
