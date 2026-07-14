@@ -3724,7 +3724,7 @@ const HELP_BTC_OPTIONS = {
     '<li><b>Триггеры</b> — хедж рассматривается, если сработал хотя бы один: <span class="fx">|Δ-избыток| &gt; дедбэнд</span>, движение цены с последнего хеджа &gt; порога, либо истёк интервал хеджа (временной триггер движка, 60 с по умолчанию — не путать с интервалом реприса источника).</li>'+
     '<li><b>Фильтр издержек</b> — ожидаемая выгода <span class="fx">|Δ-избыток|·S·m</span> сравнивается с оценкой издержек (комиссия+спред+проскальзывание+фандинг), помноженной на <span class="fx">λ≈1.25</span>. Хедж исполняется только если выгода перекрывает издержки с запасом λ.</li>'+
     '<li><b>Решение</b> — <b>ХЕДЖ</b>: ордер уходит (сторона, размер, округление до шага, тип); <b>ПРОПУСК</b>: повод есть, но фильтр не пройден — edge сохранён; <b>ПАУЗА</b>: окно расчёта 08:00 UTC или &lt;30 мин до экспирации — хедж приостановлен.</li>'+
-    '<li>Все параметры (дедбэнд, порог, λ, реприс, стиль исполнения, блэкаут) фиксируются при открытии структуры и показаны в шапке движка.</li></ul>' },
+    '<li>Параметры движка (дедбэнд, порог, λ, интервал хеджа, стиль исполнения, блэкаут) фиксируются при открытии структуры и показаны в шапке движка. Интервал реприса — настройка источника: меняется сразу и не замораживается.</li></ul>' },
   'opt-legs': { t:'Структура · winged straddle', b:
     '<p>Четыре опционные ноги одного экспиратора: куплены ATM колл и пут (длинная волатильность), проданы OTM колл (Kc≈+10%) и пут (Kp≈−10%) — «крылья» удешевляют структуру и ограничивают край.</p><ul>'+
     '<li><b>Сторона</b>: <span class="fx">LONG</span> — премия уплачена (расход, красный), <span class="fx">SHORT</span> — премия получена (приход, зелёный).</li>'+
@@ -4164,8 +4164,12 @@ function optSegPress(id, val){ const el=$(id); if(!el) return;
 function optDecWord(d){ return d==='HEDGE'?'ХЕДЖ':(d==='BLACKOUT'?'ПАУЗА':'ПРОПУСК'); }
 // действующие параметры движка: замороженные (selection) на открытой структуре, иначе живые/локальные
 function optEngineCfg(){
-  const s = (LIVE_S1 && LIVE_S1.selection) || (LIVE_S1 && LIVE_S1.settings) || null;
-  if(s) return { db:s.deadbandPreset, lam:s.lambda, rep:s.repriceSec, ex:s.execStyle, reh:s.rehedgeSec,
+  const live = LIVE_S1 && LIVE_S1.settings;
+  const s = (LIVE_S1 && LIVE_S1.selection) || live || null;
+  /* rep — ВСЕГДА из живых настроек: интервал реприса принадлежит источнику и меняется сразу
+     (guide §3), в отличие от остальных параметров, замороженных в selection при открытии */
+  if(s) return { db:s.deadbandPreset, lam:s.lambda, rep:(live&&live.repriceSec!=null)?live.repriceSec:s.repriceSec,
+                 ex:s.execStyle, reh:s.rehedgeSec,
                  bl:s.settlementBlackout!==false, priceTrig:s.priceTriggerPct, deadbandBtc:s.deadbandBtc };
   return { db:optSel.deadband, lam:optSel.lambda, rep:optSel.reprice, ex:optSel.exec, reh:60,
            bl:optSel.blackout==='on', priceTrig:optSel.priceTrig, deadbandBtc:0 };
