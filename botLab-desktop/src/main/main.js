@@ -849,7 +849,14 @@ function wireIpcStrategy1() {
       const v = s1validateStructure(built, metaByInstrument);
       // Pre-trade preview (3a): the same structured rejections the open gate applies — the ticket shows
       // the block/warn reasons BEFORE confirm (min lot / step / blackout / IM-vs-deposit with real numbers).
-      const rejections = s1engine.preTradeCheck(bo.engine, built, metaByInstrument, res.snap, Date.now());
+      // The margin warn compares IM to LIVE equity; with a structure open its MtM needs the OPEN legs'
+      // marks, which the preview snapshot (probe legs only) doesn't carry — merge the live ring's marks
+      // underneath (preview legs win) so attribute() prices the open structure instead of falling back
+      // to entry marks (≈0 MtM).
+      const checkSnap = bo.lastSnapshot
+        ? { ...res.snap, legs: { ...(bo.lastSnapshot.legs || {}), ...res.snap.legs } }
+        : res.snap;
+      const rejections = s1engine.preTradeCheck(bo.engine, built, metaByInstrument, checkSnap, Date.now());
       const payoff = s1payoffCurve(built, { min: res.snap.underlying * 0.75, max: res.snap.underlying * 1.25, n: 96 });
       return {
         ok: true,
