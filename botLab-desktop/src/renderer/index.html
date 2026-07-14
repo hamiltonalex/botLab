@@ -4503,10 +4503,20 @@ function renderOptSweep(ds){
     if(apply) apply.disabled=true; return; }
   if(stamp) stamp.textContent='свип '+optClock(sw.ranAt)+' UTC';
   if(!sw.combos || !sw.combos.length){
-    /* пустой результат ≠ пустая история: при непустом ряде с полным исключением честно назвать причину */
-    body.innerHTML='<tr><td class="lft faint" colspan="10">'+((sw.seriesLen>0 && sw.excluded && sw.excluded.length)
-      ? 'все комбинации исключены — в начале ряда нет котировок ног (подождите новые снапшоты и повторите свип)'
-      : 'история снапшотов пуста — запустите источник (LIVE) и подождите несколько минут')+'</td></tr>';
+    /* пустой результат ≠ пустая история: при непустом ряде с полным исключением показать ФАКТИЧЕСКУЮ
+       причину из excluded[].reason (блэкаут в series[0], нет ног экспирации, нет котировок…), а не
+       жёсткий текст про котировки — самая частая причина + счётчик остальных */
+    let why='история снапшотов пуста — запустите источник (LIVE) и подождите несколько минут';
+    if(sw.seriesLen>0 && sw.excluded && sw.excluded.length){
+      const byReason=new Map();
+      for(const x of sw.excluded){ const r=x.reason||'причина не указана'; byReason.set(r,(byReason.get(r)||0)+1); }
+      const top=[...byReason.entries()].sort((a,b)=>b[1]-a[1])[0];
+      const more=byReason.size-1;
+      why='все комбинации исключены — '+ledgerEsc(String(top[0]).slice(0,140))
+        +(more>0?' (всего разных причин: '+byReason.size+')':'')
+        +' · подождите новые снапшоты и повторите свип';
+    }
+    body.innerHTML='<tr><td class="lft faint" colspan="10">'+why+'</td></tr>';
     if(cap){ cap.textContent='цель: '+(OPT_SWEEP_OBJ[sw.objective]||sw.objective)+' · '+(sw.seriesLen||0)+' снапшотов'
       +((sw.excluded&&sw.excluded.length)?(' · исключено '+sw.excluded.length):''); }
     if(apply) apply.disabled=true; return; }
