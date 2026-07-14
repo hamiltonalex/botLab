@@ -209,3 +209,14 @@ test("defaultGrid deadband axis derives from DEADBAND_PRESETS (toolbar and grid 
     Object.entries(DEADBAND_PRESETS).map(([preset, btc]) => ({ preset, btc })),
   );
 });
+
+// ── equityUsd (audit №9): marginOk must judge against the LIVE account equity (ticket parity) ────
+test("equityUsd: live equity replaces the deposit as the marginOk limit; omitted → deposit fallback", () => {
+  const args = () => ({ series: mkSeries(), chain: mkChain(), expiryMs: EXPIRY, baseSettings: { ...BASE } });
+  const rich = runSweep({ ...args(), equityUsd: 1e6 });
+  assert.ok(rich.combos.length > 0 && rich.combos.every((c) => c.marginOk === true), "everything fits a huge equity");
+  const poor = runSweep({ ...args(), equityUsd: 1 });
+  assert.ok(poor.combos.length > 0 && poor.combos.every((c) => c.marginOk === false), "nothing fits a drained account");
+  const dflt = runSweep(args()); // omitted → paperEquityUsd 13000 — the pre-equity behaviour
+  assert.ok(dflt.combos.some((c) => c.marginOk) && dflt.combos.some((c) => !c.marginOk), "deposit fallback still splits by wing");
+});

@@ -14,10 +14,12 @@
 // has a real quote in series[0] (entryMark present). A combo whose wing instruments aren't quoted
 // there is pushed to `excluded` with a reason — never scored against guessed/zero entry marks.
 //
-// RANKING (stable, total order): marginOk:true combos first (the structure's initial Deribit margin
-// fits the paper deposit), then sharpe DESC, tie → net DESC, tie → grid order (gridIndex ASC —
-// carried internally, stripped from the returned combos). best = 0 (the ranked head) whenever any
-// combo scored.
+// RANKING (stable, total order): marginOk:true combos first — the structure's initial Deribit
+// margin fits the account's CURRENT equity (`equityUsd`; falls back to the paper deposit when not
+// passed), the same limit the ticket's IM-vs-equity warn applies, so sweep advice and the next
+// open's pre-trade check can't disagree — then sharpe DESC, tie → net DESC, tie → grid order
+// (gridIndex ASC — carried internally, stripped from the returned combos). best = 0 (the ranked
+// head) whenever any combo scored.
 
 import { create, openStructure, ingest, evaluate, DEADBAND_PRESETS } from "./engine.js";
 import { summarize } from "./metrics.js";
@@ -34,15 +36,17 @@ export function defaultGrid() {
   };
 }
 
-// runSweep({ series, chain, expiryMs, grid, baseSettings }) → { seriesLen, objective: "sharpe",
-//   combos: [{ wingPct, deadbandPreset, deadbandBtc, priceTriggerPct, lambda,
+// runSweep({ series, chain, expiryMs, grid, baseSettings, equityUsd }) → { seriesLen, objective:
+//   "sharpe", combos: [{ wingPct, deadbandPreset, deadbandBtc, priceTriggerPct, lambda,
 //              sharpe, net, maxDD, hedges, marginOk }], best, excluded: [{ …combo-params, reason }] }.
 //   series — ASCENDING composite snapshots (the exact shape evaluate() consumes; each carries ts);
 //   chain — instrument metas (raw array or a { instruments } envelope, as openStructure accepts);
 //   expiryMs — the expiry every combo builds against; baseSettings — qty/execStyle/paperEquityUsd/…
-//   merged over engine defaultSettings() (the four swept axes are then overlaid per combo).
+//   merged over engine defaultSettings() (the four swept axes are then overlaid per combo);
+//   equityUsd — the LIVE account equity the marginOk verdict compares the entry IM against
+//   (ticket parity); omitted → baseSettings.paperEquityUsd ?? 100 (the pre-equity behaviour).
 //   An empty/missing series → { seriesLen: 0, combos: [], best: null, excluded: [] }.
-export function runSweep({ series, chain, expiryMs, grid = {}, baseSettings = {} } = {}) {
+export function runSweep({ series, chain, expiryMs, grid = {}, baseSettings = {}, equityUsd } = {}) {
   const snaps = Array.isArray(series) ? series : [];
   const d = defaultGrid();
   const axes = {
@@ -55,6 +59,9 @@ export function runSweep({ series, chain, expiryMs, grid = {}, baseSettings = {}
   const scored = [];
   const excluded = [];
   const first = snaps[0];
+  // The margin limit every combo is judged against (see RANKING note): live equity when the caller
+  // passed it, else the configured paper deposit — identical for every combo, so hoisted.
+  const marginLimitUsd = Number.isFinite(equityUsd) ? equityUsd : baseSettings.paperEquityUsd ?? 100;
   let gridIndex = 0; // deterministic grid order: wingPct → deadband → priceTriggerPct → lambda
 
   if (first) {
@@ -110,9 +117,10 @@ export function runSweep({ series, chain, expiryMs, grid = {}, baseSettings = {}
               continue;
             }
 
-            // Margin fit is judged AT ENTRY (structure vs deposit on the first snapshot) — captured
-            // before the replay because a series that crosses the expiry settles the structure to null.
-            const marginOk = structureMargin(state.structure, first).initial <= (settings.paperEquityUsd ?? 100);
+            // Margin fit is judged AT ENTRY (structure IM vs the account limit on the first
+            // snapshot) — captured before the replay because a series that crosses the expiry
+            // settles the structure to null.
+            const marginOk = structureMargin(state.structure, first).initial <= marginLimitUsd;
 
             // Deterministic replay: each snapshot is both the market AND the clock (nowMs = its ts).
             let cycle = evaluate(state, first, first.ts);

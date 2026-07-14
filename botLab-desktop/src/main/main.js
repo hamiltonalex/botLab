@@ -927,7 +927,10 @@ function wireIpcStrategy1() {
         push1();
         return bo.sweepResult;
       }
-      const r = s1runSweep({ series, chain: bo.chain, expiryMs, baseSettings: bo.settings });
+      // marginOk vs the LIVE equity (deposit + cumulative P&L) — the same limit the ticket's
+      // IM-warn uses, so «в лимите» here can't contradict the next open's pre-trade check.
+      const equityUsd = s1engine.account(bo.engine, bo.lastSnapshot ?? series[series.length - 1]).equity;
+      const r = s1runSweep({ series, chain: bo.chain, expiryMs, baseSettings: bo.settings, equityUsd });
       bo.sweepResult = { ranAt: Date.now(), ...r };
       push1();
       return bo.sweepResult;
