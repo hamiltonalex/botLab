@@ -5024,8 +5024,22 @@ function initOpt(){ if(!$('view-btc-options')) return;
   wireOptSeg('optBlackoutSel','blackout', null, { setting:'settlementBlackout', settingCast:v=>v==='on' });
   if($('optQty')) $('optQty').addEventListener('input', ()=>{ optSel.qty=Number($('optQty').value);
     pushOptQty(optSel.qty); onOptStructParamChange(); });
-  if($('optLambda')) $('optLambda').addEventListener('input', ()=>{ optSel.lambda=Number($('optLambda').value)||1.25;
-    $('optLambdaEcho').textContent=optSel.lambda; pushOptSetting('lambda', optSel.lambda); });
+  /* λ: валидируем явно (finite и ≥1 — λ<1 опускает порог ниже издержек, а Number('')===0 раньше
+     молча превращался в 1.25 и пушился). Невалидный ввод помечается aria-invalid и НЕ уходит в
+     настройки; blur/Enter возвращают последнее принятое значение. */
+  if($('optLambda')){
+    $('optLambda').addEventListener('input', ()=>{
+      const v=Number($('optLambda').value);
+      const ok=Number.isFinite(v) && v>=1;
+      $('optLambda').setAttribute('aria-invalid', ok?'false':'true');
+      if(!ok) return;
+      optSel.lambda=v; $('optLambdaEcho').textContent=v; pushOptSetting('lambda', v);
+    });
+    $('optLambda').addEventListener('change', ()=>{
+      const v=Number($('optLambda').value);
+      if(!(Number.isFinite(v) && v>=1)){ $('optLambda').value=String(optSel.lambda); $('optLambda').setAttribute('aria-invalid','false'); }
+    });
+  }
   if($('optRecalcBtn')) $('optRecalcBtn').onclick=optRecalc;
   if($('optOpenBtn')) $('optOpenBtn').onclick=()=>{ const t=$('optLaunchTicket'); (t&&t.hidden)?openOptTicket():closeOptTicket(true); };
   if($('optAutoBtn')) $('optAutoBtn').onclick=openOptTicketAuto;
