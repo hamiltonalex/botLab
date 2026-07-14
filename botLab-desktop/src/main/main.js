@@ -411,10 +411,13 @@ function loadOrInitBtcOptions() {
   // table-consistent by construction, so this is a no-op for them.
   const healWidth = s1engine.DEADBAND_PRESETS[settings.deadbandPreset];
   const healed = healWidth != null && settings.deadbandBtc !== healWidth;
-  if (healed) {
-    settings.deadbandBtc = healWidth;
-    saveBotSettings(baseDir, BTCOPT_ID, settings);
-  }
+  if (healed) settings.deadbandBtc = healWidth;
+  // One-shot heal of pre-fix profiles: the engine default used to be 3 s — a cadence the toolbar
+  // (5/15/30) can't express, so a persisted 3 can only be the stale default, never a user's choice.
+  // Realign to the UI default 15 s; user-chosen 5/15/30 values pass through untouched.
+  const healedReprice = settings.repriceSec === 3;
+  if (healedReprice) settings.repriceSec = 15;
+  if (healed || healedReprice) saveBotSettings(baseDir, BTCOPT_ID, settings);
   let st = loadBotState(baseDir, BTCOPT_ID);
   if (!st) {
     st = s1engine.create({ settings, nowMs: Date.now() });
@@ -423,9 +426,10 @@ function loadOrInitBtcOptions() {
     st.schemaVersion = s1engine.SCHEMA_VERSION; // forward-migration guard (no-op at v1)
     saveBotState(baseDir, BTCOPT_ID, st);
   }
-  // Mirror the healed pair into the ENGINE's settings copy (next open freezes engineCfg from it).
+  // Mirror the healed values into the ENGINE's settings copy (next open freezes engineCfg from it).
   // The frozen engineCfg of an ALREADY-open structure is deliberately untouched (frozen-at-open law).
   if (healed && st.settings) st.settings = { ...st.settings, deadbandPreset: settings.deadbandPreset, deadbandBtc: settings.deadbandBtc };
+  if (healedReprice && st.settings) st.settings = { ...st.settings, repriceSec: settings.repriceSec };
   state.btcOptions.engine = st;
   state.btcOptions.settings = settings;
   // Phase 3b: the persisted IV history (its OWN file — never inside btc-options.json) survives
@@ -443,7 +447,7 @@ function loadOrInitBtcOptions() {
 // ---------------------------------------------------------------------------
 const IV_HISTORY_CAP = 2880; // 30s-sampled ⇒ ≈ 24h — matches the default ivWindowSec
 const IV_SAMPLE_MS = 30000;
-const SNAP_HISTORY_CAP = 600; // per-tick raw snapshots ⇒ ≈ 30 min at the 3s default cadence
+const SNAP_HISTORY_CAP = 600; // per-tick raw snapshots ⇒ ≈ 2.5 h at the 15 s default cadence (50 min at 5 s)
 const HIST_FLUSH_MS = 60000;
 const DVOL_REFRESH_MS = 300000; // the chain-cache cadence — DVOL is slow-moving
 const BAND_DRIFT_PCT = 0.02; // re-derive the band when the underlying moved 2% from its anchor

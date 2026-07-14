@@ -72,7 +72,7 @@ export function defaultSettings() {
     priceTriggerPct: 0.5, // % move since last hedge that arms the price trigger
     rehedgeSec: 60, // time-trigger interval (a prompt to re-price, not a must-trade)
     lambda: 1.25, // hedge cost multiplier (gate: benefit > cost * lambda)
-    repriceSec: 3, // Deribit poll cadence (source owns the timer)
+    repriceSec: 15, // Deribit poll cadence (source owns the timer); one of the toolbar presets 5/15/30
     callOffsetPct: 10, // short call strike ~ spot * (1 + off)
     putOffsetPct: 10, // short put  strike ~ spot * (1 - off)
     qty: 0.01, // option contracts per leg (Deribit BTC_USDC min lot = 0.01; validated at open)

@@ -356,3 +356,10 @@ test("exec style: limit fills at MID with maker fee 0; market crosses the spread
   assert.equal(mktFill.priceRef, 61001, "market buy crosses to the ask");
   near(mktFill.feeUsd, Math.abs(mktFill.contracts) * 10 * 0.0005, 1e-12, "taker 0.05%");
 });
+
+// ── Defaults must be expressible by the UI (audit №2: 3 s default vs the 5/15/30 toolbar) ────────
+test("defaultSettings.repriceSec is the UI default 15 and one of the toolbar presets", () => {
+  const s = engine.defaultSettings();
+  assert.equal(s.repriceSec, 15, "engine default = UI default");
+  assert.ok([5, 15, 30].includes(s.repriceSec), "default must be selectable in the toolbar");
+});
