@@ -181,6 +181,12 @@ const snap2 = {
     "BTC_USDC-11JUL26-64000-P": mkLeg(410),
     "BTC_USDC-11JUL26-70000-C": mkLeg(0.04),
     "BTC_USDC-11JUL26-58000-P": mkLeg(0.54),
+    // E2 legs quoted too: the auto-pick-skip test opens the NEXT expiry, and openStructure's
+    // no_quote gate (audit №4) honestly blocks any leg the snapshot didn't price.
+    "BTC_USDC-12JUL26-64000-C": mkLeg(510),
+    "BTC_USDC-12JUL26-64000-P": mkLeg(490),
+    "BTC_USDC-12JUL26-70000-C": mkLeg(0.11),
+    "BTC_USDC-12JUL26-58000-P": mkLeg(1.4),
   },
 };
 const AUTO_PARAMS = { expiry: null, callOffsetPct: 10, putOffsetPct: 10, qty: 0.01, execStyle: "limit" };
@@ -268,4 +274,28 @@ test("preTradeCheck composes: sub-min qty + blackout together (both blocks repor
   assert.ok(codes.includes("min_size"), String(codes));
   assert.ok(codes.includes("settlement"), String(codes));
   assert.ok(!codes.includes("margin"), String(codes)); // half size ⇒ IM ≈ $61 < $100 — no margin warn
+});
+
+// ── Quote gate (audit №4): a leg the snapshot never priced must BLOCK the open, naming culprits ──
+test("openStructure blocks when a leg has no quote in the snapshot (no_quote names the culprits)", () => {
+  const st = create({ nowMs: NOW });
+  const snapMissing = { ...snap2, legs: { ...snap2.legs } };
+  delete snapMissing.legs["BTC_USDC-11JUL26-58000-P"];
+  const r = openStructure(st, { ...AUTO_PARAMS, expiry: E1 }, chain2, snapMissing, NOW);
+  assert.ok(r.error && r.error.includes("нет котировки"), r.error);
+  assert.ok(r.error.includes("BTC_USDC-11JUL26-58000-P"), r.error);
+  assert.ok((r.rejections || []).some((x) => x.code === "no_quote" && x.severity === "block"));
+  assert.equal(st.structure, null, "nothing was opened on a half-priced snapshot");
+});
+
+test("preTradeCheck no_quote lists EVERY unquoted leg (sweep surfaces this reason verbatim)", () => {
+  const st = create({ nowMs: NOW });
+  const snapMissing = { ...snap2, legs: { ...snap2.legs } };
+  delete snapMissing.legs["BTC_USDC-11JUL26-58000-P"];
+  delete snapMissing.legs["BTC_USDC-11JUL26-70000-C"];
+  const built = buildStructure({ expiry: E1, callOffsetPct: 10, putOffsetPct: 10, qty: 0.01, execStyle: "limit" }, chain2, snapMissing);
+  const metaBy = Object.fromEntries(chain2.map((m) => [m.instrument_name, m]));
+  const rej = preTradeCheck(st, built, metaBy, snapMissing, NOW).filter((x) => x.code === "no_quote");
+  assert.equal(rej.length, 1, "one rejection naming all culprits");
+  assert.ok(rej[0].detail.includes("58000-P") && rej[0].detail.includes("70000-C"), rej[0].detail);
 });

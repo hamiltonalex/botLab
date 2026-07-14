@@ -368,6 +368,17 @@ export function evaluate(state, snapshot, nowMs) {
 export function preTradeCheck(state, structure, metaByInstrument, snapshot, nowMs) {
   const cfg = buildCfg(state.settings);
   const rejections = [...structureRejections(structure, metaByInstrument)];
+  // Quote gate: every leg must have been priced by the snapshot the structure was built from — a
+  // leg without a mark would open with entryMark null and silently DROP OUT of the net debit
+  // (buildStructure sums entryMark ?? 0), understating cost/max-loss. Names every culprit; the
+  // sweep surfaces this reason verbatim when a combo's wings aren't quoted in series[0].
+  const unquoted = (structure.legs ?? []).filter((l) => !Number.isFinite(l.entryMark));
+  if (unquoted.length)
+    rejections.push({
+      code: "no_quote",
+      severity: "block",
+      detail: `нет котировки (mark): ${unquoted.map((l) => l.instrument).join(", ")} — обновите данные и повторите`,
+    });
   if (cfg.settlementBlackout !== false) {
     const b = settlementBlackout(nowMs, structure.expiryMs, cfg);
     if (b.active)

@@ -745,7 +745,14 @@ async function resolveBtcOptStructureLive(params) {
   if (!snap.perp || Object.keys(snap.legs).length < legInstruments.length) {
     return { error: "не удалось получить котировки всех ног (Deribit)" };
   }
-  return { chain, snap, params, autoPicked };
+  // buildSnap: the snapshot the callers must BUILD the final structure from. Its underlying is the
+  // PROBE's (perp index), not the fresher option-ticker one: strike picks re-run at build time, and
+  // a price that crossed a strike midpoint between the two fetches would otherwise resolve to legs
+  // the snapshot never quoted (entryMark null → silently understated debit; audit №4). Marks come
+  // from snap.legs, so the built legs are exactly the fetched ones. Callers keep using `snap`
+  // (freshest) for display/evaluate/margin.
+  const buildSnap = { ...snap, underlying: perpTk.index_price };
+  return { chain, snap, buildSnap, params, autoPicked };
 }
 
 function wireIpcStrategy1() {
@@ -830,7 +837,7 @@ function wireIpcStrategy1() {
     try {
       const res = await resolveBtcOptStructureLive(params);
       if (res.error) return { error: res.error };
-      const built = s1buildStructure(res.params, res.chain, res.snap); // now with entry marks
+      const built = s1buildStructure(res.params, res.chain, res.buildSnap); // probe strikes + entry marks
       if (built.error) return { error: built.error };
       const metaByInstrument = {};
       for (const l of built.legs) metaByInstrument[l.instrument] = res.chain.instruments.find((m) => m.instrument_name === l.instrument);
@@ -866,7 +873,7 @@ function wireIpcStrategy1() {
     try {
       const res = await resolveBtcOptStructureLive(params);
       if (res.error) return { error: res.error };
-      const r = s1engine.openStructure(bo.engine, res.params, res.chain, res.snap, Date.now());
+      const r = s1engine.openStructure(bo.engine, res.params, res.chain, res.buildSnap, Date.now());
       if (r.error) return { error: r.error, rejections: r.rejections ?? [] };
       bo.lastSnapshot = res.snap;
       bo.snapshot = s1engine.evaluate(bo.engine, res.snap, Date.now());

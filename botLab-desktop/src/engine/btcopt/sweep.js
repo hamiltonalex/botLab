@@ -99,6 +99,8 @@ export function runSweep({ series, chain, expiryMs, grid = {}, baseSettings = {}
               continue;
             }
             // Honest-data gate: every resolved leg must be QUOTED in series[0] (see header).
+            // Normally unreachable: openStructure's preTradeCheck now blocks unquoted legs first
+            // (its "нет котировки" reason lands in opened.error above) — kept as belt-and-braces.
             const unquoted = state.structure.legs.filter((l) => !Number.isFinite(l.entryMark));
             if (unquoted.length) {
               excluded.push({
