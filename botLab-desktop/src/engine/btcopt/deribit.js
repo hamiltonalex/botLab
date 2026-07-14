@@ -229,6 +229,8 @@ export async function buildDeribitSnapshot({ legInstruments = [], primaryInstrum
   const primarySet = new Set(primaryNames);
   const gateFailed = greeksGateFailures(legs, primaryNames); // culprit names — band legs never appear here
   const gateOk = gateFailed.length === 0;
+  // primaryErrors (perp + gate-relevant legs) is what the SOURCE's health verdict may judge by;
+  // band-leg failures stay in errors/notes only — they must never flip LIVE to warn (see header).
   const primaryErrors = errors.filter((e) => e.instrument === perpName || primarySet.has(e.instrument));
   const ok = !!perp && primaryErrors.length === 0 && gateOk;
 
@@ -250,6 +252,7 @@ export async function buildDeribitSnapshot({ legInstruments = [], primaryInstrum
       notes: errors.map((e) => `${e.instrument}: ${e.message}`),
     },
     errors,
+    primaryErrors,
   };
 }
 
@@ -278,8 +281,11 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
     inFlight = true;
     try {
       const snap = await buildDeribitSnapshot({ legInstruments, primaryInstruments, metaCache, testnet, nowMs: Date.now() });
-      if (snap.errors.length) {
-        lastError = snap.errors[0].message;
+      // Health bookkeeping judges PRIMARY failures only (perp + open-structure legs): a band leg
+      // that failed to fetch stays visible in notes but must not flip the LIVE badge to warn.
+      const primaryErrs = snap.primaryErrors ?? snap.errors;
+      if (primaryErrs.length) {
+        lastError = primaryErrs[0].message;
         errorStreak++;
       } else {
         lastError = null;

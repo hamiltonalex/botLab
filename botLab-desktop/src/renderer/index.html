@@ -4571,7 +4571,9 @@ function updateOptFreshness(f, running){
   let state, ledCol;
   if(!running){ state='НЕТ ДАННЫХ'; ledCol='var(--led-idle)'; }
   else if(f && f.stale){ state='УСТАРЕЛО'; ledCol='var(--neg)'; }
-  else if(f && ((f.notes&&f.notes.length) || f.gateOk===false)){ state='ПРЕДУПР.'; ledCol='var(--neu)'; }
+  /* notes сами по себе статус не роняют: там лежат и ошибки вспомогательного band'а (сигнал IV),
+     которые не касаются открытой позиции; primary-ошибки уже учтены в f.ok (источник) */
+  else if(f && f.gateOk===false){ state='ПРЕДУПР.'; ledCol='var(--neu)'; }
   else if(f && f.ok){ state='LIVE'; ledCol='var(--pos)'; }
   else { state='ПРЕДУПР.'; ledCol='var(--neu)'; }
   if(txt) txt.textContent=state;
