@@ -891,6 +891,12 @@ function wireIpcStrategy1() {
     const snap = bo.lastSnapshot;
     if (!bo.engine.structure) return { error: "нет открытой структуры" };
     if (!snap) return { error: "нет рыночных данных — запустите источник" };
+    // Closing locks P&L in at lastSnapshot's marks, so that snapshot must be CURRENT: with a
+    // stopped source or a stale ring the fixation would silently use outdated prices. The same
+    // stale verdict the badge shows (max(15s, 5×reprice)) gates the button; the engine separately
+    // refuses to orphan a held perp on an unpriced-perp snapshot.
+    const src = bo.running && bo.source ? bo.source.status() : null;
+    if (!src || src.stale) return { error: "данные устарели — дождитесь LIVE и повторите" };
     const r = s1engine.closeStructure(bo.engine, snap, Date.now());
     if (r.error) return r;
     // Re-point at band-only polling (primary = [] — flat gates nothing). setInstruments([]) here would
