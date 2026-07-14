@@ -363,3 +363,32 @@ test("defaultSettings.repriceSec is the UI default 15 and one of the toolbar pre
   assert.equal(s.repriceSec, 15, "engine default = UI default");
   assert.ok([5, 15, 30].includes(s.repriceSec), "default must be selectable in the toolbar");
 });
+
+// ── Close guard (audit №14): a held perp must not be orphaned by an unpriced-perp snapshot ───────
+test("closeStructure refuses to close over a snapshot without a priced perp (no orphaned hedge)", () => {
+  const { st, snap } = opened();
+  engine.ingest(st, snap, NOON);
+  engine.evaluate(st, snap, NOON); // hedge → perp position held
+  assert.notEqual(st.perpState.qty, 0, "precondition: a perp hedge is held");
+
+  const degraded = { ...snap, perp: null }; // perp fetch failed on this tick
+  const r = engine.closeStructure(st, degraded, NOON + 120_000);
+  assert.ok(r.error && r.error.includes("нет цены перпетуала"), r.error);
+  assert.ok(st.structure, "structure still open — nothing was half-closed");
+  assert.notEqual(st.perpState.qty, 0, "perp untouched");
+  assert.ok(!st.ledger.some((e) => e.type === "close-options"), "no options close was booked");
+
+  const ok = engine.closeStructure(st, snap, NOON + 130_000); // priced snapshot → clean close
+  assert.equal(ok.ok, true);
+  assert.equal(st.perpState.qty, 0, "perp flattened on the priced snapshot");
+  assert.equal(st.structure, null);
+});
+
+test("closeStructure with a FLAT perp closes fine even without a priced perp (nothing to flatten)", () => {
+  const { st, snap } = opened(); // no evaluate → no hedge yet, perp qty 0
+  assert.equal(st.perpState.qty, 0);
+  const degraded = { ...snap, perp: null };
+  const r = engine.closeStructure(st, degraded, NOON + 120_000);
+  assert.equal(r.ok, true, r.error);
+  assert.equal(st.structure, null);
+});

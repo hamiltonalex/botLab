@@ -471,6 +471,13 @@ function snapshotRunMetrics(state, nowMs) {
 // cumulative P&L (realizedOptionsUsd survives, so net P&L is not reset by closing).
 export function closeStructure(state, snapshot, nowMs) {
   if (!state.structure) return { error: "нет открытой структуры" };
+  // A held perp needs a PRICED perp to flatten. Without this guard flattenPerp silently no-ops,
+  // the options still close and structure goes null — orphaning an unclosable hedge position
+  // (the close button hides with the structure) that keeps accruing funding. Same perpPriced
+  // rule settleStructure applies: closing late beats closing wrong.
+  if (state.perpState.qty !== 0 && !(snapshot?.perp && snapshot.perp.mark)) {
+    return { error: "нет цены перпетуала в снимке — обновите данные и повторите закрытие" };
+  }
   const cfg = buildCfg(state.settings);
   flattenPerp(state, snapshot, nowMs, cfg);
 
