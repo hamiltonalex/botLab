@@ -8,6 +8,7 @@
     "test": "node --test",
     "oracle": "electron scripts/selector-oracle.mjs",
     "smoke": "node scripts/smoke-live.mjs",
+    "e2e:ui": "node scripts/e2e-ui.mjs",
     "verify:loris": "node scripts/verify-loris.mjs",
     "start": "electron .",
     "dist": "electron-builder",
@@ -25,7 +26,8 @@
   },
   "devDependencies": {
     "electron": "^33.2.1",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "playwright-core": "^1.61.1"
   },
   "build": {
     "appId": "com.hamiltonalex.botlab",
