@@ -525,6 +525,13 @@ export function settleStructure(state, snapshot, nowMs) {
     type: "settle-options",
     priceRef: S,
     realizedUsd: optSettleUsd,
+    // meta feeds the delivery-price reconcile (pnl.planSettleAdjustments): unit = legs[0]
+    // qtyAbs·contractSize — the same per-unit scale payoff.js derives (equal-qty legs law).
+    meta: {
+      expiryMs: structure.expiryMs,
+      strikes: structure.strikes,
+      unit: (structure.legs[0]?.qtyAbs ?? 1) * (structure.legs[0]?.contractSize ?? 1),
+    },
     note:
       `экспирация ${structure.id} · расчёт по индексу (прокси delivery-цены Deribit)` +
       (lateH >= 1 ? ` · поздний расчёт +${lateH}ч (приложение не работало в момент экспирации)` : ""),

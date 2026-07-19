@@ -31,6 +31,7 @@ import { buildStructure as s1buildStructure, validateStructure as s1validateStru
 import { payoffCurve as s1payoffCurve } from "../engine/btcopt/payoff.js";
 import { runSweep as s1runSweep } from "../engine/btcopt/sweep.js";
 import { summarize as s1summarize } from "../engine/btcopt/metrics.js";
+import { appendLedger as s1appendLedger, planSettleAdjustments as s1planSettleAdjustments } from "../engine/btcopt/pnl.js";
 import { decimate } from "../engine/format.js";
 import { TWO_LEG, ONE_LEG, ALL_MARKETS, twoLegByKey, oneLegByKey, chainsInUse } from "../engine/universe.js";
 import { isolateSmokeProfile } from "./smoke-profile.js";
@@ -577,6 +578,60 @@ async function ensureBtcOptDvol() {
   }
 }
 
+// ── S0 (OTM-сканер, P0 аудита): сверка расчёта экспирации с ОФИЦИАЛЬНОЙ delivery-ценой Deribit.
+// settleStructure рассчитывает по снапшоту индекса (честный прокси; кейс AVAX-пута показал, что
+// расхождение с 30-мин TWAP бывает материальным). Delivery публикуется вскоре после 08:00 UTC —
+// этот джоб находит settle-строки без пары settle-adjust (pnl.planSettleAdjustments), тянет таблицу
+// btc_usdc и бронирует поправку: realizedOptionsUsd += adjust + строка settle-adjust (meta.srcSeq
+// помечает пару). Троттлинг 10 мин; на сетевой ошибке ретрай через минуту; никогда не бросает в тик.
+const SETTLE_RECONCILE_MS = 600000;
+let settleReconcileAt = 0;
+let settleReconcileInFlight = false;
+function pendingSettleRows(eng) {
+  const rows = eng?.ledger ?? [];
+  const adjusted = new Set(
+    rows.filter((r) => r.type === "settle-adjust" && r.meta?.srcSeq != null).map((r) => r.meta.srcSeq),
+  );
+  return rows.filter((r) => r.type === "settle-options" && r.meta && !adjusted.has(r.seq));
+}
+async function maybeReconcileSettles() {
+  const bo = state.btcOptions;
+  const eng = bo.engine;
+  if (!eng || settleReconcileInFlight || Date.now() - settleReconcileAt < SETTLE_RECONCILE_MS) return;
+  settleReconcileAt = Date.now();
+  if (!pendingSettleRows(eng).length) return;
+  settleReconcileInFlight = true;
+  try {
+    const res = await deribit.getDeliveryPrices({ index_name: "btc_usdc", count: 30, testnet: !!(bo.settings || {}).testnet });
+    const byDate = {};
+    for (const d of res?.data ?? []) if (Number.isFinite(d?.delivery_price)) byDate[d.date] = d.delivery_price;
+    const plans = s1planSettleAdjustments(eng.ledger, byDate);
+    for (const p of plans) {
+      eng.realizedOptionsUsd = (eng.realizedOptionsUsd || 0) + p.adjustUsd;
+      s1appendLedger(eng, {
+        t: Date.now(),
+        type: "settle-adjust",
+        priceRef: p.deliveryPrice,
+        realizedUsd: p.adjustUsd,
+        meta: { srcSeq: p.srcSeq, date: p.date, proxyPrice: p.proxyPrice, deliveryPrice: p.deliveryPrice },
+        note:
+          Math.abs(p.adjustUsd) < 0.01
+            ? `сверка с delivery-ценой Deribit ${p.date}: расхождения нет (прокси ${p.proxyPrice} ≈ ${p.deliveryPrice})`
+            : `сверка с delivery-ценой Deribit ${p.date}: прокси ${p.proxyPrice}, delivery ${p.deliveryPrice}, поправка ${p.adjustUsd >= 0 ? "+" : ""}${p.adjustUsd.toFixed(2)}$`,
+      });
+    }
+    if (plans.length) {
+      saveBotState(baseDir, BTCOPT_ID, eng);
+      push1();
+    }
+  } catch (e) {
+    console.warn("[s1] settle-reconcile:", String(e?.message || e));
+    settleReconcileAt = Date.now() - SETTLE_RECONCILE_MS + 60000; // ретрай через минуту
+  } finally {
+    settleReconcileInFlight = false;
+  }
+}
+
 function assembleDataset1() {
   const bo = state.btcOptions;
   const eng = bo.engine || {};
@@ -629,6 +684,7 @@ function onBtcOptSnapshot(snap) {
     refreshBtcOptBand(snap.underlying); // may re-point the source for the NEXT tick
     flushBtcOptHistory(false);
     ensureBtcOptDvol(); // async, self-gated to the 5-min cadence, never throws into the tick
+    maybeReconcileSettles(); // S0: async, self-gated (10 мин + pending-строки), never throws into the tick
   } catch (e) {
     console.error("[s1] tick error:", e);
   }
@@ -1263,6 +1319,9 @@ app.whenReady().then(async () => {
   // s1:start and s1:stop (Phase 1). Purely additive; funding-arb boot is unaffected.
   loadOrInitBtcOptions();
   wireIpcStrategy1();
+  // S0: если приложение было закрыто в момент экспирации, pending settle-строки сверяются с
+  // официальной delivery-ценой уже на буте (fire-and-forget; сам гейтится по pending/троттлингу).
+  if (!SMOKE) maybeReconcileSettles();
   // OTA updater (§5): registers the fa:update:* / fa:version IPC now; scheduled checks only run in a
   // packaged build. Skipped entirely under SMOKE (isolated profile, quits in <1s).
   if (!SMOKE) initUpdater({ window: win });

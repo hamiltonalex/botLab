@@ -83,6 +83,22 @@ export const getOrderBook = (instrument_name, { depth = 5, testnet = false } = {
 export const getVolatilityIndexData = ({ currency = "BTC", start_timestamp, end_timestamp, resolution = "3600", testnet = false } = {}) =>
   rpc("public/get_volatility_index_data", { currency, start_timestamp, end_timestamp, resolution }, { testnet });
 
+// TradingView-style candles (S0 otm-scanner: RV/импульс/EMA off the perp as an index proxy).
+// VERIFIED LIVE 2026-07-19: result is PARALLEL ARRAYS { status:"ok", ticks[ms], open[], high[],
+// low[], close[], volume[], cost[] }; for resolution "60" ticks are hour-aligned bar OPEN times and
+// the last bar is the hour IN PROGRESS (rv.js must drop unclosed bars itself).
+export const getTradingviewChartData = ({ instrument_name = PERP_INSTRUMENT, start_timestamp, end_timestamp, resolution = "60", testnet = false } = {}) =>
+  rpc("public/get_tradingview_chart_data", { instrument_name, start_timestamp, end_timestamp, resolution }, { testnet });
+
+// Official settlement (delivery) prices of a Deribit index (S0: bot-2 settle reconcile + scanner).
+// VERIFIED LIVE 2026-07-19: index_name "btc_usdc" exists (1593 records); result
+// { data: [{ date: "YYYY-MM-DD", delivery_price }], records_total }, newest first; btc_usdc and
+// btc_usd delivery prices coincide. Same-day fee check on get_instrument (BTC_USDC-* option):
+// maker_commission = taker_commission = 0.0003 (fraction of index per contract; the 12.5%-of-premium
+// cap is documented in the Deribit KB — no API field carries it).
+export const getDeliveryPrices = ({ index_name = "btc_usdc", offset = 0, count = 10, testnet = false } = {}) =>
+  rpc("public/get_delivery_prices", { index_name, offset, count }, { testnet });
+
 // The canonical option family: BTC linear USDC options discovered under currency=USDC.
 export const PERP_INSTRUMENT = "BTC-PERPETUAL";
 export const OPTION_CURRENCY = "USDC";

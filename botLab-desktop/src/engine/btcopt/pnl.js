@@ -11,6 +11,8 @@
 // Everything here is a pure function of (state, snapshot); accrueFunding is the only mutator and it
 // only touches perpState.fundingCum, exactly as documented.
 
+import { intrinsicAt } from "./payoff.js";
+
 // ── Options structure (LINEAR USDC — marks already in USD) ──────────────────────────────────────
 // markStructure(structure, snapshot) → { upl_usd, byLeg:[{ instrument, upl_usd, value_usd }] }.
 // Per leg: currentMark = snapshot.legs[instrument]?.mark ?? entryMark (fall back to open mark when the
@@ -104,6 +106,8 @@ export function noHedgeAttribute(engineState, snapshot) {
 // ── Ledger append (sequenced, numeric-safe) ─────────────────────────────────────────────────────
 // appendLedger(engineState, event) → assigns seq = ledger.length+1, pushes a normalized event with
 // every numeric field defaulted to 0 (so downstream sums never see undefined), returns the stored row.
+// An optional event.meta object rides along verbatim (the fa-ledger precedent: export.js reads
+// e.meta) — settle rows use it to carry the strikes/unit the delivery reconcile needs.
 export function appendLedger(engineState, event = {}) {
   const stored = {
     seq: engineState.ledger.length + 1,
@@ -117,9 +121,38 @@ export function appendLedger(engineState, event = {}) {
     fundingUsd: event.fundingUsd ?? 0,
     realizedUsd: event.realizedUsd ?? 0,
     note: event.note ?? null,
+    ...(event.meta ? { meta: event.meta } : {}),
   };
   engineState.ledger.push(stored);
   return stored;
+}
+
+// ── Delivery-price reconcile (S0 otm-scanner; P0 of the 2026-07-19 audit) ───────────────────────
+// planSettleAdjustments(ledger, deliveryByDate) → [{ srcSeq, date, proxyPrice, deliveryPrice,
+// adjustUsd }]. settleStructure settles on the index snapshot — an honest PROXY of Deribit's real
+// delivery price (30-min index TWAP before 08:00 UTC). Once the official delivery price for the
+// expiry DATE (UTC) is known, the correction is unit·(intrinsic(delivery) − intrinsic(proxy)) — the
+// entry debit cancels in the difference. Pending = settle-options rows carrying meta {expiryMs,
+// strikes, unit} with no settle-adjust row pointing back via meta.srcSeq. Dates absent from
+// deliveryByDate stay pending (delivery publishes shortly after 08:00 UTC — the next pass gets them).
+// Pure: the CALLER books the result (realizedOptionsUsd += adjustUsd + a settle-adjust row).
+export function planSettleAdjustments(ledger, deliveryByDate) {
+  const rows = Array.isArray(ledger) ? ledger : [];
+  const adjusted = new Set(
+    rows.filter((r) => r.type === "settle-adjust" && r.meta?.srcSeq != null).map((r) => r.meta.srcSeq),
+  );
+  const out = [];
+  for (const r of rows) {
+    if (r.type !== "settle-options" || !r.meta || adjusted.has(r.seq)) continue;
+    const { expiryMs, strikes, unit } = r.meta;
+    if (!Number.isFinite(expiryMs) || !strikes || !Number.isFinite(unit)) continue;
+    const date = new Date(expiryMs).toISOString().slice(0, 10);
+    const deliveryPrice = deliveryByDate ? deliveryByDate[date] : undefined;
+    if (!Number.isFinite(deliveryPrice)) continue;
+    const adjustUsd = unit * (intrinsicAt(strikes, deliveryPrice) - intrinsicAt(strikes, r.priceRef));
+    out.push({ srcSeq: r.seq, date, proxyPrice: r.priceRef, deliveryPrice, adjustUsd });
+  }
+  return out;
 }
 
 // ── Reconciliation ──────────────────────────────────────────────────────────────────────────────

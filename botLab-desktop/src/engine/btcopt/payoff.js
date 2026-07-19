@@ -10,12 +10,18 @@ const unitOf = (structure) => {
   return (leg0.qtyAbs ?? 1) * (leg0.contractSize ?? 1);
 };
 
+// Per-unit terminal intrinsic of the winged straddle at S_T (price terms, debit-free). Exported for
+// the delivery-price reconcile (S0 otm-scanner): the adjustment between two settlement prices is
+// unit·(intrinsic(S₁) − intrinsic(S₂)) — the debit cancels in the difference.
+export function intrinsicAt(strikes, S_T) {
+  const { atm: K, kc: Kc, kp: Kp } = strikes;
+  return clamp0(S_T - K) + clamp0(K - S_T) - clamp0(S_T - Kc) - clamp0(Kp - S_T);
+}
+
 // Terminal payoff (USD) at underlying S_T:
 //   q·cs·[ max(S−K,0) + max(K−S,0) − max(S−Kc,0) − max(Kp−S,0) ] − entryDebitUsd
 export function payoffAt(structure, S_T) {
-  const { atm: K, kc: Kc, kp: Kp } = structure.strikes;
-  const intrinsic = clamp0(S_T - K) + clamp0(K - S_T) - clamp0(S_T - Kc) - clamp0(Kp - S_T);
-  return unitOf(structure) * intrinsic - structure.entryDebitUsd;
+  return unitOf(structure) * intrinsicAt(structure.strikes, S_T) - structure.entryDebitUsd;
 }
 
 // The break-evens either side of the ATM floor — K ± D/(q·cs) — but ONLY where the tent actually
