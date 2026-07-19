@@ -854,6 +854,53 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
 .opt-tick{ animation:optTick .12s ease-out 1; }
 @media (prefers-reduced-motion:reduce){ .opt-tick{ animation:none; } .decision-token,.opt-bar .fill{ transition:none; }
   #optHedgeStamp.tick .blip,#optLedgerUpdated.tick .blip{ animation:none; } }
+
+/* ── OTM-сканер (S3a) — только существующие токены, ни одного нового примитива (ui-spec §11.5) ── */
+/* групповой подзаголовок строк чеклиста — типографика .subhdr внутри table.scan */
+table.scan tr.grp td{ font-size:10px; letter-spacing:.8px; text-transform:uppercase;
+  color:var(--txt-faint); font-weight:700; background:var(--inset); }
+/* жирный моно-вердикт tri-state (глиф + слово; цвет — утилитами .pos/.dim/.neu) */
+td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
+/* длинные note-значения чеклиста переносятся: колонки «Вердикт» и «Возраст» не уезжают в прокрутку */
+#scnChecklistTable td.lft.n{ white-space:normal; }
+/* варианты заливки .opt-bar по образцу .benefit/.cost: armed = действие (акцент),
+   wait = пауза (амбер), rate = нейтральная частота телеметрии */
+.opt-bar.armed .track{ background:var(--accent-bg); } .opt-bar.armed .fill{ background:var(--accent); }
+.opt-bar.wait  .track{ background:var(--neu-bg); }    .opt-bar.wait  .fill{ background:var(--neu); }
+.opt-bar.rate  .track{ background:var(--inset); }     .opt-bar.rate  .fill{ background:var(--txt-dim); }
+/* акцентный чип CALL/PUT/ядро — копия стиля .chip.B, семантическое имя (направление, не денежный поток) */
+.chip.side{ color:var(--accent); background:var(--accent-bg); border:1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+/* полая точка токена (ОЖИДАНИЕ/ФОРМИРУЕТСЯ — «ещё не событие»): инсет-кольцо тем же currentColor */
+.decision-token.hollow .dot{ background:transparent; box-shadow:inset 0 0 0 2.5px currentColor; }
+/* «коронка» карты сигнала — копия #optHedgeCard::before */
+#scnSignalCard{ position:relative; overflow:hidden; }
+#scnSignalCard::before{ content:""; position:absolute; inset:0 0 auto 0; height:2px;
+  background:linear-gradient(90deg, transparent, var(--accent), transparent); opacity:.55; }
+/* idle-паттерн зоны Ⅱ сканера (образец .zone.idle #optTradeGrid) */
+.zone.idle #scnEvalGrid{ display:none; }
+/* пунктирная рекомендация пресета при флаге события — статичная рамка, рекомендация не тревога */
+.assetsel button.reco{ outline:1px dashed var(--accent); outline-offset:2px; }
+/* инпуты редактора порогов — стиль инпутов тулбара бота 2 (optQty), вынесен в правило,
+   чтобы не повторять inline-стиль на ~20 полях; те же токены, ничего нового */
+#scnPresetCard .dl .row .v{ display:flex; align-items:center; gap:6px; justify-content:flex-end; }
+#scnPresetCard .dl .row .v input[type="number"]{ width:88px; font:600 12.5px var(--f-mono); color:var(--txt);
+  background:var(--panel-2); border:1px solid var(--line-2); border-radius:6px; padding:5px 8px; text-align:right; }
+#scnPresetCard .dl .row .v input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 1px var(--accent-bg); }
+#scnPresetCard .dl .row .v input[aria-invalid="true"]{ border-color:var(--neg); }
+#scnPresetCard .seg button{ padding:3px 8px; font-size:10.5px; }
+/* полоса pass-rate в строке .dl: трек фиксированной ширины рядом с процентом */
+.dl .row .v .ratebar{ display:inline-block; width:86px; height:8px; border-radius:4px;
+  border:1px solid var(--line); background:var(--inset); overflow:hidden; vertical-align:middle; margin-right:8px; }
+.dl .row .v .ratebar i{ display:block; height:100%; background:var(--txt-dim);
+  transform-origin:left center; transform:scaleX(0); transition:transform .3s ease; }
+/* штамп журнала сигналов — реиспользуем keyframes ledgerBlip (словарь бота 2) */
+#scnJournalUpdated .blip, #scnEvalStamp .blip{ display:inline-block; width:6px; height:6px; border-radius:50%;
+  background:var(--txt-faint); margin-right:6px; vertical-align:1px; }
+#scnJournalUpdated.tick .blip{ background:var(--pos); animation:ledgerBlip 1s ease-out 1; }
+#scnEvalStamp.tick .blip{ background:var(--accent); animation:ledgerBlip 1s ease-out 1; }
+@media (prefers-reduced-motion:reduce){
+  #scnJournalUpdated.tick .blip, #scnEvalStamp.tick .blip{ animation:none; }
+  .dl .row .v .ratebar i{ transition:none; } }
 </style>
 </head>
 <body>
@@ -870,6 +917,7 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
       <button role="tab" id="tab-home" aria-controls="view-home" aria-selected="true" tabindex="0" class="tab">Обзор</button>
       <button role="tab" id="tab-funding-arb" aria-controls="view-funding-arb" aria-selected="false" tabindex="-1" class="tab"><span class="bot-dot idle" aria-hidden="true"></span>Funding-arb<span class="sr-only" id="tabStatus-funding-arb">, не запущен</span></button>
       <button role="tab" id="tab-btc-options" aria-controls="view-btc-options" aria-selected="false" tabindex="-1" class="tab"><span class="bot-dot idle" aria-hidden="true"></span>BTC-опционы<span class="sr-only" id="tabStatus-btc-options">, готовится</span></button>
+      <button role="tab" id="tab-otm-scanner" aria-controls="view-otm-scanner" aria-selected="false" tabindex="-1" class="tab"><span class="bot-dot idle" aria-hidden="true"></span>Сканер<span class="sr-only" id="tabStatus-otm-scanner">, не запущен</span></button>
     </div>
 
     <span class="spacer"></span>
@@ -943,6 +991,19 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
         <p class="bc-desc">Крылатый стрэддл на BTC-опционах + дельта-хедж перпом · живые данные Deribit</p>
         <div class="bc-foot">
           <span id="card-status-btc-options">○ каркас модуля готов — UI по фазам</span>
+          <span class="bc-open">Открыть <span class="arw">→</span></span>
+        </div>
+      </button>
+
+      <button class="botcard" type="button" data-open="otm-scanner">
+        <div class="bc-top">
+          <span class="bot-dot idle" id="card-dot-otm-scanner" aria-hidden="true"></span>
+          <span class="bc-name">OTM-сканер</span>
+          <span class="bc-tag idle" id="card-tag-otm-scanner">НЕ ЗАПУЩЕН</span>
+        </div>
+        <p class="bc-desc">Сканер точек входа для покупки OTM-опционов BTC · чеклист условий · живые данные Deribit</p>
+        <div class="bc-foot">
+          <span id="card-status-otm-scanner">○ не запущен — откройте вкладку, чтобы начать сканирование</span>
           <span class="bc-open">Открыть <span class="arw">→</span></span>
         </div>
       </button>
@@ -1963,6 +2024,373 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
       </div>
       <div class="foot-src">
         <span>Источники: Deribit public API (mark, mark_iv, greeks, underlying/index) · без ключей, только чтение</span>
+      </div>
+    </footer>
+
+  </section>
+
+  <!-- ═══════════════════════ ВИД · OTM-СКАНЕР (S3a) — сигналы, не сделки ═══════════════════════ -->
+  <section id="view-otm-scanner" role="tabpanel" aria-labelledby="tab-otm-scanner" tabindex="-1" class="view" hidden>
+
+    <!-- ═══════════ ЗОНА Ⅱ · СИГНАЛ OTM · ЖИВАЯ ОЦЕНКА (amber) ═══════════ -->
+    <section id="scnZoneSignal" class="zone zone-trade reveal" style="animation-delay:.03s"
+             aria-labelledby="scnZoneSignalHead" tabindex="-1">
+      <div class="zone-head">
+        <span class="zn" id="scnZoneSignalHead">Ⅱ · Сигнал OTM · живая оценка</span>
+        <span class="tag">наблюдение · без ордеров</span>
+        <span class="rule"></span>
+        <span class="hint">сканер ничего не торгует — только сигналит</span>
+      </div>
+
+      <div class="trade-empty" id="scnScanEmpty" role="status">
+        <span>○ сканер запускается — загрузка цепочки Deribit и первичных данных. Чеклист оживёт после первого опроса.</span>
+      </div>
+
+      <div class="opt-grid" id="scnEvalGrid">
+        <!-- ── Сигнал · состояние ── -->
+        <div class="card" id="scnSignalCard">
+          <div class="sec-head">
+            <h2>Сигнал · состояние</h2>
+            <button class="help-btn" data-help="opt-scan-signal">?</button>
+            <span class="cfg-pill" id="scnSigPreset">пресет <b>—</b></span>
+            <span class="tag amber" id="scnSigEventTag" hidden>событие ≤48ч</span>
+            <span class="rule"></span>
+            <span class="stamp" id="scnEvalStamp"><span class="blip" aria-hidden="true"></span><span id="scnEvalStampTxt">оценка —</span></span>
+          </div>
+          <div class="opt-decision" style="border-left:0;padding-left:0" aria-live="assertive" aria-atomic="true">
+            <div class="decision-token dim" id="scnSignalToken"><span class="dot"></span>ОЖИДАНИЕ</div>
+            <div class="mono dim" id="scnSignalReason">счёт — · ожидание данных</div>
+          </div>
+          <div class="opt-bar armed" id="scnSignalBar" hidden>
+            <div class="lbl"><span id="scnSignalBarLbl">—</span><span class="num" id="scnSignalBarVal">—</span></div>
+            <div class="track"><div class="fill" id="scnSignalBarFill"></div></div>
+          </div>
+          <div class="dl" id="scnSignalRows">
+            <div class="row"><span class="k">инструмент</span><span class="v num sym" id="scnSigInstrument">—</span></div>
+            <div class="row"><span class="k">сторона <small>задана У4</small></span><span class="v" id="scnSigSide">—</span></div>
+            <div class="row"><span class="k">размер · подсказка <small>не ордер</small></span><span class="v num" id="scnSigQty">—</span></div>
+            <div class="row"><span class="k">TTL до</span><span class="v num" id="scnSigTtl">—</span></div>
+            <div class="row"><span class="k">событие</span><span class="v num" id="scnSigEvent">—</span></div>
+          </div>
+          <div class="launch-row">
+            <button id="scnHandoffBtn" class="paperbtn" disabled aria-disabled="true"
+                    aria-describedby="scnHandoffHint">▶ Передать в бот 2 (Paper)</button>
+            <span class="hint" id="scnHandoffHint">появится в фазе S4 — бумажное исполнение сигнала в модуле «BTC-опционы»</span>
+          </div>
+        </div>
+
+        <!-- ── Чеклист условий (сердце модуля) ── -->
+        <div class="card flush" id="scnChecklistCard">
+          <div class="sec-head" style="padding:16px 16px 0;margin-bottom:10px">
+            <h2>Чеклист условий</h2>
+            <button class="help-btn" data-help="opt-scan-checklist">?</button>
+            <span class="tag" id="scnModeTag">строгий И</span>
+            <span class="cfg-pill" id="scnScorePill" aria-live="polite">счёт <b>—</b></span>
+            <span class="rule"></span><span class="hint">unknown блокирует в строгом режиме</span>
+          </div>
+          <div class="table-scroll" style="max-height:420px">
+            <table class="scan" id="scnChecklistTable">
+              <caption class="sr-only">Чеклист условий входа: значение, порог, вердикт и возраст данных</caption>
+              <thead><tr>
+                <th scope="col">№</th><th class="lft" scope="col">Условие</th>
+                <th class="lft" scope="col">Значение</th><th scope="col">Порог</th>
+                <th scope="col">Вердикт</th><th scope="col">Возраст</th>
+              </tr></thead>
+              <tbody id="scnChecklistBody">
+                <tr><td class="lft faint" colspan="6">загрузка цепочки Deribit…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ── Кандидаты в σ-окне + экономика лучшего (А5) ── -->
+        <div class="card flush span2" id="scnCandCard">
+          <div class="sec-head" style="padding:16px 16px 0;margin-bottom:8px">
+            <h2>Кандидаты в σ-окне</h2>
+            <button class="help-btn" data-help="opt-scan-cand">?</button>
+            <span class="tag" id="scnCandWindowTag">окно —</span>
+            <span class="rule"></span>
+            <span class="hint">лучший кандидат подсвечен · сторона задана У4</span>
+          </div>
+          <div class="table-scroll" style="max-height:240px">
+            <table class="scan" id="scnCandTable">
+              <caption class="sr-only">Кандидаты в сигма-окне: параметры инструмента и вердикты условий</caption>
+              <thead><tr>
+                <th class="lft" scope="col">Инструмент</th><th class="lft" scope="col">Тип</th>
+                <th scope="col">Страйк</th><th scope="col">σ-дист</th><th scope="col">Эксп.</th>
+                <th scope="col">Премия %</th><th scope="col">Спред %</th><th scope="col">Глубина $</th>
+                <th scope="col">Тета %/сут</th><th scope="col">IV</th><th scope="col">У9–14</th>
+              </tr></thead>
+              <tbody id="scnCandBody">
+                <tr><td class="lft faint" colspan="11" id="scnCandEmpty">загрузка цепочки Deribit…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <!-- А5-аддендум: экономика сделки лучшего кандидата — факты гейта и модельная аналитика -->
+          <div class="two-col" style="margin:12px 16px 16px">
+            <div>
+              <div class="subhdr">Экономика сделки · лучший кандидат <span class="faint">(факты · гейт У14)</span></div>
+              <div class="dl" id="scnEconRows">
+                <div class="row"><span class="k">издержки туда-обратно <small>комиссии + спред</small></span><span class="v num" id="scnEcRt">—</span></div>
+                <div class="row"><span class="k">безубыток по марку <small>рост премии</small></span><span class="v num" id="scnEcBe">—</span></div>
+                <div class="row"><span class="k">минимальный депозит <small>для риск-дисциплины</small></span><span class="v num" id="scnEcMinCap">—</span></div>
+                <div class="row"><span class="k">фактический риск <small>после лот-округления</small></span><span class="v num" id="scnEcRisk">—</span></div>
+                <div class="row"><span class="k">размер · кэп глубины <small>≤ доли книги</small></span><span class="v num" id="scnEcDepth">—</span></div>
+              </div>
+            </div>
+            <div>
+              <div class="subhdr">Модельная аналитика <span class="faint">(оценка · не гейт)</span></div>
+              <div class="dl" id="scnEconModelRows">
+                <div class="row"><span class="k">P(ITM) <small>N(d2) · логнормальное допущение</small></span><span class="v num" id="scnEcPitm">—</span></div>
+                <div class="row"><span class="k">окупается при движении <small>дельта-оценка</small></span><span class="v num" id="scnEcBeSigma">—</span></div>
+                <div class="row"><span class="k">сценарий 24ч · ±0.5σ <small>греки − издержки</small></span><span class="v num" id="scnEcScn05">—</span></div>
+                <div class="row"><span class="k">сценарий 24ч · ±1σ <small>греки − издержки</small></span><span class="v num" id="scnEcScn10">—</span></div>
+              </div>
+              <div class="hint" id="scnEconNote" style="margin-top:6px">модель никогда не решает вход — решает чеклист</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Журнал сигналов ── -->
+        <div class="card flush span2" id="scnJournalCard">
+          <div class="sec-head" style="padding:16px 16px 0;margin-bottom:8px">
+            <h2>Журнал сигналов</h2>
+            <button class="help-btn" data-help="opt-scan-journal">?</button>
+            <span class="rule"></span>
+            <span class="stamp" id="scnJournalUpdated"><span class="blip" aria-hidden="true"></span><span id="scnJournalUpdatedTxt" aria-live="polite" role="status">—</span></span>
+            <div class="lexport" style="margin-left:10px">
+              <button id="scnJournalExportCsv" class="paperbtn mini">CSV</button>
+            </div>
+          </div>
+          <div id="scnJournalMsg" class="ledger-msg" role="status" hidden></div>
+          <div class="table-scroll" id="scnJournalScroll" style="max-height:300px" tabindex="0" role="region"
+               aria-label="Журнал сигналов, прокручиваемая таблица">
+            <table class="raw" id="scnJournalTable">
+              <caption class="sr-only">Журнал сигналов сканера</caption>
+              <thead><tr>
+                <th class="lft" scope="col">Время UTC</th><th class="lft" scope="col">Исход</th>
+                <th scope="col">Сторона</th><th class="lft" scope="col">Инструмент</th>
+                <th scope="col">Счёт</th><th class="lft" scope="col">Пресет</th>
+                <th scope="col">Соб.</th><th scope="col">TTL</th>
+              </tr></thead>
+              <tbody id="scnJournalBody"></tbody>
+            </table>
+            <div class="ledger-empty" id="scnJournalEmpty">сигналов ещё не было — журнал заполнится после первого события СИГНАЛ</div>
+          </div>
+          <div class="ledger-foot"><span class="hint" id="scnJournalCount">—</span></div>
+        </div>
+      </div>
+    </section><!-- /scnZoneSignal -->
+
+    <!-- ═══════════ ЗОНА Ⅰ · НАСТРОЙКА И КАЧЕСТВО (blue) ═══════════ -->
+    <section id="scnZoneTune" class="zone zone-analysis reveal" style="animation-delay:.08s"
+             aria-labelledby="scnZoneTuneHead">
+      <div class="zone-head">
+        <span class="zn" id="scnZoneTuneHead">Ⅰ · Настройка и качество</span>
+        <span class="tag">пороги · пресеты · телеметрия</span>
+        <span class="rule"></span>
+        <span class="hint">применяется сразу · сигнал помнит пресет рождения</span>
+      </div>
+
+      <!-- ── Тулбар: пресет, режим, флаг события (sticky) ── -->
+      <nav class="toolbar reveal" id="scnToolbar" aria-label="Пресет, режим агрегации и флаг события">
+        <div class="ctl">
+          <label id="scnPresetLbl">Пресет</label>
+          <div class="assetsel" id="scnPresetSel" role="group" aria-labelledby="scnPresetLbl">
+            <button type="button" data-v="dmitri-v1" aria-pressed="true">Дмитрий v1</button>
+            <button type="button" data-v="dmitri-v2" aria-pressed="false">Дмитрий v2.0</button>
+            <button type="button" data-v="calibrated" aria-pressed="false">Калиброванный</button>
+          </div>
+        </div>
+        <div class="ctl">
+          <label>Режим</label>
+          <div class="seg" id="scnModeSel" role="group" aria-label="Режим агрегации условий">
+            <button data-v="AND" aria-pressed="true">строгий И</button>
+            <button data-v="score" aria-pressed="false">скоринг ≥10</button>
+          </div>
+        </div>
+        <div class="ctl">
+          <label>Событие ≤48ч</label>
+          <div class="seg" id="scnEventSel" role="group" aria-label="Флаг макро-события">
+            <button data-v="off" aria-pressed="true">выкл</button>
+            <button data-v="on" aria-pressed="false">вкл</button>
+          </div>
+        </div>
+        <div class="ctl">
+          <label for="scnEventNote">пометка</label>
+          <input id="scnEventNote" class="num" type="text" maxlength="24" placeholder="CPI · FOMC…" disabled
+                 style="width:110px;font:600 12.5px var(--f-mono);color:var(--txt);background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;padding:6px 9px">
+        </div>
+        <div class="ctl">
+          <label>горизонт</label>
+          <div class="seg" id="scnEventHorizonSel" role="group" aria-label="Горизонт события">
+            <button data-v="24" class="num" aria-pressed="false" disabled>24ч</button>
+            <button data-v="48" class="num" aria-pressed="true" disabled>48ч</button>
+          </div>
+        </div>
+        <div class="ctl" style="justify-content:center;margin-left:auto">
+          <label aria-hidden="true">&nbsp;</label>
+          <button id="scnRecalcBtn" class="recalc-btn" title="Внеочередной опрос Deribit и немедленная переоценка чеклиста">⟳ Оценить сейчас</button>
+        </div>
+        <div class="ctl" style="justify-content:center">
+          <label aria-hidden="true">&nbsp;</label>
+          <button class="help-btn" data-help="opt-scan-toolbar">?</button>
+        </div>
+      </nav>
+
+      <section class="grid reveal" style="animation-delay:.1s">
+        <div class="two-col">
+          <!-- ── Пороги пресета (редактор) ── -->
+          <div class="card" id="scnPresetCard">
+            <div class="sec-head">
+              <h2>Пороги пресета</h2>
+              <button class="help-btn" data-help="opt-scan-presets">?</button>
+              <span class="tag amber" id="scnPresetTag" hidden>не сохранён</span>
+              <span class="rule"></span>
+              <span class="hint">blur-проверка · неверное не применяется</span>
+            </div>
+            <div class="subhdr">По активу</div>
+            <div class="dl">
+              <div class="row"><span class="k">У2 · режим недооценки IV</span><span class="v">
+                <div class="seg" id="scnThUvModeSel" role="group" aria-label="Режим фильтра недооценки IV">
+                  <button data-v="rvMargin" aria-pressed="false">RV−ΔIV</button>
+                  <button data-v="baselineRatio" aria-pressed="false">k×base</button>
+                  <button data-v="both" aria-pressed="false">оба</button>
+                </div></span></div>
+              <div class="row"><span class="k">У2 · мин. спред RV−IV <small>п.п.</small></span><span class="v"><input id="scnThUvVal" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У2 · кэп IV к базе DVOL <small>×</small></span><span class="v"><input id="scnThUvK" type="number" step="0.05" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У3 · подтверждение RV3d</span><span class="v">
+                <div class="seg" id="scnThRv3dSel" role="group" aria-label="Подтверждение коротким RV"><button data-v="on" aria-pressed="false">вкл</button><button data-v="off" aria-pressed="false">выкл</button></div></span></div>
+              <div class="row"><span class="k">У4 · порог импульса <small>σ</small></span><span class="v"><input id="scnThImpulse" type="number" step="0.1" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У5 · фильтр тренда EMA20</span><span class="v">
+                <div class="seg" id="scnThEmaSel" role="group" aria-label="Фильтр тренда"><button data-v="on" aria-pressed="false">вкл</button><button data-v="off" aria-pressed="false">выкл</button></div></span></div>
+              <div class="row"><span class="k">У6 · мин. дисконт fwd-IV <small>п.п. · в выходные всегда выкл</small></span><span class="v"><input id="scnThFwd" type="number" step="0.1" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У6 · far-экспирация от <small>дней</small></span><span class="v"><input id="scnThFwdFar" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У7 · режим skew</span><span class="v">
+                <div class="seg" id="scnThSkewModeSel" role="group" aria-label="Режим skew"><button data-v="off" aria-pressed="false">выкл</button><button data-v="info" aria-pressed="false">инфо</button><button data-v="gate" aria-pressed="false">гейт</button></div></span></div>
+              <div class="row"><span class="k">У7 · порог skew <small>п.п.</small></span><span class="v"><input id="scnThSkewVal" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У8 · дисбаланс стакана <small>Д5 не ратифицирован</small></span><span class="v">
+                <div class="seg" id="scnThBookSel" role="group" aria-label="Дисбаланс стакана"><button data-v="off" aria-pressed="false">выкл</button><button data-v="on" aria-pressed="false">вкл</button></div></span></div>
+              <div class="row"><span class="k">У8 · порог дисбаланса <small>×</small></span><span class="v"><input id="scnThBookVal" type="number" step="0.1" inputmode="decimal" aria-invalid="false"></span></div>
+            </div>
+            <div class="subhdr">По инструменту</div>
+            <div class="dl">
+              <div class="row"><span class="k">У9 · σ-окно страйка <small>мин · макс</small></span><span class="v"><input id="scnThSigMin" type="number" step="0.05" inputmode="decimal" aria-invalid="false"><input id="scnThSigMax" type="number" step="0.05" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">окно экспираций <small>часов · мин · макс</small></span><span class="v"><input id="scnThExpMinH" type="number" step="1" inputmode="numeric" aria-invalid="false"><input id="scnThExpMaxH" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У10 · макс. премия <small>% спота</small></span><span class="v"><input id="scnThPremCap" type="number" step="0.05" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У11 · макс. спред <small>% премии</small></span><span class="v"><input id="scnThSpreadCap" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У12 · режим глубины</span><span class="v">
+                <div class="seg" id="scnThDepthModeSel" role="group" aria-label="Режим глубины книги"><button data-v="usd" aria-pressed="false">$</button><button data-v="xPremium" aria-pressed="false">×премии</button></div></span></div>
+              <div class="row"><span class="k">У12 · мин. глубина <small>$ · не откалибровано</small></span><span class="v"><input id="scnThDepthMin" type="number" step="100" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У12 · глубина к премии <small>×</small></span><span class="v"><input id="scnThDepthX" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У13 · макс. тета <small>%/сут</small></span><span class="v"><input id="scnThThetaCap" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У14 · макс. издержки <small>% премии · ядро</small></span><span class="v"><input id="scnThCostCap" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">размер · кэп глубины <small>% книги</small></span><span class="v"><input id="scnThQtyDepth" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">модель исполнения <small>вход</small></span><span class="v">
+                <div class="seg" id="scnThExecSel" role="group" aria-label="Модель исполнения"><button data-v="maker-mid" aria-pressed="false">мейкер-mid</button><button data-v="taker-cross" aria-pressed="false">тейкер-кросс</button></div></span></div>
+            </div>
+            <div class="subhdr">Механика сигнала</div>
+            <div class="dl">
+              <div class="row"><span class="k">dwell · дожим <small>тиков подряд</small></span><span class="v"><input id="scnThDwell" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">TTL сигнала <small>мин</small></span><span class="v"><input id="scnThTtl" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">кулдаун <small>мин</small></span><span class="v"><input id="scnThCooldown" type="number" step="5" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">скоринг N <small>ядро У1+У10+У14 обязательно всегда</small></span><span class="v"><input id="scnThScoreN" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+            </div>
+            <div id="scnPresetErr" class="ticket-err" role="alert" hidden></div>
+            <div class="launch-row">
+              <button id="scnPresetSave" class="paperbtn mini">сохранить в «Калиброванный»</button>
+              <button id="scnPresetReset" class="paperbtn mini">сброс к базе</button>
+              <span class="hint">механика (dwell · TTL · кулдаун) применяется как настройка, вне пресета</span>
+            </div>
+          </div>
+
+          <!-- ── Панель честности · pass-rate ── -->
+          <div class="card" id="scnTelemetryCard">
+            <div class="sec-head">
+              <h2>Панель честности · pass-rate</h2>
+              <button class="help-btn" data-help="opt-scan-telemetry">?</button>
+              <div class="seg" id="scnTelemetryWinSel" role="group" aria-label="Окно телеметрии">
+                <button data-v="session" aria-pressed="true">сессия</button>
+                <button data-v="h24" aria-pressed="false">24ч</button>
+              </div>
+              <span class="rule"></span>
+              <span class="hint" id="scnTelemetryEvals">оценок —</span>
+              <div class="lexport" style="margin-left:10px">
+                <button id="scnTelemetryExportCsv" class="paperbtn mini">CSV</button>
+              </div>
+            </div>
+            <div class="dl" id="scnTelemetryRows">
+              <div class="row"><span class="k faint">телеметрия копится с запуска сканера</span><span class="v num">—</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid reveal" style="animation-delay:.12s">
+        <div class="transparency">
+          <!-- ── Качество данных ── -->
+          <div class="card" id="scnHealthCard">
+            <div class="sec-head">
+              <h2>Качество данных Deribit</h2>
+              <button class="help-btn" data-help="opt-scan-health">?</button>
+              <span class="tag green">public API · read-only</span>
+              <span class="tag amber" id="scnTestnetTag" hidden>TESTNET</span>
+              <span class="rule"></span>
+              <span class="stamp">
+                <button class="live" id="scnLiveBtn" title="Внеочередной опрос Deribit (опрос идёт автоматически по кадансу сканера)">
+                  <span class="led"></span><span id="scnLiveTxt">НЕТ ДАННЫХ</span><span aria-hidden="true" style="opacity:.55">⟳</span>
+                </button>
+              </span>
+            </div>
+            <div class="dl" aria-live="polite">
+              <div class="row"><span class="k"><span class="ic" style="background:var(--price)"></span>тикеры <small>перп + опционы</small></span><span class="v num" id="scnHtTickers">—</span></div>
+              <div class="row"><span class="k"><span class="ic" style="background:var(--pos)"></span>свечи · RV</span><span class="v num" id="scnHtCandles">—</span></div>
+              <div class="row"><span class="k"><span class="ic" style="background:var(--accent)"></span>DVOL</span><span class="v num" id="scnHtDvol">—</span></div>
+              <div class="row"><span class="k"><span class="ic" style="background:var(--neu)"></span>книга <small>стакан финалиста</small></span><span class="v num" id="scnHtBook">—</span></div>
+              <div class="row"><span class="k"><span class="ic" style="background:var(--slate)"></span>цепочка опционов</span><span class="v num" id="scnHtChain">—</span></div>
+              <div class="row"><span class="k">блэкаут</span><span class="v num" id="scnHtBlackout">—</span></div>
+              <div class="row"><span class="k">RTT</span><span class="v num" id="scnHtRtt">—</span></div>
+            </div>
+            <div id="scnConnStamp" class="foot-src" style="margin-top:10px" aria-live="polite">источник не запущен — сканирование начнётся при первом показе вкладки</div>
+          </div>
+
+          <!-- ── RV против IV (базис ядра) ── -->
+          <div class="card" id="scnVolCard">
+            <div class="sec-head">
+              <h2>RV против IV</h2>
+              <button class="help-btn" data-help="opt-scan-vol">?</button>
+              <span class="tag" id="scnVolTag">история сессии</span>
+              <span class="rule"></span>
+              <span class="hint">заливка — зона недооценки (ядро У1)</span>
+            </div>
+            <div class="chart-box">
+              <canvas id="scnVolCanvas" class="legs-canvas" aria-label="Реализованная волатильность RV7d против подразумеваемой IV во времени"></canvas>
+              <div class="chart-tip" id="scnVolTip"></div>
+            </div>
+            <div class="legend">
+              <div class="it"><span class="sw line" style="background:var(--price)"></span>RV7d</div>
+              <div class="it"><span class="sw line" style="background:var(--accent)"></span>ATM IV</div>
+              <div class="it"><span class="sw" style="background:color-mix(in srgb, var(--pos) 14%, transparent)"></span>зона недооценки</div>
+              <div class="it"><span class="sw" style="background:var(--accent)"></span>сигнал</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section><!-- /scnZoneTune -->
+
+    <!-- ═══════════ FOOTER · риски и допущения ═══════════ -->
+    <footer class="footer reveal" style="animation-delay:.16s">
+      <h3>Риски, допущения и ограничения модели</h3>
+      <div class="disc">
+        <div class="d"><span class="i r">P</span><span><b>Режим PAPER (наблюдение).</b> Сканер читает публичные данные Deribit и не отправляет ордеров — даже бумажных. Сигнал — это информация, а не сделка.</span></div>
+        <div class="d"><span class="i a">U</span><span><b>Unknown — не провал.</b> ◌ н/д означает, что данных нет или они протухли; в строгом режиме такой чеклист блокирует сигнал: лучше промолчать, чем сигналить на мусоре.</span></div>
+        <div class="d"><span class="i a">B</span><span><b>Блэкаут-окна.</b> В окно расчёта Deribit (08:00 UTC) и перед экспирацией новые сигналы не создаются — цены и ликвидность ненадёжны; активный сигнал доживает свой TTL.</span></div>
+        <div class="d"><span class="i b">S</span><span><b>Сигнал — снимок.</b> Оценка живая и меняется с параметрами; рождённый сигнал запоминает пресет, счёт и значения условий на момент рождения и не переоценивается задним числом.</span></div>
+        <div class="d"><span class="i b">T</span><span><b>Панель честности.</b> Pass-rate показывает, как часто реально проходит каждое условие; порог, который не срабатывает никогда, — повод для калибровки, а не для гордости.</span></div>
+        <div class="d"><span class="i a">D</span><span><b>Пороги — гипотеза Дмитрия.</b> Пресеты v1/v2.0 отражают чеклист заказчика; «Калиброванный» — слот для правок после обкатки. Сканер не советует, он проверяет заданное.</span></div>
+      </div>
+      <div class="foot-src">
+        <span>Источники: Deribit public API (tickers, book, candles, DVOL, instruments) · без ключей, только чтение · v1: только BTC</span>
       </div>
     </footer>
 
@@ -3803,7 +4231,76 @@ const HELP_BTC_OPTIONS = {
     '<li><b>Волатильность</b> <span class="fx">ΔV ≈ net_vega·ΔIV</span> на ±25 vol; <b>фандинг ×3</b> — начисление по перпу за горизонт при утроенной ставке.</li>'+
     '<li>Сдвиги цены наложены синими метками на payoff. Это гипотеза, не бумажный счёт.</li></ul>' },
 };
-const HELP = { ...HELP_CORE, ...HELP_FUNDING_ARB, ...HELP_BTC_OPTIONS };
+
+// HELP_OTM_SCANNER = панели «OTM-сканера» (S3a), неймспейс `opt-scan-*` — никогда не пересекается
+// с ключами оболочки, funding-arb и бота 2. Оракул держит строгую биекцию кнопка ⇄ текст.
+const HELP_OTM_SCANNER = {
+  'opt-scan-signal': { t:'Сигнал · состояния и жизненный цикл', b:
+    '<p>Сканер наблюдает и сигналит — не торгует. Состояния: <b>ОЖИДАНИЕ</b> — условия не сошлись; '+
+    '<b>ФОРМИРУЕТСЯ</b> — сошлись, идёт дожим (dwell) несколько тиков подряд; <b>СИГНАЛ</b> — вход найден, '+
+    'тикает TTL; <b>КУЛДАУН</b> — пауза после сигнала; <b>БЛЭКАУТ</b> — окно расчёта или преэкспирация.</p><ul>'+
+    '<li><b>Сигнал — снимок:</b> он запоминает пресет, счёт и значения условий на момент рождения (в журнале — навсегда).</li>'+
+    '<li><b>Исходы:</b> ИСТЁК — TTL вышел; ОТМЕНЁН — условия распались раньше (ядро — мгновеннее прочих). Оба запускают кулдаун по инструменту и стороне.</li>'+
+    '<li><b>Размер</b> — справочная подсказка из риск-бюджета суб-счёта, не ордер. Кнопка «Передать в бот 2» появится в фазе S4.</li></ul>' },
+  'opt-scan-checklist': { t:'Чеклист условий · tri-state вердикты', b:
+    '<p>14 условий в двух группах: по активу (У1–У8) и по инструменту-кандидату (У9–У14, считаются по '+
+    'лучшему кандидату). Каждая строка: живое значение, порог пресета, вердикт, возраст данных.</p><ul>'+
+    '<li><span class="fx">● да</span> — условие выполнено; <span class="fx">○ нет</span> — не выполнено '+
+    '(это не убыток — просто входа нет); <span class="fx">◌ н/д</span> — данных нет или протухли.</li>'+
+    '<li><b>Строгий И:</b> сигнал только когда все применимые «да» и ни одного «н/д». <b>Скоринг:</b> '+
+    'счёт ≥ N, при этом ядро <span class="fx">У1+У10+У14</span> обязательно всегда; «н/д» в счёт не идёт.</li>'+
+    '<li>«· выкл» — условие отключено пресетом (У8 по умолчанию); «· инфо» — показывается, но не гейтит и в счёт не входит (У7 по умолчанию).</li>'+
+    '<li>У4 задаёт сторону сигнала (CALL/PUT) по направлению импульса; У6 в выходные всегда выкл.</li></ul>' },
+  'opt-scan-cand': { t:'Кандидаты в σ-окне · экономика сделки', b:
+    '<p>Инструменты в σ-диапазоне страйков и окне экспираций пресета (до 6 строк): дистанция в σ, '+
+    'премия в % спота, спред в % премии, глубина книги, тета в %/сут, IV.</p><ul>'+
+    '<li>Колонка <b>У9–14</b> — сколько инструментных гейт-условий кандидат проходит; провалившиеся номера в скобках.</li>'+
+    '<li><b>Лучший</b> подсвечен строкой и чипом — именно его берёт сигнал; группа «по инструменту» в чеклисте считается по нему.</li>'+
+    '<li><b>Экономика сделки</b> (факты): издержки туда-обратно и безубыток — гейт У14; минимальный депозит и кэп глубины — граница риск-дисциплины. '+
+    '<b>Модельная аналитика</b> (P(ITM), сценарии) — подписанная оценка, вход она не решает никогда.</li>'+
+    '<li>Сторона задана У4: кандидаты отбираются только на стороне сигнала.</li></ul>' },
+  'opt-scan-journal': { t:'Журнал сигналов · экспорт', b:
+    '<p>История всех сигналов сессии и прошлых запусков: время рождения, исход, сторона, инструмент, '+
+    'счёт на момент рождения, пресет, пометка события, TTL.</p><ul>'+
+    '<li>Исходы: <b>АКТИВЕН</b> (не больше одного), <b>ИСТЁК</b>, <b>ОТМЕНЁН</b> (причина — во всплывающей подсказке строки).</li>'+
+    '<li>Пресет со звёздочкой — сигнал рождён на несохранённых порогах.</li>'+
+    '<li><b>CSV</b> — всегда полный экспорт журнала, независимо от прокрутки; JSON с полным снимком условий активного сигнала доступен там же в main-экспорте.</li></ul>' },
+  'opt-scan-toolbar': { t:'Пресет, режим агрегации, флаг события', b:
+    '<p>Параметры применяются к оценке немедленно — сканер ничего не держит, замораживать нечего; '+
+    'помнит параметры только рождённый сигнал.</p><ul>'+
+    '<li><b>Пресет</b> — набор порогов всех условий: «Дмитрий v1», «Дмитрий v2.0», «Калиброванный» (пользовательский слот).</li>'+
+    '<li><b>Режим</b> — «строгий И» либо «скоринг ≥N» (N — в порогах; ядро У1+У10+У14 обязательно всегда).</li>'+
+    '<li><b>Событие ≤48ч</b> — ручной флаг (CPI, FOMC…): подсвечивает рекомендуемый пресет пунктиром, попадает в журнал; сам пресет не переключает.</li>'+
+    '<li><b>⟳ Оценить сейчас</b> — внеочередной опрос и пересчёт чеклиста.</li></ul>' },
+  'opt-scan-presets': { t:'Пороги пресета · редактор', b:
+    '<p>Числовые пороги всех 14 условий и механика сигнала (dwell, TTL, кулдаун, N скоринга). '+
+    'Проверка на уходе с поля: неверное значение не применяется и не «исправляется» молча — '+
+    'поле подсвечивается, причина пишется текстом.</p><ul>'+
+    '<li>Любая правка порогов переводит пресет в «не сохранён» (в тулбаре — звёздочка); оценка сразу живёт на новых валидных значениях.</li>'+
+    '<li><b>«сохранить в „Калиброванный"»</b> — записывает текущие пороги в пользовательский слот; <b>«сброс к базе»</b> — возвращает выбранный пресет.</li>'+
+    '<li>Сигнал, рождённый на несохранённых порогах, помечается в журнале звёздочкой.</li>'+
+    '<li>Механика (dwell · TTL · кулдаун) — настройка сканера вне пресета: применяется сразу и не участвует в «не сохранён».</li></ul>' },
+  'opt-scan-telemetry': { t:'Панель честности · pass-rate', b:
+    '<p>Как часто каждое условие реально проходило — за сессию или за 24 часа, на счётчике оценок. '+
+    'Это зеркало порогов, а не рынка.</p><ul>'+
+    '<li><b>0% · «никогда не проходит»</b> — главный вывод панели: порог не срабатывает вообще и, возможно, требует калибровки.</li>'+
+    '<li><b>100% · «всегда»</b> — условие ничего не фильтрует.</li>'+
+    '<li>Проценты считаются по фактическим оценкам условия; выключенные пресетом условия не оцениваются вовсе.</li>'+
+    '<li><b>CSV</b> — экспорт таблицы pass-rate (сессия + суточные вёдра) для отчёта обкатки.</li></ul>' },
+  'opt-scan-health': { t:'Качество данных · свежесть и блэкаут', b:
+    '<p>Свежесть каждого источника Deribit: тикеры, свечи (для RV), DVOL, книга, цепочка опционов. '+
+    'Протухший источник переводит зависящие от него условия в «◌ н/д».</p><ul>'+
+    '<li><b>LIVE</b> — всё свежее; <b>ПРЕДУПР.</b> — часть источников деградировала; <b>УСТАРЕЛО</b> — оценка приостановлена. Клик по индикатору — внеочередной опрос.</li>'+
+    '<li><b>Блэкаут</b> — окно расчёта 08:00 UTC и преэкспирация: новые сигналы не создаются, дожим заморожен.</li>'+
+    '<li><b>RTT</b> — задержка последнего опроса; <b>TESTNET</b> — данные тестовой сети, не боевой; «каданс x2» — авто-деградация после серии ошибок, уходит сама.</li></ul>' },
+  'opt-scan-vol': { t:'RV против IV · базис ядра', b:
+    '<p>Две линии с запуска сканера: реализованная волатильность RV7d и подразумеваемая ATM IV '+
+    '(DVOL-прокси при дырке в ATM-паре). Заливка там, где RV выше IV, — «зона недооценки»: рынок двигается сильнее, '+
+    'чем оценены опционы, — базис условий <span class="fx">У1</span> и <span class="fx">У2</span>.</p><ul>'+
+    '<li>Точки на линии — моменты рождения сигналов: видно, в какой фазе спреда сканер сигналит.</li>'+
+    '<li>История сессионная: копится с запуска сканера, не переживает перезапуск приложения.</li></ul>' },
+};
+const HELP = { ...HELP_CORE, ...HELP_FUNDING_ARB, ...HELP_BTC_OPTIONS, ...HELP_OTM_SCANNER };
 
 // Edge-aware placement shared by the help popover and the updater popover: below the trigger, flipped
 // above when it would overflow the bottom, clamped horizontally to the window (macOS/Windows identical).
@@ -3989,6 +4486,7 @@ $('verPill').onclick = ()=>{
 const BOTS = [
   { id:'funding-arb', ready:true  },
   { id:'btc-options', ready:true  }, // Phase 1: UI собран, живые данные Deribit
+  { id:'otm-scanner', ready:true  }, // S3a: UI собран, живые данные Deribit (сигналы, не сделки)
 ];
 const VIEW_IDS = ['home', ...BOTS.map(b=>b.id)];
 const isReadyBot = id => BOTS.some(b=>b.id===id && b.ready);
@@ -4009,6 +4507,7 @@ function setView(id, opts){
   const bt=$('botTools'); if(bt) bt.hidden = (id!=='funding-arb');
   syncTopbarH(); // высота шапки меняется вместе с видимостью botTools
   if(id==='btc-options' && typeof optOnShow==='function') optOnShow(); // ленивая загрузка цепочки при первом показе
+  if(id==='otm-scanner' && typeof scnOnShow==='function') scnOnShow(); // А4: автостарт опроса при первом показе, дальше фон
   // 4) мотив: один корневой rise (реплей как в кодовой базе), без повторных внутренних каскадов
   const el = viewEl(id);
   if(el){
@@ -4080,6 +4579,26 @@ function refreshOverview(){
   overviewCard('btc-options', s1Run, s1Pnl,
     s1Run ? 'структура открыта · '+optDecisionWord(s1cyc&&s1cyc.decision)+' · P&L нетто <span class="'+clsSign(s1Pnl)+'">'+fmtUSDfull(s1Pnl)+'</span>'
       : '○ структура не открыта — готов к запуску');
+  // — карточка/точка otm-scanner: позиций и P&L нет (pnl=null) — в aggOpen/aggPnl не входит никогда,
+  //   в aggReady входит как модуль (ui-spec §2.9); статус — состояние сигнала —
+  const scn = LIVE_SCN || null, scnCyc = scn && scn.cycle;
+  const scnRun = !!(scn && scn.running);
+  let scnStatus = '○ не запущен — откройте вкладку, чтобы начать сканирование';
+  if(scnRun && scnCyc){
+    const sig = scnCyc.signal, sc = scnCyc.score || {};
+    if(sig){
+      const ttl = scnCyc.lifecycle && scnCyc.lifecycle.ttl;
+      scnStatus = 'сигнал · '+(sig.direction==='call'?'CALL':'PUT')+' <span class="num">'+sig.instrument+'</span>'+
+                  (ttl ? ' · TTL '+scnMMSS(ttl.leftSec) : '');
+    } else {
+      scnStatus = 'сканирует · счёт '+(Number.isFinite(sc.passed)? sc.passed+'/'+sc.applicable : '—')+
+                  ' · сигналов за 24ч: '+scnSignals24h(scnCyc.journal);
+    }
+  } else if(scnRun) scnStatus = 'сканирует · ожидание первого тика';
+  overviewCard('otm-scanner', scnRun, null, scnStatus);
+  // словарь карточки сканера: «СКАНИРУЕТ» вместо «ЗАПУЩЕН» — у сканера нет позиций, он наблюдает
+  const scnTag=$('card-tag-otm-scanner'); if(scnTag && scnRun) scnTag.textContent='СКАНИРУЕТ';
+  const scnSr=$('tabStatus-otm-scanner'); if(scnSr) scnSr.textContent = scnRun ? ', сканирует' : ', не запущен';
 }
 // общий апдейт карточки/точки/вкладки бота в «Обзоре»
 function overviewCard(id, running, pnl, statusHtml){
@@ -5075,14 +5594,730 @@ initOpt();
   }catch(e){ console.warn('s1 getState failed', e); }
 })();
 
+/* ════════════════════════════════════════════════════════════════════════════════════════════════
+   OTM-сканер (S3a) — рендер #view-otm-scanner из живого контракта window.scn (dataset scn:push).
+   Правила: пороги ТОЛЬКО из dataset.preset (UI форматирует, не задаёт); оценка живая — сигнал
+   снимок; деградация данных видима (◌ н/д), никогда не ноль. fa/s1-неймспейсы не тронуты.
+   ════════════════════════════════════════════════════════════════════════════════════════════════ */
+let LIVE_SCN = null;
+let scnStarted = false;                 // А4: автостарт один раз при первом показе вида
+let scnVolRing = [];                    // сессионная история {t, rv, iv, sig} для канваса (умирает с сессией)
+let scnLastCycleTs = null;              // блип штампа оценки
+let scnLastJournalN = -1;               // блип штампа журнала на новой строке
+let scnLastSignalId = null;             // детект рождения (вспышка зоны) и конца сигнала
+let scnEndNote = null;                  // «сигнал истёк · …» — держится в reason до следующей фазы
+let scnTelemetryWin = 'session';        // окно панели честности
+
+// Подписи строк чеклиста (реестр CONDITION_META движка; вердикты/значения/пороги — из dataset)
+const SCN_COND_LABELS = {
+  rv7d_gt_iv:'RV7d выше IV', iv_discount:'запас недооценки IV', rv3d_gt_iv:'RV3d выше IV · доп.',
+  sigma_impulse:'σ-импульс 24ч · сторона', ema_trend:'тренд EMA20 · совпадение',
+  forward_iv:'forward-IV · дисконт', skew:'skew · подтверждение стороны', book_imbalance:'дисбаланс стакана',
+  strike_sigma:'страйк в σ-окне', premium_cap:'премия ≤ лимита', spread_cap:'спред ≤ лимита',
+  depth_min:'глубина книги', theta_cap:'тета ≤ лимита', cost_gate:'издержки ≤ лимита' };
+const SCN_PRESET_LABELS = { 'dmitri-v1':'Дмитрий v1', 'dmitri-v2':'Дмитрий v2.0',
+  calibrated:'Калиброванный', custom:'Калиброванный*' };
+function scnPresetLabel(id){ return SCN_PRESET_LABELS[id] || (LIVE_SCN && LIVE_SCN.preset && LIVE_SCN.preset.id===id && LIVE_SCN.preset.label) || id || '—'; }
+
+/* — мелкие форматтеры домена — */
+function scnMMSS(sec){ if(!Number.isFinite(sec)) return '—'; const m=Math.floor(sec/60), s=Math.max(0,Math.round(sec%60)); return m+':'+String(s).padStart(2,'0'); }
+function scnSignals24h(journal){ const t=Date.now()-86400000; return (journal||[]).filter(e=>e.event==='signal' && e.ts>=t).length; }
+const scnNum = (v,dp)=> Number.isFinite(v) ? String(+v.toFixed(dp==null?2:dp)) : '—';
+const scnAge = s => s==null ? '—' : (s<90 ? Math.round(s)+'с' : Math.round(s/60)+'м');
+const scnUtcHM = ms => { const d=new Date(ms); return String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0'); };
+const scnUtcTs = ms => new Date(ms).toISOString().replace('T',' ').slice(5,19); // MM-DD HH:MM:SS
+const scnExpLbl = ms => { const d=new Date(ms);
+  return d.getUTCDate()+['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getUTCMonth()]; };
+const scnUsd = v => Number.isFinite(v) ? (v<0?'−$':'$')+Math.abs(v).toLocaleString('en-US',{maximumFractionDigits:2}) : '—';
+const scnSideWord = s => s==='call' ? 'CALL' : (s==='put' ? 'PUT' : '—');
+function scnSetHtml(id, html, cls){ const el=$(id); if(!el) return;
+  if(el.innerHTML!==html && smoothOk()){ el.classList.remove('opt-tick'); void el.offsetWidth; el.classList.add('opt-tick'); }
+  el.innerHTML=html; if(cls!=null) el.className=cls; }
+function scnSegPress(id, val){ const el=$(id); if(!el) return;
+  el.querySelectorAll('button').forEach(b=> b.setAttribute('aria-pressed', b.dataset.v===String(val)?'true':'false')); }
+function scnBlip(id){ const el=$(id); if(!el || !smoothOk()) return; el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick'); }
+
+/* — модельная аналитика (А5): N(d2)/дельта по Блэку-Шоулзу из живых полей dataset; r=0, логнормальное
+   допущение — ПОДПИСАННАЯ оценка в панели экономики, вход никогда не решает (гейт — только факты) — */
+function scnNormCdf(x){ const t=1/(1+0.2316419*Math.abs(x)), d=0.3989423*Math.exp(-x*x/2);
+  const p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274)))); return x>0?1-p:p; }
+function scnD12(spot,strike,ivPct,tYears){ if(!(spot>0&&strike>0&&ivPct>0&&tYears>0)) return null;
+  const s=ivPct/100*Math.sqrt(tYears); return { d1:(Math.log(spot/strike)+0.5*s*s)/s, d2:(Math.log(spot/strike)-0.5*s*s)/s }; }
+function scnPItm(spot,strike,ivPct,tYears,type){ const d=scnD12(spot,strike,ivPct,tYears); if(!d) return null;
+  return type==='put' ? scnNormCdf(-d.d2) : scnNormCdf(d.d2); }
+function scnBsDelta(spot,strike,ivPct,tYears,type){ const d=scnD12(spot,strike,ivPct,tYears); if(!d) return null;
+  return type==='put' ? scnNormCdf(d.d1)-1 : scnNormCdf(d.d1); }
+
+/* ── вход: сохранить датасет, обновить кольцо RV/IV, перерисовать ── */
+function applyScnDataset(ds){
+  if(!ds || ds.error) return;
+  LIVE_SCN = ds;
+  const cyc = ds.cycle || null;
+  if(cyc){
+    // кольцо канваса: одна точка на тик оценки (refreshNow может вернуть тот же тик — заменяем)
+    const v = ds.vol || {};
+    if(Number.isFinite(v.rv7dPct) && Number.isFinite(v.ivRefPct)){
+      const born = !!(cyc.signal && cyc.signal.id !== scnLastSignalId);
+      const pt = { t:cyc.ts, rv:v.rv7dPct, iv:v.ivRefPct, sig:born };
+      const last = scnVolRing[scnVolRing.length-1];
+      if(last && last.t===cyc.ts) scnVolRing[scnVolRing.length-1] = { ...pt, sig: last.sig || born };
+      else scnVolRing.push(pt);
+      if(scnVolRing.length>720) scnVolRing.shift(); // ~6ч на 30с-кадансе — достаточно для сессии
+    }
+    // рождение сигнала: вспышка зоны (единственная «вспышка» модуля) + сброс заметки конца
+    if(cyc.signal && cyc.signal.id !== scnLastSignalId){
+      scnLastSignalId = cyc.signal.id; scnEndNote = null;
+      const z=$('scnZoneSignal');
+      if(z && !$('view-otm-scanner').hidden && smoothOk()){ z.classList.remove('reveal','zone-flash'); void z.offsetWidth; z.classList.add('zone-flash'); }
+    } else if(!cyc.signal && scnLastSignalId){
+      // сигнал кончился: последняя строка журнала по этому id даёт исход и причину
+      const end=[...(cyc.journal||[])].reverse().find(e=>e.id===scnLastSignalId && e.event!=='signal');
+      scnEndNote = end ? (end.event==='expired' ? 'сигнал истёк · '+(end.reason||'TTL вышел') : 'отменён · '+(end.reason||'условия распались')) : null;
+      scnLastSignalId = null;
+    }
+    if(cyc.lifecycle && (cyc.lifecycle.phase==='forming' || cyc.lifecycle.phase==='active')) scnEndNote=null;
+  }
+  renderScn();
+  if(typeof refreshOverview==='function') refreshOverview();
+}
+
+/* ── фан-аут рендера ── */
+function renderScn(){
+  if(!$('view-otm-scanner')) return;
+  const ds = LIVE_SCN || {}, cyc = ds.cycle || null;
+  updateScnFreshness(ds, cyc);
+  hydrateScnToolbar(ds);
+  hydrateScnEditor(ds);
+  const zone=$('scnZoneSignal'); if(zone) zone.classList.toggle('idle', !cyc);
+  if(cyc){
+    renderScnSignal(ds, cyc);
+    renderScnChecklist(ds, cyc);
+    renderScnCandidates(ds, cyc);
+    renderScnEconomics(ds, cyc);
+    renderScnJournal(ds, cyc);
+    renderScnTelemetry(cyc);
+    if(cyc.ts!==scnLastCycleTs){ scnLastCycleTs=cyc.ts; scnBlip('scnEvalStamp'); }
+    const st=$('scnEvalStampTxt'); if(st) st.textContent='оценка '+new Date(cyc.ts).toISOString().slice(11,19)+' UTC';
+  }
+  renderScnCharts();
+}
+
+/* ── сигнал-токен: состояние, полоса, детали (машина состояний ui-spec §4) ── */
+function renderScnSignal(ds, cyc){
+  const lc=cyc.lifecycle||{}, bo=lc.blackout||{}, sc=cyc.score||{}, sig=cyc.signal;
+  const failedTxt = (cyc.reasons && cyc.reasons.failed || []).slice(0,3).join(', ');
+  const unknownIdx = (cyc.reasons && cyc.reasons.unknown || []);
+  const scoreTxt = Number.isFinite(sc.passed) ? sc.passed+'/'+sc.applicable : '—';
+  let tok='ОЖИДАНИЕ', cls='decision-token dim hollow', reason='счёт '+scoreTxt+' · ожидание данных';
+  let bar=null; // {mode:'armed'|'wait', lbl, val, frac}
+  if(lc.phase==='active' && sig){
+    tok='СИГНАЛ'; cls='decision-token accent';
+    const left=lc.ttl?lc.ttl.leftSec:null;
+    reason='TTL '+scnMMSS(left)+' · '+scnSideWord(sig.direction)+' '+sig.instrument+(bo.active?' · блэкаут':'');
+    bar={mode:'armed', lbl:'TTL', val:scnMMSS(left), frac:(Number.isFinite(left)&&sig.ttlSec)?left/sig.ttlSec:0};
+  } else if(bo.active){
+    tok='БЛЭКАУТ'; cls='decision-token neu';
+    const leftS = bo.untilTs ? Math.max(0,(bo.untilTs-Date.now())/1000) : null;
+    reason=(bo.reason==='pre-expiry'?'преэкспирация':'окно расчёта 08:00 UTC')+' — новые сигналы не создаются'+(leftS!=null?' · ещё '+scnMMSS(leftS):'');
+    bar={mode:'wait', lbl:'до '+(bo.untilTs?scnUtcHM(bo.untilTs)+' UTC':'—'), val:leftS!=null?scnMMSS(leftS):'—', frac:1};
+  } else if(lc.phase==='forming'){
+    tok='ФОРМИРУЕТСЯ'; cls='decision-token accent hollow';
+    const d=lc.dwell||{};
+    reason='тик '+(d.count||0)+' из '+(d.need||'—')+' · дожим условий';
+    bar={mode:'armed', lbl:'дожим', val:(d.count||0)+' / '+(d.need||'—'), frac:d.need?(d.count||0)/d.need:0};
+  } else if(lc.cooldown && lc.cooldown.active){
+    tok='КУЛДАУН'; cls='decision-token neu';
+    const until=lc.cooldown.untilTs;
+    reason=(scnEndNote?scnEndNote+' · ':'')+'новые не создаются до '+(until?scnUtcHM(until)+' UTC':'—');
+    const leftS=until?Math.max(0,(until-Date.now())/1000):null;
+    bar={mode:'wait', lbl:'кулдаун', val:leftS!=null?scnMMSS(leftS):'—', frac:1};
+  } else {
+    const fresh=ds.fresh||{};
+    if(fresh.stale) reason='источник устарел · оценка приостановлена';
+    else if(scnEndNote) reason=scnEndNote+' · счёт '+scoreTxt;
+    else if(cyc.reasons && cyc.reasons.blocked && cyc.reasons.blocked.length)
+      reason='счёт '+scoreTxt+' · размер: '+scnBlockWord(cyc.reasons.blocked[0]);
+    else if(unknownIdx.length) reason='данные неполны · н/д '+unknownIdx.length+' ('+unknownIdx.slice(0,3).join(', ')+')';
+    else if(failedTxt) reason='счёт '+scoreTxt+' · мешают '+failedTxt;
+    else reason='счёт '+scoreTxt+' · условия не сошлись';
+  }
+  const tokEl=$('scnSignalToken');
+  if(tokEl && (tokEl.className!==cls || tokEl.textContent.trim()!==tok))
+    optCrossfade(tokEl, '<span class="dot"></span>'+tok, cls);
+  const rEl=$('scnSignalReason'); if(rEl){ rEl.textContent=reason; rEl.className='mono '+(tok==='СИГНАЛ'?'':'dim'); }
+  const barEl=$('scnSignalBar');
+  if(barEl){
+    barEl.hidden = !bar;
+    if(bar){
+      barEl.className='opt-bar '+bar.mode;
+      $('scnSignalBarLbl').textContent=bar.lbl; $('scnSignalBarVal').textContent=bar.val;
+      $('scnSignalBarFill').style.transform='scaleX('+Math.max(0,Math.min(1,bar.frac))+')';
+    }
+  }
+  // детали: активный сигнал — из снимка; FORMING — превью лучшего кандидата; иначе прочерки
+  const best=cyc.best, sizing=cyc.sizing;
+  const showBest = lc.phase==='forming' && best;
+  const inst = sig ? sig.instrument : (showBest ? best.instrument : null);
+  scnSetHtml('scnSigInstrument', inst || '—');
+  $('scnSigSide').innerHTML = (sig || showBest)
+    ? '<span class="chip side">'+scnSideWord(sig?sig.direction:cyc.side)+'</span>' : '—';
+  let qtyTxt='—';
+  if(sig) qtyTxt=scnNum(sig.qtySuggested,2)+' контр.';
+  else if(showBest && sizing) qtyTxt = sizing.ok ? scnNum(sizing.qtySuggested,2)+' контр.' : scnBlockWord(sizing.blockReason);
+  scnSetHtml('scnSigQty', qtyTxt);
+  scnSetHtml('scnSigTtl', sig ? scnUtcHM(sig.ts+sig.ttlSec*1000)+' UTC' : '—');
+  const ev=ds.event||{};
+  scnSetHtml('scnSigEvent', sig ? (sig.eventNote||'—') : (ev.flagged ? (ev.note||'событие') : '—'));
+  const evTag=$('scnSigEventTag');
+  if(evTag){ evTag.hidden=!ev.flagged; if(ev.flagged) evTag.textContent='событие ≤48ч'+(ev.note?' · '+ev.note:''); }
+  const pp=$('scnSigPreset'); if(pp) pp.innerHTML='пресет <b>'+scnPresetLabel(ds.presetId)+'</b>';
+}
+function scnBlockWord(r){
+  return r==='min_lot_exceeds_risk' ? 'мин. лот превышает риск-бюджет'
+       : r==='min_lot_exceeds_depth' ? 'мин. лот превышает кэп глубины'
+       : (r||'нет данных для размера');
+}
+
+/* ── чеклист: 14 строк tri-state в двух группах ── */
+function scnVerdictCell(r){
+  if(r.state==='off')  return { txt:'· выкл', cls:'vrd faint' };
+  if(r.mode==='info')  return { txt:'· инфо', cls:'vrd faint' };
+  if(r.state==='pass') return { txt:'● да',  cls:'vrd pos' };
+  if(r.state==='fail') return { txt:'○ нет', cls:'vrd dim' };
+  return { txt:'◌ н/д', cls:'vrd neu' };
+}
+function scnThresholdText(r){
+  if(r.state==='off') return '—';
+  const n=v=>scnNum(v,2);
+  switch(r.key){
+    case 'rv7d_gt_iv': return 'RV > IV';
+    case 'rv3d_gt_iv': return 'RV3d > IV';
+    case 'iv_discount': return r.unit==='ratio' ? '≤ '+n(r.threshold)+'×' : '≥ '+n(r.threshold)+' п.п.';
+    case 'sigma_impulse': return '≥ '+n(r.threshold)+'σ';
+    case 'ema_trend': return 'совпадение со стороной';
+    case 'forward_iv': return '≥ '+n(r.threshold)+' п.п.';
+    case 'skew': return r.threshold==null ? '—' : (r.op==='<='?'≤ ':'≥ ')+n(r.threshold)+' п.п.';
+    case 'book_imbalance': return r.threshold==null ? '—' : '≥ '+n(r.threshold)+'×';
+    case 'strike_sigma': return r.threshold==null ? '—' : n(r.threshold)+'–'+n(r.thresholdHi)+'σ';
+    case 'premium_cap': return r.threshold==null ? '—' : '≤ '+n(r.threshold)+'% спота';
+    case 'spread_cap': return r.threshold==null ? '—' : '≤ '+n(r.threshold)+'% премии';
+    case 'depth_min': return r.threshold==null ? '—' : '≥ $'+Math.round(r.threshold).toLocaleString('en-US');
+    case 'theta_cap': return r.threshold==null ? '—' : '≤ '+n(r.threshold)+'%/сут';
+    case 'cost_gate': return r.threshold==null ? '—' : '≤ '+n(r.threshold)+'% премии';
+    default: return r.threshold==null ? '—' : n(r.threshold);
+  }
+}
+function renderScnChecklist(ds, cyc){
+  const rows=cyc.conditions||[], sc=cyc.score||{}, preset=ds.preset||{};
+  const mt=$('scnModeTag');
+  if(mt) mt.textContent = preset.mode==='score' ? 'скоринг ≥'+(sc.need!=null?sc.need:preset.scoreMin)+' · ядро У1+У10+У14' : 'строгий И';
+  const pill=$('scnScorePill');
+  if(pill) pill.innerHTML='счёт <b>'+(Number.isFinite(sc.passed)?sc.passed+'/'+sc.applicable:'—')+'</b>'+(sc.unknown?' · н/д '+sc.unknown:'');
+  const body=$('scnChecklistBody'); if(!body) return;
+  const bestNote = cyc.best ? 'лучший: '+cyc.best.instrument : 'нет кандидатов';
+  const tr = r => {
+    const v=scnVerdictCell(r);
+    const valTxt = (r.mode==='info' && r.state==='unknown') ? '—' : (r.note || scnNum(r.value));
+    const ageCls = r.state==='unknown' ? 'n neu' : 'n';
+    const ageTxt = scnAge(r.staleSec) + (r.state==='unknown' && r.staleSec!=null ? ' ⚠' : '');
+    return '<tr id="scnCond-'+r.key+'"><td class="n">'+r.idx+'</td>'+
+      '<td class="lft">'+(SCN_COND_LABELS[r.key]||r.key)+(r.core?' <span class="chip side">ядро</span>':'')+'</td>'+
+      '<td class="lft n">'+valTxt+'</td>'+
+      '<td class="n">'+scnThresholdText(r)+'</td>'+
+      '<td class="'+v.cls+'">'+v.txt+'</td>'+
+      '<td class="'+ageCls+'">'+ageTxt+'</td></tr>';
+  };
+  const asset=rows.filter(r=>r.group==='asset'), instr=rows.filter(r=>r.group==='instrument');
+  body.innerHTML =
+    '<tr class="grp"><td colspan="6" class="lft">По активу · BTC</td></tr>'+asset.map(tr).join('')+
+    '<tr class="grp"><td colspan="6" class="lft">По инструменту · <span id="scnBestNote" class="num">'+bestNote+'</span></td></tr>'+instr.map(tr).join('');
+}
+
+/* ── кандидаты в σ-окне ── */
+function renderScnCandidates(ds, cyc){
+  const body=$('scnCandBody'); if(!body) return;
+  const preset=ds.preset||{};
+  const tag=$('scnCandWindowTag');
+  if(tag){
+    let t = scnNum(preset.sigmaMin)+'–'+scnNum(preset.sigmaMax)+'σ · эксп. '+scnNum(preset.expiryMinH,0)+'–'+scnNum(preset.expiryMaxH,0)+'ч';
+    const skipped=(cyc.skippedExpiries||[]).length;
+    if(skipped){ t+=' · пропущено эксп.: '+skipped; tag.title='σ-IV снабжается только near/far экспирациям (§4.1); пропущенные: '+(cyc.skippedExpiries||[]).map(e=>scnExpLbl(e)).join(', '); }
+    else tag.title='';
+    tag.textContent=t;
+  }
+  const cands=cyc.candidates||[];
+  if(!cands.length){
+    body.innerHTML='<tr><td class="lft faint" colspan="11" id="scnCandEmpty">в σ-окне нет инструментов — рынок далеко от условий пресета</td></tr>';
+    return;
+  }
+  body.innerHTML = cands.map(c=>{
+    const p=c.passes||{};
+    let pTxt=(p.passed!=null?p.passed:'—')+'/'+(p.of!=null?p.of:'—'), pCls='n pos', pTitle='';
+    if(p.unknownIdx && p.unknownIdx.length){ pCls='n neu'; pTxt+=' ◌'; pTitle='н/д: '+p.unknownIdx.join(', '); }
+    else if(p.failedIdx && p.failedIdx.length){ pCls='n dim';
+      if(p.failedIdx.length<=2) pTxt+=' ('+p.failedIdx.join(', ')+')';
+      pTitle='не проходят: '+p.failedIdx.join(', '); }
+    return '<tr'+(c.best?' class="me"':'')+'>'+
+      '<td class="lft sym">'+c.instrument+(c.best?' <span class="chip side">лучший</span>':'')+'</td>'+
+      '<td class="lft">'+scnSideWord(c.optionType)+'</td>'+
+      '<td class="n">'+(Number.isFinite(c.strike)?c.strike.toLocaleString('en-US'):'—')+'</td>'+
+      '<td class="n">'+scnNum(c.sigmaDist)+'σ</td>'+
+      '<td class="n">'+(c.expiryMs?scnExpLbl(c.expiryMs):'—')+'</td>'+
+      '<td class="n">'+scnNum(c.premPctSpot)+'</td>'+
+      '<td class="n">'+scnNum(c.spreadPctPrem,1)+'</td>'+
+      '<td class="n">'+(Number.isFinite(c.depthUsd)?Math.round(c.depthUsd).toLocaleString('en-US'):'—')+'</td>'+
+      '<td class="n">'+scnNum(c.thetaPctDay,1)+'</td>'+
+      '<td class="n">'+scnNum(c.ivPct,1)+'</td>'+
+      '<td class="'+pCls+'" title="'+pTitle+'">'+pTxt+'</td></tr>';
+  }).join('');
+}
+
+/* ── экономика сделки лучшего кандидата (А5): факты гейта + подписанная модель ── */
+function renderScnEconomics(ds, cyc){
+  const e=cyc.economics, s=cyc.sizing, b=cyc.best, v=ds.vol||{};
+  const set=(id,txt,title)=>{ const el=$(id); if(!el) return; el.textContent=txt; el.title=title||''; };
+  if(!e || !b){
+    ['scnEcRt','scnEcBe','scnEcMinCap','scnEcRisk','scnEcDepth','scnEcPitm','scnEcBeSigma','scnEcScn05','scnEcScn10']
+      .forEach(id=>set(id,'—'));
+    return;
+  }
+  set('scnEcRt', Number.isFinite(e.roundTripCostPct) ? scnNum(e.roundTripCostPct,1)+'% премии'+(e.feeCapped?' · кэп 12.5%':'') : '—',
+    Number.isFinite(e.feeEntryPct) ? 'комиссии '+scnNum(e.feeEntryPct+e.feeExitPct,1)+'% + спред '+scnNum((e.spreadEntryPct||0)+(e.spreadExitPct||0),1)+'% · '+(e.execModel==='taker-cross'?'тейкер-кросс':'мейкер-mid') : '');
+  set('scnEcBe', Number.isFinite(e.breakEvenMarkPct) ? '+'+scnNum(e.breakEvenMarkPct,1)+'% к марку' : '—');
+  set('scnEcMinCap', Number.isFinite(e.minCapitalUsd) ? scnUsd(e.minCapitalUsd)+(Number.isFinite(e.comfortCapitalUsd)?' · комфорт '+scnUsd(e.comfortCapitalUsd):'') : '—',
+    'минимальный депозит, при котором мин. лот не ломает риск-дисциплину; комфорт = × максимум одновременных позиций');
+  set('scnEcRisk', Number.isFinite(e.riskActualPct) ? scnNum(e.riskActualPct,1)+'% суб-счёта' : '—');
+  set('scnEcDepth', s && Number.isFinite(s.qtyMaxDepth)
+    ? '≤ '+scnNum(s.qtyMaxDepth,2)+' контр.'+(s.depthCapped?' · размер урезан':'')
+    : '—', 'кэп размера долей видимой глубины стороны входа (А5)');
+  // — модель (подписана в подсказках; вход не решает) —
+  const pitm=scnPItm(cyc.spotUsd, b.strike, b.ivPct, b.tYears, b.optionType);
+  set('scnEcPitm', pitm!=null ? scnNum(pitm*100,1)+'%' : '—');
+  set('scnEcBeSigma', Number.isFinite(e.breakEvenMoveSigma) ? '≈ '+scnNum(e.breakEvenMoveSigma,2)+'σ дневных' : '—');
+  const qty = s && s.ok ? s.qtySuggested : null;
+  const scn = k => {
+    if(qty==null || !Number.isFinite(v.sigma1dPct) || !Number.isFinite(b.markUsd)) return '—';
+    const delta=scnBsDelta(cyc.spotUsd, b.strike, b.ivPct, b.tYears, b.optionType);
+    if(delta==null) return '—';
+    const dS=k*(v.sigma1dPct/100)*cyc.spotUsd;
+    const thetaUsd=Number.isFinite(b.thetaPctDay)? b.thetaPctDay/100*b.markUsd*qty : 0;
+    const costUsd=Number.isFinite(e.roundTripCostPct)? e.roundTripCostPct/100*b.markUsd*qty : 0;
+    const fav=Math.abs(delta)*dS*qty - thetaUsd - costUsd;
+    const adv=-Math.abs(delta)*dS*qty - thetaUsd - costUsd;
+    const f=x=>(x>=0?'+$':'−$')+Math.abs(x).toLocaleString('en-US',{maximumFractionDigits:2});
+    return f(fav)+' · '+f(adv);
+  };
+  set('scnEcScn05', scn(0.5), 'движение ±0.5σ за 24ч · дельта-приближение минус тета и издержки · на рекомендованный размер');
+  set('scnEcScn10', scn(1.0), 'движение ±1σ за 24ч · дельта-приближение минус тета и издержки · на рекомендованный размер');
+}
+
+/* ── журнал сигналов: одна строка на сигнал (последнее событие побеждает; рождение — из id) ── */
+function renderScnJournal(ds, cyc){
+  const body=$('scnJournalBody'), empty=$('scnJournalEmpty'); if(!body) return;
+  const byId=new Map();
+  for(const e of (cyc.journal||[])) byId.set(e.id, e); // ring упорядочен по времени — последний wins
+  const rows=[...byId.values()].sort((a,b)=>b.ts-a.ts);
+  const n=(cyc.journal||[]).length;
+  if(n!==scnLastJournalN){ if(scnLastJournalN>=0) scnBlip('scnJournalUpdated'); scnLastJournalN=n;
+    const jt=$('scnJournalUpdatedTxt'); if(jt) jt.textContent='записей: '+rows.length; }
+  if(empty) empty.hidden=rows.length>0;
+  const cnt=$('scnJournalCount'); if(cnt) cnt.textContent='сигналов: '+rows.length+' · кольцо 200 переходов · CSV всегда полный';
+  body.innerHTML=rows.map(e=>{
+    const bornTs=Number(String(e.id||'').split('-')[1])||e.ts;
+    const active = cyc.signal && cyc.signal.id===e.id;
+    const out = active ? {w:'АКТИВЕН',c:'pos',t:''}
+      : e.event==='expired' ? {w:'ИСТЁК',c:'dim',t:e.reason||''}
+      : e.event==='invalidated' ? {w:'ОТМЕНЁН',c:'dim',t:e.reason||''}
+      : {w:'СИГНАЛ',c:'dim',t:'рождение (исход в строке того же id)'};
+    const preset=scnPresetLabel(e.presetId);
+    return '<tr><td class="lft ts">'+scnUtcTs(bornTs)+'</td>'+
+      '<td class="lft '+out.c+'" '+(out.t?'title="'+out.t.replace(/"/g,'&quot;')+'"':'')+'>'+out.w+'</td>'+
+      '<td>'+scnSideWord(e.direction)+'</td>'+
+      '<td class="lft sym">'+(e.instrument||'—')+'</td>'+
+      '<td>'+(e.score||'—')+'</td>'+
+      '<td class="lft">'+preset+'</td>'+
+      '<td>'+(e.eventNote||'—')+'</td>'+
+      '<td>'+(Number.isFinite(e.ttlSec)?Math.round(e.ttlSec/60)+'м':'—')+'</td></tr>';
+  }).join('');
+}
+
+/* ── панель честности: pass-rate за окно ── */
+function renderScnTelemetry(cyc){
+  const box=$('scnTelemetryRows'); if(!box) return;
+  const t=(cyc.telemetry&&cyc.telemetry[scnTelemetryWin])||{};
+  const conds=cyc.conditions||[];
+  let maxEvals=0;
+  const rows=conds.map(r=>{
+    const c=t[r.key];
+    const label='<span class="k">'+r.idx+' · '+(SCN_COND_LABELS[r.key]||r.key)+'</span>';
+    if(!c || !c.evals){
+      const word = r.state==='off' ? '· выкл' : 'нет оценок';
+      return '<div class="row">'+label+'<span class="v num faint">'+word+'</span></div>';
+    }
+    maxEvals=Math.max(maxEvals,c.evals);
+    const rate=c.pass/c.evals*100;
+    let extra='', vCls='num';
+    if(rate===0){ extra=' <span class="neu">◌ никогда не проходит</span>'; }
+    else if(rate===100){ extra=' <span class="faint">всегда</span>'; }
+    return '<div class="row">'+label+'<span class="v '+vCls+'">'+
+      '<span class="ratebar" aria-hidden="true"><i style="transform:scaleX('+(rate/100)+')"></i></span>'+
+      scnNum(rate,1)+'%'+extra+'</span></div>';
+  });
+  box.innerHTML=rows.join('');
+  const ev=$('scnTelemetryEvals'); if(ev) ev.textContent='оценок '+maxEvals.toLocaleString('en-US');
+}
+
+/* ── качество данных: LED, источники, блэкаут, RTT, стамп с бюджетом ── */
+function updateScnFreshness(ds, cyc){
+  const btn=$('scnLiveBtn'), led=btn&&btn.querySelector('.led'), txt=$('scnLiveTxt'), stamp=$('scnConnStamp');
+  const fresh=ds.fresh||{}, h=cyc&&cyc.health;
+  let word, col;
+  if(!ds.running){ word='НЕТ ДАННЫХ'; col='var(--led-idle)'; }
+  else if(!cyc){ word='ЗАГРУЗКА…'; col='var(--neu)'; }
+  else if(fresh.stale){ word='УСТАРЕЛО'; col='var(--neg)'; }
+  else if(ds.degraded || (h && (h.anomaly || h.spotUntrusted || h.usDiffWarn || Object.values(h.stale||{}).some(Boolean)))){ word='ПРЕДУПР.'; col='var(--neu)'; }
+  else if(fresh.ok){ word='LIVE'; col='var(--pos)'; }
+  else { word='ПРЕДУПР.'; col='var(--neu)'; }
+  if(txt) txt.textContent=word;
+  if(led) led.style.background=col;
+  if(btn) btn.classList.toggle('fresh', word==='LIVE');
+  const tn=$('scnTestnetTag'); if(tn) tn.hidden=!(ds.settings&&ds.settings.testnet);
+  const srcRow=(id, ageSec, stale, extra)=>{ const el=$(id); if(!el) return;
+    el.innerHTML = ageSec==null && !extra ? '—'
+      : (extra||scnAge(ageSec)+' · '+(stale?'<span class="neg">УСТАРЕЛО</span>':'LIVE'));
+  };
+  if(h){
+    const ages=h.ages||{}, st=h.stale||{};
+    srcRow('scnHtTickers', ages.perpSec, st.perp);
+    srcRow('scnHtCandles', ages.candlesSec, st.candles);
+    srcRow('scnHtDvol', ages.dvolSec, st.dvol);
+    const bookRow=(cyc.conditions||[]).find(r=>r.key==='depth_min');
+    srcRow('scnHtBook', bookRow?bookRow.staleSec:null, bookRow&&bookRow.state==='unknown'&&bookRow.staleSec!=null,
+      (!cyc.best)?'<span class="faint">нет финалиста</span>':null);
+    srcRow('scnHtChain', ages.chainSec, st.chain);
+    const bo=h.blackout||{};
+    const boEl=$('scnHtBlackout');
+    if(boEl) boEl.innerHTML = bo.active
+      ? '<span class="neu">'+(bo.reason==='pre-expiry'?'преэкспирация':'расчёт 08:00 UTC')+(bo.untilTs?' · ещё '+scnMMSS(Math.max(0,(bo.untilTs-Date.now())/1000)):'')+'</span>'
+      : '<span class="faint">нет</span>';
+  }
+  const rtt=$('scnHtRtt'); if(rtt) rtt.textContent=Number.isFinite(fresh.rttMs)?Math.round(fresh.rttMs)+' мс':'—';
+  if(stamp){
+    if(!ds.running){ stamp.textContent = cyc ? 'источник остановлен — данные заморожены' : 'источник не запущен — сканирование начнётся при первом показе вкладки'; stamp.title=''; }
+    else if(fresh.atIso){
+      const iso=fresh.atIso.replace('T',' ').slice(0,19)+' UTC';
+      const age=(fresh.ageSec==null)?'—':scnAge(fresh.ageSec)+' назад';
+      const get=(ds.budget&&Number.isFinite(ds.budget.lastTickGets))?' · GET '+ds.budget.lastTickGets+'/тик':'';
+      stamp.innerHTML='данные Deribit по состоянию на '+iso+' · '+age+get+(ds.degraded?' · <b class="neu">каданс x2</b>':'');
+      stamp.title='ошибок подряд: '+(fresh.errorStreak||0)+(Number.isFinite(fresh.usDiffMs)?' · часы биржи '+fresh.usDiffMs.toFixed(0)+'мс':'');
+    } else stamp.textContent='ожидание первого тика…';
+  }
+}
+
+/* ── тулбар: пресеты, режим, событие ── */
+function hydrateScnToolbar(ds){
+  const preset=ds.preset||{}, dirty=ds.presetId==='custom';
+  const baseId = dirty ? (preset.baseId||'dmitri-v1') : ds.presetId;
+  const sel=$('scnPresetSel');
+  if(sel) sel.querySelectorAll('button').forEach(b=>{
+    const v=b.dataset.v;
+    b.setAttribute('aria-pressed', v===baseId?'true':'false');
+    b.textContent = (SCN_PRESET_LABELS[v]||v) + (dirty && v===baseId ? ' *' : '');
+    b.classList.toggle('reco', !!(ds.event&&ds.event.flagged) && v==='dmitri-v2');
+  });
+  scnSegPress('scnModeSel', preset.mode==='score'?'score':'AND');
+  const mb=$('scnModeSel') && $('scnModeSel').querySelector('button[data-v="score"]');
+  if(mb) mb.textContent='скоринг ≥'+(preset.scoreMin!=null?preset.scoreMin:10);
+  const ev=ds.event||{};
+  scnSegPress('scnEventSel', ev.flagged?'on':'off');
+  const note=$('scnEventNote');
+  if(note){ note.disabled=!ev.flagged; if(document.activeElement!==note) note.value=ev.note||''; }
+  const hor=$('scnEventHorizonSel');
+  if(hor) hor.querySelectorAll('button').forEach(b=>{ b.disabled=!ev.flagged; });
+}
+
+/* ── редактор порогов: значения из dataset.preset; blur-валидация; скретч-пресет custom ── */
+// guardrail-диапазоны редактора (структурные правила слоя S3, прецедент λ-инпута) — это НЕ пороги
+// стратегии: пороги живут в SCAN_PRESETS/настройках и приходят из dataset
+const SCN_TH_FIELDS = {
+  scnThUvVal:{k:'dIvPts',min:0,max:50,name:'У2 спред RV−IV'},
+  scnThUvK:{k:'kBaseline',min:0.1,max:2,name:'У2 кэп к базе'},
+  scnThImpulse:{k:'impulseMin',min:0,max:10,name:'У4 импульс'},
+  scnThFwd:{k:'fivMinPts',min:0,max:20,name:'У6 дисконт fwd-IV'},
+  scnThFwdFar:{k:'fivFarMinDays',min:1,max:90,int:true,name:'У6 far-экспирация'},
+  scnThSkewVal:{k:'skewMinPts',min:0,max:30,name:'У7 порог skew'},
+  scnThBookVal:{k:'imbalanceMin',min:0.1,max:20,name:'У8 порог дисбаланса'},
+  scnThSigMin:{k:'sigmaMin',min:0.05,max:6,name:'σ-окно мин'},
+  scnThSigMax:{k:'sigmaMax',min:0.05,max:6,name:'σ-окно макс'},
+  scnThExpMinH:{k:'expiryMinH',min:1,max:2000,int:true,name:'окно экспираций мин'},
+  scnThExpMaxH:{k:'expiryMaxH',min:1,max:2000,int:true,name:'окно экспираций макс'},
+  scnThPremCap:{k:'premMaxPct',min:0.01,max:10,name:'У10 премия'},
+  scnThSpreadCap:{k:'spreadMaxPctPrem',min:0.1,max:100,name:'У11 спред'},
+  scnThDepthMin:{k:'depthMinUsd',min:0,max:10000000,int:true,name:'У12 глубина'},
+  scnThDepthX:{k:'depthXPrem',min:0.1,max:100,name:'У12 кратность премии'},
+  scnThThetaCap:{k:'thetaMaxPctDay',min:0.1,max:100,name:'У13 тета'},
+  scnThCostCap:{k:'costMaxPctPrem',min:1,max:100,name:'У14 издержки'},
+  scnThQtyDepth:{k:'maxQtyDepthPct',min:1,max:100,name:'кэп глубины'},
+  scnThScoreN:{k:'scoreMin',min:1,max:14,int:true,name:'скоринг N'},
+};
+const SCN_TH_SEGS = {
+  scnThUvModeSel:{k:'ivFilterMode'}, scnThRv3dSel:{k:'rv3dConfirm',boolMap:true}, scnThEmaSel:{k:'trendOn',boolMap:true},
+  scnThSkewModeSel:{k:'skewMode'}, scnThBookSel:{k:'imbalanceMode'}, scnThDepthModeSel:{k:'depthMode'}, scnThExecSel:{k:'execModel'},
+};
+// механика — настройки вне пресета (валидация зеркалит RANGES presets.js; сервер проверяет ещё раз)
+const SCN_SET_FIELDS = {
+  scnThDwell:{k:'dwellTicks',min:1,max:20,int:true,name:'dwell'},
+  scnThTtl:{k:'ttlSec',min:1,max:120,int:true,mul:60,name:'TTL (мин)'},
+  scnThCooldown:{k:'cooldownSec',min:0,max:1440,int:true,mul:60,name:'кулдаун (мин)'},
+};
+function scnEditorErr(msg){ const el=$('scnPresetErr'); if(!el) return;
+  if(!msg){ el.hidden=true; el.textContent=''; return; }
+  el.hidden=false; el.textContent=msg; }
+function hydrateScnEditor(ds){
+  const p=ds.preset||{}, s=ds.settings||{}, dirty=ds.presetId==='custom';
+  const setVal=(id, v)=>{ const el=$(id); if(!el || document.activeElement===el) return;
+    if(el.getAttribute('aria-invalid')==='true') return; // не затирать значение, которое пользователь правит после ошибки
+    el.value = v==null ? '' : String(v); };
+  for(const [id,f] of Object.entries(SCN_TH_FIELDS)) setVal(id, p[f.k]);
+  setVal('scnThDwell', s.dwellTicks);
+  setVal('scnThTtl', Number.isFinite(s.ttlSec)? +(s.ttlSec/60).toFixed(1) : null);
+  setVal('scnThCooldown', Number.isFinite(s.cooldownSec)? +(s.cooldownSec/60).toFixed(1) : null);
+  scnSegPress('scnThUvModeSel', p.ivFilterMode);
+  scnSegPress('scnThRv3dSel', p.rv3dConfirm?'on':'off');
+  scnSegPress('scnThEmaSel', p.trendOn?'on':'off');
+  scnSegPress('scnThSkewModeSel', p.skewMode);
+  scnSegPress('scnThBookSel', p.imbalanceMode==='off'||!p.imbalanceMode?'off':'on');
+  scnSegPress('scnThDepthModeSel', p.depthMode);
+  scnSegPress('scnThExecSel', p.execModel);
+  const tag=$('scnPresetTag');
+  if(tag){ tag.hidden=!dirty; if(dirty) tag.textContent='не сохранён · база: '+scnPresetLabel(p.baseId||'dmitri-v1'); }
+  const rst=$('scnPresetReset'); if(rst) rst.disabled=!dirty;
+}
+async function scnPushPresetPatch(patch){
+  const ds=LIVE_SCN; if(!ds || !window.scn) return;
+  const base=ds.preset||{};
+  const baseId = base.id==='custom' ? (base.baseId||'dmitri-v1') : (base.id||'dmitri-v1');
+  const scratch={ ...base, ...patch, id:'custom', label:'Калиброванный*', baseId, calibrated:'draft' };
+  const ups={ ...((ds.settings&&ds.settings.userPresets)||{}), custom:scratch };
+  try{
+    await window.scn.setSettings({ userPresets: ups });
+    const r=await window.scn.setPreset('custom');
+    if(r && !r.error) applyScnDataset(r);
+  }catch(e){ console.warn('scn preset patch', e); }
+}
+async function scnSaveCalibrated(){
+  const ds=LIVE_SCN; if(!ds || !window.scn) return;
+  const cur={ ...(ds.preset||{}), id:'calibrated', label:'Калиброванный', calibrated:true };
+  delete cur.baseId;
+  const ups={ ...((ds.settings&&ds.settings.userPresets)||{}) };
+  delete ups.custom; ups.calibrated=cur;
+  try{
+    await window.scn.setSettings({ userPresets: ups });
+    const r=await window.scn.setPreset('calibrated');
+    if(r && !r.error) applyScnDataset(r);
+    scnEditorErr(null);
+  }catch(e){ console.warn('scn save preset', e); }
+}
+async function scnResetPreset(){
+  const ds=LIVE_SCN; if(!ds || !window.scn) return;
+  const baseId = ds.preset && ds.preset.id==='custom' ? (ds.preset.baseId||'dmitri-v1') : (ds.presetId||'dmitri-v1');
+  const ups={ ...((ds.settings&&ds.settings.userPresets)||{}) };
+  delete ups.custom;
+  try{
+    await window.scn.setSettings({ userPresets: ups });
+    const r=await window.scn.setPreset(baseId);
+    if(r && !r.error) applyScnDataset(r);
+    document.querySelectorAll('#scnPresetCard input[aria-invalid="true"]').forEach(i=>i.setAttribute('aria-invalid','false'));
+    scnEditorErr(null);
+  }catch(e){ console.warn('scn reset preset', e); }
+}
+function scnWireEditorInput(id, f, isSetting){
+  const el=$(id); if(!el) return;
+  const commit=async ()=>{
+    const raw=el.value.trim();
+    const v=Number(raw);
+    let bad=null;
+    if(raw==='' || !Number.isFinite(v)) bad=f.name+': нужно число';
+    else if(v<f.min || v>f.max) bad=f.name+': значение вне диапазона '+f.min+'…'+f.max;
+    else if(f.int && !Number.isInteger(v)) bad=f.name+': нужно целое число';
+    // перекрёстные правила пар (мин не выше макс) — по живому значению соседнего поля
+    const pair={ scnThSigMin:['scnThSigMax',1], scnThSigMax:['scnThSigMin',-1], scnThExpMinH:['scnThExpMaxH',1], scnThExpMaxH:['scnThExpMinH',-1] }[id];
+    if(!bad && pair){ const other=Number(($(pair[0])||{}).value);
+      if(Number.isFinite(other) && (pair[1]>0 ? v>other : v<other)) bad=f.name+': мин не может быть больше макс'; }
+    if(bad){ el.setAttribute('aria-invalid','true'); scnEditorErr(bad); return; }
+    el.setAttribute('aria-invalid','false'); scnEditorErr(null);
+    if(isSetting){
+      if(!window.scn) return;
+      try{ const r=await window.scn.setSettings({ [f.k]: (f.mul?v*f.mul:v) });
+        if(r && r.errors && r.errors.length) scnEditorErr(r.errors[0]);
+        if(r && !r.error) applyScnDataset(r);
+      }catch(e){ console.warn('scn setSettings', e); }
+    } else await scnPushPresetPatch({ [f.k]: v });
+  };
+  el.addEventListener('blur', commit);
+  el.addEventListener('keydown', e=>{ if(e.key==='Enter') el.blur(); });
+}
+function scnWireEditorSeg(id, cfg){
+  const el=$(id); if(!el) return;
+  el.querySelectorAll('button').forEach(b=> b.onclick=()=>{
+    let v=b.dataset.v;
+    if(cfg.boolMap) v=(v==='on');
+    scnPushPresetPatch({ [cfg.k]: v });
+  });
+}
+
+/* ── канвас RV против IV (канвас-кит; цвета только через C в момент draw) ── */
+function drawScnVol(cv, ring, tipEl){
+  const pts=ring.filter(p=>Number.isFinite(p.rv)&&Number.isFinite(p.iv));
+  if(pts.length<2){ drawEmpty(cv, tipEl, 'история RV и IV копится с запуска сканера — линии появятся после нескольких оценок'); return; }
+  const { ctx, w, h } = setupCanvas(cv);
+  const padL=46, padR=12, padT=12, padB=20;
+  const t0=pts[0].t, t1=pts[pts.length-1].t||t0+1;
+  const vals=pts.flatMap(p=>[p.rv,p.iv]);
+  let lo=Math.min(...vals), hi=Math.max(...vals);
+  const pad=(hi-lo)*0.15||1; lo-=pad; hi+=pad;
+  const X=t=> padL+((t-t0)/Math.max(1,t1-t0))*(w-padL-padR);
+  const Y=v=> padT+(1-(v-lo)/(hi-lo))*(h-padT-padB);
+  ctx.font='10px '+C('--f-mono'); ctx.textBaseline='middle';
+  niceTicks(lo,hi,4).forEach(v=>{ const y=Y(v);
+    ctx.strokeStyle=C('--line-soft'); ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(w-padR,y); ctx.stroke();
+    ctx.fillStyle=C('--txt-faint'); ctx.textAlign='right'; ctx.fillText(scnNum(v,0)+'%', padL-6, y); });
+  // заливка «зона недооценки»: сегменты, где RV не ниже IV (базис ядра У1)
+  ctx.fillStyle=tint('--pos',.12);
+  for(let i=1;i<pts.length;i++){
+    const a=pts[i-1], b=pts[i];
+    if(a.rv>=a.iv && b.rv>=b.iv){
+      ctx.beginPath();
+      ctx.moveTo(X(a.t),Y(a.rv)); ctx.lineTo(X(b.t),Y(b.rv));
+      ctx.lineTo(X(b.t),Y(b.iv)); ctx.lineTo(X(a.t),Y(a.iv));
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  const line=(key,col,lw)=>{ ctx.beginPath();
+    pts.forEach((p,i)=>{ const x=X(p.t), y=Y(p[key]); i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+    ctx.strokeStyle=col; ctx.lineWidth=lw; ctx.lineJoin='round'; ctx.stroke(); };
+  line('iv', C('--accent'), 1.5);
+  line('rv', C('--price'), 2);
+  ctx.fillStyle=C('--accent');
+  pts.forEach(p=>{ if(p.sig){ ctx.beginPath(); ctx.arc(X(p.t),Y(p.rv),3.2,0,7); ctx.fill(); } });
+  ctx.fillStyle=C('--txt-faint'); ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  ctx.fillText(scnUtcHM(t0), padL+20, h-6); ctx.fillText(scnUtcHM(t1)+' UTC', w-padR-30, h-6);
+  attachCrosshair(cv, tipEl, (mx)=>{
+    let best=0, dBest=Infinity;
+    pts.forEach((p,i)=>{ const d=Math.abs(X(p.t)-mx); if(d<dBest){ dBest=d; best=i; } });
+    const p=pts[best], spread=p.rv-p.iv;
+    return { x:X(p.t), y:Y(p.rv), html:
+      '<div class="r"><span class="k">время</span><span>'+scnUtcHM(p.t)+' UTC</span></div>'+
+      '<div class="r"><span class="k">RV7d</span><span>'+scnNum(p.rv,1)+'%</span></div>'+
+      '<div class="r"><span class="k">IV</span><span>'+scnNum(p.iv,1)+'%</span></div>'+
+      '<div class="r"><span class="k">спред</span><span class="'+clsSign(spread)+'">'+(spread>0?'+':'')+scnNum(spread,1)+' п.п.</span></div>'+
+      '<div class="r"><span class="k">У1</span><span>'+(spread>0?'да':'нет')+(p.sig?' · сигнал':'')+'</span></div>' };
+  });
+}
+function renderScnCharts(){
+  const cv=$('scnVolCanvas'); if(!cv) return;
+  drawScnVol(cv, scnVolRing, $('scnVolTip'));
+}
+
+/* ── А4 (ратифицировано): автостарт при первом показе вида; дальше сканер живёт в фоне до выхода.
+   scnOnShow зовёт готовый примитив scn:start — источник работает только между start/stop ── */
+async function scnOnShow(){
+  renderScnCharts();
+  if(!window.scn) return;
+  if(scnStarted && LIVE_SCN && LIVE_SCN.running) return;
+  scnStarted=true;
+  try{ const ds=await window.scn.start(); if(ds && !ds.error) applyScnDataset(ds); }
+  catch(e){ console.warn('scn start', e); }
+}
+
+function scnJournalNote(t, cls, ms){ const el=$('scnJournalMsg'); if(!el) return;
+  el.textContent=t; el.className='ledger-msg '+(cls||''); el.hidden=false;
+  if(ms) setTimeout(()=>{ el.hidden=true; }, ms); }
+async function scnExport(kind, btn){
+  if(!window.scn){ scnJournalNote('экспорт недоступен: нет моста scn','err'); return; }
+  const label=btn.textContent; btn.disabled=true; btn.textContent=label+'…';
+  try{
+    const r = kind==='telemetry' ? await window.scn.exportTelemetry({format:'csv'}) : await window.scn.exportSignals({format:'csv'});
+    if(r && r.ok) scnJournalNote('✓ сохранено: '+r.filePath+' ('+(r.count||0)+' строк)','ok',6000);
+    else if(r && r.canceled) scnJournalNote('сохранение отменено','dim',3000);
+    else scnJournalNote('не сохранено: '+((r&&r.error)||'неизвестная ошибка'),'err');
+  }catch(e){ scnJournalNote('не сохранено: ошибка IPC '+String(e&&e.message||e).slice(0,60),'err'); }
+  btn.disabled=false; btn.textContent=label;
+}
+
+/* ── init: статические контролы один раз ── */
+function initScn(){
+  if(!$('view-otm-scanner')) return;
+  // тулбар: пресеты и режим
+  const psel=$('scnPresetSel');
+  if(psel) psel.querySelectorAll('button').forEach(b=> b.onclick=async ()=>{
+    if(!window.scn) return;
+    try{ const r=await window.scn.setPreset(b.dataset.v); if(r && !r.error) applyScnDataset(r); }
+    catch(e){ console.warn('scn setPreset', e); } });
+  const msel=$('scnModeSel');
+  if(msel) msel.querySelectorAll('button').forEach(b=> b.onclick=()=> scnPushPresetPatch({ mode:b.dataset.v }));
+  // событие ≤48ч
+  const sendEvent=async ()=>{
+    if(!window.scn) return;
+    const on=$('scnEventSel').querySelector('button[data-v="on"]').getAttribute('aria-pressed')==='true';
+    const hb=$('scnEventHorizonSel').querySelector('button[aria-pressed="true"]');
+    try{ const r=await window.scn.eventFlag({ flagged:on, note:($('scnEventNote')||{}).value||null, horizonH:hb?Number(hb.dataset.v):48 });
+      if(r && !r.error) applyScnDataset(r);
+    }catch(e){ console.warn('scn eventFlag', e); }
+  };
+  const esel=$('scnEventSel');
+  if(esel) esel.querySelectorAll('button').forEach(b=> b.onclick=()=>{ scnSegPress('scnEventSel', b.dataset.v); sendEvent(); });
+  const hsel=$('scnEventHorizonSel');
+  if(hsel) hsel.querySelectorAll('button').forEach(b=> b.onclick=()=>{ scnSegPress('scnEventHorizonSel', b.dataset.v); sendEvent(); });
+  const note=$('scnEventNote'); if(note) note.addEventListener('change', sendEvent);
+  // «⟳ Оценить сейчас» + LED-кнопка
+  const recalc=$('scnRecalcBtn');
+  if(recalc) recalc.onclick=async ()=>{
+    const t=recalc.textContent; recalc.disabled=true; recalc.textContent='ОЦЕНКА…';
+    try{ if(window.scn){ const r=await window.scn.refreshNow(); if(r && !r.error) applyScnDataset(r); } }
+    catch(e){ console.warn('scn refreshNow', e); }
+    recalc.disabled=false; recalc.textContent=t; };
+  const live=$('scnLiveBtn');
+  if(live) live.onclick=async ()=>{
+    if(!window.scn) return;
+    try{ const r=(LIVE_SCN && LIVE_SCN.running) ? await window.scn.refreshNow() : await window.scn.start();
+      if(r && !r.error) applyScnDataset(r); }catch(e){ console.warn('scn live', e); } };
+  // редактор порогов
+  for(const [id,f] of Object.entries(SCN_TH_FIELDS)) scnWireEditorInput(id, f, false);
+  for(const [id,f] of Object.entries(SCN_SET_FIELDS)) scnWireEditorInput(id, f, true);
+  for(const [id,cfg] of Object.entries(SCN_TH_SEGS)) scnWireEditorSeg(id, cfg);
+  if($('scnPresetSave')) $('scnPresetSave').onclick=scnSaveCalibrated;
+  if($('scnPresetReset')) $('scnPresetReset').onclick=scnResetPreset;
+  // телеметрия: окно + экспорт
+  const tw=$('scnTelemetryWinSel');
+  if(tw) tw.querySelectorAll('button').forEach(b=> b.onclick=()=>{
+    scnTelemetryWin=b.dataset.v; scnSegPress('scnTelemetryWinSel', scnTelemetryWin);
+    if(LIVE_SCN && LIVE_SCN.cycle) renderScnTelemetry(LIVE_SCN.cycle); });
+  if($('scnJournalExportCsv')) $('scnJournalExportCsv').onclick=function(){ scnExport('signals', this); };
+  if($('scnTelemetryExportCsv')) $('scnTelemetryExportCsv').onclick=function(){ scnExport('telemetry', this); };
+  renderScnCharts();
+}
+initScn();
+
+/* ── мост живых данных сканера: getState (гидратация без автостарта) + onPush ── */
+(async ()=>{
+  if(!window.scn) return; // файловый режим без main — панели сканера просто не оживают
+  try{
+    const ds=await window.scn.getState();
+    if(ds) applyScnDataset(ds);
+    window.scn.onPush(applyScnDataset);
+  }catch(e){ console.warn('scn getState failed', e); }
+})();
+
 /* Robust chart painting: redraw whenever a chart container gets/changes its real
    size. ResizeObserver fires on first observe (once layout exists) so canvases are
    never left blank by a load-time layout/font race; debounced to coalesce bursts. */
 let rsz;
-function repaintCharts(){ clearTimeout(rsz); rsz=setTimeout(()=>{ renderCharts(); if(typeof renderTrade==='function') renderTrade(); if(typeof renderOptCharts==='function') renderOptCharts(); }, 60); }
+function repaintCharts(){ clearTimeout(rsz); rsz=setTimeout(()=>{ renderCharts(); if(typeof renderTrade==='function') renderTrade(); if(typeof renderOptCharts==='function') renderOptCharts(); if(typeof renderScnCharts==='function') renderScnCharts(); }, 60); }
 if (window.ResizeObserver){
   const ro = new ResizeObserver(repaintCharts);
-  ['equityCanvas','spreadCanvas','legsCanvas','priceCanvas','fwdCanvas','optPayoffCanvas','optDeltaCanvas','optPnlCanvas','optPriceCanvas']
+  ['equityCanvas','spreadCanvas','legsCanvas','priceCanvas','fwdCanvas','optPayoffCanvas','optDeltaCanvas','optPnlCanvas','optPriceCanvas','scnVolCanvas']
     .forEach(id => { const el=document.getElementById(id); if(el&&el.parentElement) ro.observe(el.parentElement); });
 } else {
   window.addEventListener('resize', repaintCharts);

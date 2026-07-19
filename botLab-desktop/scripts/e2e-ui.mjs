@@ -3,6 +3,8 @@
 // paper cycle through the UI: source → LIVE → «Старт (авто)» ticket → confirm → live decisions →
 // sweep → double-press close → ledger reconciliation. Asserts the UI contracts the 2026-07-14
 // mechanics-audit fixes locked in (№1/2/6/11/13/15 are cheap to check from the DOM).
+// Секция 13 (S3a, аддитивно): вкладка «Сканер» — автостарт А4, первый живой цикл, чеклист 14
+// условий, health-кластер, honest-empty кандидатов (Д8), blur-отклонение мусора в редакторе.
 //
 // SAFETY: the entire Electron profile is redirected to throw-away temp dirs (--user-data-dir AND a
 // scratch HOME). The run ABORTS before any interaction unless app.getPath("userData") provably
@@ -158,6 +160,34 @@ try {
   const recon = await win.textContent("#optLedgerRecon");
   check("журнал: open + close-options, статус «сходится»", ledger.includes("open") && ledger.includes("close-options") && /сходится/.test(recon), `events=[${ledger.join(",")}] · ${recon.trim()}`);
   await win.screenshot({ path: join(SHOTS, "05-closed.png") });
+
+  // ── 13. OTM-сканер (S3a, аддитивно): вкладка → автостарт (А4) → первый тик → чеклист + health.
+  // Каданс ужимается до 5с ДО первого показа вида — автостарт scnOnShow стартует уже быстрый источник.
+  await win.evaluate("window.scn.setSettings({ scanRepriceSec: 5 })");
+  await win.evaluate("setView('otm-scanner')");
+  const scnRunning = await waitFor(() => win.evaluate("window.scn.getState().then(d=>d.running===true)"), { timeout: 10000, label: "scn autostart" });
+  check("сканер: автостарт при первом показе вида (А4)", scnRunning === true);
+  await waitFor(() => win.evaluate("window.scn.getState().then(d=>!!d.cycle)"), { timeout: 60000, label: "scn first cycle" });
+  check("сканер: первый живой цикл оценки пришёл", true);
+  await waitFor(() => win.evaluate("document.querySelectorAll('#scnChecklistBody tr[id^=\\'scnCond-\\']').length===14"), { timeout: 15000, label: "scn checklist rows" });
+  const scnCond = await win.evaluate("document.querySelectorAll('#scnChecklistBody tr[id^=\\'scnCond-\\']').length");
+  check("чеклист: 14 условий У1–У14 отрисованы", scnCond === 14, `строк=${scnCond}`);
+  const scnPill = await win.textContent("#scnScorePill");
+  check("пилюля счёта живая (счёт N/M)", /счёт\s*\d+\/\d+/.test(scnPill), scnPill.trim());
+  const scnTok = (await win.textContent("#scnSignalToken")).trim();
+  check("токен сигнала в одном из пяти состояний", /^(ОЖИДАНИЕ|ФОРМИРУЕТСЯ|СИГНАЛ|КУЛДАУН|БЛЭКАУТ)$/.test(scnTok), scnTok);
+  const scnLive = await waitFor(async () => { const t = await win.textContent("#scnLiveTxt"); return /LIVE|ПРЕДУПР\./.test(t) ? t : null; }, { timeout: 30000, label: "scn health LIVE" });
+  check("health-кластер дошёл до LIVE/ПРЕДУПР.", true, scnLive);
+  // пустые дни кандидатов — НОРМА (находка Д8): валидны и строки, и честное «нет инструментов»
+  const scnCand = await win.textContent("#scnCandBody");
+  check("кандидаты: строки либо честное пустое состояние (Д8)", /BTC_USDC-|нет инструментов/.test(scnCand), scnCand.trim().slice(0, 60));
+  // редактор порогов: blur-отклонение мусора (прецедент λ) — значение не применяется, ошибка текстом
+  await win.fill("#scnThPremCap", "0");
+  await win.evaluate("document.getElementById('scnThPremCap').blur()");
+  const premBad = await win.evaluate("document.getElementById('scnThPremCap').getAttribute('aria-invalid')");
+  const premSetting = await win.evaluate("window.scn.getState().then(d=>d.preset.premMaxPct)");
+  check("редактор: У10=0 отклонён на blur и не применён", premBad === "true" && premSetting > 0, `aria-invalid=${premBad}, preset.premMaxPct=${premSetting}`);
+  await win.screenshot({ path: join(SHOTS, "06-scanner.png") });
 
   const fails = results.filter((r) => !r.ok);
   console.log(`\n=== UI e2e: ${results.length - fails.length}/${results.length} проверок пройдено ===`);

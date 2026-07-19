@@ -1609,6 +1609,16 @@ function assembleDatasetScan() {
     preset, // полный объект порогов — тулбар/редактор S3 биндятся к нему
     presetIds: [...new Set([...Object.keys(SCAN_PRESETS), ...Object.keys(sc.settings.userPresets ?? {})])],
     cycle: sc.cycle, // полный dataset-контракт движка (план §9 + правки ui-spec §1.4)
+    // S3a (аддитивно): абсолютные ряды волатильности для канваса «RV против IV» и модельной
+    // аналитики UI — cycle несёт только спреды условий, а канвасу нужны сами уровни (§9 плана)
+    vol: {
+      rv7dPct: sc.candlesBundle?.rv7dPct ?? null,
+      rv3dPct: sc.candlesBundle?.rv3dPct ?? null,
+      sigma1dPct: sc.candlesBundle?.sigma1dPct ?? null,
+      ivRefPct: sc.ivRef?.nearPct ?? null,
+      ivSource: sc.ivRef?.source ?? null,
+      baselineIvPct: sc.dvol?.baselineIvPct ?? null,
+    },
     event: effectiveScanEvent(Date.now()),
     budget: sc.budget, // счётчик GET/тик (§4.3) — панель качества данных S3
     degraded: sc.degraded,
