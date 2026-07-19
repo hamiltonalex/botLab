@@ -40,6 +40,7 @@ import { SCAN_PRESETS, SCAN_DATA_RULES, SCAN_SCHEMA_VERSION, defaultScanSettings
 import { tvToCandles, computeRvBundle } from "../engine/otmscan/rv.js";
 import { selectCandidates as scnSelectCandidates, expiriesInWindow as scnExpiriesInWindow } from "../engine/otmscan/candidates.js";
 import { createScanState, evaluateScan } from "../engine/otmscan/scan-engine.js";
+import { foldScanStats, bumpScanStart } from "./scn-stats.js";
 import { isolateSmokeProfile } from "./smoke-profile.js";
 import { migrateLegacyUserData } from "./migrate.js";
 import { initUpdater, disposeUpdater } from "./updater.js";
@@ -100,7 +101,8 @@ const state = {
   otmScanner: { engineState: null, settings: {}, source: null, running: false, cycle: null, lastSnapshot: null,
     candles: [], candlesTsMs: 0, candlesBundle: null, dvol: null, chain: null, ivRef: null, wings: null,
     set: null, books: {}, event: { flagged: false, note: null, untilTs: null }, degraded: false,
-    telemetryDirtyAt: 0, telemetryFlushedAt: 0, getCountAt: 0, budget: null, lastKickAt: 0 },
+    telemetryDirtyAt: 0, telemetryFlushedAt: 0, getCountAt: 0, budget: null, lastKickAt: 0,
+    stats: { days: {} } }, // S3b: суточная статистика обкатки (scn-stats.js), персист в telemetry-файле
 };
 
 const pollSec = () => Math.min(15, Math.max(1, state.settings.pollMinutes || 5)) * 60;
@@ -1121,6 +1123,7 @@ function flushScanTelemetry(force) {
       schemaVersion: SCAN_SCHEMA_VERSION,
       botId: SCN_ID,
       days: sc.engineState?.telemetry?.days ?? {},
+      stats: { days: sc.stats?.days ?? {} }, // S3b: распределения обкатки (аддитивно, тот же троттлинг)
     });
     sc.telemetryFlushedAt = Date.now();
   } catch (e) {
@@ -1147,6 +1150,9 @@ function loadOrInitOtmScanner() {
     ...(persisted ?? {}),
     telemetry: { session: {}, days: telRes.state?.days && typeof telRes.state.days === "object" ? telRes.state.days : {} },
   };
+  // S3b: статистика обкатки живёт в том же telemetry-файле (аддитивный ключ stats) и переживает
+  // рестарт вместе с суточными вёдрами; битый файл уже карантинен выше — тогда с нуля.
+  sc.stats = { days: telRes.state?.stats?.days && typeof telRes.state.stats.days === "object" ? telRes.state.stats.days : {} };
   if (!Array.isArray(sc.engineState.journal)) sc.engineState.journal = [];
   if ((sc.engineState.schemaVersion || 0) < SCAN_SCHEMA_VERSION) sc.engineState.schemaVersion = SCAN_SCHEMA_VERSION;
   if (!persisted) persistScanState(); // файл создаётся ровно один раз; «маркер» = его существование
@@ -1521,6 +1527,9 @@ async function onScanSnapshot(snap) {
     const { state: nextState, cycle } = evaluateScan(sc.engineState, assembleScanInputs(snap, nowMs), preset, nowMs);
     sc.engineState = nextState;
     sc.cycle = cycle;
+    // S3b: суточные распределения обкатки (значения условий, экономика лучшего, Д8, инциденты) —
+    // фолд ДО флаша, чтобы telemetry-файл уносил свежие вёдра тем же троттлингом.
+    sc.stats = foldScanStats(sc.stats, cycle, { degraded: sc.degraded, equityUsd: sc.settings.equityUsd, repriceSec: sc.settings.scanRepriceSec }, nowMs, SCN_RULES);
     persistScanState();
     flushScanTelemetry(false);
     pushScan();
@@ -1569,6 +1578,8 @@ function ensureScanSource() {
   if (!sc.running) {
     sc.running = true; // до start(): кэш-джобы первого тика гейтятся на running
     sc.getCountAt = deribit.getRpcCallCount(); // бюджет-лог считает с начала сессии опроса
+    sc.stats = bumpScanStart(sc.stats, resolveScanPreset().id, Date.now(), SCN_RULES); // S3b: рестарт-счётчик обкатки
+    sc.telemetryDirtyAt = Date.now(); // starts попадёт в файл и без первого тика
     sc.source.start(onScanSnapshot);
   }
 }
@@ -2254,10 +2265,19 @@ app.whenReady().then(async () => {
         signal: { id: `scn-${Date.now()}-SMOKE`, ts: Date.now(), asset: "BTC", instrument: "BTC_USDC-SMOKE-TEST-C", direction: "call", expiryMs: Date.now() + 86400000, strike: 70000, sigmaDist: 1.3, qtySuggested: 0.01, premiumAtSignal: 100, spotAtSignal: 64000, presetId: "dmitri-v1", thresholds: {}, conditionsSnapshot: [], ttlSec: 900, mode: "AND", score: "11/11", eventNote: null },
       };
       persistScanState();
+      flushScanTelemetry(true); // S3b: stats уходят в telemetry-файл до рестарт-пробы
+      const statsBefore = Object.values(Object.values(scSmoke.stats?.days ?? {})[0] ?? {}).reduce((s, b) => s + (b.ticks ?? 0), 0);
       loadOrInitOtmScanner(); // то, что делает рестарт: state с диска, телеметрия из своего файла
+      const statsAfter = Object.values(Object.values(state.otmScanner.stats?.days ?? {})[0] ?? {}).reduce((s, b) => s + (b.ticks ?? 0), 0);
       console.log(
         "[scnsmoke] restart:",
-        JSON.stringify({ phase: state.otmScanner.engineState.phase, active: state.otmScanner.engineState.signal?.instrument ?? null }),
+        JSON.stringify({
+          phase: state.otmScanner.engineState.phase,
+          active: state.otmScanner.engineState.signal?.instrument ?? null,
+          statsTicksBefore: statsBefore, // S3b: суточная статистика пережила рестарт вместе с телеметрией
+          statsTicksAfter: statsAfter,
+          statsRestored: statsAfter === statsBefore && statsBefore > 0,
+        }),
       );
       console.log("[scnsmoke] SMOKE OK");
     } catch (e) {

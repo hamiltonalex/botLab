@@ -9,6 +9,7 @@
     "oracle": "electron scripts/selector-oracle.mjs",
     "smoke": "node scripts/smoke-live.mjs",
     "smoke:scan": "node scripts/smoke-scan.mjs",
+    "report:scan": "node scripts/report-scan.mjs",
     "e2e:ui": "node scripts/e2e-ui.mjs",
     "verify:loris": "node scripts/verify-loris.mjs",
     "start": "electron .",

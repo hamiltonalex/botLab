@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { loadBotSettings, saveBotSettings, saveBotState, loadBotStateQuarantine } from "../src/engine/store.js";
 import { createScanState } from "../src/engine/otmscan/scan-engine.js";
 import { defaultScanSettings, SCAN_SCHEMA_VERSION } from "../src/engine/otmscan/presets.js";
+import { foldScanStats } from "../src/main/scn-stats.js";
 
 const ID = "otm-scanner";
 const tmp = () => mkdtempSync(join(tmpdir(), "otmscan-store-"));
@@ -26,11 +27,12 @@ function persistState(dir, engineState) {
   const { telemetry, ...core } = engineState;
   saveBotState(dir, ID, { botId: ID, ...core });
 }
-function persistTelemetry(dir, engineState) {
+function persistTelemetry(dir, engineState, stats) {
   saveBotState(dir, `${ID}-telemetry`, {
     schemaVersion: SCAN_SCHEMA_VERSION,
     botId: ID,
     days: engineState.telemetry?.days ?? {},
+    stats: { days: stats?.days ?? {} }, // S3b: статистика обкатки — аддитивный ключ того же файла
   });
 }
 function loadOrInit(dir) {
@@ -49,12 +51,14 @@ function loadOrInit(dir) {
   };
   if (!Array.isArray(engineState.journal)) engineState.journal = [];
   if ((engineState.schemaVersion || 0) < SCAN_SCHEMA_VERSION) engineState.schemaVersion = SCAN_SCHEMA_VERSION;
+  // S3b (зеркало main.js): статистика обкатки — из того же telemetry-файла, аддитивный ключ stats.
+  const stats = { days: telRes.state?.stats?.days && typeof telRes.state.stats.days === "object" ? telRes.state.stats.days : {} };
   let wrote = false;
   if (!persisted) {
     persistState(dir, engineState);
     wrote = true;
   }
-  return { engineState, settings, wrote, corrupt: stRes.corrupt };
+  return { engineState, settings, stats, wrote, corrupt: stRes.corrupt };
 }
 
 test("первый запуск пишет otm-scanner.json ровно один раз; второй бут — no-op", () => {
@@ -167,4 +171,38 @@ test("настройки: event и userPresets ходят через otm-scanner
 test("createScanState() JSON-чист: раунд-трип без потерь (нет undefined/функций/Map)", () => {
   const st = createScanState();
   assert.deepEqual(st, JSON.parse(JSON.stringify(st)));
+});
+
+test("S3b: статистика обкатки переживает рестарт через telemetry-файл; state-файл её не несёт", () => {
+  const dir = tmp();
+  try {
+    const st = createScanState();
+    const stats = foldScanStats(
+      { days: {} },
+      {
+        preset: { id: "dmitri-v1" },
+        score: { verdict: "none" },
+        lifecycle: { phase: "idle", blackout: { active: false } },
+        candidates: [],
+        conditions: [{ key: "spread_cap", unit: "pctPrem", value: 7.5, state: "fail" }],
+        economics: { roundTripCostPct: 15.2, minCapitalUsd: 120 },
+      },
+      { degraded: false, equityUsd: 100, repriceSec: 30 },
+      Date.UTC(2026, 6, 20, 12),
+    );
+    persistState(dir, st);
+    persistTelemetry(dir, st, stats);
+
+    const back = loadOrInit(dir);
+    assert.deepEqual(back.stats, JSON.parse(JSON.stringify(stats)), "распределения восстановлены побайтно");
+    assert.equal(back.stats.days["2026-07-20"]["dmitri-v1"].rtc.n, 1);
+    assert.equal(back.stats.days["2026-07-20"]["dmitri-v1"].capOverEq, 1);
+    const rawState = JSON.parse(readFileSync(join(dir, "otm-scanner.json"), "utf8"));
+    assert.equal(rawState.stats, undefined, "otm-scanner.json без статистики (раздел персиста)");
+    // Файл ДО S3b (без ключа stats) читается без ошибок — форвард-совместимость.
+    saveBotState(dir, `${ID}-telemetry`, { schemaVersion: SCAN_SCHEMA_VERSION, botId: ID, days: {} });
+    assert.deepEqual(loadOrInit(dir).stats, { days: {} });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
