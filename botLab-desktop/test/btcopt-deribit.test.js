@@ -124,3 +124,38 @@ test("snapshot: failed PRIMARY leg → primaryErrors non-empty, ok false, gate f
     global.fetch = real;
   }
 });
+
+// ── S2 (OTM-сканер) additive source API: errorStreak surfaces in status() (auto-degradation input),
+// setIntervalMs re-arms the timer WITHOUT recreating the source (recreation would zero errorStreak
+// and break recovery detection), and the GET-attempt counter feeds the §4.3 budget log. Also proves
+// the degradation premise: a failed-perp tick still DELIVERS a snapshot (ts = nowMs), so the
+// scanner's tick handler runs — and can detect the streak — even while the exchange is down.
+import { createRestSource, getRpcCallCount } from "../src/engine/btcopt/deribit.js";
+
+test("S2 source API: errorStreak in status(); setIntervalMs updates cadence; failing tick still delivers", async () => {
+  const real = global.fetch;
+  global.fetch = stubFetch("BTC-PERPETUAL"); // перп падает → primary error → errorStreak растёт
+  try {
+    const src = createRestSource({ intervalMs: 600000, staleAfterSec: 15 }); // интервал заведомо не успеет второй тик
+    src.setInstruments([], []); // сканерный режим: primary=[] — гейтит только перп-heartbeat
+    assert.equal(src.status().errorStreak, 0, "аддитивное поле присутствует и стартует с нуля");
+    assert.equal(src.status().intervalMs, 600000);
+    src.setIntervalMs(1200000); // живой перевзвод БЕЗ пересоздания
+    assert.equal(src.status().intervalMs, 1200000);
+    src.setIntervalMs(NaN); // мусор игнорируется
+    assert.equal(src.status().intervalMs, 1200000);
+
+    const c0 = getRpcCallCount();
+    let delivered = 0;
+    src.start(() => delivered++);
+    // Отказ перпа = 2 попытки с retry-снами 1.5с + 3с (rpc backoff) ≈ 4.5с до завершения тика.
+    await new Promise((r) => setTimeout(r, 6000));
+    src.stop();
+    assert.ok(delivered >= 1, "снапшот доставлен несмотря на отказ перпа (ts=nowMs) — деградация детектится в обработчике");
+    assert.ok(src.status().errorStreak >= 1, "отказ перпа растит errorStreak");
+    assert.equal(src.status().ok, false);
+    assert.ok(getRpcCallCount() >= c0 + 2, "счётчик GET считает ПОПЫТКИ (ретраи — реальный трафик)");
+  } finally {
+    global.fetch = real;
+  }
+});

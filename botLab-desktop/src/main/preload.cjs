@@ -67,3 +67,24 @@ contextBridge.exposeInMainWorld("s1", {
     return () => ipcRenderer.removeListener("s1:push", h);
   },
 });
+
+// ── OTM-сканер (S2) — ПАРАЛЛЕЛЬНЫЙ мост, полностью изолирован от `fa` и `s1` выше ──
+// Только чтение публичных данных Deribit и сигналы; исполнения нет вообще (S4 добавит handoff).
+// Источник опроса живёт строго между start() и stop() — в простое ноль трафика.
+contextBridge.exposeInMainWorld("scn", {
+  getState: () => ipcRenderer.invoke("scn:getState"),
+  start: () => ipcRenderer.invoke("scn:start"),
+  stop: () => ipcRenderer.invoke("scn:stop"),
+  refreshNow: () => ipcRenderer.invoke("scn:refreshNow"), // «⟳ Оценить сейчас»: внеочередной опрос
+  setSettings: (s) => ipcRenderer.invoke("scn:setSettings", s), // невалидное отклоняется с причиной
+  setPreset: (id) => ipcRenderer.invoke("scn:setPreset", id),
+  eventFlag: (p) => ipcRenderer.invoke("scn:eventFlag", p), // { flagged, note, horizonH: 24|48 }
+  exportSignals: (req) => ipcRenderer.invoke("scn:exportSignals", req), // журнал сигналов (csv|json)
+  exportTelemetry: (req) => ipcRenderer.invoke("scn:exportTelemetry", req), // pass-rate (csv|json)
+  // main -> renderer live pushes (тики оценки: чеклист, кандидаты, сигнал, здоровье)
+  onPush: (cb) => {
+    const h = (_e, ds) => cb(ds);
+    ipcRenderer.on("scn:push", h);
+    return () => ipcRenderer.removeListener("scn:push", h);
+  },
+});

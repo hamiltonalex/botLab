@@ -121,6 +121,16 @@ export const SCAN_DATA_RULES = deepFreeze({
   journalMax: 200, // кольцо журнала сигналов (план §5.5)
   telemetryDays: 30, // кольцо суточных вёдер телеметрии (план §5.6)
   minLotFallback: 0.01, // min_trade_amount BTC_USDC-опционов (верифицировано S0) — фолбэк, если меты нет в chain
+  // ── S2: структурные константы источника/кэшей main-процесса (план §4.1-§4.3). Не пороги
+  // Дмитрия — механика снабжения данными; живут здесь по тому же закону единого источника истины.
+  setDriftPct: 2, // пересборка набора инструментов при дрейфе спота от якоря (паттерн band бота 2)
+  candlesRefreshSec: 270, // топ-ап свечей 1h: чуть чаще staleCandlesSec (300), чтобы кэш не мигал в «протухло»
+  cacheRefreshSec: 270, // DVOL/chain: «кэш 5 мин» с тем же запасом до staleCacheSec (600)
+  candlesBackfillDays: 10, // бэкфилл свечей на старте (§4.1)
+  candlesRingCap: 480, // кольцо свечей: 10д × 24 бара + запас на топ-апы
+  dvolBaselineDays: 90, // baselineIV = среднее дневных закрытий DVOL за 90д (§5.1)
+  booksPerTickMax: 2, // стаканы только финалистов, не более 2 вызовов на тик (§4.1)
+  telemetryFlushSec: 60, // троттлинг записи otm-scanner-telemetry.json (паттерн HIST_FLUSH_MS бота 2)
 });
 
 // Настройки вне пресетов (план §6). Персист: otm-scanner-settings.json.

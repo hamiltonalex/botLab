@@ -27,6 +27,13 @@ const BASE = (testnet) => (testnet ? "https://test.deribit.com/api/v2" : "https:
 const lastRpcStats = { rttMs: null, usDiffMs: null, at: null };
 export const getRpcStats = () => ({ ...lastRpcStats });
 
+// S2 (OTM-сканер, план §4.3): монотонный счётчик HTTP GET-попыток — доказательная база бюджета
+// запросов («счётчик GET на тик»). Считает ПОПЫТКИ (включая ретраи) — это реальный трафик к бирже.
+// Общий на модуль: при одновременной работе бота 2 и сканера дельта покрывает обоих (лог это
+// подписывает). Аддитивно: бот 2 счётчик не читает.
+let rpcCallCount = 0;
+export const getRpcCallCount = () => rpcCallCount;
+
 // ---------------------------------------------------------------------------
 // JSON-RPC-over-HTTPS-GET with retry/backoff (mirrors sources.js getJson; 429 backs off harder).
 // ---------------------------------------------------------------------------
@@ -42,6 +49,7 @@ export async function rpc(method, params = {}, { testnet = false, retries = 2, t
     try {
       const t0 = Date.now();
       const signal = AbortSignal.timeout(timeoutMs);
+      rpcCallCount++; // каждая попытка = один реальный GET (бюджет §4.3 сканера)
       const r = await fetch(url, { headers: { "User-Agent": UA }, signal });
       if (r.status === 429) {
         await SLEEP(8000 * (attempt + 1)); // Deribit rate limit — back off hard
@@ -340,6 +348,17 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
     refreshNow() {
       if (running) tick();
     },
+    // S2 (OTM-сканер): живая смена каданса БЕЗ пересоздания источника — авто-деградация x2 при
+    // errorStreak >= 3 обязана сохранять lastTs/metaCache/errorStreak (пересоздание обнуляло бы
+    // errorStreak, и выздоровление детектировалось бы ложно). Аддитивно: бот 2 метод не зовёт.
+    setIntervalMs(ms) {
+      if (!Number.isFinite(ms) || ms < 250 || ms === intervalMs) return;
+      intervalMs = ms;
+      if (timer) {
+        clearInterval(timer);
+        timer = setInterval(tick, intervalMs);
+      }
+    },
     setInstruments(names, primary) {
       legInstruments = Array.isArray(names) ? names.slice() : [];
       // Optional 2nd arg: the gate-relevant (open-structure) subset. Omitted ⇒ every polled leg gates
@@ -355,6 +374,7 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
         testnet,
         running,
         ok: !!lastSnap && !lastError && errorStreak < 3,
+        errorStreak, // S2: сканер читает для авто-деградации каданса (§4.2); аддитивное поле
         stale,
         gateOk: lastSnap ? lastSnap.fresh.gateOk : false,
         gateFailed: lastSnap ? (lastSnap.fresh.gateFailed || []).slice() : [],

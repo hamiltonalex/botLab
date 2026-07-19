@@ -24,7 +24,7 @@ import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts } 
 import { ledgerView, buildLedger } from "../engine/ledger.js";
 import { toLedgerCsv, toLedgerSheet, toLedgerJson, ledgerFileName, dialogFiltersFor } from "./export.js";
 import { buildXlsxBuffer } from "./xlsx-writer.js";
-import { loadPositions, savePositions, loadSettings, saveSettings, hasSettings, loadBotState, saveBotState, loadBotSettings, saveBotSettings } from "../engine/store.js";
+import { loadPositions, savePositions, loadSettings, saveSettings, hasSettings, loadBotState, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine } from "../engine/store.js";
 import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
 import { buildStructure as s1buildStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry } from "../engine/btcopt/structure.js";
@@ -34,6 +34,12 @@ import { summarize as s1summarize } from "../engine/btcopt/metrics.js";
 import { appendLedger as s1appendLedger, planSettleAdjustments as s1planSettleAdjustments } from "../engine/btcopt/pnl.js";
 import { decimate } from "../engine/format.js";
 import { TWO_LEG, ONE_LEG, ALL_MARKETS, twoLegByKey, oneLegByKey, chainsInUse } from "../engine/universe.js";
+// OTM-сканер (S2): чистый движок каскада otmscan + его пресеты/правила. Вся грязь (fetch, таймеры,
+// диск) остаётся здесь — движок получает готовый inputs-объект (контракт в шапке scan-engine.js).
+import { SCAN_PRESETS, SCAN_DATA_RULES, SCAN_SCHEMA_VERSION, defaultScanSettings, normalizeScanPatch } from "../engine/otmscan/presets.js";
+import { tvToCandles, computeRvBundle } from "../engine/otmscan/rv.js";
+import { selectCandidates as scnSelectCandidates, expiriesInWindow as scnExpiriesInWindow } from "../engine/otmscan/candidates.js";
+import { createScanState, evaluateScan } from "../engine/otmscan/scan-engine.js";
 import { isolateSmokeProfile } from "./smoke-profile.js";
 import { migrateLegacyUserData } from "./migrate.js";
 import { initUpdater, disposeUpdater } from "./updater.js";
@@ -41,7 +47,8 @@ import { decideChangelogOpen } from "./updater-state.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const S1_SMOKE = process.env.S1_SMOKE === "1"; // bot-2 self-test: open→live ticks→close through the real s1 IPC
-const SMOKE = process.env.FA_SMOKE === "1" || S1_SMOKE; // isolate profile + hidden window + skip updater
+const SCN_SMOKE = process.env.SCN_SMOKE === "1"; // S2 self-test сканера: живой scanCycle через реальный scn-IPC
+const SMOKE = process.env.FA_SMOKE === "1" || S1_SMOKE || SCN_SMOKE; // isolate profile + hidden window + skip updater
 isolateSmokeProfile(app, { enabled: SMOKE });
 const instFor = (strat, key) => (strat === "one" ? oneLegByKey(key) : twoLegByKey(key));
 const cacheKeyFor = (strat, key) => (strat === "one" ? `${key}__oneleg` : key);
@@ -84,6 +91,16 @@ const state = {
   // session-scoped). band = the polled ATM±{5,10,15}% instrument set; dvol = the cached index value.
   btcOptions: { engine: null, source: null, settings: {}, snapshot: null, running: false, chain: null, lastSnapshot: null,
     ivHistory: [], snapshotHistory: [], band: null, dvol: null, dvolBackfilled: false, sweepResult: null, histDirtyAt: 0, histFlushedAt: 0 },
+  // OTM-сканер (S2) — изолированный сканер точек входа в покупку OTM-опционов (план otm-scanner).
+  // Читается только scn:*-хендлерами / assembleDatasetScan(); в fa:push и s1:push не попадает.
+  // Кольца и кэши живут ЗДЕСЬ (движок O(1) на тик, паттерн 3b бота 2): candles (1h, бэкфилл 10д +
+  // топ-ап), dvol (дневные закрытия 90д → baseline), chain (USDC), set (опрашиваемый набор:
+  // перп + ATM near/far + крылья + кандидаты — паттерн band), books (стаканы финалистов).
+  // engineState — персистентный редьюсер scan-engine (сигнал/журнал/кулдауны/гистерезис/телеметрия).
+  otmScanner: { engineState: null, settings: {}, source: null, running: false, cycle: null, lastSnapshot: null,
+    candles: [], candlesTsMs: 0, candlesBundle: null, dvol: null, chain: null, ivRef: null, wings: null,
+    set: null, books: {}, event: { flagged: false, note: null, untilTs: null }, degraded: false,
+    telemetryDirtyAt: 0, telemetryFlushedAt: 0, getCountAt: 0, budget: null, lastKickAt: 0 },
 };
 
 const pollSec = () => Math.min(15, Math.max(1, state.settings.pollMinutes || 5)) * 60;
@@ -1047,6 +1064,739 @@ function wireIpcStrategy1() {
 }
 
 // ---------------------------------------------------------------------------
+// OTM-сканер (S2, план otm-scanner §12-S2) — интеграция PURE-движка otmscan в main-процесс.
+// Полная изоляция (закон Phase 0): своё состояние (state.otmScanner), свои файлы
+// otm-scanner{,-settings,-telemetry}.json, свой IPC-неймспейс scn:* + push scn:push, свой
+// createRestSource-инстанс. funding-arb и Strategy One не задеты; deribit.js расширен аддитивно.
+// Источник работает ТОЛЬКО между scn:start и scn:stop — в простое ноль трафика (§4.2).
+// ---------------------------------------------------------------------------
+const SCN_ID = "otm-scanner";
+const SCN_RULES = SCAN_DATA_RULES; // структурные константы (§7) — единый источник истины в presets.js
+
+// Эффективный каданс кэшей: при авто-деградации (§4.2) все кадансы сканера удваиваются.
+const scnCacheMs = (baseSec) => baseSec * 1000 * (state.otmScanner.degraded ? 2 : 1);
+
+const normalizeScanEvent = (e) => ({
+  flagged: !!e?.flagged,
+  note: typeof e?.note === "string" ? e.note.slice(0, 24) : null,
+  untilTs: Number.isFinite(e?.untilTs) ? e.untilTs : null,
+});
+// Флаг события живёт до untilTs (горизонт 24/48ч из тулбара) и дальше гаснет сам — движок и
+// dataset всегда видят уже погашенную версию, персист чистится лениво при следующем сохранении.
+function effectiveScanEvent(nowMs) {
+  const ev = state.otmScanner.event;
+  return ev.flagged && (ev.untilTs == null || ev.untilTs > nowMs) ? ev : { flagged: false, note: null, untilTs: null };
+}
+
+function resolveScanPreset() {
+  const sc = state.otmScanner;
+  const id = sc.settings.presetId || "dmitri-v1";
+  // Пользовательский слот (S3-редактор пишет в settings.userPresets) перекрывает встроенный черновик.
+  return sc.settings.userPresets?.[id] ?? SCAN_PRESETS[id] ?? SCAN_PRESETS["dmitri-v1"];
+}
+
+function saveScanSettings() {
+  const sc = state.otmScanner;
+  saveBotSettings(baseDir, SCN_ID, { ...sc.settings, event: sc.event });
+}
+
+// Персист-раздел (план §3.1): otm-scanner.json — редьюсер БЕЗ телеметрии (сигнал/журнал/кулдауны/
+// гистерезис; пишется каждый тик — ACTIVE-сигнал переживает рестарт, §7 случай 14);
+// otm-scanner-telemetry.json — только суточные вёдра (троттлинг + финальный сброс на quit;
+// session-счётчики умирают с сессией по определению §5.6).
+function persistScanState() {
+  const sc = state.otmScanner;
+  if (!sc.engineState) return;
+  const { telemetry, ...core } = sc.engineState;
+  saveBotState(baseDir, SCN_ID, { botId: SCN_ID, ...core });
+  sc.telemetryDirtyAt = Date.now();
+}
+
+function flushScanTelemetry(force) {
+  const sc = state.otmScanner;
+  if (!sc.telemetryDirtyAt || sc.telemetryDirtyAt <= sc.telemetryFlushedAt) return;
+  if (!force && Date.now() - sc.telemetryFlushedAt < SCN_RULES.telemetryFlushSec * 1000) return;
+  try {
+    saveBotState(baseDir, `${SCN_ID}-telemetry`, {
+      schemaVersion: SCAN_SCHEMA_VERSION,
+      botId: SCN_ID,
+      days: sc.engineState?.telemetry?.days ?? {},
+    });
+    sc.telemetryFlushedAt = Date.now();
+  } catch (e) {
+    console.error("[scn] telemetry flush:", e);
+  }
+}
+
+function loadOrInitOtmScanner() {
+  const sc = state.otmScanner;
+  const persistedSettings = loadBotSettings(baseDir, SCN_ID);
+  sc.settings = { ...defaultScanSettings(), ...persistedSettings };
+  if (!sc.settings.userPresets || typeof sc.settings.userPresets !== "object") sc.settings.userPresets = {};
+  sc.event = normalizeScanEvent(sc.settings.event);
+  delete sc.settings.event; // событие живёт отдельным полем state; в файл возвращает saveScanSettings
+
+  // Битый JSON карантинится (.corrupt-<ts>), не перезаписывается молча — §7 случай 17.
+  const stRes = loadBotStateQuarantine(baseDir, SCN_ID);
+  const telRes = loadBotStateQuarantine(baseDir, `${SCN_ID}-telemetry`);
+  if (stRes.corrupt) console.warn(`[scn] ${SCN_ID}.json битый — карантин .corrupt-*, чистый re-init`);
+  if (telRes.corrupt) console.warn(`[scn] ${SCN_ID}-telemetry.json битый — карантин, телеметрия с нуля`);
+  const persisted = stRes.state && typeof stRes.state === "object" ? stRes.state : null;
+  sc.engineState = {
+    ...createScanState(),
+    ...(persisted ?? {}),
+    telemetry: { session: {}, days: telRes.state?.days && typeof telRes.state.days === "object" ? telRes.state.days : {} },
+  };
+  if (!Array.isArray(sc.engineState.journal)) sc.engineState.journal = [];
+  if ((sc.engineState.schemaVersion || 0) < SCAN_SCHEMA_VERSION) sc.engineState.schemaVersion = SCAN_SCHEMA_VERSION;
+  if (!persisted) persistScanState(); // файл создаётся ровно один раз; «маркер» = его существование
+  console.log(
+    `[scn] init: phase=${sc.engineState.phase} preset=${sc.settings.presetId}` +
+      (sc.engineState.signal ? ` · ACTIVE ${sc.engineState.signal.instrument} восстановлен (ревалидация первым тиком)` : ""),
+  );
+}
+
+// ── Медленные кэши (§4.1): свечи 1h (бэкфилл 10д + топ-ап), DVOL (90д однократно + топ-ап),
+// chain USDC. Самогейтятся кадансом, работают только при running (в простое ноль трафика),
+// никогда не бросают в тик. Fire-and-forget из обработчика тика.
+let scnCandlesInFlight = false;
+async function ensureScanCandles() {
+  const sc = state.otmScanner;
+  if (!sc.running || scnCandlesInFlight) return;
+  if (Date.now() - sc.candlesTsMs < scnCacheMs(SCN_RULES.candlesRefreshSec)) return;
+  scnCandlesInFlight = true;
+  try {
+    const end = Date.now();
+    const start = sc.candles.length
+      ? sc.candles[sc.candles.length - 1].ts - 2 * 3600000 // топ-ап: последние бары перезабираются (бар в процессе дозаполняется)
+      : end - SCN_RULES.candlesBackfillDays * 86400000; // холодный старт: бэкфилл 10д
+    const tv = await deribit.getTradingviewChartData({ start_timestamp: start, end_timestamp: end, resolution: "60", testnet: !!sc.settings.testnet });
+    const fresh = tvToCandles(tv);
+    if (fresh.length) {
+      const byTs = new Map(sc.candles.map((c) => [c.ts, c]));
+      for (const c of fresh) byTs.set(c.ts, c); // обновлённый бар побеждает (правило tvToCandles)
+      sc.candles = [...byTs.values()].sort((a, b) => a.ts - b.ts).slice(-SCN_RULES.candlesRingCap);
+    }
+    sc.candlesTsMs = Date.now();
+    // Контракт S2: candlesBundle пересчитывается ТОЛЬКО при обновлении кэша свечей (движку — готовый).
+    sc.candlesBundle = computeRvBundle(sc.candles, Date.now());
+  } catch (e) {
+    console.warn("[scn] candles fetch:", String(e?.message || e));
+  } finally {
+    scnCandlesInFlight = false;
+  }
+}
+
+let scnDvolInFlight = false;
+async function ensureScanDvol() {
+  const sc = state.otmScanner;
+  if (!sc.running || scnDvolInFlight) return;
+  if (sc.dvol && Date.now() - sc.dvol.tsMs < scnCacheMs(SCN_RULES.cacheRefreshSec)) return;
+  scnDvolInFlight = true;
+  try {
+    const end = Date.now();
+    // 90д дневных закрытий тянутся ОДНОКРАТНО (план §4.1); дальше — топ-ап хвоста, baseline скользит.
+    const start = sc.dvol?.backfilled ? end - 3 * 86400000 : end - SCN_RULES.dvolBaselineDays * 86400000;
+    const res = await deribit.getVolatilityIndexData({ currency: "BTC", start_timestamp: start, end_timestamp: end, resolution: "1D", testnet: !!sc.settings.testnet });
+    const rows = Array.isArray(res?.data) ? res.data : [];
+    const freshRows = rows
+      .map((r) => ({ ts: r?.[0], close: r?.[4] }))
+      .filter((e) => Number.isFinite(e.ts) && Number.isFinite(e.close));
+    if (freshRows.length || sc.dvol) {
+      const byTs = new Map((sc.dvol?.closes ?? []).map((e) => [e.ts, e]));
+      for (const e of freshRows) byTs.set(e.ts, e);
+      const closes = [...byTs.values()].sort((a, b) => a.ts - b.ts).slice(-SCN_RULES.dvolBaselineDays);
+      if (closes.length) {
+        sc.dvol = {
+          closes,
+          baselineIvPct: closes.reduce((s, e) => s + e.close, 0) / closes.length,
+          lastClosePct: closes[closes.length - 1].close,
+          days: closes.length,
+          backfilled: true,
+          tsMs: Date.now(),
+        };
+      }
+    }
+  } catch (e) {
+    console.warn("[scn] dvol fetch:", String(e?.message || e));
+  } finally {
+    scnDvolInFlight = false;
+  }
+}
+
+let scnChainInFlight = false;
+async function ensureScanChain() {
+  const sc = state.otmScanner;
+  if (!sc.running || scnChainInFlight) return;
+  if (sc.chain && Date.now() - (sc.chain.fetchedAt || 0) < scnCacheMs(SCN_RULES.cacheRefreshSec)) return;
+  scnChainInFlight = true;
+  try {
+    const all = await deribit.getInstruments({ currency: deribit.OPTION_CURRENCY, kind: "option", testnet: !!sc.settings.testnet });
+    sc.chain = { instruments: all.filter((i) => deribit.isBtcUsdcOption(i.instrument_name)), fetchedAt: Date.now() };
+  } catch (e) {
+    console.warn("[scn] chain fetch:", String(e?.message || e));
+  } finally {
+    scnChainInFlight = false;
+  }
+}
+
+// ── Набор инструментов источника (§4.1, паттерн band бота 2): перп (в снапшоте всегда) +
+// ATM-пары near/far (IV_ref и FIV) + крылья ±1σ (У7) + кандидаты σ-окна (тикеры У10-У14) +
+// инструмент ACTIVE-сигнала (пин §5.5). Набор — решение момента сборки; живёт до дрейфа спота
+// (setDriftPct), смены chain/стороны/пресета/σ-конвенции, ролловера near-экспирации или пина.
+function scnAtmPairOf(chain, expiryMs, spot) {
+  const metas = (chain?.instruments ?? []).filter((m) => m.expiration_timestamp === expiryMs);
+  if (!metas.length || !Number.isFinite(spot)) return null;
+  const strikes = [...new Set(metas.map((m) => m.strike))].sort((a, b) => Math.abs(a - spot) - Math.abs(b - spot));
+  const atm = strikes[0];
+  const call = metas.find((m) => m.strike === atm && m.option_type === "call")?.instrument_name ?? null;
+  const put = metas.find((m) => m.strike === atm && m.option_type === "put")?.instrument_name ?? null;
+  return call || put ? { call, put, strike: atm } : null;
+}
+
+function scnNearestStrike(chain, expiryMs, type, targetStrike) {
+  let best = null;
+  for (const m of chain?.instruments ?? []) {
+    if (m.expiration_timestamp !== expiryMs || m.option_type !== type) continue;
+    if (!best || Math.abs(m.strike - targetStrike) < Math.abs(best.strike - targetStrike)) best = m;
+  }
+  return best?.instrument_name ?? null;
+}
+
+function buildScanSet(spot, nowMs) {
+  const sc = state.otmScanner;
+  const chain = sc.chain;
+  if (!chain || !Number.isFinite(spot) || spot <= 0) return null;
+  const preset = resolveScanPreset();
+  const s = sc.settings;
+  const bundle = sc.candlesBundle;
+  const side = bundle?.direction ?? null;
+  const windowExps = scnExpiriesInWindow(chain, nowMs, preset);
+  const nearExp = windowExps[0] ?? null; // кандидатная экспирация; пустое окно = дни без листинга (Д8)
+  const farMin = nowMs + preset.fivFarMinDays * 86400000;
+  const allExps = [...new Set((chain.instruments ?? []).map((m) => m.expiration_timestamp))]
+    .filter((t) => Number.isFinite(t) && t > nowMs)
+    .sort((a, b) => a - b);
+  const farExp = allExps.find((t) => t >= farMin) ?? null;
+  const atmNear = nearExp != null ? scnAtmPairOf(chain, nearExp, spot) : null;
+  const atmFar = farExp != null ? scnAtmPairOf(chain, farExp, spot) : null;
+
+  // Крылья ±1σ near-экспирации: σ_T из последнего IV_ref (или DVOL-фолбэк на холодном старте) —
+  // сборочное решение, как страйки band у бота 2; движок мерит скью по живым mark_iv этих крыльев.
+  let wingPut = null;
+  let wingCall = null;
+  const ivForSigma = sc.ivRef?.nearPct ?? sc.dvol?.lastClosePct ?? null;
+  if (nearExp != null && Number.isFinite(ivForSigma)) {
+    const tYears = (nearExp - nowMs) / (365 * 86400000);
+    const sigmaPct = tYears > 0 ? ivForSigma * Math.sqrt(tYears) : null;
+    if (Number.isFinite(sigmaPct) && sigmaPct > 0) {
+      wingPut = scnNearestStrike(chain, nearExp, "put", spot * (1 - sigmaPct / 100));
+      wingCall = scnNearestStrike(chain, nearExp, "call", spot * (1 + sigmaPct / 100));
+    }
+  }
+
+  // Кандидаты для ОПРОСА — тот же selectCandidates, что в движке; σ-вход из последних известных IV
+  // (движок на тике пересчитает всё по живым данным — набор лишь решает, каким инструментам будут
+  // тикеры; рассинхрон деградирует в unknown видимо и лечится пересборкой на дрейфе).
+  const ivRefByExpiry = {};
+  for (const exp of windowExps) {
+    const known = sc.ivRef && sc.ivRef.nearExpiryMs === exp && sc.ivRef.source === "atm" ? sc.ivRef.nearPct : null;
+    const v = known ?? sc.dvol?.lastClosePct ?? null;
+    if (Number.isFinite(v)) ivRefByExpiry[exp] = v;
+  }
+  const sel = side
+    ? scnSelectCandidates({ chain, side, spot, nowMs, preset, sigmaConvention: s.sigmaConvention, ivRefByExpiry, sigma1dPct: bundle?.sigma1dPct ?? null, max: s.nCandidatesMax })
+    : { candidates: [] };
+  const candidateNames = sel.candidates.map((c) => c.instrument);
+  const pinned = sc.engineState?.phase === "active" ? (sc.engineState.signal?.instrument ?? null) : null;
+
+  const names = new Set();
+  for (const n of [atmNear?.call, atmNear?.put, atmFar?.call, atmFar?.put, wingPut, wingCall, ...candidateNames, pinned]) {
+    if (n) names.add(n);
+  }
+  return {
+    instruments: [...names],
+    candidates: candidateNames,
+    atmNear,
+    atmFar,
+    wingPut,
+    wingCall,
+    pinned,
+    nearExpiryMs: nearExp,
+    farExpiryMs: farExp,
+    side,
+    presetId: preset.id,
+    sigmaConvention: s.sigmaConvention,
+    anchorSpot: spot,
+    chainFetchedAt: chain.fetchedAt,
+  };
+}
+
+function pointScanSource() {
+  const sc = state.otmScanner;
+  if (!sc.source) return;
+  // primary = []: у сканера нет «ног структуры» — greeks-гейт ничего не гейтит, и дырка в крыле
+  // не гасит LIVE (качество данных судит движок per-условие через unknown, §7). Здоровье источника
+  // меряется перпом (heartbeat): его отказ растит errorStreak и включает деградацию.
+  sc.source.setInstruments(sc.set?.instruments ?? [], []);
+}
+
+function refreshScanSet(spot, nowMs) {
+  const sc = state.otmScanner;
+  if (!sc.chain || !Number.isFinite(spot) || spot <= 0) return false;
+  const cur = sc.set;
+  const preset = resolveScanPreset();
+  const bundleSide = sc.candlesBundle?.direction ?? null;
+  const pinned = sc.engineState?.phase === "active" ? (sc.engineState.signal?.instrument ?? null) : null;
+  const nearNow = scnExpiriesInWindow(sc.chain, nowMs, preset)[0] ?? null;
+  const stale =
+    !cur ||
+    cur.chainFetchedAt !== sc.chain.fetchedAt ||
+    Math.abs(spot - cur.anchorSpot) / cur.anchorSpot > SCN_RULES.setDriftPct / 100 ||
+    cur.side !== bundleSide ||
+    cur.presetId !== preset.id ||
+    cur.sigmaConvention !== sc.settings.sigmaConvention ||
+    (cur.nearExpiryMs ?? null) !== nearNow ||
+    (cur.pinned ?? null) !== pinned;
+  if (!stale) return false;
+  const next = buildScanSet(spot, nowMs);
+  if (!next) return false;
+  const changed = !cur || cur.instruments.join(",") !== next.instruments.join(",");
+  sc.set = next;
+  pointScanSource(); // источник перецеливается на СЛЕДУЮЩИЙ тик
+  return changed;
+}
+
+// ── IV_ref (§5.1): среднее mark_iv ATM-пары кандидатной экспирации (одна нога — тоже значение,
+// правило ATM-пары бота 2); пары нет вовсе — DVOL-фолбэк с пометкой source:"dvol" (движок несёт
+// её в note У1-У3). far-нога FIV при дырке в тике доживает со своим farTsMs и протухает честно.
+function deriveScanIvRef(snap, nowMs) {
+  const sc = state.otmScanner;
+  const set = sc.set;
+  const ivOf = (name) => (name && Number.isFinite(snap.legs?.[name]?.markIv) ? snap.legs[name].markIv : null);
+  const pairIv = (pair) => {
+    const c = ivOf(pair?.call);
+    const p = ivOf(pair?.put);
+    return c != null && p != null ? (c + p) / 2 : (c ?? p);
+  };
+  const near = pairIv(set?.atmNear);
+  const far = pairIv(set?.atmFar);
+  const snapTs = snap.ts ?? nowMs;
+  const keptFar = far ?? sc.ivRef?.farPct ?? null;
+  const keptFarTs = far != null ? snapTs : (sc.ivRef?.farTsMs ?? null);
+  if (near != null) {
+    sc.ivRef = { nearPct: near, nearExpiryMs: set?.nearExpiryMs ?? null, farPct: keptFar, farExpiryMs: set?.farExpiryMs ?? null, source: "atm", tsMs: snapTs, farTsMs: keptFarTs };
+  } else if (Number.isFinite(sc.dvol?.lastClosePct)) {
+    sc.ivRef = { nearPct: sc.dvol.lastClosePct, nearExpiryMs: set?.nearExpiryMs ?? null, farPct: keptFar, farExpiryMs: set?.farExpiryMs ?? null, source: "dvol", tsMs: sc.dvol.tsMs, farTsMs: keptFarTs };
+  } // иначе прежний ivRef доживает и протухает по своему tsMs (staleCacheSec)
+
+  const put = ivOf(set?.wingPut);
+  const call = ivOf(set?.wingCall);
+  if (put != null || call != null) sc.wings = { putIvPct: put, callIvPct: call, tsMs: snapTs };
+  // некотирующиеся крылья: прежние доживают и протухают по tsMs — У7 уйдёт в unknown честно
+}
+
+// ── Стаканы финалистов (§4.1): только кандидаты, прошедшие У9-У11 по данным тикера (σ-окно
+// гарантировано отбором; премия и спред — дешёвые формулы), приоритет — пин ACTIVE-сигнала
+// (его книга кормит У8/У12 живого сигнала). Не более booksPerTickMax вызовов; никто не прошёл —
+// ноль вызовов (У12 останется unknown, но вердикт уже none из-за У10/У11 — бюджет не тратится).
+function pickBookFinalists(snap, preset) {
+  const sc = state.otmScanner;
+  const spot = snap.perp?.index ?? null;
+  const out = [];
+  const pinned = sc.set?.pinned;
+  if (pinned && snap.legs?.[pinned]) out.push(pinned);
+  for (const name of sc.set?.candidates ?? []) {
+    if (out.length >= SCN_RULES.booksPerTickMax) break;
+    if (out.includes(name)) continue;
+    const l = snap.legs?.[name];
+    if (!l || !Number.isFinite(l.mark) || l.mark <= 0 || !Number.isFinite(spot) || spot <= 0) continue;
+    const premPct = (l.mark / spot) * 100;
+    const spreadPct = Number.isFinite(l.bid) && Number.isFinite(l.ask) ? ((l.ask - l.bid) / l.mark) * 100 : null;
+    if (premPct > preset.premMaxPct) continue;
+    if (spreadPct == null || spreadPct > preset.spreadMaxPctPrem) continue;
+    out.push(name);
+  }
+  return out.slice(0, SCN_RULES.booksPerTickMax);
+}
+
+// depthUsd = Σ(цена × количество) по топ-5 уровням (§5.2 У12); уровни Deribit — [price, amount].
+const scnBookDepthUsd = (levels) => (levels ?? []).reduce((s, l) => s + (Number(l?.[0]) || 0) * (Number(l?.[1]) || 0), 0);
+
+async function fetchScanBooks(names) {
+  const sc = state.otmScanner;
+  let fetched = 0;
+  await Promise.all(
+    names.map(async (name) => {
+      try {
+        const ob = await deribit.getOrderBook(name, { depth: 5, testnet: !!sc.settings.testnet });
+        sc.books[name] = { bidDepthUsd: scnBookDepthUsd(ob?.bids), askDepthUsd: scnBookDepthUsd(ob?.asks), tsMs: Date.now() };
+        fetched++;
+      } catch {
+        /* книга доживёт и протухнет по bookAgeSec в движке — честный unknown, не молчаливый fail */
+      }
+    }),
+  );
+  const keep = new Set(sc.set?.instruments ?? []);
+  for (const k of Object.keys(sc.books)) if (!keep.has(k)) delete sc.books[k]; // кэш книг не растёт
+  return fetched;
+}
+
+// ── Сборка inputs-объекта по контракту шапки scan-engine.js (S1): всё, что движку нужно на тик.
+function assembleScanInputs(snap, nowMs) {
+  const sc = state.otmScanner;
+  const instruments = {};
+  const wanted = new Set(sc.set?.candidates ?? []);
+  if (sc.set?.pinned) wanted.add(sc.set.pinned);
+  for (const name of wanted) {
+    const l = snap.legs?.[name];
+    if (!l) continue; // нет тикера — движок даст unknown по инструментной группе (честно)
+    instruments[name] = {
+      mark: l.mark,
+      bid: l.bid,
+      ask: l.ask,
+      markIv: l.markIv,
+      theta: l.theta,
+      delta: l.delta,
+      tsMs: l.ts ?? snap.ts ?? nowMs,
+      book: sc.books[name] ?? null,
+    };
+  }
+  const ivRefByExpiry = {};
+  if (sc.ivRef) {
+    if (Number.isFinite(sc.ivRef.nearPct) && Number.isFinite(sc.ivRef.nearExpiryMs)) ivRefByExpiry[sc.ivRef.nearExpiryMs] = sc.ivRef.nearPct;
+    if (Number.isFinite(sc.ivRef.farPct) && Number.isFinite(sc.ivRef.farExpiryMs)) ivRefByExpiry[sc.ivRef.farExpiryMs] = sc.ivRef.farPct;
+  }
+  return {
+    settings: sc.settings,
+    perp: snap.perp ? { indexPrice: snap.perp.index, markPrice: snap.perp.mark, tsMs: snap.perp.ts ?? snap.ts ?? nowMs } : null,
+    candlesBundle: sc.candlesBundle ?? {},
+    candlesTsMs: sc.candlesTsMs || null,
+    ivRef: sc.ivRef,
+    ivRefByExpiry,
+    dvol: sc.dvol ? { baselineIvPct: sc.dvol.baselineIvPct, tsMs: sc.dvol.tsMs } : null,
+    wings: sc.wings,
+    chain: sc.chain ?? { instruments: [] },
+    chainTsMs: sc.chain?.fetchedAt ?? null,
+    instruments,
+    event: effectiveScanEvent(nowMs),
+    usDiffMs: deribit.getRpcStats().usDiffMs,
+  };
+}
+
+// Авто-деградация каданса (§4.2): errorStreak >= 3 — интервал x2 (setIntervalMs сохраняет
+// lastTs/metaCache/errorStreak — пересоздание источника обнуляло бы счётчик и ломало детект
+// выздоровления); errorStreak == 0 — номинал. Кэш-кадансы удваивает scnCacheMs по флагу.
+function maybeDegradeScanCadence() {
+  const sc = state.otmScanner;
+  if (!sc.source) return;
+  const streak = sc.source.status().errorStreak ?? 0;
+  const baseMs = Math.max(5, sc.settings.scanRepriceSec || 30) * 1000;
+  if (streak >= 3 && !sc.degraded) {
+    sc.degraded = true;
+    sc.source.setIntervalMs(baseMs * 2);
+    console.warn(`[scn] авто-деградация: errorStreak ${streak} — каданс x2 (${(baseMs * 2) / 1000}с) до выздоровления`);
+  } else if (streak === 0 && sc.degraded) {
+    sc.degraded = false;
+    sc.source.setIntervalMs(baseMs);
+    console.log(`[scn] выздоровление: каданс возвращён (${baseMs / 1000}с)`);
+  }
+}
+
+// Тик источника: снапшот → кэш-джобы (fire-and-forget) → IV_ref/крылья → книги финалистов →
+// inputs → evaluateScan (PURE) → персист → push → пересборка набора → бюджет-лог → деградация.
+// Обёрнут так, что плохой тик никогда не роняет приложение (закон источника бота 2).
+async function onScanSnapshot(snap) {
+  const sc = state.otmScanner;
+  try {
+    sc.lastSnapshot = snap;
+    ensureScanCandles();
+    ensureScanDvol();
+    ensureScanChain();
+    deriveScanIvRef(snap, Date.now()); // по набору, которым СДЕЛАН этот снапшот (до пересборки)
+    const preset = resolveScanPreset();
+    const finalists = pickBookFinalists(snap, preset);
+    const booksFetched = finalists.length ? await fetchScanBooks(finalists) : 0;
+    const nowMs = Date.now();
+    const { state: nextState, cycle } = evaluateScan(sc.engineState, assembleScanInputs(snap, nowMs), preset, nowMs);
+    sc.engineState = nextState;
+    sc.cycle = cycle;
+    persistScanState();
+    flushScanTelemetry(false);
+    pushScan();
+
+    // Бюджет §4.3: дельта GET-счётчика с конца прошлого тика (снапшот + книги + кэш-джобы;
+    // при работающем боте 2 — общий трафик приложения, подпись в логе это фиксирует).
+    const total = deribit.getRpcCallCount();
+    if (sc.getCountAt) {
+      const gets = total - sc.getCountAt;
+      sc.budget = { lastTickGets: gets, instruments: sc.set?.instruments.length ?? 0, books: booksFetched, at: nowMs };
+      console.log(
+        `[scn] тик: GET ${gets} · инстр ${sc.budget.instruments} · книг ${booksFetched} · вердикт ${cycle.score.verdict} ${cycle.score.passed}/${cycle.score.applicable}` +
+          ` · фаза ${cycle.lifecycle.phase}${state.btcOptions.running ? " · (совместно с ботом 2)" : ""}`,
+      );
+    }
+    sc.getCountAt = total;
+
+    // Пересборка набора — для СЛЕДУЮЩЕГО тика (порядок бота 2: evaluate, потом band). Холодный
+    // старт: первый тик перп-only дал спот — набор родился; немедленный полный тик вместо
+    // ожидания каданса (гвард 5с от циклов: refreshNow сработает уже после inFlight-выхода).
+    const grew = refreshScanSet(snap.perp?.index ?? null, Date.now());
+    maybeDegradeScanCadence();
+    if (grew && Date.now() - sc.lastKickAt > 5000) {
+      sc.lastKickAt = Date.now();
+      sc.source?.refreshNow();
+    }
+  } catch (e) {
+    console.error("[scn] tick error:", e);
+  }
+}
+
+// Создать (если нет) и запустить источник сканера. Идемпотентно; набор может быть пуст
+// (холодный старт) — первый тик перп-only сеет спот, набор рождается в его обработчике.
+function ensureScanSource() {
+  const sc = state.otmScanner;
+  const cfg = sc.settings;
+  if (!sc.source) {
+    sc.source = deribit.createRestSource({
+      testnet: !!cfg.testnet,
+      intervalMs: Math.max(5, cfg.scanRepriceSec || 30) * 1000,
+      staleAfterSec: Math.max(15, (cfg.scanRepriceSec || 30) * SCN_RULES.staleTickerFactor),
+    });
+    sc.degraded = false;
+  }
+  pointScanSource();
+  if (!sc.running) {
+    sc.running = true; // до start(): кэш-джобы первого тика гейтятся на running
+    sc.getCountAt = deribit.getRpcCallCount(); // бюджет-лог считает с начала сессии опроса
+    sc.source.start(onScanSnapshot);
+  }
+}
+
+function stopScanSource() {
+  const sc = state.otmScanner;
+  sc.source?.stop();
+  sc.running = false; // кэш-джобы гейтятся на running — в простое ноль трафика (§4.2)
+}
+
+// §7 случай 16 (testnet на лету): семьи данных несовместимы — кольца сбрасываются. Состояние
+// движка НЕ трогаем: журнал — история, ACTIVE ревалидируется первым тиком новой сети
+// (instrument-gone даст честный INVALIDATED).
+function resetScanDataRings() {
+  const sc = state.otmScanner;
+  sc.candles = [];
+  sc.candlesTsMs = 0;
+  sc.candlesBundle = null;
+  sc.dvol = null;
+  sc.chain = null;
+  sc.ivRef = null;
+  sc.wings = null;
+  sc.set = null;
+  sc.books = {};
+  sc.cycle = null;
+  sc.lastSnapshot = null;
+  sc.budget = null;
+}
+
+function assembleDatasetScan() {
+  const sc = state.otmScanner;
+  const preset = resolveScanPreset();
+  return {
+    botId: SCN_ID,
+    running: sc.running,
+    settings: sc.settings, // живые параметры (применяются сразу — «оценка живая, сигнал снимок»)
+    presetId: preset.id,
+    preset, // полный объект порогов — тулбар/редактор S3 биндятся к нему
+    presetIds: [...new Set([...Object.keys(SCAN_PRESETS), ...Object.keys(sc.settings.userPresets ?? {})])],
+    cycle: sc.cycle, // полный dataset-контракт движка (план §9 + правки ui-spec §1.4)
+    event: effectiveScanEvent(Date.now()),
+    budget: sc.budget, // счётчик GET/тик (§4.3) — панель качества данных S3
+    degraded: sc.degraded,
+    fresh: sc.source
+      ? { ...sc.source.status(), degraded: sc.degraded }
+      : { source: "deribit-rest", running: false, ok: false, stale: true, gateOk: false, ageSec: null, errorStreak: 0, degraded: false, notes: [] },
+  };
+}
+
+function pushScan() {
+  if (win && !win.isDestroyed()) win.webContents.send("scn:push", assembleDatasetScan());
+}
+
+// ── Экспорт (§5.6): журнал сигналов и pass-rate телеметрия. Паттерн бота 2: системный диалог,
+// CSV c BOM/CRLF для Excel; JSON несёт ACTIVE-сигнал целиком (полный снимок §8.1 с условиями).
+const scnCsv = (header, rows) => {
+  const esc = (v) => {
+    const s = String(v ?? "");
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  return "﻿" + [header, ...rows].map((r) => r.map(esc).join(",")).join("\r\n") + "\r\n";
+};
+
+const SCN_JOURNAL_HEADER = ["ts_utc", "event", "id", "instrument", "direction", "score", "preset_id", "event_note", "ttl_sec", "reason"];
+const scnJournalRows = (st) =>
+  (st?.journal ?? []).map((e) => [
+    e.ts ? new Date(e.ts).toISOString() : "",
+    e.event ?? "",
+    e.id ?? "",
+    e.instrument ?? "",
+    e.direction ?? "",
+    e.score ?? "",
+    e.presetId ?? "",
+    e.eventNote ?? "",
+    e.ttlSec ?? "",
+    e.reason ?? "",
+  ]);
+
+const SCN_TELEMETRY_HEADER = ["window", "condition", "evals", "pass", "fail", "unknown", "pass_rate_pct"];
+function scnTelemetryRows(st) {
+  const rows = [];
+  const emit = (windowKey, bucket) => {
+    for (const [key, c] of Object.entries(bucket ?? {})) {
+      rows.push([windowKey, key, c.evals ?? 0, c.pass ?? 0, c.fail ?? 0, c.unknown ?? 0, c.evals ? (((c.pass ?? 0) / c.evals) * 100).toFixed(1) : ""]);
+    }
+  };
+  emit("session", st?.telemetry?.session);
+  for (const day of Object.keys(st?.telemetry?.days ?? {}).sort()) emit(day, st.telemetry.days[day]);
+  return rows;
+}
+
+async function scnExportFile({ kind, format, payloadCsv, payloadJson, count }) {
+  const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12); // YYYYMMDDHHMM
+  const fmt = format === "json" ? "json" : "csv";
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    defaultPath: `otmscan-${kind}_${stamp}.${fmt}`,
+    filters: dialogFiltersFor(fmt),
+  });
+  if (canceled || !filePath) return { canceled: true };
+  writeFileSync(filePath, fmt === "json" ? payloadJson() : payloadCsv());
+  return { ok: true, filePath, count };
+}
+
+function wireIpcScan() {
+  ipcMain.handle("scn:getState", async () => assembleDatasetScan());
+
+  ipcMain.handle("scn:start", async () => {
+    try {
+      ensureScanSource();
+    } catch (e) {
+      return { error: String(e.message || e) };
+    }
+    return assembleDatasetScan();
+  });
+
+  ipcMain.handle("scn:stop", async () => {
+    stopScanSource();
+    flushScanTelemetry(true);
+    return assembleDatasetScan();
+  });
+
+  ipcMain.handle("scn:refreshNow", async () => {
+    const sc = state.otmScanner;
+    // Остановленный сканер НЕ автостартует: scn:start/scn:stop — явные примитивы (вопрос А4
+    // открыт; автостарт-обвязка, если будет ратифицирована, придёт в S3 поверх этих примитивов).
+    if (sc.source && sc.running) sc.source.refreshNow();
+    return assembleDatasetScan();
+  });
+
+  ipcMain.handle("scn:setSettings", async (_e, patch) => {
+    const sc = state.otmScanner;
+    const norm = normalizeScanPatch(patch || {}); // невалидное ОТКЛОНЯЕТСЯ с причиной, не коерцится
+    const before = { scanRepriceSec: sc.settings.scanRepriceSec, testnet: !!sc.settings.testnet };
+    sc.settings = { ...sc.settings, ...norm.value };
+    saveScanSettings();
+    const cadenceChanged = sc.settings.scanRepriceSec !== before.scanRepriceSec;
+    const testnetChanged = !!sc.settings.testnet !== before.testnet;
+    if (testnetChanged) resetScanDataRings(); // §7 случай 16: семьи данных несовместимы
+    if ((cadenceChanged || testnetChanged) && sc.source) {
+      // Пересоздание источника только когда меняется ЕГО параметр (урок s1:setSettings).
+      const wasRunning = sc.running;
+      stopScanSource();
+      sc.source = null;
+      sc.degraded = false;
+      if (wasRunning) ensureScanSource();
+    }
+    const ds = assembleDatasetScan();
+    return norm.errors.length ? { ...ds, errors: norm.errors } : ds;
+  });
+
+  ipcMain.handle("scn:setPreset", async (_e, id) => {
+    const sc = state.otmScanner;
+    if (!SCAN_PRESETS[id] && !sc.settings.userPresets?.[id]) return { error: `неизвестный пресет: ${String(id)}` };
+    sc.settings.presetId = id;
+    saveScanSettings();
+    // dwell сбросится сам: dwellKey несёт presetId (§7 случай 20 — сигнал зреет на одном пресете)
+    return assembleDatasetScan();
+  });
+
+  ipcMain.handle("scn:eventFlag", async (_e, payload) => {
+    const sc = state.otmScanner;
+    const p = payload || {};
+    const horizonH = p.horizonH === 24 ? 24 : 48; // тулбар ui-spec: горизонт 24ч|48ч
+    sc.event = p.flagged
+      ? { flagged: true, note: typeof p.note === "string" ? p.note.slice(0, 24) : null, untilTs: Date.now() + horizonH * 3600000 }
+      : { flagged: false, note: null, untilTs: null };
+    saveScanSettings();
+    return assembleDatasetScan();
+  });
+
+  ipcMain.handle("scn:exportSignals", async (_e, req) => {
+    const sc = state.otmScanner;
+    const st = sc.engineState;
+    try {
+      return await scnExportFile({
+        kind: "signals",
+        format: req?.format,
+        count: st?.journal?.length ?? 0,
+        payloadCsv: () => scnCsv(SCN_JOURNAL_HEADER, scnJournalRows(st)),
+        payloadJson: () =>
+          JSON.stringify(
+            {
+              format: "otm-scanner-signals",
+              version: 1,
+              botId: SCN_ID,
+              exportedAt: new Date().toISOString(),
+              activeSignal: st?.signal ?? null, // полный замороженный контракт §8.1 (со снимком условий)
+              journal: st?.journal ?? [],
+            },
+            null,
+            2,
+          ),
+      });
+    } catch (e) {
+      return { error: String(e.message || e) };
+    }
+  });
+
+  ipcMain.handle("scn:exportTelemetry", async (_e, req) => {
+    const sc = state.otmScanner;
+    const st = sc.engineState;
+    try {
+      return await scnExportFile({
+        kind: "telemetry",
+        format: req?.format,
+        count: scnTelemetryRows(st).length,
+        payloadCsv: () => scnCsv(SCN_TELEMETRY_HEADER, scnTelemetryRows(st)),
+        payloadJson: () =>
+          JSON.stringify(
+            {
+              format: "otm-scanner-telemetry",
+              version: 1,
+              botId: SCN_ID,
+              exportedAt: new Date().toISOString(),
+              session: st?.telemetry?.session ?? {},
+              days: st?.telemetry?.days ?? {},
+            },
+            null,
+            2,
+          ),
+      });
+    } catch (e) {
+      return { error: String(e.message || e) };
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // IPC
 // ---------------------------------------------------------------------------
 // Shell-level UI IPC (theme). Wired BEFORE createWindow: the renderer's inline <head> script asks
@@ -1319,6 +2069,10 @@ app.whenReady().then(async () => {
   // s1:start and s1:stop (Phase 1). Purely additive; funding-arb boot is unaffected.
   loadOrInitBtcOptions();
   wireIpcStrategy1();
+  // OTM-сканер (S2): изолированное состояние + IPC scn:*. Источник НЕ стартует на буте —
+  // опрос живёт только между scn:start и scn:stop (§4.2); в простое ноль трафика.
+  loadOrInitOtmScanner();
+  wireIpcScan();
   // S0: если приложение было закрыто в момент экспирации, pending settle-строки сверяются с
   // официальной delivery-ценой уже на буте (fire-and-forget; сам гейтится по pending/троттлингу).
   if (!SMOKE) maybeReconcileSettles();
@@ -1336,7 +2090,7 @@ app.whenReady().then(async () => {
 
   if (!SMOKE) warmFrames();
 
-  if (SMOKE && !S1_SMOKE) {
+  if (SMOKE && !S1_SMOKE && !SCN_SMOKE) {
     const smokeKey = state.settings.asset; // default two-leg instrument (ETH)
     await ensureFrame(state.settings.strat, smokeKey).catch(() => {});
     const ds = assembleDataset({});
@@ -1427,6 +2181,81 @@ app.whenReady().then(async () => {
     setTimeout(() => app.quit(), 600);
   }
 
+  // S2 self-test сканера: живой scanCycle end-to-end через РЕАЛЬНЫЙ scn-IPC (window.scn →
+  // ipcMain.handle → источник → evaluateScan → pushScan). Бюджет §4.3 виден в [scn]-логах тиков.
+  // Изолированный SMOKE-профиль: файлы сканера временные, боевой userData не задет.
+  if (SCN_SMOKE) {
+    try {
+      const boot = await win.webContents.executeJavaScript("window.scn.getState()");
+      console.log(
+        "[scnsmoke] boot:",
+        JSON.stringify({ running: boot.running, presetId: boot.presetId, hasCycle: !!boot.cycle, presets: boot.presetIds }),
+      );
+      await win.webContents.executeJavaScript("window.scn.setSettings({ scanRepriceSec: 5 })"); // смоук не ждёт 30с-каданс
+      await win.webContents.executeJavaScript("window.scn.start()");
+      const scnReport = (label, ds) => {
+        const c = ds.cycle || {};
+        console.log(
+          `[scnsmoke] ${label}:`,
+          JSON.stringify({
+            running: ds.running,
+            degraded: ds.degraded,
+            preset: ds.presetId,
+            fresh: ds.fresh && { ok: ds.fresh.ok, ageSec: ds.fresh.ageSec, errorStreak: ds.fresh.errorStreak, instruments: (ds.fresh.instruments || []).length, rttMs: ds.fresh.rttMs },
+            side: c.side,
+            spot: c.spotUsd,
+            conditions: (c.conditions || []).length,
+            score: c.score,
+            candidates: (c.candidates || []).length,
+            best: c.best && c.best.instrument,
+            skippedExpiries: (c.skippedExpiries || []).length,
+            phase: c.lifecycle && c.lifecycle.phase,
+            budget: ds.budget,
+            telemetryKeys: c.telemetry ? Object.keys(c.telemetry.session || {}).length : 0,
+            journal: (c.journal || []).length,
+          }),
+        );
+      };
+      await new Promise((r) => setTimeout(r, 17000)); // ≈3 живых тика (5с каданс + сеть + кэш-джобы)
+      scnReport("live v1", await win.webContents.executeJavaScript("window.scn.getState()"));
+      // Смена пресета на живом IPC: окно экспираций v2 (48-60ч) чаще пересекается с сеткой
+      // листинга (находка Д8) — в дни без пересечения кандидатов честно нет у обоих пресетов.
+      await win.webContents.executeJavaScript("window.scn.setPreset('dmitri-v2')");
+      await new Promise((r) => setTimeout(r, 12000)); // пересборка набора + ≈2 полных тика
+      const dsV2 = await win.webContents.executeJavaScript("window.scn.getState()");
+      scnReport("live v2", dsV2);
+      // Третья фаза: ШИРОКИЙ пользовательский пресет через штатный канал userPresets (тот же путь,
+      // каким S3-редактор сохранит «Калиброванный») — гарантирует кандидатов при любой сетке дня,
+      // чтобы смоук показал Stage C живьём: кандидаты, финалисты, книги (≤2), У9-У14 по тикерам.
+      const wide = { ...dsV2.preset, id: "smoke-wide", label: "смоук-широкий", expiryMinH: 6, expiryMaxH: 240, sigmaMin: 0.3, sigmaMax: 3.0, premMaxPct: 5, spreadMaxPctPrem: 50, depthMinUsd: 1 };
+      await win.webContents.executeJavaScript(`window.scn.setSettings({ userPresets: { "smoke-wide": ${JSON.stringify(wide)} } })`);
+      await win.webContents.executeJavaScript("window.scn.setPreset('smoke-wide')");
+      await new Promise((r) => setTimeout(r, 12000));
+      scnReport("live wide", await win.webContents.executeJavaScript("window.scn.getState()"));
+      const stopped = await win.webContents.executeJavaScript("window.scn.stop()");
+      console.log("[scnsmoke] stop:", JSON.stringify({ running: stopped.running }));
+      // Рестарт-проба (§7 случай 14, acceptance S2): синтетический ACTIVE-сигнал пишется на диск,
+      // состояние перечитывается тем же путём, что и настоящий рестарт (loadOrInitOtmScanner).
+      // Синтетика легальна: SMOKE-блок — тестовый контекст в изолированном временном профиле.
+      const scSmoke = state.otmScanner;
+      scSmoke.engineState = {
+        ...scSmoke.engineState,
+        phase: "active",
+        signal: { id: `scn-${Date.now()}-SMOKE`, ts: Date.now(), asset: "BTC", instrument: "BTC_USDC-SMOKE-TEST-C", direction: "call", expiryMs: Date.now() + 86400000, strike: 70000, sigmaDist: 1.3, qtySuggested: 0.01, premiumAtSignal: 100, spotAtSignal: 64000, presetId: "dmitri-v1", thresholds: {}, conditionsSnapshot: [], ttlSec: 900, mode: "AND", score: "11/11", eventNote: null },
+      };
+      persistScanState();
+      loadOrInitOtmScanner(); // то, что делает рестарт: state с диска, телеметрия из своего файла
+      console.log(
+        "[scnsmoke] restart:",
+        JSON.stringify({ phase: state.otmScanner.engineState.phase, active: state.otmScanner.engineState.signal?.instrument ?? null }),
+      );
+      console.log("[scnsmoke] SMOKE OK");
+    } catch (e) {
+      console.error("[scnsmoke] ERROR:", (e && e.message) || e);
+    }
+    setTimeout(() => app.quit(), 600);
+  }
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -1444,5 +2273,7 @@ app.on("before-quit", () => {
   if (pollTimer) clearInterval(pollTimer);
   if (state.btcOptions && state.btcOptions.source) state.btcOptions.source.stop(); // Phase 1: stop Deribit poll
   try { flushBtcOptHistory(true); } catch {} // Phase 3b: final IV-history flush
+  if (state.otmScanner && state.otmScanner.source) state.otmScanner.source.stop(); // S2: стоп опроса сканера
+  try { flushScanTelemetry(true); } catch {} // S2: финальный сброс суточных вёдер телеметрии
   disposeUpdater();
 });

@@ -92,6 +92,22 @@ export function saveBotState(baseDir, id, st) {
   ensureDir(baseDir);
   atomicWrite(botStatePath(baseDir, id), JSON.stringify(st, null, 2));
 }
+// S2 (OTM-сканер, план §7 случай 17): строгая загрузка с КАРАНТИНОМ битого JSON — файл
+// переименовывается в .corrupt-<ts>, чтобы журнал сигналов не был уничтожен одной плохой записью
+// (закон loadPositions, аудит M32). loadBotState() выше сохраняет терпимое поведение бота 2.
+export function loadBotStateQuarantine(baseDir, id, nowMs = Date.now()) {
+  ensureDir(baseDir);
+  const p = botStatePath(baseDir, id);
+  if (!existsSync(p)) return { state: null, corrupt: false };
+  try {
+    return { state: JSON.parse(readFileSync(p, "utf8")), corrupt: false };
+  } catch {
+    try {
+      renameSync(p, `${p}.corrupt-${nowMs}`);
+    } catch {}
+    return { state: null, corrupt: true };
+  }
+}
 export function loadBotSettings(baseDir, id) {
   ensureDir(baseDir);
   return readJson(botSettingsPath(baseDir, id), {});
