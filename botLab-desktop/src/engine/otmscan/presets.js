@@ -106,6 +106,23 @@ export const SCAN_PRESETS = deepFreeze({
   calibrated: CALIBRATED,
 });
 
+// Правила качества данных и механики (план §7) — СТРУКТУРНЫЕ константы сканера, не пороги
+// Дмитрия: свежесть источников, аномалия перп/индекс, блэкаут-окна (те же числа, что у бота 2:
+// ±10 мин вокруг 08:00 UTC и 30 мин преэкспирации), кольцо журнала. Живут здесь, а не в коде
+// условий, по тому же закону единого источника истины (S1).
+export const SCAN_DATA_RULES = deepFreeze({
+  staleTickerFactor: 2, // тикеры протухли: возраст > factor × scanRepriceSec (§7 случай 1)
+  staleCandlesSec: 300, // свечи протухли: > 5 мин (§7 случай 2)
+  staleCacheSec: 600, // DVOL/chain: 2 × их 5-минутного каданса (§7 случаи 3, 5)
+  anomalyPct: 0.5, // |perp − index|/index > 0.5% ⇒ условия от S unknown (§7 случай 11)
+  usDiffWarnMs: 5000, // часы разъехались ⇒ health warn, расчёты продолжаются (§7 случай 12)
+  blackoutDailyWindowSec: 600, // ±10 мин вокруг 08:00 UTC (паттерн бота 2)
+  blackoutPreExpirySec: 1800, // 30 мин до экспирации кандидата
+  journalMax: 200, // кольцо журнала сигналов (план §5.5)
+  telemetryDays: 30, // кольцо суточных вёдер телеметрии (план §5.6)
+  minLotFallback: 0.01, // min_trade_amount BTC_USDC-опционов (верифицировано S0) — фолбэк, если меты нет в chain
+});
+
 // Настройки вне пресетов (план §6). Персист: otm-scanner-settings.json.
 export function defaultScanSettings() {
   return {

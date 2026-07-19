@@ -1,0 +1,100 @@
+{
+  "nowMs": 1784548800000,
+  "inputs": {
+    "settings": {
+      "scanRepriceSec": 30,
+      "dwellTicks": 3,
+      "failTicks": 2,
+      "ttlSec": 900,
+      "cooldownSec": 1800,
+      "hystPct": 5,
+      "equityUsd": 100,
+      "riskPerTradePct": 20,
+      "qtyMax": 0.05,
+      "maxConcurrent": 2,
+      "sigmaConvention": "horizon",
+      "nCandidatesMax": 6
+    },
+    "perp": {
+      "indexPrice": 100000,
+      "markPrice": 100010,
+      "tsMs": 1784548800000
+    },
+    "candlesBundle": {
+      "rv7dPct": 46.1,
+      "rv3dPct": 44,
+      "sigma1dPct": 2.41,
+      "dP24hPct": 2,
+      "impulse": 0.83,
+      "direction": "call",
+      "ema": 100000,
+      "emaPeriod": 20,
+      "lastClose": 101000,
+      "lastTs": null,
+      "bars": {
+        "n7": 167,
+        "need7": 167,
+        "complete7": 1,
+        "n3": 71,
+        "need3": 71,
+        "complete3": 1
+      }
+    },
+    "candlesTsMs": 1784548800000,
+    "ivRef": {
+      "nearPct": 41,
+      "nearExpiryMs": 1785088800000,
+      "farPct": 40,
+      "farExpiryMs": 1787140800000,
+      "source": "atm",
+      "tsMs": 1784548800000,
+      "farTsMs": 1784548800000
+    },
+    "ivRefByExpiry": {
+      "1785088800000": 42
+    },
+    "dvol": {
+      "baselineIvPct": 50,
+      "tsMs": 1784548800000
+    },
+    "wings": {
+      "putIvPct": 45,
+      "callIvPct": 47.5,
+      "tsMs": 1784548800000
+    },
+    "chain": {
+      "instruments": [
+        {
+          "instrument_name": "BTC_USDC-26JUL26-107500-C",
+          "option_type": "call",
+          "strike": 107500,
+          "expiration_timestamp": 1785088800000,
+          "min_trade_amount": 0.01
+        }
+      ]
+    },
+    "chainTsMs": 1784548800000,
+    "instruments": {
+      "BTC_USDC-26JUL26-107500-C": {
+        "mark": 350,
+        "bid": 345,
+        "ask": 355,
+        "markIv": 42,
+        "theta": -30,
+        "delta": 0.25,
+        "tsMs": 1784548800000,
+        "book": {
+          "bidDepthUsd": 9000,
+          "askDepthUsd": 8000,
+          "tsMs": 1784548800000
+        }
+      }
+    },
+    "event": {
+      "flagged": false,
+      "note": null,
+      "untilTs": null
+    },
+    "usDiffMs": 0
+  }
+}
