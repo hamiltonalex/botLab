@@ -188,23 +188,34 @@ async function pollLive() {
     },
   };
 
-  // Settle open paper positions: gaps beyond the capped live step are priced from the in-memory
-  // HISTORICAL frame first (each hour at its own rates), the remainder from the current factors.
-  settleOpenPositions(pollSec() * 3);
+  // Settle open paper positions: gaps beyond the capped live step are priced from the HISTORICAL
+  // frame first (refreshed on over-cap gaps - R2), the remainder from the current factors.
+  await settleOpenPositions(pollSec() * 3);
 }
 
 // Settle every open position up to now with the given live-step cap: history for the whole-hour
-// part of any over-cap gap (frames are kept topped up by topUpFrames), capped live for the rest.
-// Shared by the poll tick, the poll-interval change and closePaper so no accrual path has a
-// cap dead zone (a mid-session gap used to be dropped to gapSkippedSec until the next restart).
-function settleOpenPositions(capSec) {
+// part of any over-cap gap, capped live for the rest - so no accrual path has a cap dead zone.
+// А6 R2 (ратифицировано 2026-07-20): гэп сверх капа сначала ДОЗАБИРАЕТ фрейм с биржи (await
+// ensureFrame - паттерн бут-пути gapBackfillPositions). Раньше settle шёл против in-memory
+// фрейма, чей топ-ап стартовал только ПОСЛЕ pollLive в тике поллера: часы сна/оффлайна при
+// живом приложении невозвратно уходили в gapSkippedSec, хотя история на бирже уже была.
+// Хвост моложе STALE_AFTER_SEC (2ч) может остаться не закрытым историей (биржевые ряды часовые
+// и запаздывают) - он, как и раньше, честно записывается в gapSkippedSec.
+async function settleOpenPositions(capSec) {
   const now = Date.now();
   let changed = false;
   for (const p of state.positions) {
     if (p.status !== "open") continue;
     const snap = state.snapshots.byKey[p.instrumentKey];
     if (!snap || snap.accrualOk === false) continue; // suspicious/incomplete data -> don't accrue
-    const rows = state.frames.get(cacheKeyFor(p.strategy, p.instrumentKey));
+    let rows = state.frames.get(cacheKeyFor(p.strategy, p.instrumentKey));
+    if ((now - p.lastAccrualAt) / 1000 > capSec) {
+      try {
+        rows = await ensureFrame(p.strategy, p.instrumentKey); // no-op при свежем фрейме; иначе delta-фетч дыры
+      } catch (e) {
+        state.snapshots.fresh.notes.push(`${p.instrumentKey}: история для дозаполнения гэпа недоступна (${String(e.message || e).slice(0, 60)})`);
+      }
+    }
     // markPx: best-effort mark for the ledger's "price at operation" column — never required
     if (settlePosition(p, rows, snap.raw, now, capSec, { markPx: snap.price })) changed = true;
   }
@@ -1925,10 +1936,19 @@ function wireIpc() {
     const p = state.positions.find((x) => x.id === id);
     if (p) {
       // final settle so the last interval isn't dropped (audit M16) — incl. history pricing of any
-      // over-cap gap (e.g. close right after a laptop wake)
+      // over-cap gap (e.g. close right after a laptop wake). А6 R2: тот же дозабор фрейма, что в
+      // settleOpenPositions - закрытие сразу после пробуждения не должно терять часы в gapSkippedSec;
+      // при недоступной сети закрытие НЕ блокируется (остаток честно уйдёт в recordUnpricedGap/skip).
       const now = Date.now();
       const snap = state.snapshots.byKey[p.instrumentKey];
-      const rows = state.frames.get(cacheKeyFor(p.strategy, p.instrumentKey));
+      let rows = state.frames.get(cacheKeyFor(p.strategy, p.instrumentKey));
+      if (p.status === "open" && (now - p.lastAccrualAt) / 1000 > pollSec() * 3) {
+        try {
+          rows = await ensureFrame(p.strategy, p.instrumentKey);
+        } catch {
+          /* стейл-фрейм как фолбэк - хвост запишется честно */
+        }
+      }
       if (p.status === "open" && snap && snap.accrualOk !== false) {
         settlePosition(p, rows, snap.raw, now, pollSec() * 3);
       } else if (p.status === "open") {
@@ -1959,7 +1979,7 @@ function wireIpc() {
       // Close the current accrual period under the OLD cap before re-arming the timer: shrinking
       // the interval also shrinks the live-step cap, and the tail of the running inter-poll gap
       // would otherwise fall into the (newCap, gap) dead zone as never-backfilled gapSkippedSec.
-      settleOpenPositions(Math.min(15, Math.max(1, prevPoll || 5)) * 60 * 3);
+      await settleOpenPositions(Math.min(15, Math.max(1, prevPoll || 5)) * 60 * 3);
       startPolling(); // re-arm the timer (audit M17)
     }
     return { ok: true };
