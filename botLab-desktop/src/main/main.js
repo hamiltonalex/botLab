@@ -10,7 +10,7 @@
 //  * getState/select respond immediately; backfills run in the background and arrive via push.
 //  * Snapshots that fail the netRate sign gate are shown with a warning but NOT accrued.
 
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, powerMonitor, shell } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -2303,6 +2303,30 @@ app.whenReady().then(async () => {
     }
     setTimeout(() => app.quit(), 600);
   }
+
+  // А6 (fault-tolerance, находка C2): сон/пробуждение видимы и обрабатываются. Во сне setInterval
+  // не тикает - тики просто не существуют (потерянное покрытие обкатки фиксируется логом с длиной
+  // сна). На пробуждении работающие источники рефрешатся сразу, не дожидаясь своего интервала:
+  // detektory свежести и так деградируют честно (ages огромные, unknown), но немедленный тик
+  // возвращает LIVE быстрее и ставит точную метку возобновления в телеметрию. Догоняющего шквала
+  // нет по построению (inFlight-гвард в createRestSource + один слот setInterval после сна).
+  // fa-поллер сознательно НЕ трогаем: его гэп-механика - вопрос R2 ратификации (см. план А6).
+  let suspendedAt = null;
+  powerMonitor.on("suspend", () => {
+    suspendedAt = Date.now();
+    console.log("[main] система засыпает - таймеры остановлены, тики до пробуждения существовать не будут");
+  });
+  powerMonitor.on("resume", () => {
+    const gapMin = suspendedAt ? Math.round((Date.now() - suspendedAt) / 60000) : null;
+    suspendedAt = null;
+    console.log(`[main] пробуждение${gapMin != null ? ` после ~${gapMin} мин сна` : ""} - немедленный рефреш работающих источников`);
+    try {
+      if (state.btcOptions.running && state.btcOptions.source) state.btcOptions.source.refreshNow();
+      if (state.otmScanner.running && state.otmScanner.source) state.otmScanner.source.refreshNow();
+    } catch (e) {
+      console.warn("[main] resume-рефреш не удался (источники продолжат по своему кадансу):", String(e?.message || e));
+    }
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
