@@ -41,6 +41,7 @@ import { tvToCandles, computeRvBundle } from "../engine/otmscan/rv.js";
 import { selectCandidates as scnSelectCandidates, expiriesInWindow as scnExpiriesInWindow } from "../engine/otmscan/candidates.js";
 import { createScanState, evaluateScan } from "../engine/otmscan/scan-engine.js";
 import { foldScanStats, bumpScanStart } from "./scn-stats.js";
+import { sanitizeRestoredScanState } from "./scn-boot.js";
 import { isolateSmokeProfile } from "./smoke-profile.js";
 import { migrateLegacyUserData } from "./migrate.js";
 import { initUpdater, disposeUpdater } from "./updater.js";
@@ -1172,6 +1173,14 @@ function loadOrInitOtmScanner() {
   sc.stats = { days: telRes.state?.stats?.days && typeof telRes.state.stats.days === "object" ? telRes.state.stats.days : {} };
   if (!Array.isArray(sc.engineState.journal)) sc.engineState.journal = [];
   if ((sc.engineState.schemaVersion || 0) < SCAN_SCHEMA_VERSION) sc.engineState.schemaVersion = SCAN_SCHEMA_VERSION;
+  // А6 (находка A4/F2): континуальные счётчики (dwell FORMING, память гистерезиса) не переживают
+  // разрыв рестарта - «N подряд тиков» не склеивается через пропасть. ACTIVE не трогается: его
+  // ревалидирует первый тик (§7 случай 14).
+  if (persisted) {
+    const boot = sanitizeRestoredScanState(sc.engineState);
+    sc.engineState = boot.state;
+    for (const n of boot.notes) console.log(`[scn] boot-гигиена: ${n}`);
+  }
   if (!persisted) persistScanState(); // файл создаётся ровно один раз; «маркер» = его существование
   console.log(
     `[scn] init: phase=${sc.engineState.phase} preset=${sc.settings.presetId}` +
