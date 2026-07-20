@@ -51,6 +51,23 @@ const S1_SMOKE = process.env.S1_SMOKE === "1"; // bot-2 self-test: open→live t
 const SCN_SMOKE = process.env.SCN_SMOKE === "1"; // S2 self-test сканера: живой scanCycle через реальный scn-IPC
 const SMOKE = process.env.FA_SMOKE === "1" || S1_SMOKE || SCN_SMOKE; // isolate profile + hidden window + skip updater
 isolateSmokeProfile(app, { enabled: SMOKE });
+// А6 (fault-tolerance, находка C1): один профиль - один процесс. Без лока второй `npm start` на том
+// же userData становится вторым писателем тех же JSON-файлов (включая ОБЩИЙ `<file>.tmp`-путь
+// atomicWrite) и молча побеждает последней записью. Лок берётся ПОСЛЕ isolateSmokeProfile: лок
+// привязан к userData, смоук-профили - уникальные времянки и с боевым профилем не пересекаются.
+const singleInstance = app.requestSingleInstanceLock();
+if (!singleInstance) {
+  console.error("[main] профиль уже занят другим инстансом BotLab - второй инстанс завершается (single-instance lock)");
+  app.quit();
+}
+app.on("second-instance", () => {
+  // Повторный запуск - это просьба «покажи приложение», а не тихое ничего: поднять окно.
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  }
+});
 const instFor = (strat, key) => (strat === "one" ? oneLegByKey(key) : twoLegByKey(key));
 const cacheKeyFor = (strat, key) => (strat === "one" ? `${key}__oneleg` : key);
 const MAX_CURVE_POINTS = 1200; // IPC payload cap; full resolution stays on disk
@@ -2036,6 +2053,7 @@ function startPolling() {
 }
 
 app.whenReady().then(async () => {
+  if (!singleInstance) return; // второй инстанс уже завершается - ни одного побочного эффекта (migrate/записи)
   baseDir = app.getPath("userData");
   // productName changed "Funding-Arb Paper Simulator" -> "BotLab", which moves this userData dir.
   // Copy an existing forward-test ledger + settings over before we read anything, so the rename
