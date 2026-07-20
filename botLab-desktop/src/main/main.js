@@ -24,7 +24,7 @@ import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts } 
 import { ledgerView, buildLedger } from "../engine/ledger.js";
 import { toLedgerCsv, toLedgerSheet, toLedgerJson, ledgerFileName, dialogFiltersFor } from "./export.js";
 import { buildXlsxBuffer } from "./xlsx-writer.js";
-import { loadPositions, savePositions, loadSettings, saveSettings, hasSettings, loadBotState, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine } from "../engine/store.js";
+import { loadPositions, savePositions, loadSettings, saveSettings, hasSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine } from "../engine/store.js";
 import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
 import { buildStructure as s1buildStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry } from "../engine/btcopt/structure.js";
@@ -456,7 +456,12 @@ function loadOrInitBtcOptions() {
   const healedReprice = settings.repriceSec === 3;
   if (healedReprice) settings.repriceSec = 15;
   if (healed || healedReprice) saveBotSettings(baseDir, BTCOPT_ID, settings);
-  let st = loadBotState(baseDir, BTCOPT_ID);
+  // А6 R1 (ратифицировано 2026-07-20): битый btc-options.json КАРАНТИНИТСЯ (.corrupt-<ts>), а не
+  // перезаписывается молча свежим движком - леджер, открытая структура и realizedOptionsUsd не
+  // уничтожаются одной плохой записью (закон positions.json / сканера, аудит M32 + §7 случай 17).
+  const stRes = loadBotStateQuarantine(baseDir, BTCOPT_ID);
+  if (stRes.corrupt) console.warn(`[s1] ${BTCOPT_ID}.json битый - карантин .corrupt-*, чистый re-init (испорченный файл сохранён рядом)`);
+  let st = stRes.state;
   if (!st) {
     st = s1engine.create({ settings, nowMs: Date.now() });
     saveBotState(baseDir, BTCOPT_ID, st); // written once; "marker" = the file's own existence
@@ -472,8 +477,9 @@ function loadOrInitBtcOptions() {
   state.btcOptions.settings = settings;
   // Phase 3b: the persisted IV history (its OWN file — never inside btc-options.json) survives
   // restarts so the 24h regime window doesn't start empty every session.
-  const hist = loadBotState(baseDir, `${BTCOPT_ID}-history`);
-  if (Array.isArray(hist?.ivHistory)) state.btcOptions.ivHistory = hist.ivHistory.slice(-IV_HISTORY_CAP);
+  const histRes = loadBotStateQuarantine(baseDir, `${BTCOPT_ID}-history`);
+  if (histRes.corrupt) console.warn(`[s1] ${BTCOPT_ID}-history.json битый - карантин, кольцо IV начнётся с нуля`);
+  if (Array.isArray(histRes.state?.ivHistory)) state.btcOptions.ivHistory = histRes.state.ivHistory.slice(-IV_HISTORY_CAP);
 }
 
 // ---------------------------------------------------------------------------
