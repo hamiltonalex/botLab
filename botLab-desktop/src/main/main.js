@@ -705,6 +705,7 @@ function assembleDataset1() {
       fundingTotal: ps.fundingCum ?? 0,
       realizedPerp: ps.realizedUsd ?? 0,
       realizedOptions: eng.realizedOptionsUsd ?? 0,
+      fundingGapSec: ps.fundingGapSec ?? 0, // А6 R3: неоценённое время фандинга (кламп) - аддитивно
     },
     chain: bo.chain ? groupBtcOptChain(bo.chain, cycle?.underlying_price ?? bo.lastSnapshot?.underlying) : null,
     sweep: bo.sweepResult ?? null, // Phase 3b: the last runSweep result rides every dataset (re-render safe)

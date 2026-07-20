@@ -408,3 +408,37 @@ test("engineCfg overlays the ticket's actual params over settings (debounce-race
   assert.ok(fill, "hedge executed");
   assert.equal(fill.priceRef, 61001, "market buy crosses to the ask — not the limit-mid fill");
 });
+
+// ── А6 R3 (fault-tolerance аудит, ратифицировано 2026-07-20): фандинг-гэп сверх анти-catch-up
+// клампа ВИДИМ - копится в perpState.fundingGapSec и оставляет строку funding-gap в леджере.
+// Сам кламп (fundingMaxGapSec 300с) не меняется: начислено ровно за клампованное время.
+test("R3: ingest через 8ч разрыв - фандинг клампится 300с, пропуск видим (fundingGapSec + строка леджера)", () => {
+  const st = engine.create({ nowMs: NOON });
+  st.perpState.qty = -12; // короткий хедж 12 контрактов по $10
+  st.perpState.avgEntry = 61000;
+  st.lastIngestAt = NOON;
+  const perp = { funding8h: 0.0001, contractSize: 10, mark: 61000 };
+
+  // штатный тик (15с): гэпа нет - ни поля, ни строки
+  engine.ingest(st, { perp, underlying: 61000 }, NOON + 15_000);
+  assert.equal(st.perpState.fundingGapSec, 0, "штатный тик не рождает гэп");
+  assert.equal(st.ledger.filter((e) => e.type === "funding-gap").length, 0);
+
+  // 8ч разрыв (сон машины): начислено ровно за 300с клампа, остальное видимо пропущено
+  const wake = NOON + 15_000 + 8 * 3600_000;
+  const before = st.perpState.fundingCum;
+  engine.ingest(st, { perp, underlying: 61000 }, wake);
+  const clampedDelta = -(-12) * 10 * 0.0001 * (300 / 28800); // −qty·cs·f8h·(dtEff/28800), короткий получает
+  near(st.perpState.fundingCum - before, clampedDelta, 1e-12, "начислено ровно за клампованные 300с");
+  assert.equal(st.perpState.fundingGapSec, 8 * 3600 - 300, "пропущенное время скопилось в поле");
+  const gapRows = st.ledger.filter((e) => e.type === "funding-gap");
+  assert.equal(gapRows.length, 1, "одна строка на один разрыв");
+  assert.match(gapRows[0].note, /не оценены/);
+  assert.equal(gapRows[0].feeUsd, 0, "строка чисто информационная - суммы нулевые");
+  assert.equal(gapRows[0].realizedUsd, 0);
+
+  // второй разрыв копится, а не перетирает
+  engine.ingest(st, { perp, underlying: 61000 }, wake + 1800_000); // ещё 30 мин
+  assert.equal(st.perpState.fundingGapSec, 8 * 3600 - 300 + (1800 - 300), "гэпы аддитивны");
+  assert.equal(st.ledger.filter((e) => e.type === "funding-gap").length, 2);
+});

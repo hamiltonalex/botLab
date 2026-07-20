@@ -95,7 +95,7 @@ export function create(params) {
     createdAt: params.nowMs ?? null, // stamped by the caller (no Date.now() in a pure module)
     settings: { ...defaultSettings(), ...(params.settings || {}) },
     structure: null, // the open 4-leg structure (set by openStructure())
-    perpState: { qty: 0, avgEntry: 0, feesCum: 0, fundingCum: 0, realizedUsd: 0 }, // inverse BTC-perp hedge (qty in $10 contracts)
+    perpState: { qty: 0, avgEntry: 0, feesCum: 0, fundingCum: 0, realizedUsd: 0, fundingGapSec: 0 }, // inverse BTC-perp hedge (qty in $10 contracts); fundingGapSec - А6 R3, см. ingest
     realizedOptionsUsd: 0, // option MtM locked in by closed structures (cumulative)
     ledger: [], // cumulative hedge/accrual/open/close events — independent of any exchange session reset
     lastHedgeAt: null, // ms of the last executed hedge (time/price trigger baseline)
@@ -123,12 +123,27 @@ function exchangeDeltaTotal(structure, snapshot, Qperp) {
 }
 
 // ── Ingest: accrue funding on a held perp, refresh clocks. Called once per market tick before evaluate.
+// А6 R3 (ратифицировано 2026-07-20): время сверх анти-catch-up клампа (fundingMaxGapSec) больше не
+// исчезает молча - оно копится в perpState.fundingGapSec (аддитивное поле, паттерн gapSkippedSec
+// funding-arb) и оставляет строку funding-gap в леджере (нулевые суммы, только видимость - закон
+// §7 «деградация видима»). Сам кламп НЕ меняется: оценивать многочасовой разрыв текущей
+// мгновенной ставкой было бы неверно, отказ от оценки - правильная механика.
 export function ingest(state, snapshot, nowMs) {
   const cfg = buildCfg(state.settings);
   if (state.perpState.qty !== 0 && snapshot.perp && Number.isFinite(snapshot.perp.funding8h)) {
     const last = state.lastIngestAt ?? nowMs;
     const dtSec = Math.max(0, (nowMs - last) / 1000);
-    if (dtSec > 0) accrueFunding(state.perpState, snapshot.perp, dtSec, { maxDtSec: cfg.fundingMaxGapSec });
+    if (dtSec > 0) {
+      const res = accrueFunding(state.perpState, snapshot.perp, dtSec, { maxDtSec: cfg.fundingMaxGapSec });
+      if (res.gapSkippedSec > 0) {
+        state.perpState.fundingGapSec = (state.perpState.fundingGapSec || 0) + res.gapSkippedSec;
+        appendLedger(state, {
+          t: nowMs,
+          type: "funding-gap",
+          note: `разрыв тиков ${Math.round(dtSec)}с: фандинг начислен за ${cfg.fundingMaxGapSec}с, ${Math.round(res.gapSkippedSec)}с не оценены (анти-catch-up кламп)`,
+        });
+      }
+    }
   }
   state.lastIngestAt = nowMs;
   state.lastUnderlying = snapshot.underlying;
