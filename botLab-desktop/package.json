@@ -1,6 +1,6 @@
 {
   "name": "botlab-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Live paper-trading desktop app for delta-neutral funding-rate arbitrage (GMX V2 x Hyperliquid). Phase 1: public read-only data, no orders, no keys.",
   "type": "module",
   "main": "src/main/main.js",
@@ -8,6 +8,9 @@
     "test": "node --test",
     "oracle": "electron scripts/selector-oracle.mjs",
     "smoke": "node scripts/smoke-live.mjs",
+    "smoke:scan": "node scripts/smoke-scan.mjs",
+    "report:scan": "node scripts/report-scan.mjs",
+    "e2e:ui": "node scripts/e2e-ui.mjs",
     "verify:loris": "node scripts/verify-loris.mjs",
     "start": "electron .",
     "dist": "electron-builder",
@@ -25,7 +28,8 @@
   },
   "devDependencies": {
     "electron": "^33.2.1",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "playwright-core": "^1.61.1"
   },
   "build": {
     "appId": "com.hamiltonalex.botlab",

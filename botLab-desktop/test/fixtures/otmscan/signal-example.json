@@ -1,0 +1,178 @@
+{
+  "id": "scn-1784548860000-BTC_USDC-26JUL26-107500-C",
+  "ts": 1784548860000,
+  "asset": "BTC",
+  "instrument": "BTC_USDC-26JUL26-107500-C",
+  "direction": "call",
+  "expiryMs": 1785088800000,
+  "strike": 107500,
+  "sigmaDist": 1.3647167607427508,
+  "qtySuggested": 0.05,
+  "premiumAtSignal": 350,
+  "spotAtSignal": 100000,
+  "presetId": "dmitri-v1",
+  "thresholds": {
+    "id": "dmitri-v1",
+    "label": "Дмитрий v1",
+    "mode": "AND",
+    "scoreMin": 10,
+    "ivFilterMode": "rvMargin",
+    "dIvPts": 5,
+    "kBaseline": 0.85,
+    "rv3dConfirm": true,
+    "impulseMin": 0.7,
+    "trendOn": true,
+    "fivMinPts": 0.5,
+    "fivWeekendOff": true,
+    "fivFarMinDays": 21,
+    "skewMode": "info",
+    "skewMinPts": 2,
+    "imbalanceMode": "off",
+    "imbalanceMin": 2,
+    "sigmaMin": 1.2,
+    "sigmaMax": 1.5,
+    "premMaxPct": 0.4,
+    "spreadMaxPctPrem": 3,
+    "depthMode": "usd",
+    "depthMinUsd": 5000,
+    "depthXPrem": 2,
+    "thetaMaxPctDay": 10,
+    "costMaxPctPrem": 20,
+    "maxQtyDepthPct": 25,
+    "expiryMinH": 120,
+    "expiryMaxH": 240,
+    "execModel": "maker-mid",
+    "exits": {
+      "ivDropExitPts": 1.5,
+      "stopLossPctPrem": 35,
+      "takeHalfSigma": 0.45,
+      "timeStopH": 12,
+      "minMoveSigma": 0.1,
+      "takeProfitPct": 90,
+      "preExpiryCloseH": 6,
+      "skewShiftOn": false,
+      "skewShiftPts": 1,
+      "lambdaExit": 1.25,
+      "exitMode": "auto"
+    },
+    "calibrated": false
+  },
+  "conditionsSnapshot": [
+    {
+      "key": "rv7d_gt_iv",
+      "idx": "У1",
+      "value": 5.100000000000001,
+      "threshold": 0,
+      "state": "pass",
+      "mode": "gate"
+    },
+    {
+      "key": "iv_discount",
+      "idx": "У2",
+      "value": 5.100000000000001,
+      "threshold": 5,
+      "state": "pass",
+      "mode": "gate"
+    },
+    {
+      "key": "rv3d_gt_iv",
+      "idx": "У3",
+      "value": 3,
+      "threshold": 0,
+      "state": "pass",
+      "mode": "gate"
+    },
+    {
+      "key": "sigma_impulse",
+      "idx": "У4",
+      "value": 0.83,
+      "threshold": 0.7,
+      "state": "pass",
+      "mode": "gate"
+    },
+    {
+      "key": "ema_trend",
+      "idx": "У5",
+      "value": 1.0000000000000009,
+      "threshold": null,
+      "state": "pass",
+      "mode": "gate"
+    },
+    {
+      "key": "forward_iv",
+      "idx": "У6",
+      "value": 1,
+      "threshold": 0.5,
+      "state": "pass",
+      "mode": "gate"
+    },
+    {
+      "key": "skew",
+      "idx": "У7",
+      "value": -2.5,
+      "threshold": -2,
+      "state": "pass",
+      "mode": "info"
+    },
+    {
+      "key": "book_imbalance",
+      "idx": "У8",
+      "value": null,
+      "threshold": null,
+      "state": "off",
+      "mode": "off"
+    },
+    {
+      "key": "strike_sigma",
+      "idx": "У9",
+      "value": 1.3647167607427508,
+      "threshold": 1.2,
+      "state": "pass",
+      "mode": "gate"
+    },
+    {
+      "key": "premium_cap",
+      "idx": "У10",
+      "value": 0.35000000000000003,
+      "threshold": 0.4,
+      "state": "pass",
+      "mode": "gate"
+    },
+    {
+      "key": "spread_cap",
+      "idx": "У11",
+      "value": 2.857142857142857,
+      "threshold": 3,
+      "state": "pass",
+      "mode": "gate"
+    },
+    {
+      "key": "depth_min",
+      "idx": "У12",
+      "value": 8000,
+      "threshold": 5000,
+      "state": "pass",
+      "mode": "gate"
+    },
+    {
+      "key": "theta_cap",
+      "idx": "У13",
+      "value": 8.571428571428571,
+      "threshold": 10,
+      "state": "pass",
+      "mode": "gate"
+    },
+    {
+      "key": "cost_gate",
+      "idx": "У14",
+      "value": 18.571428571428566,
+      "threshold": 20,
+      "state": "pass",
+      "mode": "gate"
+    }
+  ],
+  "ttlSec": 900,
+  "mode": "AND",
+  "score": "12/12",
+  "eventNote": null
+}
