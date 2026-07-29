@@ -6,7 +6,6 @@ import {
   createUpdaterMachine,
   toPlainNotes,
   releaseTagUrl,
-  decideChangelogOpen,
 } from "../src/main/updater-state.js";
 
 // Collect every emitted snapshot so transitions and payload shape can be asserted (§17.1).
@@ -149,34 +148,4 @@ test("releaseTagUrl falls back to the releases index for a crafted / empty versi
   assert.equal(releaseTagUrl(""), RELEASES_BASE);
   assert.equal(releaseTagUrl("0.3.0/../../evil"), RELEASES_BASE);
   assert.equal(releaseTagUrl("javascript:alert(1)"), RELEASES_BASE);
-});
-
-// ── decideChangelogOpen (§8.3, the 3+ cases named in §17.1) ────────────────────────────────────────
-test("changelog: fresh install (no settings.json) records version, does not open", () => {
-  const d = decideChangelogOpen({ isPackaged: true, settingsFileExisted: false, lastRunVersion: undefined, currentVersion: "0.2.0" });
-  assert.deepEqual(d, { open: false, url: null, nextLastRunVersion: "0.2.0" });
-});
-
-test("changelog: normal upgrade (older lastRunVersion) opens the current release page", () => {
-  const d = decideChangelogOpen({ isPackaged: true, settingsFileExisted: true, lastRunVersion: "0.2.0", currentVersion: "0.3.0" });
-  assert.equal(d.open, true);
-  assert.equal(d.url, `${RELEASES_BASE}/tag/v0.3.0`);
-  assert.equal(d.nextLastRunVersion, "0.3.0");
-});
-
-test("changelog: 0.1.0 -> first updater build (file exists, no lastRunVersion) is treated as an upgrade", () => {
-  const d = decideChangelogOpen({ isPackaged: true, settingsFileExisted: true, lastRunVersion: undefined, currentVersion: "0.2.0" });
-  assert.equal(d.open, true);
-  assert.equal(d.url, `${RELEASES_BASE}/tag/v0.2.0`);
-});
-
-test("changelog: same-version restart does not open", () => {
-  const d = decideChangelogOpen({ isPackaged: true, settingsFileExisted: true, lastRunVersion: "0.2.0", currentVersion: "0.2.0" });
-  assert.equal(d.open, false);
-  assert.equal(d.nextLastRunVersion, "0.2.0");
-});
-
-test("changelog: never opens in an unpackaged/dev build", () => {
-  const d = decideChangelogOpen({ isPackaged: false, settingsFileExisted: true, lastRunVersion: "0.1.0", currentVersion: "0.2.0" });
-  assert.equal(d.open, false);
 });

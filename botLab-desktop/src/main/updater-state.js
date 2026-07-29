@@ -73,26 +73,6 @@ export function releaseTagUrl(version) {
   return SEMVER_RE.test(v) ? `${RELEASES_BASE}/tag/v${v}` : RELEASES_BASE;
 }
 
-// §8.3 — decide whether to open the "what's new" page once, right after an update lands, and what the
-// recorded version should become. Pure so all cases are unit-tested (§17.1):
-//   - unpackaged (dev): never (would open a browser tab on every `npm start`);
-//   - fresh install (settings.json never existed): record the version, do NOT open;
-//   - settings.json existed but has no lastRunVersion: the 0.1.0 -> first-updater upgrade (0.1.0
-//     shipped without an updater) -> treat as an upgrade and open;
-//   - lastRunVersion present and != current: a normal upgrade -> open;
-//   - lastRunVersion == current: same-version restart -> do NOT open.
-// Every branch advances nextLastRunVersion to current so the page shows at most once per upgrade.
-export function decideChangelogOpen({ isPackaged, settingsFileExisted, lastRunVersion, currentVersion } = {}) {
-  const result = { open: false, url: null, nextLastRunVersion: currentVersion };
-  if (!isPackaged) return result;
-  if (!settingsFileExisted) return result; // fresh install
-  if (lastRunVersion === currentVersion) return result; // same version restart
-  // Upgrade: either an explicit older lastRunVersion, or none at all on the first updater-capable build.
-  result.open = true;
-  result.url = releaseTagUrl(currentVersion);
-  return result;
-}
-
 const initialSnapshot = (current) => ({
   state: STATES.IDLE,
   current,
