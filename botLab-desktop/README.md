@@ -1,9 +1,14 @@
-# BotLab — Desktop · Funding-Rate Arbitrage (Phase 1: live data, paper-only)
+# BotLab - Desktop (funding-arb x BTC-options x OTM-scanner)
 
-A cross-platform desktop app (macOS `.dmg` / Windows `.exe`) that runs a delta-neutral
-**funding-rate arbitrage** strategy on **live GMX V2 (Arbitrum/Avalanche) × Hyperliquid** data and
-**forward-tests paper trading from "now"**. It shows the strategy's profitability on *current*
-market data and accrues a realized equity curve from the moment you open a paper position.
+A cross-platform desktop app (Windows `.exe` today; the macOS build is code-ready but not yet
+wired into CI - see "Build installers" below) that hosts several paper-trading bots as tabs. This
+file's walkthrough covers the original **funding-rate arbitrage** bot; see
+[CHANGELOG.md](CHANGELOG.md) for the BTC-options and OTM-scanner bots and the full version history.
+
+It runs a delta-neutral **funding-rate arbitrage** strategy on **live GMX V2 (Arbitrum/Avalanche)
+x Hyperliquid** data and **forward-tests paper trading from "now"**. It shows the strategy's
+profitability on *current* market data and accrues a realized equity curve from the moment you
+open a paper position.
 
 > **Phase 1 handles NO real money, NO private keys, NO order execution, NO custody.**
 > Public read-only endpoints only. Every screen keeps the honest disclaimers (PAPER · liquidation
@@ -13,19 +18,19 @@ market data and accrues a realized equity curve from the moment you open a paper
 
 ## What it does
 
-- **Live snapshot** — every poll (default 5 min, ≤15 min staleness OK) it fetches current funding,
+- **Live snapshot** - every poll (default 5 min, ≤15 min staleness OK) it fetches current funding,
   borrow, open interest and prices and shows the **net APR now**, per-leg APRs, spread and OI skew
   for ETH/BTC (two-leg) and the ETH-Arb / BTC-Arb / ETH-Avax one-leg GMX carries. (APT was
   dropped 2026-07-02: top historical spread ~47% median, but its live GMX market is inactive (~$0 OI).)
-- **Forward paper test** — "Открыть бумажную позицию" records `t0`, instrument, strategy, config,
+- **Forward paper test** - "Открыть бумажную позицию" records `t0`, instrument, strategy, config,
   capital and leverage, then at each poll accrues the modelled funding/borrow P&L from live data:
   GMX funding+borrow **continuously per second** (`factor × elapsed_s × notional`), Hyperliquid
   funding **discretely at each top-of-hour settlement**. The forward equity curve is drawn from `t0`
-  and **persists to disk** — close and reopen the app and the test resumes.
-- **Trailing history** — backfills ~365d of hourly funding/borrow from GMX Subsquid + HL
+  and **persists to disk** - close and reopen the app and the test resumes.
+- **Trailing history** - backfills ~365d of hourly funding/borrow from GMX Subsquid + HL
   `fundingHistory` to compute robust summary stats (median/mean net APR, per-leg contribution,
   drawdown, config choice) and the trailing equity / spread / legs / price charts.
-- **Min-set scanner** — ranks the tracked instruments by **median** net APR (robust to the funding
+- **Min-set scanner** - ranks the tracked instruments by **median** net APR (robust to the funding
   spikes that inflate means on thin markets). The full ~90-token scan is P2.
 
 ## Correctness
@@ -40,7 +45,7 @@ npm test
 reproduces the audited numbers (APT config A **53.39% mean / 47.24% median**, P&L **+$1,067.95** at
 1×/$2000; ETH A +2.97% / +$59.36; BTC B +3.02% / −1.54% / +$60.43; one-leg ETH-Arb +10.55%) and
 verifies the forward accrual engine + persistence. (APT is retained here only as a **historical
-golden fixture** for the math port; it is no longer a live tradable instrument — see above.)
+golden fixture** for the math port; it is no longer a live tradable instrument - see above.)
 
 The renderer selector/state oracle runs the production DOM against a fixed 400-day frame and
 checks all strategy/instrument/config/window/mode/capital/leverage combinations plus stale-push fuzz:
@@ -52,7 +57,7 @@ npm run oracle
 ### The live sign gate (important)
 GMX `markets/info` returns **annualized** rates in a **cost frame** (positive = that side pays),
 which is **opposite-signed** to the raw Subsquid factors the math expects. The app converts them
-(`signs.js`) — flipping funding, keeping borrow — and verifies the identity
+(`signs.js`) - flipping funding, keeping borrow - and verifies the identity
 `netRateSide == fundingRateSide + borrowingRateSide` on every fetch. The standalone live smoke check
 also compares the current sign with the latest Subsquid snapshot; continuous in-app cross-source
 reconciliation remains a P2 item. Gate failures and incomplete required legs are surfaced in the
@@ -79,19 +84,19 @@ npm run verify:loris -- --loris-json <captured.json>   # and/or set LORIS_API_KE
 
 ## Architecture
 
-- **`src/engine/`** — pure JS (no Electron, no DOM), unit-testable in Node:
+- **`src/engine/`** - pure JS (no Electron, no DOM), unit-testable in Node:
   `math.js` (annualize/scan), `signs.js` (live sign/scale gate), `sources.js` (fetchers),
   `backfill.js` (cached history), `assemble.js` (render-shaped datasets), `paper.js` (forward
   accrual), `store.js` (atomic persistence), `costs.js`, `universe.js`.
-- **`src/main/main.js`** — Electron main: does **all** fetching + compute + `fs` persistence in Node
+- **`src/main/main.js`** - Electron main: does **all** fetching + compute + `fs` persistence in Node
   (zero CORS, robust resume), polls on a timer, accrues open paper positions, pushes ready-to-render
   datasets to the renderer over IPC. `preload.cjs` is the only bridge (context-isolated, sandboxed).
-- **`src/renderer/index.html`** — the professional Russian dashboard UI, reused verbatim; its mock
+- **`src/renderer/index.html`** - the professional Russian dashboard UI, reused verbatim; its mock
   data layer is replaced by an IPC-fed live adapter feeding the *same* render/draw functions.
 
 **Why Electron:** it ships Chromium on both macOS and Windows, so the approved UI (HiDPI `<canvas>`
 charts, `backdrop-filter`, font handling, all navigation) renders identically to where it was
-designed — the UI-fidelity guarantee that drove the shell choice. Trade-off: ~150 MB binaries.
+designed - the UI-fidelity guarantee that drove the shell choice. Trade-off: ~150 MB binaries.
 
 ## Run from source
 
@@ -108,13 +113,16 @@ npm run dist:win     # -> release/*.exe  (NSIS installer)
 npm run dist         # current platform
 ```
 
-Output lands in `release/`. **Production builds are made in CI from a tag** (`git push --tags` →
-GitHub Actions → signed + notarized macOS DMG/ZIP, Windows NSIS, attached to a draft release) — see
-the maintainer’s `RELEASING.md` notes (kept outside the repo). Local `npm run dist:*` builds are **unsigned**; to run one:
+Output lands in `release/`. **Production builds are made in CI from a tag**: `git push --tags`
+triggers GitHub Actions, which runs the tests, builds, and attaches a signed Windows NSIS installer
+to a draft release - see the maintainer's `RELEASING.md` notes (kept outside the repo). The macOS
+CI job is code-ready (icon, entitlements, electron-builder target all committed) but not yet
+enabled - it needs an Apple Developer ID signing setup first (see CHANGELOG.md Known Issues).
+Local `npm run dist:*` builds are **unsigned**; to run one:
 
-- **macOS** — `CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac` builds unsigned; then right-click
+- **macOS** - `CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac` builds unsigned; then right-click
   the app → **Open** → **Open**, or `xattr -dr com.apple.quarantine "/Applications/BotLab.app"`.
-- **Windows** — SmartScreen → **More info** → **Run anyway** (Windows signing is deferred).
+- **Windows** - SmartScreen → **More info** → **Run anyway** (Windows signing is deferred).
 
 ## Updates (OTA)
 
@@ -134,7 +142,7 @@ the full release process is in the maintainer’s `RELEASING.md` notes (kept out
 
 ## Roadmap
 
-- **P1 (this):** live-data paper simulator + forward test. ✅
+- **P1 (this):** live-data paper simulator + forward test. Done.
 - **P2 Robustness:** full ~90-token live scanner, source reconciliation, alerting, logging.
 - **P3 Execution fidelity:** live position-fee/price-impact modeling, exact settlement timing,
   liquidation at leverage, borrow-utilization curve.
