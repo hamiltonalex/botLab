@@ -126,7 +126,8 @@ const state = {
     // S3c (слой записи): surfaceAt — момент последнего снимка поверхности, surfaceLast — его сводка
     // для лога и панели честности, recordCounts — сколько строк записано за сессию по каждому тракту.
     surfaceAt: 0, surfaceLast: null, recordCounts: { surface: 0, checks: 0, ticks: 0 },
-    perpBook: null }, // У8: стакан перпа (дисбаланс), тянется каждый тик
+    perpBook: null, // У8: стакан перпа (дисбаланс), тянется каждый тик
+    lastBest: null }, // лучший кандидат прошлого тика — ему книга достаётся раньше прочих (У12)
 };
 
 const pollSec = () => Math.min(15, Math.max(1, state.settings.pollMinutes || 5)) * 60;
@@ -1553,6 +1554,13 @@ function pickBookFinalists(snap, preset) {
   const out = [];
   const pinned = sc.set?.pinned;
   if (pinned && snap.legs?.[pinned]) out.push(pinned);
+  // ЛУЧШИЙ ПРОШЛОГО ТИКА — вторым по важности, сразу за пином. Без этого книги уходили первым двум
+  // кандидатам НАБОРА, прошедшим пречек У10/У11, а «лучшим» движок выбирает другого — по вердиктам
+  // всех условий. Выборы расходятся, лучший остаётся без книги, У12 уходит в unknown, а unknown в
+  // режиме AND запрещает сигнал: сканер не смог бы дать сигнал НИКОГДА, по механической причине.
+  // В прогоне 3 дефект был не виден — там пречек почти никто не проходил (У10/У11 pass 70.7%/0.5%),
+  // и У12 давал 99.4% unknown, что списывалось на узость выборки финалистов.
+  if (sc.lastBest && sc.lastBest !== pinned && snap.legs?.[sc.lastBest]) out.push(sc.lastBest);
   for (const name of sc.set?.candidates ?? []) {
     if (out.length >= SCN_RULES.booksPerTickMax) break;
     if (out.includes(name)) continue;
@@ -1692,6 +1700,7 @@ async function onScanSnapshot(snap) {
     const { state: nextState, cycle } = evaluateScan(sc.engineState, assembleScanInputs(snap, nowMs), preset, nowMs);
     sc.engineState = nextState;
     sc.cycle = cycle;
+    sc.lastBest = cycle.best?.instrument ?? null; // приоритет книги на следующем тике (У12)
     // S3b: суточные распределения обкатки (значения условий, экономика лучшего, Д8, инциденты) —
     // фолд ДО флаша, чтобы telemetry-файл уносил свежие вёдра тем же троттлингом.
     sc.stats = foldScanStats(sc.stats, cycle, { degraded: sc.degraded, equityUsd: sc.settings.equityUsd, repriceSec: sc.settings.scanRepriceSec }, nowMs, SCN_RULES);
