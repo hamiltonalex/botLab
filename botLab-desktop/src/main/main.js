@@ -51,6 +51,7 @@ import { initUpdater, disposeUpdater } from "./updater.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const S1_SMOKE = process.env.S1_SMOKE === "1"; // bot-2 self-test: open→live ticks→close through the real s1 IPC
 const SCN_SMOKE = process.env.SCN_SMOKE === "1"; // S2 self-test сканера: живой scanCycle через реальный scn-IPC
+const SCN_AUTOSTART = process.env.SCN_AUTOSTART === "1"; // обкатка: завести опрос сканера на буте, без показа вкладки
 const SMOKE = process.env.FA_SMOKE === "1" || S1_SMOKE || SCN_SMOKE; // isolate profile + hidden window + skip updater
 isolateSmokeProfile(app, { enabled: SMOKE });
 // А6 (fault-tolerance, находка C1): один профиль - один процесс. Без лока второй `npm start` на том
@@ -2251,6 +2252,17 @@ app.whenReady().then(async () => {
   // опрос живёт только между scn:start и scn:stop (§4.2); в простое ноль трафика.
   loadOrInitOtmScanner();
   wireIpcScan();
+  // SCN_AUTOSTART=1 — режим обкатки: опрос заводится на буте, БЕЗ показа вкладки «Сканер».
+  // Зачем флаг вообще: в обычной работе опрос стартует из renderer при первом показе вида
+  // (А4, scnOnShow), а стартовый вид жёстко «Обзор». На удалённой машине это значит, что каждый
+  // перезапуск требует ручного открытия вкладки — клики Screen Sharing не передаёт, а синтетический
+  // ввод osascript по SSH запрещён (-25211), и обкатку приходилось заводить клавиатурой. Для
+  // трёхсуточного прогона такая зависимость от человека недопустима: любой рестарт убил бы сбор.
+  // Флаг НИЧЕГО не меняет без явной установки — обычный запуск по-прежнему не трогает сеть в простое.
+  if (SCN_AUTOSTART) {
+    ensureScanSource();
+    console.log("[scn] SCN_AUTOSTART=1: опрос заведён на буте без показа вкладки");
+  }
   // S0: если приложение было закрыто в момент экспирации, pending settle-строки сверяются с
   // официальной delivery-ценой уже на буте (fire-and-forget; сам гейтится по pending/троттлингу).
   if (!SMOKE) maybeReconcileSettles();
