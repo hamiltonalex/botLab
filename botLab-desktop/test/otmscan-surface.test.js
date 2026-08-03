@@ -14,6 +14,7 @@ import {
   surfaceRow,
   buildSurfaceRows,
   buildGreekChecks,
+  buildLegGreekChecks,
   summarizeSurface,
   BTC_USDC_PREFIX,
 } from "../src/engine/otmscan/surface.js";
@@ -229,4 +230,69 @@ test("сводка: строки, экспирации, наличие коти�
 
 test("префикс экспортирован и совпадает с боевым", () => {
   assert.equal(BTC_USDC_PREFIX, "BTC_USDC-");
+});
+
+// ── сверка формулы на полях ОДНОГО тикера (buildLegGreekChecks)
+const leg = (over = {}) => ({
+  type: "put",
+  strike: 63500,
+  expiryMs: NOW + 96 * H,
+  underlying: 63919.23,
+  markIv: 30.69,
+  delta: -0.3905,
+  theta: -118.59,
+  vega: 20.19,
+  ts: NOW,
+  ...over,
+});
+
+test("leg-сверка: расхождение считается от полей ТОГО ЖЕ тикера, возраст снимка не примешан", () => {
+  const g = black76Greeks({
+    forwardUsd: 63919.23,
+    strikeUsd: 63500,
+    ivPct: 30.69,
+    tYears: yearsToExpiry(NOW, NOW + 96 * H),
+    optionType: "put",
+  });
+  // Биржевые греки задаём РАВНЫМИ нашим — расхождение обязано быть ровно нулевым.
+  const checks = buildLegGreekChecks({
+    legs: { "BTC_USDC-7AUG26-63500-P": leg({ delta: g.delta, theta: g.thetaUsd, vega: g.vegaUsd }) },
+    nowMs: NOW,
+  });
+  assert.equal(checks.length, 1);
+  const c = checks[0];
+  assert.equal(c.kind, "leg", "тип сверки помечен: leg и surface мерят разное");
+  assert.equal(c.dRel, 0);
+  assert.equal(c.thRel, 0);
+  assert.equal(c.vgRel, 0);
+  assert.equal(c.h, 96);
+});
+
+test("leg-сверка: время берётся из ts НОГИ, а не из момента записи", () => {
+  // Нога снята на час раньше момента записи: до экспирации 96ч по её метке, 95ч по nowMs.
+  const checks = buildLegGreekChecks({ legs: { X: leg({ ts: NOW }) }, nowMs: NOW + H });
+  assert.equal(checks[0].h, 96, "иначе греки сверялись бы с чужим сроком");
+});
+
+test("leg-сверка: невычислимая нога не даёт строки «расхождение ноль»", () => {
+  const checks = buildLegGreekChecks({
+    legs: {
+      A: leg({ markIv: null }), // без IV
+      B: leg({ underlying: 0 }), // без форварда
+      C: leg({ expiryMs: NOW - H }), // экспирация прошла
+      D: leg({ type: "future" }), // не опцион
+    },
+    nowMs: NOW,
+  });
+  assert.deepEqual(checks, [], "молчание вместо выдуманного нуля");
+  assert.deepEqual(buildLegGreekChecks({}), []);
+});
+
+test("leg-сверка: отсутствие биржевого грека даёт null расхождения, но строку не убивает", () => {
+  const checks = buildLegGreekChecks({ legs: { X: leg({ vega: null }) }, nowMs: NOW });
+  assert.equal(checks.length, 1);
+  assert.equal(checks[0].vgRel, null, "расхождение по веге не выдумано");
+  assert.equal(checks[0].vgEx, null);
+  assert.ok(Number.isFinite(checks[0].vgOur), "наша вега при этом посчитана");
+  assert.ok(Number.isFinite(checks[0].dRel), "дельта сверена как обычно");
 });

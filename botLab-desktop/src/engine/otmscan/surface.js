@@ -123,6 +123,7 @@ export function buildGreekChecks({ rows, tickers, nowMs } = {}) {
     const th = greekDiff(ours.th, t.theta);
     const vg = greekDiff(ours.vg, t.vega);
     out.push({
+      kind: "surface",
       ts: nowMs ?? null,
       n: name,
       h: ours.h,
@@ -134,6 +135,49 @@ export function buildGreekChecks({ rows, tickers, nowMs } = {}) {
       thRel: r(th.relPct, 3),
       vgOur: ours.vg,
       vgEx: r(t.vega, 3),
+      vgRel: r(vg.relPct, 3),
+    });
+  }
+  return out;
+}
+
+// Сверка ФОРМУЛЫ на полях ОДНОГО тикера: греки считаются из underlying/markIv той же ноги, с
+// которой берутся биржевые греки, поэтому расхождение здесь — это точность модели и НИЧЕГО больше.
+// buildGreekChecks выше сравнивает поверхность с тикером и потому мерит сумму «формула + возраст
+// снимка поверхности»; разделять их обязательно, иначе устаревание источника читается как ошибка
+// модели (наступили на это при ручной проверке 2026-08-03: ATM на 0.5 суток дал 112% расхождения
+// при смешении источников и 0.0% на полях одного тикера).
+// legs: { [instrument]: { underlying, markIv, strike, expiryMs, type, delta, theta, vega, ts } }.
+export function buildLegGreekChecks({ legs, nowMs } = {}) {
+  const out = [];
+  for (const [name, l] of Object.entries(legs ?? {})) {
+    if (!l || (l.type !== "call" && l.type !== "put")) continue;
+    const atMs = fin(l.ts) ? l.ts : nowMs;
+    const tYears = yearsToExpiry(atMs, l.expiryMs);
+    const g = black76Greeks({
+      forwardUsd: l.underlying,
+      strikeUsd: l.strike,
+      ivPct: l.markIv,
+      tYears,
+      optionType: l.type,
+    });
+    if (g.delta == null) continue; // нечего сверять — не строка «расхождение ноль»
+    const d = greekDiff(g.delta, l.delta);
+    const th = greekDiff(g.thetaUsd, l.theta);
+    const vg = greekDiff(g.vegaUsd, l.vega);
+    out.push({
+      kind: "leg",
+      ts: nowMs ?? null,
+      n: name,
+      h: r(tYears * 365 * 24, 3),
+      dOur: r(g.delta, 4),
+      dEx: r(l.delta, 4),
+      dRel: r(d.relPct, 3),
+      thOur: r(g.thetaUsd, 3),
+      thEx: r(l.theta, 3),
+      thRel: r(th.relPct, 3),
+      vgOur: r(g.vegaUsd, 3),
+      vgEx: r(l.vega, 3),
       vgRel: r(vg.relPct, 3),
     });
   }
