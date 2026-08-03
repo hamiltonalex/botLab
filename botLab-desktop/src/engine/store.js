@@ -5,7 +5,7 @@
 // All writes are atomic (write tmp -> rename) to avoid corruption on crash/quit. baseDir is
 // app.getPath('userData') in production; a temp dir in tests.
 
-import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, appendFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseSpreadCsv, toSpreadCsv } from "./format.js";
 
@@ -115,6 +115,82 @@ export function loadBotSettings(baseDir, id) {
 export function saveBotSettings(baseDir, id, s) {
   ensureDir(baseDir);
   atomicWrite(botSettingsPath(baseDir, id), JSON.stringify(s, null, 2));
+}
+
+// ---- append-only NDJSON records (S3c, слой записи сканера) ----
+// ПОЧЕМУ ОТДЕЛЬНЫЙ ТРАКТ, А НЕ КЛЮЧ В ТЕЛЕМЕТРИИ. saveBotState переписывает файл ЦЕЛИКОМ (write
+// tmp + rename). Для суточных вёдер это правильно — они маленькие и должны быть атомарны. Но записи
+// поверхности это ~82 КБ на снимок и десятки мегабайт за прогон: перезапись целого файла на каждом
+// флаше дала бы квадратичную стоимость и растущие паузы. Поэтому здесь дописывание в конец.
+//
+// ЦЕНА ВЫБОРА, НАЗВАННАЯ ЯВНО: append не атомарен. Падение процесса посреди записи оставляет
+// оборванную последнюю строку — поэтому читатель обязан её пережить, а не бросить. Ровно одна
+// строка в конце файла может пострадать, и она считается в `broken`, а не проглатывается молча
+// (та же дисциплина, что карантин в loadBotStateQuarantine: данные не уничтожаются одной плохой
+// записью, но и не выдаются за целые).
+//
+// Файлы режутся по суткам UTC: <baseDir>/scan-records/<prefix>-<YYYY-MM-DD>.ndjson. Тот же ключ
+// суток, что у вёдер телеметрии, поэтому запись и статистика соединяются без переводов времени.
+const RECORDS_DIR = "scan-records";
+const recordsDir = (b) => ensureDir(join(b, RECORDS_DIR));
+const recordPath = (b, prefix, dayKey) => join(recordsDir(b), `${prefix}-${dayKey}.ndjson`);
+
+// Дописать строки. rows — массив объектов; пустой массив НЕ создаёт файл (пустой прогон не должен
+// оставлять следов, по которым отчёт решит, что данные были). Возвращает число записанных строк.
+export function appendScanRecords(baseDir, prefix, dayKey, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return 0;
+  const text = rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
+  appendFileSync(recordPath(baseDir, prefix, dayKey), text);
+  return rows.length;
+}
+
+// Прочитать записи за перечисленные сутки. Возвращает { rows, broken, files } — broken это число
+// нечитаемых строк (оборванный хвост после падения); отчёт обязан его показать.
+export function readScanRecords(baseDir, prefix, dayKeys) {
+  const rows = [];
+  const files = [];
+  let broken = 0;
+  for (const dayKey of dayKeys ?? []) {
+    const p = recordPath(baseDir, prefix, dayKey);
+    if (!existsSync(p)) continue;
+    files.push(p);
+    for (const line of readFileSync(p, "utf8").split("\n")) {
+      if (!line) continue;
+      try {
+        rows.push(JSON.parse(line));
+      } catch {
+        broken += 1;
+      }
+    }
+  }
+  return { rows, broken, files };
+}
+
+// Какие сутки записаны для префикса — чтобы отчёт не угадывал диапазон, а читал его с диска.
+export function listScanRecordDays(baseDir, prefix) {
+  const dir = join(baseDir, RECORDS_DIR);
+  if (!existsSync(dir)) return [];
+  const re = new RegExp(`^${prefix}-(\\d{4}-\\d{2}-\\d{2})\\.ndjson$`);
+  return readdirSync(dir)
+    .map((f) => re.exec(f)?.[1])
+    .filter(Boolean)
+    .sort();
+}
+
+// Размер записей на диске в байтах — для панели честности и для лога прогона: рост файла обязан
+// быть видимым оператору, а не сюрпризом на 60-м часу.
+export function scanRecordsBytes(baseDir, prefix) {
+  const dir = join(baseDir, RECORDS_DIR);
+  if (!existsSync(dir)) return 0;
+  const re = new RegExp(`^${prefix}-\\d{4}-\\d{2}-\\d{2}\\.ndjson$`);
+  let total = 0;
+  for (const f of readdirSync(dir)) {
+    if (!re.test(f)) continue;
+    try {
+      total += statSync(join(dir, f)).size;
+    } catch {}
+  }
+  return total;
 }
 
 // ---- trailing-history CSV cache (per instrument key) ----
