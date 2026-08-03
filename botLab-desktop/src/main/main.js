@@ -41,6 +41,7 @@ import { tvToCandles, computeRvBundle } from "../engine/otmscan/rv.js";
 import { selectCandidates as scnSelectCandidates, expiriesInWindow as scnExpiriesInWindow } from "../engine/otmscan/candidates.js";
 import { createScanState, evaluateScan } from "../engine/otmscan/scan-engine.js";
 import { buildSurfaceRows, buildGreekChecks, buildLegGreekChecks, summarizeSurface } from "../engine/otmscan/surface.js";
+import { buildTickRecord } from "../engine/otmscan/tick-record.js";
 import { foldScanStats, bumpScanStart } from "./scn-stats.js";
 import { sanitizeRestoredScanState } from "./scn-boot.js";
 import { isolateSmokeProfile } from "./smoke-profile.js";
@@ -123,7 +124,7 @@ const state = {
     stats: { days: {} }, // S3b: суточная статистика обкатки (scn-stats.js), персист в telemetry-файле
     // S3c (слой записи): surfaceAt — момент последнего снимка поверхности, surfaceLast — его сводка
     // для лога и панели честности, recordCounts — сколько строк записано за сессию по каждому тракту.
-    surfaceAt: 0, surfaceLast: null, recordCounts: { surface: 0, checks: 0 } },
+    surfaceAt: 0, surfaceLast: null, recordCounts: { surface: 0, checks: 0, ticks: 0 } },
 };
 
 const pollSec = () => Math.min(15, Math.max(1, state.settings.pollMinutes || 5)) * 60;
@@ -1302,8 +1303,34 @@ async function ensureScanChain() {
 // собственным отбором.
 const SCN_SURFACE_PREFIX = `${SCN_ID}-surface`;
 const SCN_CHECKS_PREFIX = `${SCN_ID}-checks`;
+const SCN_TICKS_PREFIX = `${SCN_ID}-ticks`;
 const scnDayKey = (ms) => new Date(ms).toISOString().slice(0, 10); // тот же ключ суток, что у вёдер
 let scnSurfaceInFlight = false;
+
+// Строка тика в запись. Дёшева (сеть не трогает), поэтому пишется КАЖДЫЙ тик, а не по кадансу:
+// 8758 строк за 72ч рядом с 69 МБ поверхности — шум, зато ряд непрерывен и склеивается с
+// поверхностью по времени без интерполяции. Отказ записи не трогает торговый тракт.
+function recordScanTick(cycle, nowMs) {
+  const sc = state.otmScanner;
+  try {
+    const rec = buildTickRecord({
+      cycle,
+      vol: {
+        rv7dPct: sc.candlesBundle?.rv7dPct ?? null,
+        rv3dPct: sc.candlesBundle?.rv3dPct ?? null,
+        sigma1dPct: sc.candlesBundle?.sigma1dPct ?? null,
+        ivRefPct: sc.ivRef?.nearPct ?? null,
+        ivSource: sc.ivRef?.source ?? null,
+        baselineIvPct: sc.dvol?.baselineIvPct ?? null,
+      },
+      books: sc.books,
+      degraded: sc.degraded,
+    });
+    if (rec) sc.recordCounts.ticks += appendScanRecords(baseDir, SCN_TICKS_PREFIX, scnDayKey(nowMs), [rec]);
+  } catch (e) {
+    console.warn("[scn] tick record:", String(e?.message || e));
+  }
+}
 
 async function ensureScanSurface() {
   const sc = state.otmScanner;
@@ -1643,6 +1670,11 @@ async function onScanSnapshot(snap) {
     // S3b: суточные распределения обкатки (значения условий, экономика лучшего, Д8, инциденты) —
     // фолд ДО флаша, чтобы telemetry-файл уносил свежие вёдра тем же троттлингом.
     sc.stats = foldScanStats(sc.stats, cycle, { degraded: sc.degraded, equityUsd: sc.settings.equityUsd, repriceSec: sc.settings.scanRepriceSec }, nowMs, SCN_RULES);
+    // S3c: вторая половина сырья. Поверхность несёт срез по инструментам, а условия У1-У8 живут на
+    // уровне АКТИВА и в неё не попадают — без этой строки чужой пресет по записи не пересчитывается.
+    // Здесь же единственный источник распределения ГЛУБИНЫ: стаканы берутся ≤2 финалистам за тик,
+    // а book_summary глубины не отдаёт вовсе.
+    recordScanTick(cycle, nowMs);
     persistScanState();
     flushScanTelemetry(false);
     pushScan();
