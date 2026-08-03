@@ -339,6 +339,8 @@ export function evaluateScan(state, inputs, preset, nowMs) {
     if (st.signal.expiryMs - nowMs < preset.expiryMinH * HOUR_MS) pinnedRolled = true; // §7 случай 7
   }
   const target = bestEntry?.inst ?? null;
+  const perpBookAge = age(inputs?.perpBook?.tsMs);
+  const perpBookStale = perpBookAge != null && perpBookAge > staleTickSec;
 
   // ── Stage B · условия по активу (книга У8 — от лучшего/пинованного кандидата).
   const assetRows = evaluateAssetConditions({
@@ -350,9 +352,12 @@ export function evaluateScan(state, inputs, preset, nowMs) {
     farIvPct: inputs?.ivRef?.farPct ?? null,
     baselineIvPct: inputs?.dvol?.baselineIvPct ?? null,
     wings: inputs?.wings ?? null,
-    book: target ? { bidDepthUsd: target.bidDepthUsd, askDepthUsd: target.askDepthUsd } : null,
-    ages: { candlesSec: ages.candlesSec, ivRefSec: ages.ivRefSec, farIvSec: ages.farIvSec, dvolSec: ages.dvolSec, wingsSec: ages.wingsSec, bookSec: target?.bookAgeSec ?? null },
-    stale: { candles: stale.candles, ivRef: stale.ivRef, farIv: stale.farIv, dvol: stale.dvol, wings: stale.wings, book: !!target?.bookStale },
+    // У8 мерит дисбаланс по стакану ПЕРПА, а не по книге кандидата: книги опционов забираются ≤2
+    // финалистам за тик, и за 72ч прогона 3 глубина набрала 56 замеров из 8758 — на такой выборке
+    // условие не живёт. Перп стоит один вызов и есть всегда.
+    book: inputs?.perpBook ? { bidDepthUsd: inputs.perpBook.bidDepthUsd, askDepthUsd: inputs.perpBook.askDepthUsd } : null,
+    ages: { candlesSec: ages.candlesSec, ivRefSec: ages.ivRefSec, farIvSec: ages.farIvSec, dvolSec: ages.dvolSec, wingsSec: ages.wingsSec, bookSec: age(inputs?.perpBook?.tsMs) },
+    stale: { candles: stale.candles, ivRef: stale.ivRef, farIv: stale.farIv, dvol: stale.dvol, wings: stale.wings, book: perpBookStale },
     weekend,
   });
   const instrumentRows = bestEntry

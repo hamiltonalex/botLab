@@ -2103,10 +2103,10 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
           </div>
         </div>
 
-        <!-- ── Кандидаты в σ-окне + экономика лучшего (А5) ── -->
+        <!-- ── Кандидаты в окне отбора + экономика лучшего (А5) ── -->
         <div class="card flush span2" id="scnCandCard">
           <div class="sec-head" style="padding:16px 16px 0;margin-bottom:8px">
-            <h2>Кандидаты в σ-окне</h2>
+            <h2>Кандидаты</h2>
             <button class="help-btn" data-help="opt-scan-cand">?</button>
             <span class="tag" id="scnCandWindowTag">окно —</span>
             <span class="rule"></span>
@@ -2114,7 +2114,7 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
           </div>
           <div class="table-scroll" style="max-height:240px">
             <table class="scan" id="scnCandTable">
-              <caption class="sr-only">Кандидаты в сигма-окне: параметры инструмента и вердикты условий</caption>
+              <caption class="sr-only">Кандидаты в окне отбора: параметры инструмента и вердикты условий</caption>
               <thead><tr>
                 <th class="lft" scope="col">Инструмент</th><th class="lft" scope="col">Тип</th>
                 <th scope="col">Страйк</th><th scope="col">σ-дист</th><th scope="col">Эксп.</th>
@@ -4251,7 +4251,7 @@ const HELP_OTM_SCANNER = {
     'счёт ≥ N, при этом ядро <span class="fx">У1+У10+У14</span> обязательно всегда; «н/д» в счёт не идёт.</li>'+
     '<li>«· выкл» — условие отключено пресетом (У8 по умолчанию); «· инфо» — показывается, но не гейтит и в счёт не входит (У7 по умолчанию).</li>'+
     '<li>У4 задаёт сторону сигнала (CALL/PUT) по направлению импульса; У6 в выходные всегда выкл.</li></ul>' },
-  'opt-scan-cand': { t:'Кандидаты в σ-окне · экономика сделки', b:
+  'opt-scan-cand': { t:'Кандидаты в окне отбора · экономика сделки', b:
     '<p>Инструменты в σ-диапазоне страйков и окне экспираций пресета (до 6 строк): дистанция в σ, '+
     'премия в % спота, спред в % премии, глубина книги, тета в %/сут, IV.</p><ul>'+
     '<li>Колонка <b>У9–14</b> — сколько инструментных гейт-условий кандидат проходит; провалившиеся номера в скобках.</li>'+
@@ -5613,7 +5613,7 @@ const SCN_COND_LABELS = {
   rv7d_gt_iv:'RV7d выше IV', iv_discount:'запас недооценки IV', rv3d_gt_iv:'RV3d выше IV · доп.',
   sigma_impulse:'σ-импульс 24ч · сторона', ema_trend:'тренд EMA20 · совпадение',
   forward_iv:'forward-IV · дисконт', skew:'skew · подтверждение стороны', book_imbalance:'дисбаланс стакана',
-  strike_sigma:'страйк в σ-окне', premium_cap:'премия ≤ лимита', spread_cap:'спред ≤ лимита',
+  strike_sigma:'страйк в окне отбора', premium_cap:'премия ≤ лимита', spread_cap:'спред ≤ лимита',
   depth_min:'глубина книги', theta_cap:'тета ≤ лимита', cost_gate:'издержки ≤ лимита' };
 const SCN_PRESET_LABELS = { 'dmitri-v1':'Дмитрий v1', 'dmitri-v2':'Дмитрий v2.0',
   calibrated:'Калиброванный', custom:'Калиброванный*' };

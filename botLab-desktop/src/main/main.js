@@ -24,7 +24,7 @@ import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts } 
 import { ledgerView, buildLedger } from "../engine/ledger.js";
 import { toLedgerCsv, toLedgerSheet, toLedgerJson, ledgerFileName, dialogFiltersFor } from "./export.js";
 import { buildXlsxBuffer } from "./xlsx-writer.js";
-import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine } from "../engine/store.js";
+import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes } from "../engine/store.js";
 import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
 import { buildStructure as s1buildStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry } from "../engine/btcopt/structure.js";
@@ -40,6 +40,8 @@ import { SCAN_PRESETS, SCAN_DATA_RULES, SCAN_SCHEMA_VERSION, defaultScanSettings
 import { tvToCandles, computeRvBundle } from "../engine/otmscan/rv.js";
 import { selectCandidates as scnSelectCandidates, expiriesInWindow as scnExpiriesInWindow } from "../engine/otmscan/candidates.js";
 import { createScanState, evaluateScan } from "../engine/otmscan/scan-engine.js";
+import { buildSurfaceRows, buildGreekChecks, buildLegGreekChecks, summarizeSurface } from "../engine/otmscan/surface.js";
+import { buildTickRecord } from "../engine/otmscan/tick-record.js";
 import { foldScanStats, bumpScanStart } from "./scn-stats.js";
 import { sanitizeRestoredScanState } from "./scn-boot.js";
 import { isolateSmokeProfile } from "./smoke-profile.js";
@@ -49,6 +51,7 @@ import { initUpdater, disposeUpdater } from "./updater.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const S1_SMOKE = process.env.S1_SMOKE === "1"; // bot-2 self-test: open→live ticks→close through the real s1 IPC
 const SCN_SMOKE = process.env.SCN_SMOKE === "1"; // S2 self-test сканера: живой scanCycle через реальный scn-IPC
+const SCN_AUTOSTART = process.env.SCN_AUTOSTART === "1"; // обкатка: завести опрос сканера на буте, без показа вкладки
 const SMOKE = process.env.FA_SMOKE === "1" || S1_SMOKE || SCN_SMOKE; // isolate profile + hidden window + skip updater
 isolateSmokeProfile(app, { enabled: SMOKE });
 // А6 (fault-tolerance, находка C1): один профиль - один процесс. Без лока второй `npm start` на том
@@ -119,7 +122,11 @@ const state = {
     candles: [], candlesTsMs: 0, candlesBundle: null, dvol: null, chain: null, ivRef: null, wings: null,
     set: null, books: {}, event: { flagged: false, note: null, untilTs: null }, degraded: false,
     telemetryDirtyAt: 0, telemetryFlushedAt: 0, getCountAt: 0, budget: null, lastKickAt: 0,
-    stats: { days: {} } }, // S3b: суточная статистика обкатки (scn-stats.js), персист в telemetry-файле
+    stats: { days: {} }, // S3b: суточная статистика обкатки (scn-stats.js), персист в telemetry-файле
+    // S3c (слой записи): surfaceAt — момент последнего снимка поверхности, surfaceLast — его сводка
+    // для лога и панели честности, recordCounts — сколько строк записано за сессию по каждому тракту.
+    surfaceAt: 0, surfaceLast: null, recordCounts: { surface: 0, checks: 0, ticks: 0 },
+    perpBook: null }, // У8: стакан перпа (дисбаланс), тянется каждый тик
 };
 
 const pollSec = () => Math.min(15, Math.max(1, state.settings.pollMinutes || 5)) * 60;
@@ -1289,6 +1296,97 @@ async function ensureScanChain() {
   }
 }
 
+// ── Слой записи S3c: снимок ВСЕЙ поверхности опционов на своём медленном кадансе.
+// Один GET отдаёт 428 инструментов BTC_USDC по всем экспирациям (~1.1 МБ ответа), греки считает
+// black76 из mark_iv и форварда. Каданс 300с, а не тиковый: амортизированно это 0.1 вызова за тик,
+// бюджет §4.3 не задет, а данных достаточно, потому что записываются РАСПРЕДЕЛЕНИЯ, а не решения.
+// Зачем вообще: прежний сбор писал только то, что прошло наши фильтры, поэтому отвечал ровно на
+// вопрос «были ли правы мы»; чужой порог по такой записи не пересчитывается, а квантили смещены
+// собственным отбором.
+const SCN_SURFACE_PREFIX = `${SCN_ID}-surface`;
+const SCN_CHECKS_PREFIX = `${SCN_ID}-checks`;
+const SCN_TICKS_PREFIX = `${SCN_ID}-ticks`;
+const scnDayKey = (ms) => new Date(ms).toISOString().slice(0, 10); // тот же ключ суток, что у вёдер
+let scnSurfaceInFlight = false;
+
+// Строка тика в запись. Дёшева (сеть не трогает), поэтому пишется КАЖДЫЙ тик, а не по кадансу:
+// 8758 строк за 72ч рядом с 69 МБ поверхности — шум, зато ряд непрерывен и склеивается с
+// поверхностью по времени без интерполяции. Отказ записи не трогает торговый тракт.
+function recordScanTick(cycle, nowMs) {
+  const sc = state.otmScanner;
+  try {
+    const rec = buildTickRecord({
+      cycle,
+      vol: {
+        rv7dPct: sc.candlesBundle?.rv7dPct ?? null,
+        rv3dPct: sc.candlesBundle?.rv3dPct ?? null,
+        sigma1dPct: sc.candlesBundle?.sigma1dPct ?? null,
+        ivRefPct: sc.ivRef?.nearPct ?? null,
+        ivSource: sc.ivRef?.source ?? null,
+        baselineIvPct: sc.dvol?.baselineIvPct ?? null,
+      },
+      books: sc.books,
+      degraded: sc.degraded,
+    });
+    if (rec) sc.recordCounts.ticks += appendScanRecords(baseDir, SCN_TICKS_PREFIX, scnDayKey(nowMs), [rec]);
+  } catch (e) {
+    console.warn("[scn] tick record:", String(e?.message || e));
+  }
+}
+
+async function ensureScanSurface() {
+  const sc = state.otmScanner;
+  if (!sc.running || scnSurfaceInFlight) return;
+  if (!sc.chain?.instruments?.length) return; // страйк/срок/сторона живут в chain — без мет не сшить
+  const nowMs = Date.now();
+  if (sc.surfaceAt && nowMs - sc.surfaceAt < scnCacheMs(SCN_RULES.surfaceRefreshSec)) return;
+  scnSurfaceInFlight = true;
+  try {
+    const summary = await deribit.getBookSummaryByCurrency({
+      currency: deribit.OPTION_CURRENCY,
+      kind: "option",
+      testnet: !!sc.settings.testnet,
+    });
+    const at = Date.now();
+    const { rows, skipped, expiries } = buildSurfaceRows({
+      summary,
+      chainMetas: sc.chain.instruments,
+      nowMs: at,
+      maxHours: SCN_RULES.surfaceMaxHours,
+    });
+    const day = scnDayKey(at);
+    // Метка времени первым полем: строки одного снимка склеиваются по ней без разбора имён.
+    sc.recordCounts.surface += appendScanRecords(baseDir, SCN_SURFACE_PREFIX, day, rows.map((r) => ({ ts: at, ...r })));
+
+    // Две РАЗНЫЕ сверки, и разделять их обязательно. leg-сверка считает греки из полей того же
+    // тикера, с которого берутся биржевые, — это чистая точность формулы. surface-сверка сравнивает
+    // снимок поверхности с живым тикером и потому мерит сумму «формула + возраст снимка»: она
+    // отвечает на вопрос, насколько поверхность вообще пригодна как источник.
+    const legs = sc.lastSnapshot?.legs ?? {};
+    const tickers = {};
+    for (const [name, l] of Object.entries(legs)) {
+      if (Number.isFinite(l?.delta)) tickers[name] = { delta: l.delta, theta: l.theta, vega: l.vega };
+    }
+    const checks = [...buildLegGreekChecks({ legs, nowMs: at }), ...buildGreekChecks({ rows, tickers, nowMs: at })];
+    sc.recordCounts.checks += appendScanRecords(baseDir, SCN_CHECKS_PREFIX, day, checks);
+
+    sc.surfaceAt = at;
+    const bytes = scanRecordsBytes(baseDir, SCN_SURFACE_PREFIX);
+    sc.surfaceLast = { ...summarizeSurface(rows), skipped, at, bytes };
+    console.log(
+      `[scn] поверхность: ${rows.length} строк · ${expiries.length} экспираций · в полосе дельты ${sc.surfaceLast.inDeltaBand}` +
+        ` · сверок ${checks.length} · пропуски ${skipped.noMeta}/${skipped.noIv}/${skipped.expired} (мета/IV/истёкшие)` +
+        ` · на диске ${(bytes / 1048576).toFixed(1)} МБ`,
+    );
+  } catch (e) {
+    // Отказ записи НИКОГДА не трогает торговый тракт: сканер продолжает считать условия, просто
+    // этот снимок поверхности не записан (следующий каданс попробует снова).
+    console.warn("[scn] surface fetch:", String(e?.message || e));
+  } finally {
+    scnSurfaceInFlight = false;
+  }
+}
+
 // ── Набор инструментов источника (§4.1, паттерн band бота 2): перп (в снапшоте всегда) +
 // ATM-пары near/far (IV_ref и FIV) + крылья ±1σ (У7) + кандидаты σ-окна (тикеры У10-У14) +
 // инструмент ACTIVE-сигнала (пин §5.5). Набор — решение момента сборки; живёт до дрейфа спота
@@ -1472,6 +1570,25 @@ function pickBookFinalists(snap, preset) {
 // depthUsd = Σ(цена × количество) по топ-5 уровням (§5.2 У12); уровни Deribit — [price, amount].
 const scnBookDepthUsd = (levels) => (levels ?? []).reduce((s, l) => s + (Number(l?.[0]) || 0) * (Number(l?.[1]) || 0), 0);
 
+// Глубина стакана ПЕРПА (У8, дисбаланс). Единицы у обратного BTC-PERPETUAL другие: объём уровня уже
+// выражен в USD, поэтому здесь СУММА КОЛИЧЕСТВ, а не цена×количество как у линейных опционов выше.
+// Перепутать легко, а ошибка была бы тихой: отношение bid/ask осталось бы правдоподобным числом.
+const scnPerpDepthUsd = (levels) => (levels ?? []).reduce((s, l) => s + (Number(l?.[1]) || 0), 0);
+
+// Стакан перпа тянется КАЖДЫЙ тик (один дешёвый вызов): дисбаланс — быстрый сигнал, на кадансе
+// поверхности он потерял бы смысл. Отказ оставляет прошлую книгу, она протухнет по bookAgeSec и даст
+// честный unknown, а не молчаливый fail.
+async function fetchScanPerpBook() {
+  const sc = state.otmScanner;
+  try {
+    const ob = await deribit.getOrderBook(deribit.PERP_INSTRUMENT, { depth: 5, testnet: !!sc.settings.testnet });
+    sc.perpBook = { bidDepthUsd: scnPerpDepthUsd(ob?.bids), askDepthUsd: scnPerpDepthUsd(ob?.asks), tsMs: Date.now() };
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function fetchScanBooks(names) {
   const sc = state.otmScanner;
   let fetched = 0;
@@ -1523,6 +1640,7 @@ function assembleScanInputs(snap, nowMs) {
     candlesTsMs: sc.candlesTsMs || null,
     ivRef: sc.ivRef,
     ivRefByExpiry,
+    perpBook: sc.perpBook, // У8: дисбаланс считается по стакану перпа, не по книге опциона
     dvol: sc.dvol ? { baselineIvPct: sc.dvol.baselineIvPct, tsMs: sc.dvol.tsMs } : null,
     wings: sc.wings,
     chain: sc.chain ?? { instruments: [] },
@@ -1562,10 +1680,14 @@ async function onScanSnapshot(snap) {
     ensureScanCandles();
     ensureScanDvol();
     ensureScanChain();
+    ensureScanSurface(); // S3c: слой записи, свой медленный каданс; fire-and-forget как прочие джобы
     deriveScanIvRef(snap, Date.now()); // по набору, которым СДЕЛАН этот снапшот (до пересборки)
     const preset = resolveScanPreset();
     const finalists = pickBookFinalists(snap, preset);
-    const booksFetched = finalists.length ? await fetchScanBooks(finalists) : 0;
+    const [booksFetched] = await Promise.all([
+      finalists.length ? fetchScanBooks(finalists) : 0,
+      fetchScanPerpBook(), // У8: дисбаланс — быстрый сигнал, тянем каждый тик
+    ]);
     const nowMs = Date.now();
     const { state: nextState, cycle } = evaluateScan(sc.engineState, assembleScanInputs(snap, nowMs), preset, nowMs);
     sc.engineState = nextState;
@@ -1573,6 +1695,11 @@ async function onScanSnapshot(snap) {
     // S3b: суточные распределения обкатки (значения условий, экономика лучшего, Д8, инциденты) —
     // фолд ДО флаша, чтобы telemetry-файл уносил свежие вёдра тем же троттлингом.
     sc.stats = foldScanStats(sc.stats, cycle, { degraded: sc.degraded, equityUsd: sc.settings.equityUsd, repriceSec: sc.settings.scanRepriceSec }, nowMs, SCN_RULES);
+    // S3c: вторая половина сырья. Поверхность несёт срез по инструментам, а условия У1-У8 живут на
+    // уровне АКТИВА и в неё не попадают — без этой строки чужой пресет по записи не пересчитывается.
+    // Здесь же единственный источник распределения ГЛУБИНЫ: стаканы берутся ≤2 финалистам за тик,
+    // а book_summary глубины не отдаёт вовсе.
+    recordScanTick(cycle, nowMs);
     persistScanState();
     flushScanTelemetry(false);
     pushScan();
@@ -2125,6 +2252,17 @@ app.whenReady().then(async () => {
   // опрос живёт только между scn:start и scn:stop (§4.2); в простое ноль трафика.
   loadOrInitOtmScanner();
   wireIpcScan();
+  // SCN_AUTOSTART=1 — режим обкатки: опрос заводится на буте, БЕЗ показа вкладки «Сканер».
+  // Зачем флаг вообще: в обычной работе опрос стартует из renderer при первом показе вида
+  // (А4, scnOnShow), а стартовый вид жёстко «Обзор». На удалённой машине это значит, что каждый
+  // перезапуск требует ручного открытия вкладки — клики Screen Sharing не передаёт, а синтетический
+  // ввод osascript по SSH запрещён (-25211), и обкатку приходилось заводить клавиатурой. Для
+  // трёхсуточного прогона такая зависимость от человека недопустима: любой рестарт убил бы сбор.
+  // Флаг НИЧЕГО не меняет без явной установки — обычный запуск по-прежнему не трогает сеть в простое.
+  if (SCN_AUTOSTART) {
+    ensureScanSource();
+    console.log("[scn] SCN_AUTOSTART=1: опрос заведён на буте без показа вкладки");
+  }
   // S0: если приложение было закрыто в момент экспирации, pending settle-строки сверяются с
   // официальной delivery-ценой уже на буте (fire-and-forget; сам гейтится по pending/троттлингу).
   if (!SMOKE) maybeReconcileSettles();

@@ -31,8 +31,10 @@ export const CONDITION_META = Object.freeze([
   { key: "ema_trend", idx: "У5", group: "asset", core: false, label: "тренд EMA20 · совпадение" },
   { key: "forward_iv", idx: "У6", group: "asset", core: false, label: "forward-IV · дисконт" },
   { key: "skew", idx: "У7", group: "asset", core: false, label: "skew · подтверждение стороны" },
-  { key: "book_imbalance", idx: "У8", group: "asset", core: false, label: "дисбаланс стакана" },
-  { key: "strike_sigma", idx: "У9", group: "instrument", core: false, label: "страйк в σ-окне" },
+  { key: "book_imbalance", idx: "У8", group: "asset", core: false, label: "дисбаланс стакана перпа" },
+  // Ключ остаётся strike_sigma при любом strikeMode: по нему живут гистерезис-память и счётчики
+  // телеметрии, а переименование разорвало бы сравнимость с прогоном 3. Метка нейтральна к режиму.
+  { key: "strike_sigma", idx: "У9", group: "instrument", core: false, label: "страйк в окне отбора" },
   { key: "premium_cap", idx: "У10", group: "instrument", core: true, label: "премия ≤ лимита" },
   { key: "spread_cap", idx: "У11", group: "instrument", core: false, label: "спред ≤ лимита" },
   { key: "depth_min", idx: "У12", group: "instrument", core: false, label: "глубина книги" },
@@ -270,23 +272,32 @@ export function evaluateAssetConditions(ctx) {
     }
   }
 
-  // У8 book_imbalance: bid/ask-глубина книги лучшего кандидата ≥ imbalanceMin. По умолчанию OFF
-  // до ратификации определения (вопрос Д5); подтверждение сделками — S6.
+  // У8 book_imbalance: дисбаланс стакана ПЕРПА, объём bid к объёму ask ≥ imbalanceMin.
+  // Определение — Дмитрия (письмо 2026-08-03), оно и закрыло висевший вопрос Д5. Мерится по перпу,
+  // а НЕ по книге опциона: стаканы опционов забираются ≤2 финалистам за тик, и за 72ч прогона 3
+  // глубина получила 56 замеров из 8758 — распределения по такой выборке не построить. Стакан перпа
+  // стоит один дешёвый вызов и доступен всегда. Единицы: у обратного BTC-PERPETUAL объём уровня
+  // УЖЕ в USD, поэтому глубина считается суммой количеств, а не цена×количество (у линейных
+  // опционов наоборот) — смешение дало бы тихо неверное отношение.
+  // Режим по умолчанию info: определение ратифицировано, ПОРОГ нет — условие считается и пишется в
+  // телеметрию, но входа не решает (прецедент У7 skew).
   {
-    if (preset.imbalanceMode === "off" || !preset.imbalanceMode) rows.push(off("book_imbalance", "выключено · определение не ратифицировано (Д5)"));
-    else if (stale.book) rows.push(unknown("book_imbalance", `книга протухла (${fmt(ages.bookSec, 0)}с)`, { staleSec: ages.bookSec }));
+    const mode = preset.imbalanceMode === "off" || !preset.imbalanceMode ? "off" : preset.imbalanceMode === "gate" ? "gate" : "info";
+    if (mode === "off") rows.push(off("book_imbalance", "выключено пресетом"));
+    else if (stale.book) rows.push(unknown("book_imbalance", `стакан перпа протух (${fmt(ages.bookSec, 0)}с)`, { mode, staleSec: ages.bookSec }));
     else if (!posNum(ctx.book?.bidDepthUsd) || !posNum(ctx.book?.askDepthUsd))
-      rows.push(unknown("book_imbalance", "книга не запрошена или пуста", { staleSec: ages.bookSec }));
+      rows.push(unknown("book_imbalance", "стакан перпа не запрошен или пуст", { mode, staleSec: ages.bookSec }));
     else {
       const ratio = ctx.book.bidDepthUsd / ctx.book.askDepthUsd;
       rows.push(
         row("book_imbalance", {
+          mode,
           value: ratio,
           threshold: preset.imbalanceMin,
           op: ">=",
           unit: "ratio",
           state: ratio >= preset.imbalanceMin ? "pass" : "fail",
-          note: `bid/ask глубина ${fmt(ratio, 2)}×`,
+          note: `перп bid/ask ${fmt(ratio, 2)}× · ${ratio >= 1 ? "перевес покупателей" : "перевес продавцов"}`,
           staleSec: ages.bookSec,
         }),
       );
@@ -320,20 +331,43 @@ export function evaluateInstrumentConditions(inst, ctx) {
       ? unknown(key, `тикер протух (${fmt(tAge, 0)}с)`, { staleSec: tAge, hkey: hk(key) })
       : null;
 
-  // У9 strike_sigma: σ-дистанция в окне пресета. От S зависит — аномалия перп/индекс даёт unknown.
+  // У9 strike_sigma: окно отбора страйка. Два режима, оба гейтят одну и ту же мысль «страйк на
+  // нужном удалении от денег», но РАЗНОЙ мерой:
+  //   sigma — σ-дистанция |K/S−1|/σ_T, считается из chain и IV_ref, тикера не требует (историческое
+  //           поведение v1/v2, сохранено ради сравнимости с прогоном 3);
+  //   delta — |Δ| по ЖИВЫМ грекам тикера. Живой замер 2026-08-03: σ-окно 1.2-1.5 и полоса дельты
+  //           0.35-0.55 не пересекаются вообще, на 1.2-1.5σ дельта около 0.09. В этом режиме σ-окно
+  //           пресета работает только СИТОМ снабжения (набор опрашиваемых собирается до тикеров),
+  //           а гейтом служит дельта.
+  // Плата за режим delta: условие начинает зависеть от свежести тикера — протухший тикер даёт
+  // честный unknown там, где режим sigma дал бы вердикт. Это осознанно: дельта без живых греков
+  // была бы выдумкой.
   {
-    if (anomaly) rows.push(unknown("strike_sigma", "аномалия цены: перп и индекс разошлись более 0.5%", { hkey: hk("strike_sigma") }));
-    else if (!fin(inst.sigmaDist)) rows.push(unknown("strike_sigma", "σ-дистанция не вычислена (нет IV_ref экспирации)", { hkey: hk("strike_sigma"), staleSec: tAge }));
+    const byDelta = preset.strikeMode === "delta";
+    const bad = byDelta ? tickerBad("strike_sigma") : null;
+    const value = byDelta ? (fin(inst.deltaUsd) ? Math.abs(inst.deltaUsd) : null) : inst.sigmaDist;
+    const lo = byDelta ? preset.deltaMin : preset.sigmaMin;
+    const hi = byDelta ? preset.deltaMax : preset.sigmaMax;
+    if (bad) rows.push(bad);
+    else if (anomaly && !byDelta) rows.push(unknown("strike_sigma", "аномалия цены: перп и индекс разошлись более 0.5%", { hkey: hk("strike_sigma") }));
+    else if (!fin(value))
+      rows.push(
+        unknown(
+          "strike_sigma",
+          byDelta ? "дельта не пришла в тикере" : "σ-дистанция не вычислена (нет IV_ref экспирации)",
+          { hkey: hk("strike_sigma"), staleSec: tAge },
+        ),
+      );
     else
       rows.push(
         row("strike_sigma", {
-          value: inst.sigmaDist,
-          threshold: preset.sigmaMin,
-          thresholdHi: preset.sigmaMax,
+          value,
+          threshold: lo,
+          thresholdHi: hi,
           op: "between",
-          unit: "sigma",
-          state: inst.sigmaDist >= preset.sigmaMin && inst.sigmaDist <= preset.sigmaMax ? "pass" : "fail",
-          note: `${fmt(inst.sigmaDist, 2)}σ`,
+          unit: byDelta ? "delta" : "sigma",
+          state: value >= lo && value <= hi ? "pass" : "fail",
+          note: byDelta ? `дельта ${fmt(value, 3)} · окно ${fmt(lo, 2)}-${fmt(hi, 2)}` : `${fmt(value, 2)}σ`,
           staleSec: tAge,
           hkey: hk("strike_sigma"),
         }),

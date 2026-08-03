@@ -85,6 +85,15 @@ export const getTicker = (instrument_name, { testnet = false } = {}) =>
 export const getOrderBook = (instrument_name, { depth = 5, testnet = false } = {}) =>
   rpc("public/get_order_book", { instrument_name, depth }, { testnet });
 
+// Вся поверхность опционов ОДНИМ вызовом (S3c, слой записи сканера). Отдаёт bid/ask/mark/mid,
+// mark_iv, underlying_price (форвард СВОЕЙ экспирации), open_interest и объёмы по каждому
+// инструменту валюты — на живых данных 2026-08-03 это 2310 USDC-опционов, из них 428 BTC_USDC,
+// ответ ~1.1 МБ. Греков в ответе НЕТ: их считает black76.js из mark_iv и форварда.
+// Дорогой по трафику и намеренно НЕ тиковый — вызывается на своём медленном кадансе (§4.3), иначе
+// съедает бюджет 15 GET/тик.
+export const getBookSummaryByCurrency = ({ currency = "USDC", kind = "option", testnet = false } = {}) =>
+  rpc("public/get_book_summary_by_currency", { currency, kind }, { testnet });
+
 // DVOL — Deribit's 30-day implied-volatility index (Phase 3b IV regime). PUBLIC endpoint; a BTC-currency
 // query returning { data: [[ts, open, high, low, close], …] } at the given resolution (seconds: "1" |
 // "60" | "3600" | "43200" | "1D"). Slow-moving — callers cache it like the chain (never per tick).
