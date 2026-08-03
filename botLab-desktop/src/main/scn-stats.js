@@ -24,7 +24,8 @@ const deepFreeze = (o) => {
 // edges: бин i покрывает [edges[i], edges[i+1]), последний открыт вверх.
 export const SCN_STATS_BINS = deepFreeze({
   pts: { lo: -40, hi: 40, step: 1 }, // У1/У2/У3/У6/У7: спреды RV−IV/FIV/skew в п.п.
-  sigma: { lo: 0, hi: 6, step: 0.1 }, // У4 импульс, У9 σ-дистанция
+  sigma: { lo: 0, hi: 6, step: 0.1 }, // У4 импульс, У9 σ-дистанция (режим sigma)
+  delta: { lo: 0, hi: 1, step: 0.01 }, // У9 в режиме delta: |Δ| страйка по живым грекам
   ratio: { lo: 0, hi: 4, step: 0.05 }, // У2 baselineRatio, У8 bid/ask
   pct: { lo: -15, hi: 15, step: 0.25 }, // У5 дистанция цены от EMA в %
   pctSpot: { lo: 0, hi: 4, step: 0.05 }, // У10 премия в % спота

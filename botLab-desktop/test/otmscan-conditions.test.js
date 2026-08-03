@@ -33,7 +33,7 @@ test("базовый контекст: У1-У6 pass, У7 info, У8 off — ру�
   assert.equal(rows.skew.mode, "info");
   assert.equal(rows.skew.state, "pass"); // −2.5 ≤ −2.0 на стороне CALL
   assert.equal(rows.book_imbalance.state, "off");
-  assert.match(rows.book_imbalance.note, /Д5/);
+  assert.match(rows.book_imbalance.note, /выключено пресетом/); // Д5 закрыт: определение дал Дмитрий 2026-08-03
 });
 
 test("У1: fail при IV дороже RV; unknown при протухших свечах и без IV_ref", () => {
@@ -122,14 +122,26 @@ test("У7: gate-режим гейтит по стороне; PUT требует 
   assert.equal(noWings.skew.state, "unknown");
 });
 
-test("У8: gate-режим считает bid/ask книги лучшего кандидата", () => {
+test("У8: gate-режим считает bid/ask стакана перпа", () => {
   const preset = { ...PRESET, imbalanceMode: "gate", imbalanceMin: 1.5 };
   const pass = byKey(evaluateAssetConditions(mkAssetCtx({ preset }))); // 12000/6000 = 2.0
   assert.equal(pass.book_imbalance.state, "pass");
+  assert.match(pass.book_imbalance.note, /перп bid\/ask/, "нота называет источник — перп, не книгу опциона");
+  assert.match(pass.book_imbalance.note, /перевес покупателей/);
   const fail = byKey(evaluateAssetConditions(mkAssetCtx({ preset, book: { bidDepthUsd: 6000, askDepthUsd: 6000 } })));
   assert.equal(fail.book_imbalance.state, "fail");
   const noBook = byKey(evaluateAssetConditions(mkAssetCtx({ preset, book: null })));
   assert.equal(noBook.book_imbalance.state, "unknown");
+  assert.match(noBook.book_imbalance.note, /стакан перпа/);
+});
+
+test("У8: режим info считает вердикт честно, но из агрегата исключён (прецедент У7)", () => {
+  const preset = { ...PRESET, imbalanceMode: "info", imbalanceMin: 1.5 };
+  const r = byKey(evaluateAssetConditions(mkAssetCtx({ preset })));
+  assert.equal(r.book_imbalance.mode, "info", "порог не ратифицирован — условие не гейтит");
+  assert.equal(r.book_imbalance.state, "pass", "но вердикт считается и попадает в телеметрию");
+  const off = byKey(evaluateAssetConditions(mkAssetCtx({ preset: { ...PRESET, imbalanceMode: "off" } })));
+  assert.equal(off.book_imbalance.mode, "off");
 });
 
 test("У9-У14 базовый инструмент: все pass; ноты — русские форматы ui-spec §2.2", () => {
@@ -152,6 +164,41 @@ test("У9: вне σ-окна fail; аномалия цены даёт unknown (
   assert.equal(anomaly.strike_sigma.state, "unknown");
   assert.equal(anomaly.premium_cap.state, "unknown");
   assert.match(anomaly.strike_sigma.note, /аномалия/);
+});
+
+// ── У9 в режиме delta (пресет delta-v1): гейт по ЖИВЫМ грекам вместо σ-дистанции.
+const DELTA_PRESET = { ...PRESET, strikeMode: "delta", deltaMin: 0.35, deltaMax: 0.55 };
+const deltaCtx = { ...instCtx, preset: DELTA_PRESET };
+
+test("У9 delta: |Δ| внутри окна pass, вне — fail; σ-дистанция при этом НЕ гейтит", () => {
+  // sigmaDist 1.36 лежит вне σ-окна delta-v1, но в режиме delta оно сито снабжения, а не гейт.
+  const pass = byKey(evaluateInstrumentConditions(mkInst({ deltaUsd: 0.42, costs: costsBase }), deltaCtx));
+  assert.equal(pass.strike_sigma.state, "pass");
+  assert.equal(pass.strike_sigma.unit, "delta");
+  assert.equal(pass.strike_sigma.value, 0.42);
+  assert.equal(pass.strike_sigma.note, "дельта 0.420 · окно 0.35-0.55");
+  for (const d of [0.2, 0.34, 0.56, 0.9]) {
+    const r = byKey(evaluateInstrumentConditions(mkInst({ deltaUsd: d, costs: costsBase }), deltaCtx));
+    assert.equal(r.strike_sigma.state, "fail", `дельта ${d} вне окна`);
+  }
+});
+
+test("У9 delta: пут даёт отрицательную дельту — гейтится модуль", () => {
+  const r = byKey(evaluateInstrumentConditions(mkInst({ deltaUsd: -0.44, optionType: "put", costs: costsBase }), deltaCtx));
+  assert.equal(r.strike_sigma.state, "pass", "|-0.44| внутри 0.35-0.55");
+  assert.equal(r.strike_sigma.value, 0.44);
+});
+
+test("У9 delta: цена режима — зависимость от тикера; протухший или пустой даёт честный unknown", () => {
+  const stale = byKey(evaluateInstrumentConditions(mkInst({ tickerStale: true, tickerAgeSec: 99, costs: costsBase }), deltaCtx));
+  assert.equal(stale.strike_sigma.state, "unknown");
+  assert.match(stale.strike_sigma.note, /тикер протух/);
+  const noDelta = byKey(evaluateInstrumentConditions(mkInst({ deltaUsd: null, costs: costsBase }), deltaCtx));
+  assert.equal(noDelta.strike_sigma.state, "unknown");
+  assert.match(noDelta.strike_sigma.note, /дельта не пришла/);
+  // В режиме sigma тот же протухший тикер вердикт НЕ отнимает: σ-дистанция считается без тикера.
+  const sigmaMode = byKey(evaluateInstrumentConditions(mkInst({ tickerStale: true, tickerAgeSec: 99, costs: costsBase }), instCtx));
+  assert.equal(sigmaMode.strike_sigma.state, "pass");
 });
 
 test("У10/У11/У13: fail за порогом; unknown без данных тикера", () => {

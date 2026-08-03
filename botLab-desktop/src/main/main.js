@@ -124,7 +124,8 @@ const state = {
     stats: { days: {} }, // S3b: суточная статистика обкатки (scn-stats.js), персист в telemetry-файле
     // S3c (слой записи): surfaceAt — момент последнего снимка поверхности, surfaceLast — его сводка
     // для лога и панели честности, recordCounts — сколько строк записано за сессию по каждому тракту.
-    surfaceAt: 0, surfaceLast: null, recordCounts: { surface: 0, checks: 0, ticks: 0 } },
+    surfaceAt: 0, surfaceLast: null, recordCounts: { surface: 0, checks: 0, ticks: 0 },
+    perpBook: null }, // У8: стакан перпа (дисбаланс), тянется каждый тик
 };
 
 const pollSec = () => Math.min(15, Math.max(1, state.settings.pollMinutes || 5)) * 60;
@@ -1568,6 +1569,25 @@ function pickBookFinalists(snap, preset) {
 // depthUsd = Σ(цена × количество) по топ-5 уровням (§5.2 У12); уровни Deribit — [price, amount].
 const scnBookDepthUsd = (levels) => (levels ?? []).reduce((s, l) => s + (Number(l?.[0]) || 0) * (Number(l?.[1]) || 0), 0);
 
+// Глубина стакана ПЕРПА (У8, дисбаланс). Единицы у обратного BTC-PERPETUAL другие: объём уровня уже
+// выражен в USD, поэтому здесь СУММА КОЛИЧЕСТВ, а не цена×количество как у линейных опционов выше.
+// Перепутать легко, а ошибка была бы тихой: отношение bid/ask осталось бы правдоподобным числом.
+const scnPerpDepthUsd = (levels) => (levels ?? []).reduce((s, l) => s + (Number(l?.[1]) || 0), 0);
+
+// Стакан перпа тянется КАЖДЫЙ тик (один дешёвый вызов): дисбаланс — быстрый сигнал, на кадансе
+// поверхности он потерял бы смысл. Отказ оставляет прошлую книгу, она протухнет по bookAgeSec и даст
+// честный unknown, а не молчаливый fail.
+async function fetchScanPerpBook() {
+  const sc = state.otmScanner;
+  try {
+    const ob = await deribit.getOrderBook(deribit.PERP_INSTRUMENT, { depth: 5, testnet: !!sc.settings.testnet });
+    sc.perpBook = { bidDepthUsd: scnPerpDepthUsd(ob?.bids), askDepthUsd: scnPerpDepthUsd(ob?.asks), tsMs: Date.now() };
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function fetchScanBooks(names) {
   const sc = state.otmScanner;
   let fetched = 0;
@@ -1619,6 +1639,7 @@ function assembleScanInputs(snap, nowMs) {
     candlesTsMs: sc.candlesTsMs || null,
     ivRef: sc.ivRef,
     ivRefByExpiry,
+    perpBook: sc.perpBook, // У8: дисбаланс считается по стакану перпа, не по книге опциона
     dvol: sc.dvol ? { baselineIvPct: sc.dvol.baselineIvPct, tsMs: sc.dvol.tsMs } : null,
     wings: sc.wings,
     chain: sc.chain ?? { instruments: [] },
@@ -1662,7 +1683,10 @@ async function onScanSnapshot(snap) {
     deriveScanIvRef(snap, Date.now()); // по набору, которым СДЕЛАН этот снапшот (до пересборки)
     const preset = resolveScanPreset();
     const finalists = pickBookFinalists(snap, preset);
-    const booksFetched = finalists.length ? await fetchScanBooks(finalists) : 0;
+    const [booksFetched] = await Promise.all([
+      finalists.length ? fetchScanBooks(finalists) : 0,
+      fetchScanPerpBook(), // У8: дисбаланс — быстрый сигнал, тянем каждый тик
+    ]);
     const nowMs = Date.now();
     const { state: nextState, cycle } = evaluateScan(sc.engineState, assembleScanInputs(snap, nowMs), preset, nowMs);
     sc.engineState = nextState;

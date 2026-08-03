@@ -61,6 +61,19 @@ export function selectCandidates({ chain, side, spot, nowMs, preset, sigmaConven
       out.push({ instrument: m.instrument_name, expiryMs, strike: m.strike, optionType: side, sigmaDist, tYears, sigmaPct });
     }
   }
-  out.sort((a, b) => Math.abs(a.sigmaDist - mid) - Math.abs(b.sigmaDist - mid) || a.expiryMs - b.expiryMs);
+  // Порядок решает, КОГО мы вообще опросим тикером: список режется по max, и всё за срезом для
+  // условий У9-У14 просто не существует.
+  //   sigma — ближе к середине σ-окна (историческое поведение: окно И есть цель);
+  //   delta — ближе к деньгам. Дельту на этом шаге знать неоткуда (она приходит с тикером, а набор
+  //           собирается до тикеров), но полоса 0.35-0.55 всегда лежит у денег — живой замер
+  //           2026-08-03 дал ей σ 0.04-0.46 по всем срокам. Сортировка по возрастанию σ-дистанции
+  //           поэтому гарантирует, что носители полосы попадут в срез первыми, а сортировка к
+  //           середине широкого сита 0.03-0.80 уводила бы выбор к его верхнему краю.
+  const byDelta = preset.strikeMode === "delta";
+  out.sort((a, b) =>
+    byDelta
+      ? a.sigmaDist - b.sigmaDist || a.expiryMs - b.expiryMs
+      : Math.abs(a.sigmaDist - mid) - Math.abs(b.sigmaDist - mid) || a.expiryMs - b.expiryMs,
+  );
   return { candidates: out.slice(0, Math.max(1, max)), skippedExpiries: skipped };
 }
