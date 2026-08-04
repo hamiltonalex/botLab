@@ -11,6 +11,7 @@
     "smoke:scan": "node scripts/smoke-scan.mjs",
     "report:scan": "node scripts/report-scan.mjs",
     "report:records": "node scripts/report-records.mjs",
+    "eval:sell": "node scripts/eval-sell.mjs",
     "e2e:ui": "node scripts/e2e-ui.mjs",
     "verify:loris": "node scripts/verify-loris.mjs",
     "start": "electron .",
