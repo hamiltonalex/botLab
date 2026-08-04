@@ -1641,6 +1641,22 @@ function assembleScanInputs(snap, nowMs) {
     if (Number.isFinite(sc.ivRef.nearPct) && Number.isFinite(sc.ivRef.nearExpiryMs)) ivRefByExpiry[sc.ivRef.nearExpiryMs] = sc.ivRef.nearPct;
     if (Number.isFinite(sc.ivRef.farPct) && Number.isFinite(sc.ivRef.farExpiryMs)) ivRefByExpiry[sc.ivRef.farExpiryMs] = sc.ivRef.farPct;
   }
+  // Живой ATM-IV получают только near и far — по одной ATM-паре на каждую (§4.1). Все ОСТАЛЬНЫЕ
+  // экспирации окна остаются без σ, и selectCandidates отправляет их в skippedExpiries целиком.
+  // Замер обкатки 2026-08-04: в окне 48-336ч биржа держит 3 экспирации (2.6/3.6/9.6 суток), а
+  // кандидатов давала ровно ОДНА — ближайшая; skippedExpiries=2 на 2388 тиках из 2399. Девятидневная,
+  // единственная с тетой 5-6%/сут (то есть единственная, способная пройти У13), не попадала в
+  // кандидаты НИКОГДА — и расширение окна до 336ч оказалось безрезультатным.
+  // Сборщик НАБОРА этот фолбэк уже имеет, поэтому тикеры тех инструментов мы и так скачиваем:
+  // движок их просто выбрасывал. Правка возвращает уже оплаченные данные и не стоит ни одного GET.
+  // Только для strikeMode "delta": там σ — СИТО снабжения, а гейтом служит дельта живых греков,
+  // поэтому грубость DVOL-прокси на вердикт не влияет. В режиме "sigma" (dmitri-v1/v2) σ гейтит
+  // напрямую, подмена ATM-IV на 30-дневный индекс исказила бы У9 — и сравнимость с прогоном 3.
+  if (resolveScanPreset().strikeMode === "delta" && Number.isFinite(sc.dvol?.lastClosePct) && sc.chain) {
+    for (const exp of scnExpiriesInWindow(sc.chain, nowMs, resolveScanPreset())) {
+      if (!Number.isFinite(ivRefByExpiry[exp])) ivRefByExpiry[exp] = sc.dvol.lastClosePct;
+    }
+  }
   return {
     settings: sc.settings,
     perp: snap.perp ? { indexPrice: snap.perp.index, markPrice: snap.perp.mark, tsMs: snap.perp.ts ?? snap.ts ?? nowMs } : null,
