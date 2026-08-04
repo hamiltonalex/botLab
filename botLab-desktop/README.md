@@ -137,6 +137,11 @@ the full release process is in the maintainer’s `RELEASING.md` notes (kept out
 - Sources (all public, CORS=\*): GMX Subsquid GraphQL (history), GMX `markets/info` (live rates +
   OI), Hyperliquid `metaAndAssetCtxs` (live funding/OI/premium/maxLev) + `fundingHistory` (backfill),
   Binance klines (price context).
+- **OTM-scanner market records** (append-only NDJSON under `userData/scan-records/`): while the
+  scanner runs it writes a snapshot of the whole option surface every 5 minutes plus one context row
+  per poll tick, split into one file per UTC day. Budget roughly **80 MB per 72 h of scanning**. The
+  files are the raw material for `npm run report:records` and `npm run eval:sell`; nothing reads them
+  at runtime, so they are safe to delete once a run is archived.
 - Paper positions, settings and the trailing-history CSV cache are stored in the OS user-data dir
   (`app.getPath('userData')`), so restarts resume the forward test and don't refetch the window.
 

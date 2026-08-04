@@ -2269,13 +2269,15 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
               <div class="row"><span class="k">У7 · режим skew</span><span class="v">
                 <div class="seg" id="scnThSkewModeSel" role="group" aria-label="Режим skew"><button data-v="off" aria-pressed="false">выкл</button><button data-v="info" aria-pressed="false">инфо</button><button data-v="gate" aria-pressed="false">гейт</button></div></span></div>
               <div class="row"><span class="k">У7 · порог skew <small>п.п.</small></span><span class="v"><input id="scnThSkewVal" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У8 · дисбаланс стакана <small>Д5 не ратифицирован</small></span><span class="v">
+              <div class="row"><span class="k">У8 · дисбаланс стакана <small>по стакану перпа</small></span><span class="v">
                 <div class="seg" id="scnThBookSel" role="group" aria-label="Дисбаланс стакана"><button data-v="off" aria-pressed="false">выкл</button><button data-v="on" aria-pressed="false">вкл</button></div></span></div>
               <div class="row"><span class="k">У8 · порог дисбаланса <small>×</small></span><span class="v"><input id="scnThBookVal" type="number" step="0.1" inputmode="decimal" aria-invalid="false"></span></div>
             </div>
             <div class="subhdr">По инструменту</div>
             <div class="dl">
-              <div class="row"><span class="k">У9 · σ-окно страйка <small>мин · макс</small></span><span class="v"><input id="scnThSigMin" type="number" step="0.05" inputmode="decimal" aria-invalid="false"><input id="scnThSigMax" type="number" step="0.05" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У9 · чем меряется страйк</span><span class="v"><div class="seg" id="scnThStrikeModeSel" role="group" aria-label="Режим отбора страйка"><button data-v="sigma" aria-pressed="false">σ-окно</button><button data-v="delta" aria-pressed="false">дельта</button></div></span></div>
+              <div class="row"><span class="k">У9 · окно дельты <small>мин · макс</small></span><span class="v"><input id="scnThDeltaMin" type="number" step="0.01" inputmode="decimal" aria-invalid="false"><input id="scnThDeltaMax" type="number" step="0.01" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k">У9 · σ-окно страйка <small>в режиме дельты — сито снабжения</small></span><span class="v"><input id="scnThSigMin" type="number" step="0.01" inputmode="decimal" aria-invalid="false"><input id="scnThSigMax" type="number" step="0.01" inputmode="decimal" aria-invalid="false"></span></div>
               <div class="row"><span class="k">окно экспираций <small>часов · мин · макс</small></span><span class="v"><input id="scnThExpMinH" type="number" step="1" inputmode="numeric" aria-invalid="false"><input id="scnThExpMaxH" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
               <div class="row"><span class="k">У10 · макс. премия <small>% спота</small></span><span class="v"><input id="scnThPremCap" type="number" step="0.05" inputmode="decimal" aria-invalid="false"></span></div>
               <div class="row"><span class="k">У11 · макс. спред <small>% премии</small></span><span class="v"><input id="scnThSpreadCap" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
@@ -4249,11 +4251,16 @@ const HELP_OTM_SCANNER = {
     '(это не убыток — просто входа нет); <span class="fx">◌ н/д</span> — данных нет или протухли.</li>'+
     '<li><b>Строгий И:</b> сигнал только когда все применимые «да» и ни одного «н/д». <b>Скоринг:</b> '+
     'счёт ≥ N, при этом ядро <span class="fx">У1+У10+У14</span> обязательно всегда; «н/д» в счёт не идёт.</li>'+
-    '<li>«· выкл» — условие отключено пресетом (У8 по умолчанию); «· инфо» — показывается, но не гейтит и в счёт не входит (У7 по умолчанию).</li>'+
-    '<li>У4 задаёт сторону сигнала (CALL/PUT) по направлению импульса; У6 в выходные всегда выкл.</li></ul>' },
+    '<li>«· выкл» — условие отключено пресетом; «· инфо» — показывается, но не гейтит и в счёт не входит (У7 и У8 в пресете «Дельта v1»).</li>'+
+    '<li>У4 задаёт сторону сигнала (CALL/PUT) по направлению импульса; У6 в выходные всегда выкл.</li>'+
+    '<li>У8 меряет дисбаланс по стакану БЕССРОЧНОГО фьючерса, а не по книге опциона: книги опционов берутся '+
+    'только финалистам (не более двух за тик), и распределения по такой выборке не построить.</li></ul>' },
   'opt-scan-cand': { t:'Кандидаты в окне отбора · экономика сделки', b:
-    '<p>Инструменты в σ-диапазоне страйков и окне экспираций пресета (до 6 строк): дистанция в σ, '+
+    '<p>Инструменты в окне отбора страйков и окне экспираций пресета (до 8 строк): дистанция в σ, '+
     'премия в % спота, спред в % премии, глубина книги, тета в %/сут, IV.</p><ul>'+
+    '<li><b>Чем меряется страйк</b> задаёт пресет. Режим «σ-окно» гейтит по дистанции в сигмах. Режим «дельта» '+
+    '(пресет «Дельта v1») гейтит по |дельте| живых греков, а σ-окно в нём работает только СИТОМ снабжения — '+
+    'решает, кого мы вообще опрашиваем тикером, потому что дельта приходит вместе с тикером, а набор собирается раньше.</li>'+
     '<li>Колонка <b>У9–14</b> — сколько инструментных гейт-условий кандидат проходит; провалившиеся номера в скобках.</li>'+
     '<li><b>Лучший</b> подсвечен строкой и чипом — именно его берёт сигнал; группа «по инструменту» в чеклисте считается по нему.</li>'+
     '<li><b>Экономика сделки</b> (факты): издержки туда-обратно и безубыток — гейт У14; минимальный депозит и кэп глубины — граница риск-дисциплины. '+
@@ -6047,8 +6054,10 @@ const SCN_TH_FIELDS = {
   scnThFwdFar:{k:'fivFarMinDays',min:1,max:90,int:true,name:'У6 far-экспирация'},
   scnThSkewVal:{k:'skewMinPts',min:0,max:30,name:'У7 порог skew'},
   scnThBookVal:{k:'imbalanceMin',min:0.1,max:20,name:'У8 порог дисбаланса'},
-  scnThSigMin:{k:'sigmaMin',min:0.05,max:6,name:'σ-окно мин'},
-  scnThSigMax:{k:'sigmaMax',min:0.05,max:6,name:'σ-окно макс'},
+  scnThSigMin:{k:'sigmaMin',min:0.01,max:6,name:'σ-окно мин'},
+  scnThSigMax:{k:'sigmaMax',min:0.01,max:6,name:'σ-окно макс'},
+  scnThDeltaMin:{k:'deltaMin',min:0.01,max:0.99,name:'окно дельты мин'},
+  scnThDeltaMax:{k:'deltaMax',min:0.01,max:0.99,name:'окно дельты макс'},
   scnThExpMinH:{k:'expiryMinH',min:1,max:2000,int:true,name:'окно экспираций мин'},
   scnThExpMaxH:{k:'expiryMaxH',min:1,max:2000,int:true,name:'окно экспираций макс'},
   scnThPremCap:{k:'premMaxPct',min:0.01,max:10,name:'У10 премия'},
@@ -6062,7 +6071,7 @@ const SCN_TH_FIELDS = {
 };
 const SCN_TH_SEGS = {
   scnThUvModeSel:{k:'ivFilterMode'}, scnThRv3dSel:{k:'rv3dConfirm',boolMap:true}, scnThEmaSel:{k:'trendOn',boolMap:true},
-  scnThSkewModeSel:{k:'skewMode'}, scnThBookSel:{k:'imbalanceMode'}, scnThDepthModeSel:{k:'depthMode'}, scnThExecSel:{k:'execModel'},
+  scnThSkewModeSel:{k:'skewMode'}, scnThBookSel:{k:'imbalanceMode'}, scnThDepthModeSel:{k:'depthMode'}, scnThExecSel:{k:'execModel'}, scnThStrikeModeSel:{k:'strikeMode'},
 };
 // механика — настройки вне пресета (валидация зеркалит RANGES presets.js; сервер проверяет ещё раз)
 const SCN_SET_FIELDS = {
@@ -6088,6 +6097,7 @@ function hydrateScnEditor(ds){
   scnSegPress('scnThSkewModeSel', p.skewMode);
   scnSegPress('scnThBookSel', p.imbalanceMode==='off'||!p.imbalanceMode?'off':'on');
   scnSegPress('scnThDepthModeSel', p.depthMode);
+  scnSegPress('scnThStrikeModeSel', p.strikeMode || 'sigma');
   scnSegPress('scnThExecSel', p.execModel);
   const tag=$('scnPresetTag');
   if(tag){ tag.hidden=!dirty; if(dirty) tag.textContent='не сохранён · база: '+scnPresetLabel(p.baseId||'dmitri-v1'); }
@@ -6141,7 +6151,7 @@ function scnWireEditorInput(id, f, isSetting){
     else if(v<f.min || v>f.max) bad=f.name+': значение вне диапазона '+f.min+'…'+f.max;
     else if(f.int && !Number.isInteger(v)) bad=f.name+': нужно целое число';
     // перекрёстные правила пар (мин не выше макс) — по живому значению соседнего поля
-    const pair={ scnThSigMin:['scnThSigMax',1], scnThSigMax:['scnThSigMin',-1], scnThExpMinH:['scnThExpMaxH',1], scnThExpMaxH:['scnThExpMinH',-1] }[id];
+    const pair={ scnThSigMin:['scnThSigMax',1], scnThSigMax:['scnThSigMin',-1], scnThExpMinH:['scnThExpMaxH',1], scnThExpMaxH:['scnThExpMinH',-1], scnThDeltaMin:['scnThDeltaMax',1], scnThDeltaMax:['scnThDeltaMin',-1] }[id];
     if(!bad && pair){ const other=Number(($(pair[0])||{}).value);
       if(Number.isFinite(other) && (pair[1]>0 ? v>other : v<other)) bad=f.name+': мин не может быть больше макс'; }
     if(bad){ el.setAttribute('aria-invalid','true'); scnEditorErr(bad); return; }
