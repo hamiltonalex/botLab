@@ -350,8 +350,11 @@ if (args.includes("--trades")) {
       const posH = hed.filter((x) => x > 0).length;
       console.log(`${H} ч | ${g.length} | ${f(qtl(pnl,0.5))} | ${f(100*pos/g.length,0)}% | ${f(qtl(hed,0.5))} | ${f(qtl(hed,0.25))} | ${f(qtl(hed,0.75))} | ${f(Math.min(...hed))} | ${f(100*posH/g.length,0)}% | ${f(qtl(ret,0.5),3)} | ${f(qtl(g.map(x=>x.im),0.5))}`);
     }
-    console.log(`\n### Из чего складывается результат (медианы, горизонт 8 ч)\n`);
-    const g8 = all.filter((x) => x.H === 8);
+    // Берём САМЫЙ ДЛИННЫЙ горизонт, по которому есть наблюдения: на свежей записи восьмичасовых
+    // окон ещё нет, и жёстко зашитая восьмёрка печатала бы «н/д» вместо разложения.
+    const HREF = [...cfg.horizonsH].reverse().find((H) => all.some((x) => x.H === H)) ?? cfg.horizonsH[0];
+    console.log(`\n### Из чего складывается результат (медианы, горизонт ${HREF} ч — самый длинный с наблюдениями)\n`);
+    const g8 = all.filter((x) => x.H === HREF);
     if (g8.length) {
       console.log(`  тета (доход продавца)      $${f(qtl(g8.map(x=>x.thetaGain),0.5))}`);
       console.log(`  вега (убыток при росте IV) $${f(qtl(g8.map(x=>x.vegaPnl),0.5))}`);
@@ -361,14 +364,14 @@ if (args.includes("--trades")) {
       console.log(`  ИТОГО без хеджа            $${f(qtl(g8.map(x=>x.pnl),0.5))}`);
       console.log(`  ИТОГО С ХЕДЖЕМ             $${f(qtl(g8.map(x=>x.pnlHedged),0.5))} при марже $${f(qtl(g8.map(x=>x.im),0.5))}`);
       const thetaMed = qtl(g8.map(x=>x.thetaGain),0.5), feeMed = qtl(g8.map(x=>x.fees),0.5);
-      console.log(`\n  комиссии съедают ${f(100*feeMed/Math.max(thetaMed,1e-9),0)}% теты за 8 часов`);
+      console.log(`\n  комиссии съедают ${f(100*feeMed/Math.max(thetaMed,1e-9),0)}% теты за ${HREF} ч`);
     }
     // ── Экономика одной сделки: отвечает на вопрос «какой депозит сделает это прибыльным».
     // Ответ структурный: НИКАКОЙ. И комиссия, и тета пропорциональны количеству контрактов, поэтому
     // их отношение от размера позиции НЕ ЗАВИСИТ. Увеличение депозита масштабирует и доход, и
     // издержки в одной пропорции. Меняют дело только СРОК УДЕРЖАНИЯ и отказ от откупа.
     {
-      const g = all.filter((x) => x.H === 8);
+      const g = all.filter((x) => x.H === HREF);
       const thetaDay = qtl(g.map((x) => x.thetaGain / x.dtDays), 0.5);
       const feeRT = qtl(g.map((x) => x.fees), 0.5);
       const feeEntry = feeRT / 2;
