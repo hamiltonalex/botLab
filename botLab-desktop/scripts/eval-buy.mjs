@@ -35,6 +35,9 @@ const QTY = Number(argOf("--qty", 0.01));
 const DWELL = Number(argOf("--dwell", 3));
 const COOLDOWN_S = Number(argOf("--cooldown", 1800));
 const IMPULSE = Number(argOf("--impulse", 0.5));
+const EDGE = Number(argOf("--edge", 0));      // минимальный запас недооценки, п.п. (0 = просто RV выше IV)
+const TP = Number(argOf("--tp", NaN));
+const TS = Number(argOf("--timestop", NaN));  // тайм-стоп, ч (по умолчанию из пресета)        // тейк-профит, % (по умолчанию из пресета)
 
 const load = (kind) => {
   const out = [];
@@ -67,7 +70,7 @@ const q = (a, p) => { const s = a.filter(fin).sort((x, y) => x - y); if (!s.leng
 // совпадение с трендом (задаёт сторону, а не решает, торговать ли).
 const buyEntry = (t) => {
   const V = t.V || {}, St = t.St || "";
-  const edge = fin(V["У1"]) ? V["У1"] > 0 : St[0] === "p";           // преимущество есть
+  const edge = fin(V["У1"]) ? V["У1"] >= EDGE : St[0] === "p";       // преимущество не меньше порога
   const move = fin(V["У4"]) ? V["У4"] >= IMPULSE : St[3] === "p";     // движение есть
   const quality = [8, 9, 10, 11, 12, 13].every((i) => St[i] === "p"); // качество инструмента
   return edge && move && quality && t.B && t.B.n;
@@ -89,7 +92,9 @@ const buyPx = (r) => (EXEC === "mid" ? (fin(r.md) ? r.md : r.m) : fin(r.a) ? r.a
 const sellPx = (r) => (EXEC === "mid" ? (fin(r.md) ? r.md : r.m) : fin(r.b) ? r.b : r.m);
 
 // ── Ведение позиции до выхода по правилам пресета.
-function runTrade(t, timeStopH = X.timeStopH, tpPct = X.takeProfitPct) {
+const TP_EFF = fin(TP) ? TP : X.takeProfitPct;
+const TS_EFF = fin(TS) ? TS : X.timeStopH;
+function runTrade(t, timeStopH = TS_EFF, tpPct = TP_EFF) {
   const name = t.B.n;
   let i = times.findIndex((x) => x >= t.ts);
   if (i < 0) return null;
@@ -130,13 +135,13 @@ function runTrade(t, timeStopH = X.timeStopH, tpPct = X.takeProfitPct) {
   return null;
 }
 
-const trades = entries.map(runTrade).filter(Boolean);
+const trades = entries.map((e) => runTrade(e)).filter(Boolean);
 
 console.log(`# Сделки покупки: от входа до выхода\n`);
 console.log(`Запись: ${ticks.length} тиков, ${f(spanH, 1)} ч. Исполнение ${EXEC === "mid" ? "по середине" : "тейкерское (пессимистичное)"}, размер ${QTY} BTC.`);
-console.log(`\n**Правило входа:** преимущество (реализованная воля выше подразумеваемой) + импульс ≥ ${IMPULSE}σ + шесть гейтов качества инструмента.`);
+console.log(`\n**Правило входа:** запас недооценки ≥ ${EDGE} п.п. + импульс ≥ ${IMPULSE}σ + шесть гейтов качества инструмента.`);
 console.log(`Выброшены как избыточные или неработающие: запас недооценки 5 п.п., короткая воля, ближняя против дальней, совпадение с трендом.`);
-console.log(`\n**Выходы** из пресета: тейк +${X.takeProfitPct}%, стоп −${X.stopLossPctPrem}%, падение воли на ${X.ivDropExitPts} п.п., тайм-стоп ${X.timeStopH} ч при движении менее ${X.minMoveSigma}σ, закрытие за ${X.preExpiryCloseH} ч до экспирации.\n`);
+console.log(`\n**Выходы** из пресета: тейк +${TP_EFF}%, стоп −${X.stopLossPctPrem}%, падение воли на ${X.ivDropExitPts} п.п., тайм-стоп ${TS_EFF} ч при движении менее ${X.minMoveSigma}σ, закрытие за ${X.preExpiryCloseH} ч до экспирации.\n`);
 
 if (!trades.length) { console.log(`Сделок нет: правило входа за эту запись не сработало.`); process.exit(0); }
 
