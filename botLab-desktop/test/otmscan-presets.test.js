@@ -56,7 +56,7 @@ test("комиссии: верифицированные золотые числ
 
 test("defaultScanSettings: дефолты плана §6", () => {
   const s = defaultScanSettings();
-  assert.equal(s.presetId, "delta-v1", "чистый профиль (то есть обкатка) стартует на новом пресете");
+  assert.equal(s.presetId, "measure-v1", "чистый профиль (то есть обкатка) стартует на новом пресете");
   assert.equal(s.nCandidatesMax, 8, "окно 48-336ч несёт больше страйков полосы, чем прежние шесть");
   assert.equal(s.equityUsd, 100);
   assert.equal(s.sigmaConvention, "horizon");
@@ -85,7 +85,7 @@ test("SCAN_DATA_RULES (S1): структурные правила §7 замор
   assert.equal(SCAN_DATA_RULES.blackoutDailyWindowSec, 600);
   assert.equal(SCAN_DATA_RULES.blackoutPreExpirySec, 1800);
   assert.equal(SCAN_DATA_RULES.staleCandlesSec, 300);
-  assert.equal(SCAN_DATA_RULES.journalMax, 200);
+  assert.equal(SCAN_DATA_RULES.journalMax, 1000); // 86 сигналов за трое суток на measure-v1: двухнедельная обкатка переполнила бы 200
   assert.equal(SCAN_DATA_RULES.minLotFallback, 0.01);
 });
 
