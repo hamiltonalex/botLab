@@ -35,6 +35,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { SCAN_PRESETS } from "../src/engine/otmscan/presets.js";
 import { computeTradeCosts, computeEconomics, optionFeePct } from "../src/engine/otmscan/economics.js";
+import { computeSizing } from "../src/engine/otmscan/scan-engine.js";
 
 const fin = (x) => Number.isFinite(x);
 const posNum = (x) => fin(x) && x > 0;
@@ -190,12 +191,20 @@ function evaluate(t) {
 
   const st = {}, val = {};
   const set = (k, state, value) => { st[k] = state; val[k] = fin(value) ? value : null; };
+  // Режимы волатильностной группы зеркалят conditions.js: отсутствие поля = gate.
+  const cm = (v) => (v === "off" ? "off" : v === "info" ? "info" : "gate");
+  const M = { "У1": cm(P.rv7dMode), "У2": cm(P.ivDiscountMode),
+    "У3": P.rv3dConfirm === false ? "off" : cm(P.rv3dMode), "У6": cm(P.forwardIvMode),
+    "У7": P.skewMode === "off" ? "off" : P.skewMode === "gate" ? "gate" : "info",
+    "У8": !P.imbalanceMode || P.imbalanceMode === "off" ? "off" : P.imbalanceMode === "gate" ? "gate" : "info" };
 
   // ── группа актива
   const rv7 = t.rv7, rv3 = t.rv3;
-  if (!fin(rv7) || !fin(ivRef)) { set("У1", "unknown"); set("У2", "unknown"); }
+  if (M["У1"] === "off") st["У1"] = "off";
+  if (M["У2"] === "off") st["У2"] = "off";
+  if (!fin(rv7) || !fin(ivRef)) { if (M["У1"] !== "off") set("У1", "unknown"); if (M["У2"] !== "off") set("У2", "unknown"); }
   else {
-    set("У1", rv7 > ivRef ? "pass" : "fail", rv7 - ivRef);
+    if (M["У1"] !== "off") set("У1", rv7 > ivRef ? "pass" : "fail", rv7 - ivRef);
     const margin = rv7 - ivRef;
     const wantMargin = P.ivFilterMode === "rvMargin" || P.ivFilterMode === "both";
     const wantRatio = P.ivFilterMode === "baselineRatio" || P.ivFilterMode === "both";
@@ -206,9 +215,9 @@ function evaluate(t) {
     if ((marginOk === false && wantMargin) || (ratioOk === false && wantRatio)) s2 = "fail";
     else if (wantRatio && ratio == null) s2 = "unknown";
     else s2 = "pass";
-    set("У2", s2, wantMargin ? margin : ratio);
+    if (M["У2"] !== "off") set("У2", s2, wantMargin ? margin : ratio);
   }
-  if (!P.rv3dConfirm) st["У3"] = "off";
+  if (M["У3"] === "off") st["У3"] = "off";
   else if (!fin(rv3) || !fin(ivRef)) set("У3", "unknown");
   else set("У3", rv3 > ivRef ? "pass" : "fail", rv3 - ivRef);
 
@@ -223,12 +232,12 @@ function evaluate(t) {
   }
 
   const weekend = [0, 6].includes(new Date(t.ts).getUTCDay());
-  if (P.fivWeekendOff && weekend) st["У6"] = "off";
+  if (M["У6"] === "off") st["У6"] = "off";
+  else if (P.fivWeekendOff && weekend) st["У6"] = "off";
   else if (!fin(ivRef) || !fin(farIv)) set("У6", "unknown");
   else set("У6", ivRef - farIv >= P.fivMinPts ? "pass" : "fail", ivRef - farIv);
 
-  const skewMode = P.skewMode === "off" ? "off" : P.skewMode === "gate" ? "gate" : "info";
-  if (skewMode === "off") st["У7"] = "off";
+  if (M["У7"] === "off") st["У7"] = "off";
   else {
     const sg = fin(ivRef) && nearExp != null ? ivRef * Math.sqrt((nearExp - t.ts) / YEAR_MS) : null;
     const put = posNum(sg) ? nearestStrikeIv(ix, nearExp, "P", spot * (1 - sg / 100)) : null;
@@ -237,8 +246,7 @@ function evaluate(t) {
     else { const sk = put - call;
       set("У7", (side === "call" ? sk <= -P.skewMinPts : sk >= P.skewMinPts) ? "pass" : "fail", sk); }
   }
-  const imbMode = P.imbalanceMode === "off" || !P.imbalanceMode ? "off" : P.imbalanceMode === "gate" ? "gate" : "info";
-  if (imbMode === "off") st["У8"] = "off";
+  if (M["У8"] === "off") st["У8"] = "off";
   else { const v8 = t.V?.["У8"]; if (!fin(v8)) set("У8", "unknown"); else set("У8", v8 >= P.imbalanceMin ? "pass" : "fail", v8); }
 
   // ── кандидаты: сито σ, сортировка по возрастанию σ-дистанции, срез nCandidatesMax
@@ -270,19 +278,28 @@ function evaluate(t) {
   else for (const k of ["У9","У10","У11","У12","У13","У14"]) { st[k] = "unknown"; val[k] = null; }
 
   // ── агрегат (AND: все применимые gate-условия обязаны pass)
-  const gateKeys = IDX.filter((k) => {
-    if (st[k] === "off") return false;
-    if (k === "У7") return skewMode === "gate";
-    if (k === "У8") return imbMode === "gate";
-    return true;
-  });
+  const gateKeys = IDX.filter((k) => st[k] !== "off" && (M[k] ?? "gate") === "gate");
   const passed = gateKeys.filter((k) => st[k] === "pass").length;
   const unknown = gateKeys.filter((k) => st[k] === "unknown").length;
-  const verdict = passed === gateKeys.length && gateKeys.length > 0;
-  // цена набора в вызовах: ATM-пары near/far + два крыла + кандидаты + перп + стакан перпа
-  const setSize = new Set([nearExp, farExp].filter((x) => x != null)).size * 2 + 2 + cands.length + 2;
-  return { ts: t.ts, st, val, gateKeys, passed, applicable: gateKeys.length, unknown, verdict,
-    best, nCand: cands.length, nearExp, farExp, ivRef, farIv, spot, side, setSize, weekend, s1d: t.s1d };
+  let verdict = passed === gateKeys.length && gateKeys.length > 0;
+  // ЖИВОЙ ГЕЙТ РАЗМЕРА (scan-engine.js:386): вердикт signal гасится в none, если минимальный лот
+  // не помещается в риск-бюджет. Без него офлайн молчит там, где движок честно отказывает: на
+  // дальних сроках премия контракта перерастает equity*risk/100 и сигнал не рождается вовсе.
+  const sizing = best ? computeSizing({ markUsd: best.r.m, lot: LOT, equityUsd: S.equityUsd,
+    riskPerTradePct: S.riskPerTradePct, qtyMax: S.qtyMax, entryDepthUsd: null, maxQtyDepthPct: P.maxQtyDepthPct }) : null;
+  const sizeFail = sizing && !sizing.ok ? sizing.blockReason : null; // не помещается независимо от вердикта
+  const sizeBlock = verdict && (!sizing || !sizing.ok) ? (sizing?.blockReason ?? "нет данных для размера") : null;
+  if (sizeBlock) verdict = false;
+  // Цена набора в вызовах по ЖИВОЙ формуле из лога обкатки (`GET = инстр + книг + 2`), а не по
+  // выдуманной: инструменты набора это ATM-пары near и far, два крыла и кандидаты; книг не более
+  // booksPerTickMax; плюс тикер перпа и его стакан.
+  const nInst = new Set([nearExp, farExp].filter((x) => x != null)).size * 2 + 2 + cands.length;
+  const setSize = nInst + Math.min(2, cands.length) + 2;
+  return { ts: t.ts, st, val, gateKeys, passed, applicable: gateKeys.length, unknown, verdict, sizeBlock, sizeFail,
+    best, nCand: cands.length, nearExp, farExp, ivRef, farIv, spot, side, setSize, nInst, weekend, s1d: t.s1d,
+    // Честность IV_ref: условия У1/У2/У3/У6 считаются по ATM-IV ПЕРВОЙ экспирации окна, а покупаем
+    // мы лучшего кандидата. Совпадают эти экспирации не всегда, и расхождение никем не проверяется.
+    ivRefHonest: best ? best.r.e === nearExp : null };
 }
 
 // ── прогон по всем тикам с механикой жизненного цикла
@@ -359,7 +376,19 @@ console.log(`|---|---|`);
 console.log(`| тактов без кандидатов | ${noCand} (${f((100 * noCand) / evals.length, 2)}%) |`);
 console.log(`| кандидатов на такт | медиана ${q(evals.map((e) => e.nCand), .5)} · p90 ${q(evals.map((e) => e.nCand), .9)} · макс ${Math.max(...evals.map((e) => e.nCand))} |`);
 console.log(`| экспираций в окне | медиана ${q(evals.map((e) => new Set([e.nearExp]).size), .5)} (near ${new Set(evals.map((e) => e.nearExp)).size} разных за запись) |`);
-console.log(`| **инструментов в наборе (оценка GET/тик)** | медиана ${q(evals.map((e) => e.setSize), .5)} · макс ${Math.max(...evals.map((e) => e.setSize))} · ориентир §4.3 = 15 |`);
+console.log(`| инструментов в наборе | медиана ${q(evals.map((e) => e.nInst), .5)} · макс ${Math.max(...evals.map((e) => e.nInst))} |`);
+console.log(`| **GET/тик** (инстр + книг + 2, живая формула из лога) | медиана ${q(evals.map((e) => e.setSize), .5)} · макс ${Math.max(...evals.map((e) => e.setSize))} · ориентир §4.3 = 15 |`);
+{
+  const honest = evals.filter((e) => e.ivRefHonest != null);
+  const ok = honest.filter((e) => e.ivRefHonest).length;
+  const gaps = honest.filter((e) => !e.ivRefHonest).map((e) => Math.abs((e.best?.r.iv ?? NaN) - (e.ivRef ?? NaN)));
+  console.log(`| **честность IV_ref** (экспирация лучшего == near окна) | ${f((100 * ok) / (honest.length || 1), 1)}%` +
+    (gaps.length ? ` · на несовпадающих разрыв IV медиана ${f(q(gaps, .5), 2)} п.п., p90 ${f(q(gaps, .9), 2)}` : ``) + ` |`);
+  const blocked = evals.filter((e) => e.sizeBlock).length;
+  const unfit = evals.filter((e) => e.sizeFail);
+  console.log(`| тактов, где лот не помещается в риск | ${unfit.length} (${f((100 * unfit.length) / evals.length, 1)}%)${unfit.length ? ` · ${[...new Set(unfit.map((e) => e.sizeFail))].join(", ")}` : ""} |`);
+  console.log(`| из них СНЯЛИ бы готовый сигнал | ${blocked} |`);
+}
 
 const mc = evals.map((e) => e.best?.minCapitalUsd).filter(fin);
 const over = mc.filter((x) => x > S.equityUsd).length;
