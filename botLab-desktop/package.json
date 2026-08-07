@@ -14,6 +14,7 @@
     "eval:sell": "node scripts/eval-sell.mjs",
     "eval:relax": "node scripts/eval-relax.mjs",
     "eval:score": "node scripts/eval-score.mjs",
+    "eval:buy": "node scripts/eval-buy.mjs",
     "e2e:ui": "node scripts/e2e-ui.mjs",
     "verify:loris": "node scripts/verify-loris.mjs",
     "start": "electron .",
