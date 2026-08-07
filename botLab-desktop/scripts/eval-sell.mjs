@@ -333,7 +333,9 @@ if (args.includes("--trades")) {
   report(base, run(base));
 } else if (!args.includes("--sweep")) {
   // Основной режим: распределение исхода по горизонтам удержания.
-  const cfg = { ...base, horizonsH: [1, 2, 4, 8, 12] };
+  // Горизонты настраиваются: на 19-часовой записи дальше 12ч наблюдений не было, на 72-часовой
+  // осмысленны сутки и двое — именно там тета начинает перебивать комиссию.
+  const cfg = { ...base, horizonsH: (argOf("--horizons") || "1,2,4,8,12,24,48").split(",").map(Number).filter(Number.isFinite) };
   console.log(`\n## Распределение исхода продажи стрэнгла (дельта ${cfg.delta}, окно ${cfg.minH}-${cfg.maxH}ч, исполнение ${cfg.exec})\n`);
   const all = horizons(cfg);
   if (!all.length) { console.log("  подходящих пар страйков в записи не нашлось"); }
