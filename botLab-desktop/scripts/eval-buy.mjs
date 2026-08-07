@@ -106,6 +106,11 @@ function runTrade(t, timeStopH = TS_EFF, tpPct = TP_EFF) {
   const cost0 = feeUsd(r0.m, index0) * QTY;
   const paid = entryPx * QTY + cost0;
   const ivIn = r0.iv, s1d = t.s1d ?? null, spot0 = index0;
+  // Триггеры тейка и стопа СРАБАТЫВАЮТ по mark, как их определяет пресет (EXITS_DEFAULT:
+  // «mark ≥ entry·(1+x/100)»), а исполняются по стороне книги. Сравнивать бид с аском нельзя:
+  // на спреде 4.3% премии «тейк +10%» превратился бы в требование роста mark на 14.3%, то есть
+  // симулятор проверял бы не то правило, которое написано в пресете и поедет в S4.
+  const entryMark = r0.m;
 
   for (let j = i + 1; j < times.length; j++) {
     const r = snaps.get(times[j])?.get(name);
@@ -119,8 +124,8 @@ function runTrade(t, timeStopH = TS_EFF, tpPct = TP_EFF) {
     const moveSigma = fin(movePct) && fin(s1d) && s1d > 0 ? Math.abs(movePct) / s1d : null;
 
     let why = null;
-    if (px >= entryPx * (1 + tpPct / 100)) why = "тейк";
-    else if (px <= entryPx * (1 - X.stopLossPctPrem / 100)) why = "стоп";
+    if (r.m >= entryMark * (1 + tpPct / 100)) why = "тейк";
+    else if (r.m <= entryMark * (1 - X.stopLossPctPrem / 100)) why = "стоп";
     else if (fin(ivIn) && fin(r.iv) && ivIn - r.iv >= X.ivDropExitPts) why = "падение воли";
     else if (heldH >= timeStopH && (!fin(moveSigma) || moveSigma < X.minMoveSigma)) why = "тайм-стоп";
     else if (fin(r.h) && r.h <= X.preExpiryCloseH) why = "преэкспирация";
