@@ -7,8 +7,8 @@ import { SCAN_PRESETS, SCAN_DATA_RULES, defaultScanSettings, normalizeScanPatch,
 import { createScanState, evaluateScan } from "../src/engine/otmscan/scan-engine.js";
 import { NOW, PRESET, mkInputs } from "./otmscan-helpers.mjs";
 
-test("пресеты: четыре id, различия v1/v2 по плану, заморожены (в т.ч. вложенные exits)", () => {
-  assert.deepEqual(Object.keys(SCAN_PRESETS).sort(), ["calibrated", "delta-v1", "dmitri-v1", "dmitri-v2"]);
+test("пресеты: пять id, различия v1/v2 по плану, заморожены (в т.ч. вложенные exits)", () => {
+  assert.deepEqual(Object.keys(SCAN_PRESETS).sort(), ["calibrated", "delta-v1", "dmitri-v1", "dmitri-v2", "measure-v1"]);
   const v1 = SCAN_PRESETS["dmitri-v1"];
   const v2 = SCAN_PRESETS["dmitri-v2"];
   assert.equal(v1.mode, "AND");
@@ -100,4 +100,36 @@ test("сигнал несёт ПОЛНЫЙ снапшот порогов рож�
   sig.thresholds.premMaxPct = 99; // мутация снимка не задевает источник истины
   assert.equal(PRESET.premMaxPct, 0.4);
   assert.equal(SCAN_PRESETS["dmitri-v1"].premMaxPct, 0.4);
+});
+
+// measure-v1 закрепляется теми же числами, что и delta-v1: они ИЗМЕРЕНЫ по записи прогона 5, и
+// молчаливый дрейф любого из них рвёт связь пресета с замером, ради которого он заведён.
+test("measure-v1: окно ровно 168 ч и волатильностная группа в info", () => {
+  const m = SCAN_PRESETS["measure-v1"];
+  // Ширина ровно неделя — не подобранное число: все экспирации кроме дневных приходятся на пятницы
+  // с шагом 7 суток, поэтому такое окно содержит ровно одну экспирацию в любой момент (замер по
+  // записи прогона 5: 100.00% тактов против 13.38% пустоты при 6 сутках и 32.58% двойных при 8).
+  assert.equal(m.expiryMaxH - m.expiryMinH, 168, "ширина окна обязана быть ровно неделей");
+  // Потолок против горизонта листинга обычной недельной (14.99 суток, замер по записи): запас 24 ч.
+  assert.ok(m.expiryMaxH <= 336, "потолок окна обязан оставаться внутри горизонта листинга");
+  // far-нога У6 обязана лежать ВНЕ окна, иначе forward-IV сравнивал бы экспирацию саму с собой.
+  assert.ok(m.fivFarMinDays * 24 > m.expiryMaxH, "far-экспирация обязана быть за пределами окна");
+  for (const k of ["rv7dMode", "ivDiscountMode", "rv3dMode", "forwardIvMode"]) {
+    assert.equal(m[k], "info", `${k}: волатильностная группа измеряется, но вход не решает`);
+  }
+  assert.equal(m.impulseMin, 0.4);
+  assert.equal(m.calibrated, false, "это конфигурация сбора данных, а не калибровка");
+  // Инструментные пороги не тронуты: их чинит арифметика тарифа, а не режим рынка.
+  const d = SCAN_PRESETS["delta-v1"];
+  for (const k of ["deltaMin", "deltaMax", "premMaxPct", "spreadMaxPctPrem", "thetaMaxPctDay", "costMaxPctPrem", "depthMinUsd"]) {
+    assert.equal(m[k], d[k], `${k}: инструментный порог обязан совпадать с delta-v1`);
+  }
+});
+
+test("режимы условий: дефолт gate у всех отгруженных пресетов кроме measure-v1", () => {
+  for (const id of ["dmitri-v1", "dmitri-v2", "delta-v1", "calibrated"]) {
+    for (const k of ["rv7dMode", "ivDiscountMode", "rv3dMode", "forwardIvMode"]) {
+      assert.equal(SCAN_PRESETS[id][k], "gate", `${id}.${k}`);
+    }
+  }
 });
