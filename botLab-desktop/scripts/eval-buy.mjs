@@ -220,10 +220,12 @@ console.log(`\n## Виноват вход, выход или рынок?\n`);
 console.log(`\n## Что дал бы другой тайм-стоп\n`);
 console.log(`| тайм-стоп | сделок | медиана результата | прибыльных |`);
 console.log(`|---|---|---|---|`);
-for (const H of [4, 6, 12, 24, 48]) {
+// Метку «сейчас» ставим ДЕЙСТВУЮЩЕМУ тайм-стопу (пресет либо --timestop), а не зашитому числу:
+// с `--timestop 24` прежняя версия помечала текущей строку 12 ч и противоречила собственной шапке.
+for (const H of [...new Set([4, 6, 12, 24, 48, TS_EFF])].sort((a, b) => a - b)) {
   const tt = entries.map((e) => runTrade(e, H)).filter(Boolean);
   if (!tt.length) continue;
-  console.log(`| ${H} ч${H === 12 ? " (сейчас)" : ""} | ${tt.length} | ${f(q(tt.map((t) => t.retPct), .5), 1)}% | ${f(100 * tt.filter((t) => t.pnl > 0).length / tt.length, 0)}% |`);
+  console.log(`| ${H} ч${H === TS_EFF ? " (сейчас)" : ""} | ${tt.length} | ${f(q(tt.map((t) => t.retPct), .5), 1)}% | ${f(100 * tt.filter((t) => t.pnl > 0).length / tt.length, 0)}% |`);
 }
 
 // ── Тейк-профит: он писался под ДАЛЬНИЕ страйки, где выплата лотерейная, и не пересматривался,
