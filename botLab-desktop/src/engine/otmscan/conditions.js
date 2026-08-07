@@ -68,6 +68,16 @@ function row(key, args) {
 const off = (key, note, extra) => row(key, { mode: "off", state: "off", note, ...extra });
 const unknown = (key, note, extra) => row(key, { state: "unknown", note, ...extra });
 
+// Режим условия: off (не считается вовсе) | info (считается и пишется, но вход не решает) |
+// gate (решает вход). Прецедент У7 skewMode и У8 imbalanceMode: режим существует там, где
+// ОПРЕДЕЛЕНИЕ условия ратифицировано, а ПОРОГ нет. Волатильностная группа У1-У3 и У6 получила
+// такие же поля по результату двух обкаток: за 145 часов в противоположных режимах рынка У1 дал
+// 0.0% pass в июле и 74.8% в августе, У6 наоборот 47.9% и 0.0%, то есть каждое из них поочерёдно
+// вырождается, а откалибровать У1 нечем в принципе - его порог структурный (знак разности RV−IV),
+// пресетного числа у него нет. info сохраняет измерение и снимает блокировку.
+// Отсутствующее поле = "gate": все существующие пресеты сохраняют поведение.
+const condMode = (v) => (v === "off" ? "off" : v === "info" ? "info" : "gate");
+
 // ── Группа «актив» (У1-У8). ctx:
 //   preset; side ("call"|"put"|null — направление У4);
 //   bundle — computeRvBundle() из rv.js (rv7dPct, rv3dPct, sigma1dPct, dP24hPct, impulse,
@@ -94,31 +104,41 @@ export function evaluateAssetConditions(ctx) {
   };
   const rvIvAge = Math.max(ages.candlesSec ?? 0, ages.ivRefSec ?? 0) || (ages.candlesSec ?? ages.ivRefSec ?? null);
 
-  // У1 rv7d_gt_iv (ядро): RV7d > IV_ref. value = спред RV−IV в п.п., порог 0.
+  // У1 rv7d_gt_iv (ядро): RV7d > IV_ref. value = спред RV−IV в п.п., порог 0 СТРУКТУРНЫЙ —
+  // условие проверяет знак разности, пресетного числа у него нет. Отсюда rv7dMode: откалибровать
+  // такое условие нельзя, можно только решить, гейт оно или измерение.
   {
-    const bad = rvIvUnknown("rv7d_gt_iv", bundle.rv7dPct, "RV7d");
-    rows.push(
-      bad ??
-        row("rv7d_gt_iv", {
-          value: bundle.rv7dPct - ctx.ivRefPct,
-          threshold: 0,
-          op: ">",
-          unit: "pts",
-          state: bundle.rv7dPct > ctx.ivRefPct ? "pass" : "fail",
-          note: `RV ${fmt(bundle.rv7dPct)}% · IV ${fmt(ctx.ivRefPct)}%${ivNote}`,
-          staleSec: rvIvAge,
-        }),
-    );
+    const m = condMode(preset.rv7dMode);
+    if (m === "off") rows.push(off("rv7d_gt_iv", "выключено пресетом"));
+    else {
+      const bad = rvIvUnknown("rv7d_gt_iv", bundle.rv7dPct, "RV7d");
+      rows.push(
+        bad
+          ? { ...bad, mode: m }
+          : row("rv7d_gt_iv", {
+              mode: m,
+              value: bundle.rv7dPct - ctx.ivRefPct,
+              threshold: 0,
+              op: ">",
+              unit: "pts",
+              state: bundle.rv7dPct > ctx.ivRefPct ? "pass" : "fail",
+              note: `RV ${fmt(bundle.rv7dPct)}% · IV ${fmt(ctx.ivRefPct)}%${ivNote}`,
+              staleSec: rvIvAge,
+            }),
+      );
+    }
   }
 
   // У2 iv_discount: режим rvMargin (IV ≤ RV7d − dIvPts, т.е. RV−IV ≥ dIvPts), режим
   // baselineRatio (IV ≤ k·baselineIV, т.е. IV/baseline ≤ k) или both (оба обязаны пройти).
   {
+    const m = condMode(preset.ivDiscountMode);
     const mode = preset.ivFilterMode;
     const wantMargin = mode === "rvMargin" || mode === "both";
     const wantRatio = mode === "baselineRatio" || mode === "both";
     const bad = rvIvUnknown("iv_discount", bundle.rv7dPct, "RV7d");
-    if (bad) rows.push(bad);
+    if (m === "off") rows.push(off("iv_discount", "выключено пресетом"));
+    else if (bad) rows.push({ ...bad, mode: m });
     else {
       const marginVal = bundle.rv7dPct - ctx.ivRefPct;
       const marginOk = wantMargin ? marginVal >= preset.dIvPts : null;
@@ -144,6 +164,7 @@ export function evaluateAssetConditions(ctx) {
       // Гистерезис ведём по первичной числовой паре режима: rvMargin в приоритете.
       rows.push(
         row("iv_discount", {
+          mode: m,
           value: wantMargin ? marginVal : ratioVal,
           threshold: wantMargin ? preset.dIvPts : preset.kBaseline,
           op: wantMargin ? ">=" : "<=",
@@ -158,12 +179,17 @@ export function evaluateAssetConditions(ctx) {
 
   // У3 rv3d_gt_iv: подтверждение коротким RV (сам Дмитрий предложил). Выключаемо пресетом.
   {
-    if (!preset.rv3dConfirm) rows.push(off("rv3d_gt_iv", "выключено пресетом"));
+    // rv3dConfirm (булев, исторический) и rv3dMode (три состояния) сосуществуют: выключение любым
+    // из них даёт off, поэтому старые пресеты не меняют поведения.
+    const m = condMode(preset.rv3dMode);
+    if (!preset.rv3dConfirm || m === "off") rows.push(off("rv3d_gt_iv", "выключено пресетом"));
     else {
       const bad = rvIvUnknown("rv3d_gt_iv", bundle.rv3dPct, "RV3d");
       rows.push(
-        bad ??
-          row("rv3d_gt_iv", {
+        bad
+          ? { ...bad, mode: m }
+          : row("rv3d_gt_iv", {
+            mode: m,
             value: bundle.rv3dPct - ctx.ivRefPct,
             threshold: 0,
             op: ">",
@@ -221,15 +247,18 @@ export function evaluateAssetConditions(ctx) {
   // У6 forward_iv: бэквордация терм-структуры FIV = IV(near) − IV(far) ≥ fivMinPts.
   // В выходные UTC (fivWeekendOff) условие ВЫКЛЮЧЕНО календарём — state off, не fail (§5.2).
   {
-    if (preset.fivWeekendOff && ctx.weekend) rows.push(off("forward_iv", "выходные · forward-IV не считается"));
+    const m = condMode(preset.forwardIvMode);
+    if (m === "off") rows.push(off("forward_iv", "выключено пресетом"));
+    else if (preset.fivWeekendOff && ctx.weekend) rows.push(off("forward_iv", "выходные · forward-IV не считается"));
     else if (stale.ivRef || stale.farIv)
-      rows.push(unknown("forward_iv", `IV терм-структуры протухла (${fmt(Math.max(ages.ivRefSec ?? 0, ages.farIvSec ?? 0), 0)}с)`, { staleSec: Math.max(ages.ivRefSec ?? 0, ages.farIvSec ?? 0) }));
+      rows.push({ ...unknown("forward_iv", `IV терм-структуры протухла (${fmt(Math.max(ages.ivRefSec ?? 0, ages.farIvSec ?? 0), 0)}с)`, { staleSec: Math.max(ages.ivRefSec ?? 0, ages.farIvSec ?? 0) }), mode: m });
     else if (!fin(ctx.ivRefPct) || !fin(ctx.farIvPct))
-      rows.push(unknown("forward_iv", !fin(ctx.farIvPct) ? `far-IV нет (экспирация ≥ ${preset.fivFarMinDays}д не котируется)` : "IV_ref недоступен", { staleSec: ages.farIvSec }));
+      rows.push({ ...unknown("forward_iv", !fin(ctx.farIvPct) ? `far-IV нет (экспирация ≥ ${preset.fivFarMinDays}д не котируется)` : "IV_ref недоступен", { staleSec: ages.farIvSec }), mode: m });
     else {
       const fiv = ctx.ivRefPct - ctx.farIvPct;
       rows.push(
         row("forward_iv", {
+          mode: m,
           value: fiv,
           threshold: preset.fivMinPts,
           op: ">=",

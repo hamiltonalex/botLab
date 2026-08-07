@@ -276,3 +276,54 @@ test("чистота движка: ни Date.now, ни fetch, ни fs в src/eng
     assert.ok(!/Date\.now\s*\(|fetch\s*\(|from\s+"node:|require\s*\(/.test(src), `${f} должен быть PURE`);
   }
 });
+
+// ── Режимы off/info/gate волатильностной группы У1/У2/У3/У6 (добавлены после двух обкаток:
+// каждое из этих условий поочерёдно вырождалось в противоположных режимах рынка, а У1 нельзя
+// откалибровать в принципе - его порог структурный, знак разности RV−IV).
+test("У1/У2/У3/У6: отсутствие поля режима = gate, старые пресеты поведения не меняют", () => {
+  const rows = byKey(evaluateAssetConditions(mkAssetCtx()));
+  for (const k of ["rv7d_gt_iv", "iv_discount", "rv3d_gt_iv", "forward_iv"]) {
+    assert.equal(rows[k].mode, "gate", k);
+  }
+});
+
+test("У1/У2/У3/У6: режим info считает вердикт, но помечает строку info", () => {
+  const preset = { ...PRESET, rv7dMode: "info", ivDiscountMode: "info", rv3dMode: "info", forwardIvMode: "info" };
+  const rows = byKey(evaluateAssetConditions(mkAssetCtx({ preset })));
+  for (const k of ["rv7d_gt_iv", "iv_discount", "rv3d_gt_iv", "forward_iv"]) {
+    assert.equal(rows[k].mode, "info", k);
+    assert.equal(rows[k].state, "pass", k); // вердикт считается честно, просто не гейтит
+    assert.ok(Number.isFinite(rows[k].value), `${k}: значение обязано остаться, info это измерение`);
+  }
+});
+
+test("У1/У2/У3/У6: режим off выключает условие целиком", () => {
+  const preset = { ...PRESET, rv7dMode: "off", ivDiscountMode: "off", rv3dMode: "off", forwardIvMode: "off" };
+  const rows = byKey(evaluateAssetConditions(mkAssetCtx({ preset })));
+  for (const k of ["rv7d_gt_iv", "iv_discount", "rv3d_gt_iv", "forward_iv"]) {
+    assert.equal(rows[k].state, "off", k);
+    assert.equal(rows[k].mode, "off", k);
+  }
+});
+
+test("info НЕ превращает отсутствие данных в pass: unknown остаётся unknown и несёт свой режим", () => {
+  const preset = { ...PRESET, rv7dMode: "info", forwardIvMode: "info" };
+  const stale = byKey(evaluateAssetConditions(mkAssetCtx({ preset, stale: { candles: true }, ages: { candlesSec: 400 } })));
+  assert.equal(stale.rv7d_gt_iv.state, "unknown");
+  assert.equal(stale.rv7d_gt_iv.mode, "info");
+  const noFar = byKey(evaluateAssetConditions(mkAssetCtx({ preset, farIvPct: null })));
+  assert.equal(noFar.forward_iv.state, "unknown");
+  assert.equal(noFar.forward_iv.mode, "info");
+});
+
+test("У6: выходной перебивает info, но режим off виден и в будни", () => {
+  const info = { ...PRESET, forwardIvMode: "info" };
+  assert.equal(byKey(evaluateAssetConditions(mkAssetCtx({ preset: info, weekend: true }))).forward_iv.state, "off");
+  const offP = { ...PRESET, forwardIvMode: "off" };
+  assert.equal(byKey(evaluateAssetConditions(mkAssetCtx({ preset: offP, weekend: false }))).forward_iv.state, "off");
+});
+
+test("У3: rv3dConfirm=false и rv3dMode=off выключают одинаково", () => {
+  assert.equal(byKey(evaluateAssetConditions(mkAssetCtx({ preset: { ...PRESET, rv3dConfirm: false } }))).rv3d_gt_iv.state, "off");
+  assert.equal(byKey(evaluateAssetConditions(mkAssetCtx({ preset: { ...PRESET, rv3dMode: "off" } }))).rv3d_gt_iv.state, "off");
+});

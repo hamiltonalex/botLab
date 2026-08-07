@@ -114,8 +114,11 @@ export function aggregateVerdict(rows, preset) {
   const passed = applicable.filter((r) => r.state === "pass").length;
   const failedIdx = applicable.filter((r) => r.state === "fail").map((r) => r.idx);
   const unknownIdx = applicable.filter((r) => r.state === "unknown").map((r) => r.idx);
-  const coreRows = rows.filter((r) => r.core);
-  const coreOk = coreRows.length > 0 && coreRows.every((r) => r.mode === "gate" && r.state === "pass");
+  // Ядро считается только по тем core-условиям, что стоят гейтами. Иначе перевод любого из них
+  // в info (У1 такой перевод получил после двух обкаток) навсегда прибивал бы coreOk к false и
+  // делал score-режим недостижимым, хотя оставшиеся core-условия честно проходят.
+  const coreRows = rows.filter((r) => r.core && r.mode === "gate");
+  const coreOk = rows.some((r) => r.core) && coreRows.every((r) => r.state === "pass");
   const need = preset.mode === "score" ? preset.scoreMin : applicable.length;
   const verdict =
     preset.mode === "score"

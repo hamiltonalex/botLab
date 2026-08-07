@@ -84,3 +84,27 @@ test("телеметрия: кольцо 30 суток отрезает стар
   assert.deepEqual(w.h24.rv7d_gt_iv, { evals: 4, pass: 2, fail: 2, unknown: 0 });
   assert.deepEqual(w.session.rv7d_gt_iv, { evals: 1, pass: 1, fail: 0, unknown: 0 });
 });
+
+// ── coreOk считается только по core-условиям, стоящим ГЕЙТАМИ. Иначе перевод У1 в info (он
+// получил такой режим после двух обкаток) навсегда прибивал бы coreOk к false и делал score-режим
+// недостижимым, хотя оставшиеся core-условия честно проходят.
+test("coreOk: core-условие в режиме info не роняет ядро, остальные core решают", () => {
+  const rows = [R("У1", "fail", { core: true, mode: "info" }), R("У10", "pass", { core: true }), R("У14", "pass", { core: true })];
+  const a = aggregateVerdict(rows, { mode: "AND" });
+  assert.equal(a.coreOk, true, "info-условие из ядра исключено");
+  assert.equal(a.applicable, 2, "info не входит и в знаменатель вердикта");
+  const bad = aggregateVerdict([R("У1", "pass", { core: true, mode: "info" }), R("У10", "fail", { core: true }), R("У14", "pass", { core: true })], { mode: "AND" });
+  assert.equal(bad.coreOk, false, "гейтовое core-условие по-прежнему решает");
+});
+
+test("coreOk: ядро целиком в info даёт coreOk true, а score-режим остаётся достижимым", () => {
+  const rows = [R("У1", "fail", { core: true, mode: "info" }), R("У10", "fail", { core: true, mode: "info" }),
+    R("У14", "fail", { core: true, mode: "info" }), ...fill(10)];
+  const a = aggregateVerdict(rows, { mode: "score", scoreMin: 10 });
+  assert.equal(a.coreOk, true);
+  assert.equal(a.verdict, "signal");
+});
+
+test("coreOk: без единого core-условия в наборе ядро не считается собранным", () => {
+  assert.equal(aggregateVerdict(fill(3), { mode: "AND" }).coreOk, false);
+});
