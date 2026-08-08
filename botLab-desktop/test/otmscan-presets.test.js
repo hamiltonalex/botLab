@@ -7,8 +7,8 @@ import { SCAN_PRESETS, SCAN_DATA_RULES, defaultScanSettings, normalizeScanPatch,
 import { createScanState, evaluateScan } from "../src/engine/otmscan/scan-engine.js";
 import { NOW, PRESET, mkInputs } from "./otmscan-helpers.mjs";
 
-test("пресеты: пять id, различия v1/v2 по плану, заморожены (в т.ч. вложенные exits)", () => {
-  assert.deepEqual(Object.keys(SCAN_PRESETS).sort(), ["calibrated", "delta-v1", "dmitri-v1", "dmitri-v2", "measure-v1"]);
+test("пресеты: шесть id, различия v1/v2 по плану, заморожены (в т.ч. вложенные exits)", () => {
+  assert.deepEqual(Object.keys(SCAN_PRESETS).sort(), ["calibrated", "delta-v1", "dmitri-v1", "dmitri-v2", "measure-far-v1", "measure-v1"]);
   const v1 = SCAN_PRESETS["dmitri-v1"];
   const v2 = SCAN_PRESETS["dmitri-v2"];
   assert.equal(v1.mode, "AND");
@@ -131,5 +131,22 @@ test("режимы условий: дефолт gate у всех отгруже�
     for (const k of ["rv7dMode", "ivDiscountMode", "rv3dMode", "forwardIvMode"]) {
       assert.equal(SCAN_PRESETS[id][k], "gate", `${id}.${k}`);
     }
+  }
+});
+
+// measure-far-v1: тот же чеклист на сроке, где комиссия перестаёт съедать результат. Числа
+// измерены по записи прогона 5, дрейф любого из них рвёт связь пресета с замером.
+test("measure-far-v1: дальнее окно и пороги, поехавшие вслед за сроком", () => {
+  const f = SCAN_PRESETS["measure-far-v1"];
+  const m = SCAN_PRESETS["measure-v1"];
+  assert.equal(f.expiryMinH, 672); // 28 суток: недельные котируются лишь до 15, полоса 15-28 пуста
+  assert.equal(f.expiryMaxH, 1344); // 56 суток: 28-56 дают ровно одну экспирацию 93% времени
+  assert.ok(f.fivFarMinDays * 24 > f.expiryMaxH, "far-нога У6 обязана лежать вне окна");
+  assert.equal(f.premMaxPct, 5.0, "премия дальних 4.55% спота медиана, 5.00 максимум");
+  assert.equal(f.thetaMaxPctDay, 3.0, "гарантия от сползания к коротким срокам, факт 1.13-1.50");
+  // Всё остальное наследуется от measure-v1 без изменений: меняется срок, а не логика отбора.
+  for (const k of ["strikeMode", "deltaMin", "deltaMax", "impulseMin", "spreadMaxPctPrem",
+    "costMaxPctPrem", "rv7dMode", "ivDiscountMode", "rv3dMode", "forwardIvMode"]) {
+    assert.equal(f[k], m[k], `${k}: отличаться от measure-v1 обязан ТОЛЬКО срок и связанное с ним`);
   }
 });

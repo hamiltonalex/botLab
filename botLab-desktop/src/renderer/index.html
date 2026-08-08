@@ -2201,6 +2201,7 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
             <button type="button" data-v="dmitri-v2" aria-pressed="false">Дмитрий v2.0</button>
             <button type="button" data-v="delta-v1" aria-pressed="false">Дельта v1</button>
             <button type="button" data-v="measure-v1" aria-pressed="false">Измерительный v1</button>
+            <button type="button" data-v="measure-far-v1" aria-pressed="false">Измерительный дальний</button>
             <button type="button" data-v="calibrated" aria-pressed="false">Калиброванный</button>
           </div>
         </div>
@@ -5625,7 +5626,7 @@ const SCN_COND_LABELS = {
   strike_sigma:'страйк в окне отбора', premium_cap:'премия ≤ лимита', spread_cap:'спред ≤ лимита',
   depth_min:'глубина книги', theta_cap:'тета ≤ лимита', cost_gate:'издержки ≤ лимита' };
 const SCN_PRESET_LABELS = { 'dmitri-v1':'Дмитрий v1', 'dmitri-v2':'Дмитрий v2.0',
-  'delta-v1':'Дельта v1', 'measure-v1':'Измерительный v1',
+  'delta-v1':'Дельта v1', 'measure-v1':'Измерительный v1', 'measure-far-v1':'Измерительный дальний v1',
   calibrated:'Калиброванный', custom:'Калиброванный*' };
 function scnPresetLabel(id){ return SCN_PRESET_LABELS[id] || (LIVE_SCN && LIVE_SCN.preset && LIVE_SCN.preset.id===id && LIVE_SCN.preset.label) || id || '—'; }
 
