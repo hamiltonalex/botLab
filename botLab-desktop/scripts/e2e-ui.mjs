@@ -122,15 +122,59 @@ try {
   await waitFor(async () => /реприс 5с/.test(await win.textContent("#optEngineMode")), { timeout: 5000, label: "live reprice badge" });
   check("№15: шапка перешла на «реприс 5с» при открытой позиции", true);
 
-  // ── 9. Fix №6: tweaking an engine param (deadband) must NOT flash the badge to УСТАРЕЛО
+  // ── 9. Fix №6: правка параметра ДВИЖКА (дедбэнд) не имеет права тронуть живой источник.
+  // Предусловие LIVE. Смена реприса в §8 пересоздаёт источник ПО ПРАВУ (каданс - его собственный
+  // параметр, main.js: sourceChanged), а у нового источника lastTs=null, пока не придёт первый
+  // опрос. Значок «реприс 5с» и «УСТАРЕЛО» зажигаются в ОДНОМ проходе renderOpt(), поэтому прежняя
+  // редакция начинала считать сэмплы ровно внутри чужого переходного процесса.
+  // Замер 2026-08-08 (8 пересозданий, писец 25мс): не-LIVE держится 225-550мс (медиана 375мс), и во
+  // ВСЕХ его сэмплах lastTs=null; момент появления значка и первый не-LIVE совпали 8 раз из 8 до
+  // миллисекунды. Проверка проходила, только если опаздывала со стартом опроса на те же 225-550мс
+  // (медиана 400мс) - 300мс гранулярности waitFor плюс клик ложились ровно на эту границу, отсюда
+  // «то 24/24, то 23/24». В норме мигания нет вовсе: 0 не-LIVE и 0 разрывов истории на 11953
+  // сэмплах (16 кликов дедбэнда при живом LIVE + 150с покоя), возраст данных максимум 5с при
+  // пороге устаревания 25с.
+  await waitFor(async () => (await win.textContent("#optLiveTxt")) === "LIVE", { timeout: 40000, label: "LIVE перед сменой дедбэнда" });
+  // Писец живёт ВНУТРИ страницы: 25мс против 250мс через протокол - на самом коротком замеренном
+  // окне (225мс) это 9 сэмплов вместо одного, то есть регрессия ловится с запасом, а не на грани
+  // разрешения. Пишем и текст значка, и lastTs источника: значок - следствие, lastTs - причина.
+  await win.evaluate(`(function(){ if(window.__e2eSrcRec) clearInterval(window.__e2eSrcRec.timer);
+    window.__e2eSrcRec={ rows:[], timer:setInterval(function(){
+      var d=(typeof LIVE_S1!=='undefined'&&LIVE_S1)||null, f=d&&d.fresh, el=document.getElementById('optLiveTxt');
+      window.__e2eSrcRec.rows.push([Date.now(), el?el.textContent:null, !!(d&&d.running), (f&&f.lastTs!=null)?f.lastTs:null]);
+    },25) }; })()`);
   await win.click('#optDeadbandSel button[data-v="aggressive"]');
-  let flashed = null;
-  for (let i = 0; i < 12; i++) { // sample for 3s after the patch
-    const s = await win.textContent("#optLiveTxt");
-    if (s !== "LIVE") { flashed = s; break; }
-    await sleep(250);
+  await sleep(6000); // 250мс дебаунса настроек + запас, чтобы отличить «мигнул» от «упал и остался»
+  const dbRows = JSON.parse(await win.evaluate(`(function(){ var r=window.__e2eSrcRec;
+    clearInterval(r.timer); r.timer=null; return JSON.stringify(r.rows); })()`));
+  // Проверка спрашивает «источник жив и НЕПРЕРЫВЕН», а не «значок ни разу не моргнул»:
+  //   torn  - хоть один сэмпл с running && lastTs===null: источник потерял историю, то есть был
+  //           пересоздан. Задержка биржи так не выглядит никогда (0 из 11953 сэмплов нормы), а
+  //           пересоздание выглядит так всегда (8 из 8) - это подпись самой регрессии, а не следа.
+  //   stuck - непрерывная серия не-LIVE длиннее 1500мс: втрое больше худшего замеренного окна
+  //           пересоздания (550мс), поэтому регрессия не проскочит и по этому правилу тоже.
+  //   ended - к концу окна значок обязан вернуться в LIVE («упал и остался» - провал).
+  // Короткий транзиент (медленный ответ биржи) допускается, но печатается в детали: ползучая
+  // регрессия останется видна в логе даже на пройденной проверке.
+  const dbTorn = dbRows.filter((r) => r[2] && r[3] === null).length;
+  const dbBad = dbRows.filter((r) => r[1] !== "LIVE");
+  let dbRun = 0, dbFrom = null;
+  for (const r of dbRows) {
+    if (r[1] !== "LIVE") { if (dbFrom === null) dbFrom = r[0]; dbRun = Math.max(dbRun, r[0] - dbFrom + 25); }
+    else dbFrom = null;
   }
-  check("№6: статус остался LIVE после смены дедбэнда", flashed === null, flashed ? `мигнул: ${flashed}` : "12/12 сэмплов LIVE");
+  const dbEnded = dbRows.length > 0 && dbRows[dbRows.length - 1][1] === "LIVE";
+  // Пол по числу сэмплов (ожидается ~240): без него задушенный таймер дал бы пустой след и
+  // проверка прошла бы вхолостую, тихо перестав что-либо проверять.
+  const dbSampled = dbRows.length >= 100;
+  check(
+    "№6: смена дедбэнда не рвёт живой источник",
+    dbSampled && dbTorn === 0 && dbRun <= 1500 && dbEnded,
+    `${dbRows.length} сэмплов/25мс · не-LIVE ${dbBad.length}` +
+      (dbBad.length ? ` (макс. серия ${dbRun}мс: ${[...new Set(dbBad.map((r) => r[1]))].join("/")})` : "") +
+      ` · разрывов истории источника ${dbTorn}` +
+      (dbEnded ? "" : " · НЕ вернулся в LIVE") + (dbSampled ? "" : " · писец задушен"),
+  );
 
   // ── 10. Let a couple of 5s cycles run; snapshot Zone II
   await sleep(11000);
