@@ -56,9 +56,13 @@ test("комиссии: верифицированные золотые числ
 
 test("defaultScanSettings: дефолты плана §6", () => {
   const s = defaultScanSettings();
-  assert.equal(s.presetId, "measure-v1", "чистый профиль (то есть обкатка) стартует на новом пресете");
+  assert.equal(s.presetId, "measure-far-v1", "чистый профиль (то есть обкатка) стартует на новом пресете");
   assert.equal(s.nCandidatesMax, 8, "окно 48-336ч несёт больше страйков полосы, чем прежние шесть");
-  assert.equal(s.equityUsd, 100);
+  // Депозит и пресет связаны: на 28-56 днях премия контракта 4.55% спота, минимальный лот даёт
+  // minCapital $146-161, и при $100 гейт computeSizing снял бы 100% тактов по min_lot_exceeds_risk.
+  assert.equal(s.equityUsd, 500);
+  const far = SCAN_PRESETS[s.presetId];
+  assert.ok(far, "дефолтный пресет обязан существовать в SCAN_PRESETS");
   assert.equal(s.sigmaConvention, "horizon");
   assert.equal(s.scanRepriceSec, 30);
 });
