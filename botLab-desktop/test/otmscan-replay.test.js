@@ -1,4 +1,4 @@
-// otmscan-replay.test.js — общий проигрыш пресета по записи (src/engine/otmscan/replay.js).
+// otmscan-replay.test.js - общий проигрыш пресета по записи (src/engine/otmscan/replay.js).
 // Модуль поднят из scripts/eval-preset.mjs и теперь кормит ДВУХ потребителей: сам eval:preset и
 // исторический бектест. Тесты закрепляют ровно те свойства, ради которых он вынесен в одно место.
 // Доказывает: (1) индекс снимка и ATM-пара берут среднее колла и пута по ближайшему к споту
@@ -6,7 +6,7 @@
 // из кода; (3) окно экспираций пресета действительно режет кандидатов, а сторона выбирает
 // колл/пут; (4) гейт размера гасит готовый вердикт, когда лот не помещается в риск-бюджет;
 // (5) режим info снимает блокировку, но сохраняет измерение; (6) dwell и кулдаун дают ровно
-// столько сигналов, сколько обещано; (7) ЭПИЗОД, а не строка журнала — единица счёта, и один
+// столько сигналов, сколько обещано; (7) ЭПИЗОД, а не строка журнала - единица счёта, и один
 // эпизод не превращается в девять наблюдений; (8) tri-state: отсутствие данных даёт unknown и
 // блокирует вход, оставаясь отличимым от fail.
 import { test } from "node:test";
@@ -19,7 +19,7 @@ import { SCAN_PRESETS } from "../src/engine/otmscan/presets.js";
 
 const NOW = Date.UTC(2026, 7, 5, 12, 0, 0);
 const SPOT = 64000;
-const EXP_NEAR = NOW + 10 * 86400000; // 10 суток — внутри окна measure-v1 (168-336 ч)
+const EXP_NEAR = NOW + 10 * 86400000; // 10 суток - внутри окна measure-v1 (168-336 ч)
 const EXP_FAR = NOW + 120 * 86400000; // far-нога У6
 
 // Строка поверхности в формате записи. Значения подобраны так, чтобы страйк 66000 проходил все
@@ -52,7 +52,7 @@ test("индекс снимка и ATM-пара: среднее колла и п
   const ix = snapshot();
   assert.equal(ix.expiries.length, 2);
   assert.deepEqual(ix.expiries, [EXP_NEAR, EXP_FAR]);
-  // Ближайший к споту страйк 64000; колл и пут оба по 40 — среднее 40.
+  // Ближайший к споту страйк 64000; колл и пут оба по 40 - среднее 40.
   assert.equal(atmIv(ix, EXP_NEAR, SPOT), 40);
   // Одинокая нога не теряется: пут по 64000 убран, остаётся колл.
   const oneLeg = indexSnapshot(ix.rows.filter((r) => !(r.e === EXP_NEAR && r.k === 64000 && r.s === "P")));
@@ -96,12 +96,12 @@ test("гейт размера гасит готовый вердикт, когд
   assert.equal(rich.verdict, true, "лот за $10 в бюджет $20 помещается");
   assert.equal(rich.sizeBlock, null);
 
-  // Депозит $40 даёт бюджет $8 против $10 за лот — не помещается.
+  // Депозит $40 даёт бюджет $8 против $10 за лот - не помещается.
   const poor = evaluateReplayTick({ tick: tick(), index: ix, preset: P, settings: { ...S, equityUsd: 40 } });
   assert.equal(poor.verdict, false, "тот же рынок при $40 сигнала не даёт");
   assert.equal(poor.sizeBlock, "min_lot_exceeds_risk", "и причина названа, а не молчит");
 
-  // Дорогой инструмент при том же депозите блокируется так же — гейт про премию лота, не про марк.
+  // Дорогой инструмент при том же депозите блокируется так же - гейт про премию лота, не про марк.
   const pricey = indexSnapshot(ix.rows.map((r) => ({ ...r, m: 2900, b: 2870, a: 2930, md: 2900 })));
   const far = evaluateReplayTick({ tick: tick(), index: pricey, preset: P, settings: { ...S, equityUsd: 100 } });
   assert.equal(far.sizeFail, "min_lot_exceeds_risk", "$29 за лот против бюджета $20");
@@ -128,7 +128,7 @@ test("dwell и кулдаун дают ровно обещанное число 
   const step = 30000;
   const evals = [];
   for (let i = 0; i < 20; i++) evals.push(mk(NOW + i * step, true));
-  // dwell 3 — первый сигнал на третьем такте, дальше кулдаун 1800с (60 тактов) запирает всё.
+  // dwell 3 - первый сигнал на третьем такте, дальше кулдаун 1800с (60 тактов) запирает всё.
   const s = replaySignals(evals, { dwellTicks: 3, cooldownSec: 1800 });
   assert.equal(s.length, 1);
   assert.equal(s[0].ts, NOW + 2 * step);
@@ -155,7 +155,7 @@ test("эпизод, а не строка журнала: один вход не 
   const gapped = [...sig, { ts: NOW + 9 * 1800000 + 3 * 3600000, side: "call", best: { r: { n: "BTC_USDC-X-66000-C" } } }];
   assert.equal(toEpisodes(gapped, { gapMs: 30 * 60000 }).length, 2);
 
-  // Разные инструменты — разные эпизоды.
+  // Разные инструменты - разные эпизоды.
   const two = [
     { ts: NOW, side: "call", best: { r: { n: "A" } } },
     { ts: NOW + 60000, side: "call", best: { r: { n: "B" } } },
@@ -169,7 +169,7 @@ test("tri-state: пустой снимок даёт unknown всей инстр�
   assert.equal(e.nCand, 0);
   assert.equal(e.verdict, false);
   for (const k of ["У9", "У10", "У11", "У12", "У13", "У14"]) assert.equal(e.st[k], "unknown");
-  // Импульс без значения — тоже unknown, а не ноль и не отказ.
+  // Импульс без значения - тоже unknown, а не ноль и не отказ.
   const noImp = evaluateReplayTick({ tick: tick({ imp: null, V: {} }), index: snapshot(), preset: P, settings: S });
   assert.equal(noImp.st["У4"], "unknown");
   assert.equal(noImp.val["У4"], null);

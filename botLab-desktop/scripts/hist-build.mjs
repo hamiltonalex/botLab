@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// hist-build.mjs — восстановление записи сканера из кэша истории. READ-ONLY, без сети.
+// hist-build.mjs - восстановление записи сканера из кэша истории. READ-ONLY, без сети.
 //
-// ГЛАВНОЕ АРХИТЕКТУРНОЕ РЕШЕНИЕ: НА ВЫХОДЕ РОВНО ТОТ ЖЕ ФОРМАТ, что пишет живой процесс, —
+// ГЛАВНОЕ АРХИТЕКТУРНОЕ РЕШЕНИЕ: НА ВЫХОДЕ РОВНО ТОТ ЖЕ ФОРМАТ, что пишет живой процесс, -
 // `scan-records/otm-scanner-{surface,ticks}-<сутки>.ndjson`. Не похожий, а тот же, ключ в ключ.
 // Из этого следует всё остальное: `npm run eval:preset --dir <выход>`, `eval:toll`, `eval:buy`,
 // `report:records` работают по истории БЕЗ ЕДИНОЙ ПРАВКИ, и бектест гоняет ту же самую механику
@@ -15,9 +15,9 @@
 // восстанавливается только СЫРЬЁ; ни одного правила движка тут нет.
 //
 // ЧТО ВОССТАНАВЛИВАЕТСЯ И ИЗ ЧЕГО:
-//   поверхность  ← подгонка IV по ленте обратных опционов (hist-surface.js), цены и греки по
+//   поверхность: подгонка IV по ленте обратных опционов (hist-surface.js), цены и греки по
 //                  Блэку-76 для ЛИНЕЙНЫХ инструментов, bid/ask по модели (hist-cost.js);
-//   тики         ← часовые свечи перпа через computeRvBundle (rv.js) — те же RV7d/RV3d/σ1d/импульс/
+//   тики: часовые свечи перпа через computeRvBundle (rv.js), те же RV7d/RV3d/σ1d/импульс/
 //                  EMA, что считает живой процесс, плюс база DVOL за 90 суток.
 //
 // ЧЕСТНЫЕ ОТЛИЧИЯ ОТ ЖИВОЙ ЗАПИСИ, все три печатаются в сводке:
@@ -29,7 +29,7 @@
 //      обязано идти как `--depth assume` (eval-preset печатает долю таких тактов сам).
 //
 // ВЗГЛЯДА ВПЕРЁД НЕТ НИГДЕ. Окно сделок только назад (правило П1 в hist-surface.js); индекс берётся
-// по последним сделкам НЕ ПОЗЖЕ метки; форвард — закрытие часового бара, ЗАКАНЧИВАЮЩЕГОСЯ на метке;
+// по последним сделкам НЕ ПОЗЖЕ метки; форвард - закрытие часового бара, ЗАКАНЧИВАЮЩЕГОСЯ на метке;
 // RV и EMA считаются по закрытым барам (closedCandles). Каждое из этих мест уже однажды было
 // возможностью подсмотреть будущее, поэтому названо поимённо.
 
@@ -53,7 +53,7 @@ const argOf = (n, d = null) => { const i = args.indexOf(n); return i >= 0 && i +
 const has = (n) => args.includes(n);
 
 if (has("--help") || !argOf("--out")) {
-  console.log(`hist-build.mjs — восстановление записи сканера из кэша истории
+  console.log(`hist-build.mjs - восстановление записи сканера из кэша истории
 
   --out <dir>        КУДА писать (обязательно); внутри создаётся scan-records/
   --cache <dir>      кэш истории (по умолчанию ~/botlab-hist-cache)
@@ -105,13 +105,13 @@ function loadMeta(kind) {
 const optMeta = [...loadMeta("usdc-option").values()]
   .filter((m) => m.instrument_name.startsWith("BTC_USDC-") && fin(m.expiration_timestamp) && posNum(m.strike))
   .sort((a, b) => a.expiration_timestamp - b.expiration_timestamp || a.strike - b.strike);
-if (!optMeta.length) { console.error(`в кэше ${CACHE} нет меты линейных опционов — сначала npm run hist:download`); process.exit(1); }
+if (!optMeta.length) { console.error(`в кэше ${CACHE} нет меты линейных опционов - сначала npm run hist:download`); process.exit(1); }
 
 // ── свечи: перп (прокси индекса и вход RV) + фьючерсы (форвард экспираций)
-// Файл ряда несёт своё покрытие (fromMs/toMs) — см. грабли резюмируемости в hist-download.mjs.
+// Файл ряда несёт своё покрытие (fromMs/toMs) - см. грабли резюмируемости в hist-download.mjs.
 const barsOf = (rel) => (existsSync(cachePath(rel)) ? readJson(rel)?.bars ?? [] : []);
 const perp = barsOf("candles/BTC-PERPETUAL.json");
-if (!perp.length) { console.error("нет свечей перпа в кэше — сначала npm run hist:download"); process.exit(1); }
+if (!perp.length) { console.error("нет свечей перпа в кэше - сначала npm run hist:download"); process.exit(1); }
 const perpByBarEnd = new Map(perp.map((c) => [c.ts + HOUR_MS, c.close]));
 
 // Форвард по фьючерсам: закрытие бара, ЗАКАНЧИВАЮЩЕГОСЯ на метке (взгляда вперёд нет).
@@ -123,7 +123,8 @@ for (const f of loadMeta("btc-future").values()) {
   if (m.size) futSeries.set(f.expiration_timestamp, m);
 }
 
-// ── DVOL: часовой ряд → дневные закрытия → скользящая база за 90 суток (правило SCAN_DATA_RULES)
+// ── DVOL: часовой ряд, из него дневные закрытия, из них скользящая база за 90 суток
+// (правило SCAN_DATA_RULES)
 const dvol = existsSync(cachePath("dvol/btc-hourly.json")) ? readJson("dvol/btc-hourly.json") : [];
 const dvolDailyClose = new Map();
 for (const d of dvol) if (posNum(d.close)) dvolDailyClose.set(Math.floor(d.ts / DAY_MS), d.close);
@@ -135,7 +136,7 @@ function baselineIvAt(ts) {
     const v = dvolDailyClose.get(d);
     if (posNum(v)) vals.push(v);
   }
-  // Меньше половины окна — не база, а выдумка: правило tri-state сильнее желания получить число.
+  // Меньше половины окна - не база, а выдумка: правило tri-state сильнее желания получить число.
   return vals.length >= SCAN_DATA_RULES.dvolBaselineDays / 2
     ? vals.reduce((s, x) => s + x, 0) / vals.length : null;
 }
@@ -190,7 +191,7 @@ function indexAt(ts, windowTrades) {
 
 // ── форвард экспирации: свой фьючерс, иначе интерполяция ставки базиса по сроку
 // Базис ведёт себя как непрерывная ставка: замер по записи прогона 5 даёт +0.020% на 0.83 суток и
-// +0.624% на 50.83 — то есть ln(F/S)/T почти постоянен. Поэтому интерполируется именно СТАВКА,
+// +0.624% на 50.83 - то есть ln(F/S)/T почти постоянен. Поэтому интерполируется именно СТАВКА,
 // а не сам форвард: так короткие и длинные экспирации не растаскивают кривую.
 function forwardFactory(ts, spot) {
   const rates = []; // { T, rate } где rate = ln(F/S)/T
@@ -300,7 +301,7 @@ for (let ts = Math.ceil(FROM / STEP_MS) * STEP_MS; ts < TO; ts += STEP_MS) {
     if (!posNum(g.priceUsd)) { stats.noQuote += 1; continue; }
     const q = quotesFromMark({ deltaAbs: Math.abs(g.delta), daysToExpiry: days, markUsd: g.priceUsd, vegaUsd: g.vegaUsd, invariant: SPREAD_MODE, scale: SPREAD_SCALE });
     if (!q) { stats.noQuote += 1; continue; }
-    // Ключи и округления — ровно как в surface.js живого рекордера.
+    // Ключи и округления - ровно как в surface.js живого рекордера.
     appendRow("surface", ts, {
       ts, n: m.instrument_name, e: m.expiration_timestamp, k: m.strike,
       s: m.option_type === "call" ? "C" : "P",
@@ -328,7 +329,7 @@ for (let ts = Math.ceil(FROM / STEP_MS) * STEP_MS; ts < TO; ts += STEP_MS) {
     imp: r(bundle.impulse, 3), dir: bundle.direction,
     // IV_ref намеренно НЕ восстанавливается здесь: eval-preset выводит его сам из ATM-пары
     // ближней экспирации окна пресета, и подсовывать своё значение значило бы завести второе
-    // правило для одной задачи — ровно тот дефект, ради избежания которого всё и строится.
+    // правило для одной задачи - ровно тот дефект, ради избежания которого всё и строится.
     ivr: null, ivs: "hist-surface", base: r(base, 3),
     V: { "У5": fin(bundle.lastClose) && posNum(bundle.ema) ? r((bundle.lastClose / bundle.ema - 1) * 100, 4) : null },
     St: "",
