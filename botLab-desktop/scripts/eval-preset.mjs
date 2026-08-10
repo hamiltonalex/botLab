@@ -34,8 +34,12 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { SCAN_PRESETS } from "../src/engine/otmscan/presets.js";
-import { computeTradeCosts, computeEconomics, optionFeePct } from "../src/engine/otmscan/economics.js";
-import { computeSizing } from "../src/engine/otmscan/scan-engine.js";
+import { optionFeePct } from "../src/engine/otmscan/economics.js";
+// Правила проигрыша живут в ОДНОМ месте и переиспользуются историческим бектестом (см. шапку
+// replay.js): две копии одного правила — тот класс дефекта, который проект ловил уже трижды.
+import {
+  indexSnapshot, evaluateReplayTick, replaySignals, REPLAY_LOT, REPLAY_CONDITION_KEYS,
+} from "../src/engine/otmscan/replay.js";
 
 const fin = (x) => Number.isFinite(x);
 const posNum = (x) => fin(x) && x > 0;
@@ -84,7 +88,6 @@ const S = { dwellTicks: 3, failTicks: 2, ttlSec: 900, cooldownSec: 1800, hystPct
   riskPerTradePct: 20, qtyMax: 0.05, maxConcurrent: 2, nCandidatesMax: 8, sigmaConvention: "horizon",
   ...parseKV(argOf("--settings")) };
 const EXEC = argOf("--exec", P.execModel === "taker-cross" ? "taker" : "mid");
-const LOT = 0.01;
 
 // ── загрузка записи
 const load = (kind) => {
@@ -108,198 +111,22 @@ if (!ticks.length || times.length < 5) { console.error("запись пуста 
 const snapBefore = (ts) => { let lo = 0, hi = times.length - 1, res = -1;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (times[m] <= ts) { res = m; lo = m + 1; } else hi = m - 1; } return res; };
 
-// ── индекс снимка: экспирации, ATM-пары, страйки
+// ── индекс снимка кэшируется: соседние тики почти всегда смотрят в один и тот же снимок
 const snapIndex = new Map();
 function indexOf(si) {
   let ix = snapIndex.get(si);
   if (ix) return ix;
-  const rows = [...snaps.get(times[si]).values()];
-  const byExp = new Map();
-  for (const r of rows) {
-    if (!fin(r.e) || !fin(r.k) || !fin(r.iv)) continue;
-    let a = byExp.get(r.e);
-    if (!a) { a = []; byExp.set(r.e, a); }
-    a.push(r);
-  }
-  ix = { rows, byExp, expiries: [...byExp.keys()].sort((a, b) => a - b) };
+  ix = indexSnapshot([...snaps.get(times[si]).values()]);
   if (snapIndex.size > 400) snapIndex.clear();
   snapIndex.set(si, ix);
   return ix;
 }
-// ATM-пара экспирации: страйк ближе всего к споту, среднее mark_iv колла и пута (правило main.js)
-function atmIv(ix, expiryMs, spot) {
-  const a = ix.byExp.get(expiryMs);
-  if (!a || !fin(spot)) return null;
-  let bestK = null, bestD = Infinity;
-  for (const r of a) { const d = Math.abs(r.k - spot); if (d < bestD) { bestD = d; bestK = r.k; } }
-  if (bestK == null) return null;
-  const c = a.find((r) => r.k === bestK && r.s === "C")?.iv ?? null;
-  const p = a.find((r) => r.k === bestK && r.s === "P")?.iv ?? null;
-  return c != null && p != null ? (c + p) / 2 : (c ?? p);
-}
-const nearestStrikeIv = (ix, expiryMs, type, target) => {
-  const a = ix.byExp.get(expiryMs);
-  if (!a) return null;
-  let best = null, bd = Infinity;
-  for (const r of a) { if (r.s !== type) continue; const d = Math.abs(r.k - target); if (d < bd) { bd = d; best = r; } }
-  return best?.iv ?? null;
-};
 
-// ── экономика кандидата и инструментные условия У9-У14
-function instrRow(r, spot, side) {
-  if (!fin(r.m) || r.m <= 0 || !fin(r.b) || !fin(r.a) || r.a < r.b) return null;
-  const costs = computeTradeCosts({ markUsd: r.m, bidUsd: r.b, askUsd: r.a, indexPrice: spot, execModel: P.execModel });
-  if (!costs) return null;
-  const premPctSpot = (r.m / spot) * 100;
-  const spreadPctPrem = ((r.a - r.b) / r.m) * 100;
-  const thetaPctDay = fin(r.th) ? (Math.abs(r.th) / r.m) * 100 : null;
-  const sigmaPct = fin(r.iv) && r.h > 0 ? r.iv * Math.sqrt(r.h / 24 / 365) : null;
-  const sigmaDist = posNum(sigmaPct) ? (Math.abs(r.k / spot - 1) * 100) / sigmaPct : null;
-  const st = {};
-  st["У9"] = P.strikeMode === "delta"
-    ? (fin(r.d) ? (Math.abs(r.d) >= P.deltaMin && Math.abs(r.d) <= P.deltaMax ? "pass" : "fail") : "unknown")
-    : (sigmaDist == null ? "unknown" : sigmaDist >= P.sigmaMin && sigmaDist <= P.sigmaMax ? "pass" : "fail");
-  st["У10"] = premPctSpot <= P.premMaxPct ? "pass" : "fail";
-  st["У11"] = spreadPctPrem <= P.spreadMaxPctPrem ? "pass" : "fail";
-  st["У12"] = DEPTH_MODE === "assume" ? "pass" : "unknown";
-  st["У13"] = thetaPctDay == null ? "unknown" : thetaPctDay <= P.thetaMaxPctDay ? "pass" : "fail";
-  st["У14"] = fin(costs.roundTripCostPct) ? (costs.roundTripCostPct <= P.costMaxPctPrem ? "pass" : "fail") : "unknown";
-  const passed = Object.values(st).filter((x) => x === "pass").length;
-  const econ = computeEconomics({ costs, markUsd: r.m, deltaAbs: Math.abs(r.d ?? 0), indexPrice: spot,
-    sigma1dPct: null, lot: LOT, riskPerTradePct: S.riskPerTradePct, maxConcurrent: S.maxConcurrent });
-  return { r, st, passed, sigmaDist, premPctSpot, spreadPctPrem, thetaPctDay,
-    rtcPct: costs.roundTripCostPct, minCapitalUsd: econ.minCapitalUsd,
-    values: { "У9": P.strikeMode === "delta" ? Math.abs(r.d ?? NaN) : sigmaDist, "У10": premPctSpot,
-      "У11": spreadPctPrem, "У12": null, "У13": thetaPctDay, "У14": costs.roundTripCostPct } };
-}
-
-// ── один такт оценки
-const IDX = ["У1","У2","У3","У4","У5","У6","У7","У8","У9","У10","У11","У12","У13","У14"];
+const IDX = REPLAY_CONDITION_KEYS;
 function evaluate(t) {
   const si = snapBefore(t.ts);
   if (si < 0) return null;
-  const ix = indexOf(si);
-  const spot = t.S;
-  const side = t.sd;
-  if (!fin(spot) || !(side === "call" || side === "put")) return null;
-
-  const inWindow = ix.expiries.filter((e) => e - t.ts >= P.expiryMinH * 3600000 && e - t.ts <= P.expiryMaxH * 3600000);
-  const nearExp = inWindow[0] ?? null;
-  const farExp = ix.expiries.find((e) => e - t.ts >= P.fivFarMinDays * 86400000) ?? null;
-  const ivRef = nearExp != null ? atmIv(ix, nearExp, spot) : null;
-  const farIv = farExp != null ? atmIv(ix, farExp, spot) : null;
-
-  const st = {}, val = {};
-  const set = (k, state, value) => { st[k] = state; val[k] = fin(value) ? value : null; };
-  // Режимы волатильностной группы зеркалят conditions.js: отсутствие поля = gate.
-  const cm = (v) => (v === "off" ? "off" : v === "info" ? "info" : "gate");
-  const M = { "У1": cm(P.rv7dMode), "У2": cm(P.ivDiscountMode),
-    "У3": P.rv3dConfirm === false ? "off" : cm(P.rv3dMode), "У6": cm(P.forwardIvMode),
-    "У7": P.skewMode === "off" ? "off" : P.skewMode === "gate" ? "gate" : "info",
-    "У8": !P.imbalanceMode || P.imbalanceMode === "off" ? "off" : P.imbalanceMode === "gate" ? "gate" : "info" };
-
-  // ── группа актива
-  const rv7 = t.rv7, rv3 = t.rv3;
-  if (M["У1"] === "off") st["У1"] = "off";
-  if (M["У2"] === "off") st["У2"] = "off";
-  if (!fin(rv7) || !fin(ivRef)) { if (M["У1"] !== "off") set("У1", "unknown"); if (M["У2"] !== "off") set("У2", "unknown"); }
-  else {
-    if (M["У1"] !== "off") set("У1", rv7 > ivRef ? "pass" : "fail", rv7 - ivRef);
-    const margin = rv7 - ivRef;
-    const wantMargin = P.ivFilterMode === "rvMargin" || P.ivFilterMode === "both";
-    const wantRatio = P.ivFilterMode === "baselineRatio" || P.ivFilterMode === "both";
-    const ratio = fin(t.base) && t.base > 0 ? ivRef / t.base : null;
-    const marginOk = wantMargin ? margin >= P.dIvPts : null;
-    const ratioOk = wantRatio && ratio != null ? ratio <= P.kBaseline : null;
-    let s2;
-    if ((marginOk === false && wantMargin) || (ratioOk === false && wantRatio)) s2 = "fail";
-    else if (wantRatio && ratio == null) s2 = "unknown";
-    else s2 = "pass";
-    if (M["У2"] !== "off") set("У2", s2, wantMargin ? margin : ratio);
-  }
-  if (M["У3"] === "off") st["У3"] = "off";
-  else if (!fin(rv3) || !fin(ivRef)) set("У3", "unknown");
-  else set("У3", rv3 > ivRef ? "pass" : "fail", rv3 - ivRef);
-
-  const imp = t.imp ?? t.V?.["У4"];
-  if (!fin(imp)) set("У4", "unknown"); else set("У4", imp >= P.impulseMin ? "pass" : "fail", imp);
-
-  if (!P.trendOn) st["У5"] = "off";
-  else {
-    const v5 = t.V?.["У5"]; // (lastClose/ema − 1)·100, знак и есть вердикт стороны
-    if (!fin(v5)) set("У5", "unknown");
-    else set("У5", (side === "call" ? v5 > 0 : v5 < 0) ? "pass" : "fail", v5);
-  }
-
-  const weekend = [0, 6].includes(new Date(t.ts).getUTCDay());
-  if (M["У6"] === "off") st["У6"] = "off";
-  else if (P.fivWeekendOff && weekend) st["У6"] = "off";
-  else if (!fin(ivRef) || !fin(farIv)) set("У6", "unknown");
-  else set("У6", ivRef - farIv >= P.fivMinPts ? "pass" : "fail", ivRef - farIv);
-
-  if (M["У7"] === "off") st["У7"] = "off";
-  else {
-    const sg = fin(ivRef) && nearExp != null ? ivRef * Math.sqrt((nearExp - t.ts) / YEAR_MS) : null;
-    const put = posNum(sg) ? nearestStrikeIv(ix, nearExp, "P", spot * (1 - sg / 100)) : null;
-    const call = posNum(sg) ? nearestStrikeIv(ix, nearExp, "C", spot * (1 + sg / 100)) : null;
-    if (!fin(put) || !fin(call)) set("У7", "unknown");
-    else { const sk = put - call;
-      set("У7", (side === "call" ? sk <= -P.skewMinPts : sk >= P.skewMinPts) ? "pass" : "fail", sk); }
-  }
-  if (M["У8"] === "off") st["У8"] = "off";
-  else { const v8 = t.V?.["У8"]; if (!fin(v8)) set("У8", "unknown"); else set("У8", v8 >= P.imbalanceMin ? "pass" : "fail", v8); }
-
-  // ── кандидаты: сито σ, сортировка по возрастанию σ-дистанции, срез nCandidatesMax
-  const pre = [];
-  for (const exp of inWindow) {
-    const sg = atmIv(ix, exp, spot);
-    const tY = (exp - t.ts) / YEAR_MS;
-    const sigmaPct = S.sigmaConvention === "daily" ? t.s1d : (fin(sg) && tY > 0 ? sg * Math.sqrt(tY) : null);
-    if (!posNum(sigmaPct)) continue;
-    for (const r of ix.byExp.get(exp)) {
-      if (r.s !== (side === "call" ? "C" : "P")) continue;
-      if (side === "call" ? !(r.k > spot) : !(r.k < spot)) continue;
-      const sd = (Math.abs(r.k / spot - 1) * 100) / sigmaPct;
-      if (sd < P.sigmaMin || sd > P.sigmaMax) continue;
-      pre.push({ r, sd });
-    }
-  }
-  const byDelta = P.strikeMode === "delta";
-  const mid = (P.sigmaMin + P.sigmaMax) / 2;
-  pre.sort((a, b) => (byDelta ? a.sd - b.sd || a.r.e - b.r.e : Math.abs(a.sd - mid) - Math.abs(b.sd - mid) || a.r.e - b.r.e));
-  const cands = [];
-  for (const { r } of pre.slice(0, Math.max(1, S.nCandidatesMax))) {
-    const row = instrRow(r, spot, side);
-    if (row) cands.push(row);
-  }
-  let best = null;
-  for (const c of cands) if (!best || c.passed > best.passed) best = c;
-  if (best) { for (const k of ["У9","У10","У11","У12","У13","У14"]) { st[k] = best.st[k]; val[k] = best.values[k]; } }
-  else for (const k of ["У9","У10","У11","У12","У13","У14"]) { st[k] = "unknown"; val[k] = null; }
-
-  // ── агрегат (AND: все применимые gate-условия обязаны pass)
-  const gateKeys = IDX.filter((k) => st[k] !== "off" && (M[k] ?? "gate") === "gate");
-  const passed = gateKeys.filter((k) => st[k] === "pass").length;
-  const unknown = gateKeys.filter((k) => st[k] === "unknown").length;
-  let verdict = passed === gateKeys.length && gateKeys.length > 0;
-  // ЖИВОЙ ГЕЙТ РАЗМЕРА (scan-engine.js:386): вердикт signal гасится в none, если минимальный лот
-  // не помещается в риск-бюджет. Без него офлайн молчит там, где движок честно отказывает: на
-  // дальних сроках премия контракта перерастает equity*risk/100 и сигнал не рождается вовсе.
-  const sizing = best ? computeSizing({ markUsd: best.r.m, lot: LOT, equityUsd: S.equityUsd,
-    riskPerTradePct: S.riskPerTradePct, qtyMax: S.qtyMax, entryDepthUsd: null, maxQtyDepthPct: P.maxQtyDepthPct }) : null;
-  const sizeFail = sizing && !sizing.ok ? sizing.blockReason : null; // не помещается независимо от вердикта
-  const sizeBlock = verdict && (!sizing || !sizing.ok) ? (sizing?.blockReason ?? "нет данных для размера") : null;
-  if (sizeBlock) verdict = false;
-  // Цена набора в вызовах по ЖИВОЙ формуле из лога обкатки (`GET = инстр + книг + 2`), а не по
-  // выдуманной: инструменты набора это ATM-пары near и far, два крыла и кандидаты; книг не более
-  // booksPerTickMax; плюс тикер перпа и его стакан.
-  const nInst = new Set([nearExp, farExp].filter((x) => x != null)).size * 2 + 2 + cands.length;
-  const setSize = nInst + Math.min(2, cands.length) + 2;
-  return { ts: t.ts, st, val, gateKeys, passed, applicable: gateKeys.length, unknown, verdict, sizeBlock, sizeFail,
-    best, nCand: cands.length, nearExp, farExp, ivRef, farIv, spot, side, setSize, nInst, weekend, s1d: t.s1d,
-    // Честность IV_ref: условия У1/У2/У3/У6 считаются по ATM-IV ПЕРВОЙ экспирации окна, а покупаем
-    // мы лучшего кандидата. Совпадают эти экспирации не всегда, и расхождение никем не проверяется.
-    ivRefHonest: best ? best.r.e === nearExp : null };
+  return evaluateReplayTick({ tick: t, index: indexOf(si), preset: P, settings: S, depthMode: DEPTH_MODE });
 }
 
 // ── прогон по всем тикам с механикой жизненного цикла
@@ -307,23 +134,7 @@ const evals = [];
 for (const t of ticks) { const e = evaluate(t); if (e) evals.push(e); }
 if (!evals.length) { console.error("нечего оценивать"); process.exit(1); }
 
-const signals = [];
-{
-  let dwell = 0, dwellKey = null;
-  const cooldownUntil = new Map();
-  for (const e of evals) {
-    const key = e.best ? `${e.best.r.n}|${e.side}` : null;
-    if (!e.verdict || !key) { dwell = 0; dwellKey = null; continue; }
-    if (key !== dwellKey) { dwellKey = key; dwell = 0; }
-    dwell += 1;
-    if (dwell < S.dwellTicks) continue;
-    const until = cooldownUntil.get(key) ?? 0;
-    if (e.ts < until) continue;
-    signals.push(e);
-    cooldownUntil.set(key, e.ts + S.cooldownSec * 1000);
-    dwell = 0; dwellKey = null;
-  }
-}
+const signals = replaySignals(evals, S);
 
 // ── отчёт
 const q = (a, p) => { const s = a.filter(fin).sort((x, y) => x - y); if (!s.length) return null;
@@ -400,7 +211,7 @@ console.log(`| тета, %/сут | ${f(q(evals.map((e) => e.best?.thetaPctDay),
 console.log(`| круг издержек, % премии | ${f(q(evals.map((e) => e.best?.rtcPct), .5), 2)} | ${f(q(evals.map((e) => e.best?.rtcPct), .9), 2)} | ${f(Math.max(...evals.map((e) => e.best?.rtcPct ?? -Infinity)), 2)} |`);
 console.log(`| minCapital, $ | ${f(q(mc, .5), 0)} | ${f(q(mc, .9), 0)} | ${f(Math.max(...mc), 0)} |`);
 console.log(`\n**Доля тактов, где minCapital выше депозита $${S.equityUsd}: ${f((100 * over) / (mc.length || 1), 1)}%.**` +
-  (over / (mc.length || 1) > 0.5 ? ` Такой пресет не помещается в суб-счёт: минимальный лот ${LOT} BTC несёт риск выше ${S.riskPerTradePct}% депозита.` : ``));
+  (over / (mc.length || 1) > 0.5 ? ` Такой пресет не помещается в суб-счёт: минимальный лот ${REPLAY_LOT} BTC несёт риск выше ${S.riskPerTradePct}% депозита.` : ``));
 
 // ── сделки
 if (WANT_TRADES && signals.length) {
@@ -416,7 +227,7 @@ if (WANT_TRADES && signals.length) {
     if (!r0 || !fin(r0.m)) continue;
     const entryPx = buyPx(r0), entryMark = r0.m;
     if (!posNum(entryPx)) continue;
-    const paid = entryPx * LOT + feeOf(r0.m, s.spot) * LOT;
+    const paid = entryPx * REPLAY_LOT + feeOf(r0.m, s.spot) * REPLAY_LOT;
     let out = null;
     for (let j = i0 + 1; j < times.length; j++) {
       const r = snaps.get(times[j])?.get(name);
@@ -432,13 +243,13 @@ if (WANT_TRADES && signals.length) {
       else if (heldH >= X.timeStopH && (!fin(moveSigma) || moveSigma < X.minMoveSigma)) why = "тайм-стоп";
       else if (fin(r.h) && r.h <= X.preExpiryCloseH) why = "преэкспирация";
       else if (j === times.length - 1) why = "конец записи";
-      if (why) { const pnl = px * LOT - feeOf(r.m, r.f) * LOT - paid;
+      if (why) { const pnl = px * REPLAY_LOT - feeOf(r.m, r.f) * REPLAY_LOT - paid;
         out = { ts: s.ts, name, why, heldH, paid, pnl, retPct: (pnl / paid) * 100,
           days: (s.best.r.e - s.ts) / 86400000, delta: Math.abs(s.best.r.d ?? NaN) }; break; }
     }
     if (out) trades.push(out);
   }
-  console.log(`\n## Сделки (исполнение ${EXEC === "mid" ? "по середине" : "тейкерское"}, размер ${LOT} BTC)\n`);
+  console.log(`\n## Сделки (исполнение ${EXEC === "mid" ? "по середине" : "тейкерское"}, размер ${REPLAY_LOT} BTC)\n`);
   if (!trades.length) console.log(`Сигналы есть, но ни одна сделка не закрылась внутри записи.`);
   else {
     const sum = trades.reduce((a, t) => a + t.pnl, 0), paid = trades.reduce((a, t) => a + t.paid, 0);
