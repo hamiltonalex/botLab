@@ -17,6 +17,7 @@
     "eval:buy": "node scripts/eval-buy.mjs",
     "eval:toll": "node scripts/eval-toll.mjs",
     "eval:preset": "node --max-old-space-size=6000 scripts/eval-preset.mjs",
+    "hist:download": "node scripts/hist-download.mjs",
     "e2e:ui": "node scripts/e2e-ui.mjs",
     "verify:loris": "node scripts/verify-loris.mjs",
     "start": "electron .",
