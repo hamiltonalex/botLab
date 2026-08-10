@@ -23,6 +23,8 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { OPTION_FEE_RATE, OPTION_FEE_CAP_PCT_PREMIUM } from "../src/engine/otmscan/presets.js";
+// Оценка эффективного размера выборки живёт в одном месте на все офлайн-скрипты.
+import { acf, nEff as nEffShared } from "../src/engine/otmscan/stats.js";
 
 const fin = (x) => Number.isFinite(x);
 const args = process.argv.slice(2);
@@ -141,15 +143,7 @@ function series(H) {
   }
   return out;
 }
-const acf = (xs, lag) => {
-  const n = xs.length - lag;
-  if (n < 10) return null;
-  const a = xs.slice(0, n), b = xs.slice(lag);
-  const ma = a.reduce((s, x) => s + x, 0) / n, mb = b.reduce((s, x) => s + x, 0) / n;
-  let sab = 0, saa = 0, sbb = 0;
-  for (let i = 0; i < n; i++) { const u = a[i] - ma, v = b[i] - mb; sab += u * v; saa += u * u; sbb += v * v; }
-  return saa > 0 && sbb > 0 ? sab / Math.sqrt(saa * sbb) : null;
-};
+
 const stepMin = (times[1] - times[0]) / 60000 || 5;
 
 console.log(`\n## 3 · Сколько независимых наблюдений содержит запись\n`);
@@ -163,9 +157,7 @@ for (const H of [8, 12, 24]) {
   const xs = series(H);
   if (xs.length < 50) continue;
   const at = (h) => { const c = acf(xs, Math.round((h * 60) / stepMin)); return c == null ? "н/д" : f(c, 2); };
-  let sum = 0;
-  for (let k = 1; k < xs.length; k++) { const c = acf(xs, k); if (c == null || c <= 0) break; sum += (1 - k / xs.length) * c; }
-  const nEff = xs.length / (1 + 2 * sum);
+  const nEff = nEffShared(xs);
   effs.push({ H, nEff });
   console.log(`| ${H} ч | ${xs.length} | ${at(0.5)} | ${at(2)} | ${at(6)} | ${at(12)} | **${f(nEff, 1)}** | ${f(spanH / nEff, 1)} ч |`);
 }

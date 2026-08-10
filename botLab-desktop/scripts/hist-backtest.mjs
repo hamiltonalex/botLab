@@ -37,6 +37,7 @@ import {
   REPLAY_SETTINGS_DEFAULT, REPLAY_LOT,
 } from "../src/engine/otmscan/replay.js";
 import { optionFeePct, computeTradeCosts } from "../src/engine/otmscan/economics.js";
+import { mean, sd, nEff, ci95 } from "../src/engine/otmscan/stats.js";
 
 const fin = (x) => Number.isFinite(x);
 const args = process.argv.slice(2);
@@ -106,28 +107,8 @@ function load(dir) {
 const q = (a, p) => { const s = a.filter(fin).sort((x, y) => x - y); if (!s.length) return null;
   const i = (s.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
   return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (i - lo); };
-const mean = (a) => { const s = a.filter(fin); return s.length ? s.reduce((x, y) => x + y, 0) / s.length : null; };
-const sd = (a) => { const s = a.filter(fin); if (s.length < 2) return null; const m = mean(s);
-  return Math.sqrt(s.reduce((x, y) => x + (y - m) ** 2, 0) / (s.length - 1)); };
 const f = (x, d = 2) => (fin(x) ? x.toFixed(d) : "н/д");
 
-// Автокорреляция и n_eff - тот же метод, что в eval:toll, чтобы числа были сравнимы.
-const acf = (xs, lag) => {
-  const n = xs.length - lag;
-  if (n < 10) return null;
-  const a = xs.slice(0, n), b = xs.slice(lag);
-  const ma = mean(a), mb = mean(b);
-  let sab = 0, saa = 0, sbb = 0;
-  for (let i = 0; i < n; i++) { const u = a[i] - ma, v = b[i] - mb; sab += u * v; saa += u * u; sbb += v * v; }
-  return saa > 0 && sbb > 0 ? sab / Math.sqrt(saa * sbb) : null;
-};
-function nEff(xs) {
-  if (xs.length < 12) return xs.length || null;
-  let sum = 0;
-  for (let k = 1; k < xs.length; k++) { const c = acf(xs, k); if (c == null || c <= 0) break; sum += (1 - k / xs.length) * c; }
-  const v = xs.length / (1 + 2 * sum);
-  return fin(v) && v > 0 ? Math.min(v, xs.length) : null;
-}
 
 // ── один прогон: восстановление, эпизоды, доходности по горизонтам
 function runOne(dir) {
