@@ -166,6 +166,24 @@ function runOne(dir) {
     if (!sigByKey.has(k)) sigByKey.set(k, []);
     sigByKey.get(k).push(s);
   }
+  // Реализованная годовая волатильность индекса между двумя метками, по часовым логарифмическим
+  // приращениям спота из строк тиков. Год = 365 суток — та же конвенция, что в rv.js и black76.js.
+  const spotAt = ticks.filter((t) => fin(t.S)).map((t) => ({ ts: t.ts, s: t.S }));
+  function realizedVolPctBetween(fromTs, toTs) {
+    const win = spotAt.filter((p) => p.ts >= fromTs && p.ts <= toTs);
+    if (win.length < 4) return null;
+    const rets = [];
+    for (let i = 1; i < win.length; i++) {
+      const dtH = (win[i].ts - win[i - 1].ts) / 3600000;
+      if (!(dtH > 0) || !(win[i].s > 0) || !(win[i - 1].s > 0)) continue;
+      rets.push(Math.log(win[i].s / win[i - 1].s) / Math.sqrt(dtH)); // приводим к часовому шагу
+    }
+    if (rets.length < 3) return null;
+    const m = rets.reduce((a, b) => a + b, 0) / rets.length;
+    const v = rets.reduce((a, b) => a + (b - m) ** 2, 0) / (rets.length - 1);
+    return Math.sqrt(v) * Math.sqrt(365 * 24) * 100;
+  }
+
   const feeOf = (mark, index) => optionFeePct({ markUsd: mark, indexPrice: index }).feeUsd ?? 0;
   const trades = [];
   let epNoSignal = 0;
@@ -187,7 +205,14 @@ function runOne(dir) {
       const r1 = j < times.length ? snaps.get(times[j])?.get(name) : null;
       if (!r1 || !(r1.m > 0)) { row.h[H] = null; continue; }
       const before = ((r1.m - r0.m) / r0.m) * 100;
-      row.h[H] = { before, after: before - (costs?.roundTripCostPct ?? 0), ivExit: r1.iv, heldH: (times[j] - times[i0]) / 3600000 };
+      // РЕАЛИЗОВАННАЯ ВОЛЯ ЗА САМО УДЕРЖАНИЕ против IV, которую за неё заплатили. Это центральная
+      // величина аудита 2026-08-08 («запас −0.53 пункта») и единственная, выраженная в тех же
+      // единицах, что круг издержек. Считается по индексу из строк тика, час к часу.
+      const rvHold = realizedVolPctBetween(s.ts, times[j]);
+      row.h[H] = { before, after: before - (costs?.roundTripCostPct ?? 0), ivExit: r1.iv,
+        heldH: (times[j] - times[i0]) / 3600000,
+        dIv: fin(r1.iv) && fin(r0.iv) ? r1.iv - r0.iv : null,
+        volEdge: fin(rvHold) && fin(r0.iv) ? rvHold - r0.iv : null };
     }
     trades.push(row);
   }
@@ -249,6 +274,30 @@ for (const H of HORIZONS) {
 }
 console.log(`\nПолоса считается по n_eff, а не по числу эпизодов: перекрывающиеся входы не добавляют`);
 console.log(`независимости, и деление на √n завысило бы уверенность.`);
+
+console.log(`\n## 2b · То же в единицах волатильности, где живут и издержки\n`);
+console.log(`Аудит 2026-08-08 свёл спор к одной паре чисел: круг издержек стоит **1.52 пункта воли**`);
+console.log(`на сроке 8-16 дней и **0.62** на 32-64, а фактически реализовавшийся запас за трое суток`);
+console.log(`августа был **−0.53 пункта**. Год даёт ту же величину на выборке в сотни раз большей.\n`);
+console.log(`| горизонт | n | реализованная воля − IV входа, медиана | среднее | доля > 0 | изменение IV, медиана |`);
+console.log(`|---|---|---|---|---|---|`);
+for (const H of HORIZONS) {
+  const ve = A.trades.map((t) => t.h[H]?.volEdge).filter(fin);
+  const di = A.trades.map((t) => t.h[H]?.dIv).filter(fin);
+  if (!ve.length) continue;
+  console.log(`| ${H} ч | ${ve.length} | **${f(q(ve, 0.5), 2)} п.п.** | ${f(mean(ve), 2)} п.п. | ${f((100 * ve.filter((x) => x > 0).length) / ve.length, 0)}% | ${f(q(di, 0.5), 2)} п.п. |`);
+}
+console.log(`\nЧитать так: положительная величина означает, что рынок отработал больше воли, чем за неё`);
+console.log(`заплатили. Сравнивать её надо не с нулём, а с кругом издержек.`);
+console.log(`\n**Разделы 2 и 2b мерят РАЗНОЕ, и путать их нельзя.** Раздел 2 это то, что получает`);
+console.log(`покупатель БЕЗ хеджа: там результат почти целиком движение цены, и аудит уже показал, что`);
+console.log(`дельта объясняет 81% дисперсии итога. Раздел 2b это то, что получил бы покупатель`);
+console.log(`С ДЕЛЬТА-ХЕДЖЕМ, то есть чистая ставка на волатильность. Первое около нуля, второе`);
+console.log(`уверенно отрицательно — и вместе они говорят ровно то, что сказал аудит структурно:`);
+console.log(`позиция направленная, а чеклист фильтрует волатильность.`);
+console.log(`\n> Оговорка к оценке: реализованная воля за 12 часов считается по дюжине часовых приращений,`);
+console.log(`> поэтому оценка шумная и её МЕДИАНА смещена вниз относительно среднего (распределение`);
+console.log(`> выборочного σ скошено). Опираться следует на среднее, а не на медиану.`);
 
 console.log(`\n## 3 · Что с ним делает МОДЕЛИРУЕМАЯ цена исполнения\n`);
 console.log(`Круг издержек вычитается из каждой позиции. Это ДОПУЩЕНИЕ (истории котировок нет).\n`);
