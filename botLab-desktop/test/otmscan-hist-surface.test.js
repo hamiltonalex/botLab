@@ -128,6 +128,36 @@ test("П4: по сроку интерполируется полная дисп�
   assert.equal(ivAt(surf, { expiryMs: before, strikeUsd: 64000, forwardUsd: F, nowMs: NOW, forwardOf: () => F }), null);
 });
 
+test("П7: общая форма восстанавливает наклон и кривизну по z и свой уровень у каждой экспирации", () => {
+  // Закладываем РОВНО ту модель, которую режим "pooled" и предполагает: iv = уровень(экспирация)
+  // + b·z + c·z², где z = ln(K/F)/√T. Если оценка верна, уровни и форма выходят обратно точно.
+  const B = -3, C = 12, LVL = { [EXP_A]: 30, [EXP_B]: 45 };
+  const trades = [];
+  for (const e of [EXP_A, EXP_B]) {
+    const T = tYears(NOW, e);
+    for (const k of [54000, 58000, 62000, 64000, 66000, 70000, 74000]) {
+      const z = Math.log(k / F) / Math.sqrt(T);
+      trades.push({ ts: NOW - 60000, expiryMs: e, strikeUsd: k, forwardUsd: F, ivPct: LVL[e] + B * z + C * z * z });
+    }
+  }
+  const surf = buildSurface({ trades, nowMs: NOW, opts: { shapeMode: "pooled" } });
+  assert.equal(surf.stats.shapeMode, "pooled");
+  near(surf.shape.b, B, 1e-6, "наклон общей формы");
+  near(surf.shape.c, C, 1e-6, "кривизна общей формы");
+  for (const e of [EXP_A, EXP_B]) {
+    near(surf.smiles.get(e).level, LVL[e], 1e-6, `уровень экспирации ${new Date(e).toISOString().slice(0, 10)}`);
+    // И смайл в координатах x обязан давать то же самое, что модель в координатах z.
+    const T = tYears(NOW, e);
+    const z = Math.log(66000 / F) / Math.sqrt(T);
+    near(ivAt(surf, { expiryMs: e, strikeUsd: 66000, forwardUsd: F, nowMs: NOW, forwardOf: () => F }),
+      LVL[e] + B * z + C * z * z, 1e-6, "перевод коэффициентов из z в x");
+  }
+  // Режим по умолчанию — независимая подгонка: это выбор, сделанный замером, и он не должен
+  // измениться молча вместе с правкой констант.
+  assert.equal(SURFACE_DEFAULTS.shapeMode, "perExpiry");
+  assert.equal(buildSurface({ trades, nowMs: NOW }).stats.shapeMode, "perExpiry");
+});
+
 test("parseOptionName: обе контрактные семьи, экспирация в 08:00 UTC", () => {
   const inv = parseOptionName("BTC-14AUG26-64000-P");
   assert.equal(inv.linear, false);

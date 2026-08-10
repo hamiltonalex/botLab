@@ -33,6 +33,28 @@
 //       повторяется. Одиночная сделка «мимо рынка» не должна двигать смайл.
 //   П6. Результат вне [ivFloor, ivCap] считается невычислимым и даёт null, а не обрезанное число:
 //       обрезка тихо превратила бы поломку подгонки в правдоподобную цифру.
+//   П7. СМАЙЛ ПОДГОНЯЕТСЯ НА КАЖДУЮ ЭКСПИРАЦИЮ ОТДЕЛЬНО ("perExpiry", дефолт). Альтернатива
+//       ("pooled": общая форма в стандартизованных деньгах z = ln(K/F)/√T плюс свой уровень на
+//       экспирацию) выглядела очевидно лучшей для редких данных и БЫЛА ПРОВЕРЕНА ЗАМЕРОМ ПРОТИВ
+//       ЗАПИСИ — оказалась хуже: средняя ошибка 0.83 пункта против 0.59 при одинаковом окне.
+//       Причина содержательная: кривизна смайла у BTC заметно меняется со сроком даже в z, и общая
+//       форма вносит смещение больше, чем снимает шума. Режим оставлен как ОСЬ ЧУВСТВИТЕЛЬНОСТИ
+//       (`--shape pooled`): вывод бектеста, который переворачивается при смене модели поверхности,
+//       держится на модели, а не на рынке, и это надо уметь показать.
+//
+// ПАРАМЕТРЫ ОКНА ВЫБРАНЫ ЗАМЕРОМ, А НЕ НА ГЛАЗ. Средняя ошибка IV против записи по ширине окна
+// назад: 60 мин 0.83 · 120 мин 0.66 · **240 мин 0.59** · 360 мин 0.60 · 480 мин 0.61 · 720 мин 0.63.
+// Кривая пологая с минимумом около четырёх часов, и это САМО ПО СЕБЕ результат: раз расширение окна
+// дальше не помогает, остаток ошибки — не устаревание уровня, а шум сделок (каждая проходит по биду
+// или по аску, то есть несёт полспреда в пунктах воли).
+//
+// ЛЕНТА ТОЛЬКО ОБРАТНАЯ, И ЭТО ТОЖЕ ЗАМЕР. Добавление линейной ленты к подгонке (`--tape both`)
+// роняет точность в СЕМЬ РАЗ: 4.25 пункта против 0.59. Поле `iv` линейных сделок не сходится с
+// ценой той же сделки, пересчитанной по Блэку-76 от истинного форварда (расхождение до 3.3 пункта
+// на живых примерах), тогда как у обратных сходится до 0.4. Чем бы ни объяснялась разница в
+// конвенции биржи, вывод для нас однозначен: линейная лента годится для сверок, но не для подгонки.
+
+const SHAPE_POOLED = "pooled";
 //
 // TRI-STATE. Везде, где данных нет, возвращается null — никогда 0 и никогда «последнее известное».
 // Это тот же закон, по которому движок различает fail и unknown: отсутствие данных обязано остаться
@@ -44,8 +66,9 @@ const posNum = (x) => fin(x) && x > 0;
 const YEAR_MS = 365 * 86400000;
 
 export const SURFACE_DEFAULTS = Object.freeze({
-  windowMs: 2 * 3600000, // П1: сколько истории смотрим назад
-  halfLifeMs: 30 * 60000, // П1: полураспад веса по возрасту
+  shapeMode: "perExpiry", // "perExpiry" | "pooled" — правило П7, выбор сделан замером
+  windowMs: 4 * 3600000, // П1: окно назад; минимум ошибки по замеру (см. шапку)
+  halfLifeMs: 45 * 60000, // П1: полураспад веса по возрасту
   minPoints: 4, // минимум точек на смайл
   xMarginFrac: 0.25, // П3: на сколько ширины диапазона можно выйти за наблюдённые страйки
   trimMad: 3.5, // П5
@@ -179,7 +202,9 @@ export function smileAt(smile, x, opts = {}) {
   const span = smile.xMax - smile.xMin;
   // Для одного страйка (span = 0) расширять нечего: константа действует только на нём самом,
   // а по сроку её подхватит интерполяция полной дисперсии.
-  const margin = span > 0 ? span * o.xMarginFrac : 0;
+  // У общей формы (П7) границы уже несут поле допуска, посчитанное по ВСЕМ сделкам окна, поэтому
+  // второй раз его добавлять нельзя — иначе допуск молча удвоится.
+  const margin = smile.pooled ? 0 : span > 0 ? span * o.xMarginFrac : 0;
   if (x < smile.xMin - margin || x > smile.xMax + margin) return null;
   const iv = polyAt(smile, x);
   if (!fin(iv) || iv < o.ivFloor || iv > o.ivCap) return null;
@@ -205,22 +230,92 @@ export function buildSurface({ trades, nowMs, opts = {} } = {}) {
     const x = Math.log(t.strikeUsd / t.forwardUsd);
     if (!fin(x)) continue;
     const w = 2 ** (-age / o.halfLifeMs);
-    let arr = byExp.get(t.expiryMs);
-    if (!arr) { arr = []; byExp.set(t.expiryMs, arr); }
-    arr.push({ x, iv: t.ivPct, w });
+    const T = tYears(nowMs, t.expiryMs);
+    if (!posNum(T)) continue;
+    let g = byExp.get(t.expiryMs);
+    if (!g) { g = { T, pts: [] }; byExp.set(t.expiryMs, g); }
+    g.pts.push({ x, z: x / Math.sqrt(T), iv: t.ivPct, w });
     used += 1;
   }
+
   const smiles = new Map();
   let fitted = 0;
-  for (const [e, pts] of byExp) {
-    const s = fitSmile(pts, o);
-    if (s) { smiles.set(e, s); fitted += 1; }
+  const shape = o.shapeMode === SHAPE_POOLED ? fitPooledShape(byExp, o) : null;
+
+  if (shape) {
+    // П7: общая форма в z, свой уровень у каждой экспирации. Область действия по z ОБЩАЯ (форма
+    // оценена по всему окну), а уровень требует собственных сделок — экспирация без минимума
+    // смайла не получает, и её закрывает интерполяция по сроку (П4).
+    for (const [e, g] of byExp) {
+      const wsum = g.pts.reduce((s, p) => s + p.w, 0);
+      if (g.pts.length < Math.max(1, o.minPoints) || !(wsum > 0)) continue;
+      const level = g.pts.reduce((s, p) => s + p.w * (p.iv - shape.at(p.z)), 0) / wsum;
+      if (!fin(level)) continue;
+      const sq = Math.sqrt(g.T);
+      // Квадрат по z при фиксированном T это квадрат по x, потому что z = x/√T. Переводим
+      // коэффициенты, чтобы smileAt и ivAt остались единственными потребителями формата.
+      const coef = [level, shape.b / sq, shape.c / (sq * sq)];
+      const sse = g.pts.reduce((s, p) => s + p.w * (p.iv - (level + shape.at(p.z))) ** 2, 0);
+      smiles.set(e, {
+        coef, x0: 0, xScale: 1, deg: 2,
+        n: g.pts.length,
+        nDistinct: new Set(g.pts.map((p) => p.x.toFixed(8))).size,
+        xMin: shape.zMin * sq, xMax: shape.zMax * sq,
+        rmse: Math.sqrt(sse / wsum), trimmed: 0, pooled: true, level,
+      });
+      fitted += 1;
+    }
+  } else {
+    for (const [e, g] of byExp) {
+      const s = fitSmile(g.pts, o);
+      if (s) { smiles.set(e, s); fitted += 1; }
+    }
   }
+
   return {
     atMs: nowMs,
     smiles,
-    stats: { tradesInWindow: seen, pointsUsed: used, expiriesSeen: byExp.size, expiriesFitted: fitted },
+    shape,
+    stats: {
+      tradesInWindow: seen, pointsUsed: used, expiriesSeen: byExp.size, expiriesFitted: fitted,
+      shapeMode: shape ? SHAPE_POOLED : "perExpiry",
+    },
   };
+}
+
+// Общая форма смайла в стандартизованных деньгах z = ln(K/F)/√T (правило П7).
+// Оценка двухшаговая, а не одной большой системой: сначала из каждой экспирации вычитается её
+// взвешенное среднее (уровень уходит вместе с ним), затем остаток регрессируется на z и z².
+// Так уровни в оценке формы не участвуют вовсе, и добавление экспирации не меняет размерность
+// задачи — важно, потому что число экспираций в окне гуляет от 4 до 14.
+// Возвращает { b, c, zMin, zMax, at(z), n } либо null, если формы не из чего собрать.
+export function fitPooledShape(byExp, opts = {}) {
+  const o = { ...SURFACE_DEFAULTS, ...opts };
+  const rows = [];
+  const zs = [];
+  for (const g of byExp.values()) {
+    const wsum = g.pts.reduce((s, p) => s + p.w, 0);
+    for (const p of g.pts) zs.push(p.z);
+    if (!(wsum > 0) || g.pts.length < 2) continue;
+    // Центрируем ВНУТРИ экспирации и отклик, и оба регрессора: иначе уровень протечёт в наклон.
+    const mIv = g.pts.reduce((s, p) => s + p.w * p.iv, 0) / wsum;
+    const mZ = g.pts.reduce((s, p) => s + p.w * p.z, 0) / wsum;
+    const mZ2 = g.pts.reduce((s, p) => s + p.w * p.z * p.z, 0) / wsum;
+    for (const p of g.pts) rows.push({ y: p.iv - mIv, z: p.z - mZ, z2: p.z * p.z - mZ2, w: p.w });
+  }
+  if (rows.length < Math.max(3, o.minPoints) || !zs.length) return null;
+  let a11 = 0, a12 = 0, a22 = 0, b1 = 0, b2 = 0;
+  for (const r of rows) {
+    a11 += r.w * r.z * r.z; a12 += r.w * r.z * r.z2; a22 += r.w * r.z2 * r.z2;
+    b1 += r.w * r.z * r.y; b2 += r.w * r.z2 * r.y;
+  }
+  const sol = solve([[a11, a12], [a12, a22]], [b1, b2]);
+  if (!sol || sol.some((v) => !fin(v))) return null;
+  const [b, c] = sol;
+  const zMin = Math.min(...zs), zMax = Math.max(...zs);
+  const span = zMax - zMin;
+  const m = span > 0 ? span * o.xMarginFrac : 0;
+  return { b, c, zMin: zMin - m, zMax: zMax + m, n: rows.length, at: (z) => b * z + c * z * z };
 }
 
 // ivAt(surface, { expiryMs, strikeUsd, forwardUsd, nowMs, forwardOf, opts }) → ivPct | null

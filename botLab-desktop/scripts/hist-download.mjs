@@ -234,24 +234,57 @@ async function fetchTrades() {
 }
 
 // ── 3. свечи: перп на всё окно + каждый фьючерс на его жизнь
-// Часовые бары, потолок ответа биржи ~5000 баров, поэтому режем на куски по 120 суток.
+// Часовые бары; проверено, что ответ не режется до 5000 (запрос на 120 суток вернул 2881 бар).
+//
+// ГРАБЛИ РЕЗЮМИРУЕМОСТИ, найденные первым же реальным прогоном и стоившие молчаливой поломки RV.
+// Пропуск «файл уже есть» верен для суток ленты (сутки либо скачаны целиком, либо нет), но НЕВЕРЕН
+// для свечей: у ряда есть ОКНО, и файл, скачанный на пять суток пробного прогона, годовой прогон
+// считал готовым. Перп остался со 121 баром, computeRvBundle честно вернул null по RV7d на КАЖДОМ
+// такте, и восстановленная запись вышла бы без единого значения У1/У2/У3 — молча, потому что
+// tri-state в этом месте работает как задумано и никакой ошибки не возникает.
+// Лечение: файл несёт своё покрытие, и недостающие края дозабираются, а не игнорируются.
 async function fetchCandleSeries(rel, instrument, fromMs, toMs) {
-  if (isDone(rel)) return { skipped: true };
-  const chunk = 120 * DAY_MS;
   const byTs = new Map();
-  for (let s = fromMs; s < toMs; s += chunk) {
-    const e = Math.min(toMs, s + chunk);
-    const r = await rpc(HISTORY, `public/get_tradingview_chart_data?instrument_name=${instrument}` +
-      `&start_timestamp=${s}&end_timestamp=${e}&resolution=60`);
-    if (r?.status === "no_data" || !r?.ticks?.length) continue;
-    for (let i = 0; i < r.ticks.length; i++) {
-      byTs.set(r.ticks[i], { ts: r.ticks[i], open: r.open[i], high: r.high[i], low: r.low[i], close: r.close[i], volume: r.volume?.[i] ?? null });
+  let haveFrom = null, haveTo = null;
+  if (!FORCE && existsSync(donePath(rel))) {
+    try {
+      const prev = JSON.parse(readFileSync(donePath(rel), "utf8"));
+      if (Array.isArray(prev.bars) && fin(prev.fromMs) && fin(prev.toMs)) {
+        for (const b of prev.bars) byTs.set(b.ts, b);
+        haveFrom = prev.fromMs; haveTo = prev.toMs;
+        if (haveFrom <= fromMs && haveTo >= toMs) return { skipped: true, bars: prev.bars.length };
+      }
+    } catch { /* битый файл — перекачиваем целиком */ }
+  }
+  // Дозабираем только недостающие края, а не весь ряд заново.
+  const gaps = [];
+  if (haveFrom == null) gaps.push([fromMs, toMs]);
+  else {
+    if (fromMs < haveFrom) gaps.push([fromMs, haveFrom]);
+    if (toMs > haveTo) gaps.push([haveTo, toMs]);
+  }
+  const chunk = 120 * DAY_MS;
+  for (const [gFrom, gTo] of gaps) {
+    for (let s = gFrom; s < gTo; s += chunk) {
+      const e = Math.min(gTo, s + chunk);
+      const r = await rpc(HISTORY, `public/get_tradingview_chart_data?instrument_name=${instrument}` +
+        `&start_timestamp=${s}&end_timestamp=${e}&resolution=60`);
+      if (r?.status === "no_data" || !r?.ticks?.length) continue;
+      for (let i = 0; i < r.ticks.length; i++) {
+        byTs.set(r.ticks[i], { ts: r.ticks[i], open: r.open[i], high: r.high[i], low: r.low[i], close: r.close[i], volume: r.volume?.[i] ?? null });
+      }
     }
   }
-  const rows = [...byTs.values()].sort((a, b) => a.ts - b.ts);
-  bytes += writeJson(rel, rows);
-  return { bars: rows.length };
+  const bars = [...byTs.values()].sort((a, b) => a.ts - b.ts);
+  bytes += writeJson(rel, {
+    instrument,
+    fromMs: haveFrom == null ? fromMs : Math.min(haveFrom, fromMs),
+    toMs: haveTo == null ? toMs : Math.max(haveTo, toMs),
+    bars,
+  });
+  return { bars: bars.length };
 }
+const fin = (x) => Number.isFinite(x);
 
 async function fetchCandles() {
   const r = await fetchCandleSeries("candles/BTC-PERPETUAL.json", "BTC-PERPETUAL", FROM, TO);
