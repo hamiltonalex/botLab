@@ -74,7 +74,7 @@ export const SPREAD_PCT_PREMIUM = Object.freeze([
 ]);
 
 export const COST_MODEL_PROVENANCE = Object.freeze({
-  source: "запись прогона 5, research/otm-scanner/run5-2026-08-07/records.tar.gz",
+  source: "запись прогона 5 (внутренний архив обкатки 2026-08-04..07, вне репозитория)",
   windowUtc: "2026-08-04T16:48Z .. 2026-08-07T17:37Z",
   snapshots: 809,
   instruments: 428,

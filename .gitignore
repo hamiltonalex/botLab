@@ -8,3 +8,7 @@ dist/
 .DS_Store
 
 # runtime data caches are written to the OS userData dir, never the repo
+
+# внутренние материалы исследований: письма заказчику, промпты, отчёты.
+# Живут вне репозитория в ~/.claude/botLab/research/ и в публичный git не попадают.
+research/

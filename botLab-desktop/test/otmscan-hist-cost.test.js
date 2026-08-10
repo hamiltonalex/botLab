@@ -99,7 +99,12 @@ test("таблицы заморожены и монотонны по сроку 
 
 test("происхождение подписано как допущение", () => {
   assert.equal(COST_MODEL_PROVENANCE.isAssumption, true);
-  assert.match(COST_MODEL_PROVENANCE.source, /run5/);
+  // Проверяем СМЫСЛ подписи, а не конкретный путь: сама запись лежит вне репозитория, и привязка
+  // теста к её местоположению уже однажды сломала сборку при переносе внутренних материалов.
+  assert.match(COST_MODEL_PROVENANCE.source, /прогона 5/);
+  assert.ok(COST_MODEL_PROVENANCE.windowUtc.includes("2026-08-04"), "названо окно замера");
+  assert.ok(COST_MODEL_PROVENANCE.snapshots > 0 && COST_MODEL_PROVENANCE.instruments > 0);
+  assert.ok(COST_MODEL_PROVENANCE.caveat.length > 0, "оговорка о режиме рынка не пустая");
 });
 
 test("tri-state: мусор даёт null", () => {
