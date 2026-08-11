@@ -34,7 +34,7 @@ import { join } from "node:path";
 import { SCAN_PRESETS } from "../src/engine/otmscan/presets.js";
 import {
   indexSnapshot, evaluateReplayTick, replaySignals, toEpisodes,
-  REPLAY_SETTINGS_DEFAULT, REPLAY_LOT,
+  REPLAY_SETTINGS_DEFAULT, REPLAY_LOT, REPLAY_CONDITION_KEYS,
 } from "../src/engine/otmscan/replay.js";
 import { optionFeePct, computeTradeCosts } from "../src/engine/otmscan/economics.js";
 import { mean, sd, nEff, ci95 } from "../src/engine/otmscan/stats.js";
@@ -54,7 +54,9 @@ if (!argOf("--dir") && !argOf("--compare")) {
   --episode-gap-min   разрыв, склеивающий такты в эпизод (по умолчанию 90; шаг записи 60)
   --depth assume|skip У12 без стакана (по умолчанию assume)
   --compare a=dir,... сравнить несколько восстановлений (чувствительность к модели издержек)
-  --by-month          добавить помесячную разбивку`);
+  --by-month          добавить помесячную разбивку
+  --trades            печатать позиции по одной строке (вход, выход, P&L, значения условий)
+  --trades-h <ч>      горизонт для таблицы позиций (по умолчанию первый из --horizons)`);
   process.exit(1);
 }
 
@@ -79,6 +81,8 @@ const S = { ...REPLAY_SETTINGS_DEFAULT, equityUsd: 500, ...parseKV(argOf("--sett
 const HORIZONS = (argOf("--horizons", "12,24,48")).split(",").map(Number).filter(fin);
 const GAP_MS = Number(argOf("--episode-gap-min", "90")) * 60000;
 const DEPTH = argOf("--depth", "assume");
+const WANT_TRADES = has("--trades");
+const TRADES_H = Number(argOf("--trades-h", String(HORIZONS[0])));
 
 // ── загрузка восстановления
 function load(dir) {
@@ -178,7 +182,11 @@ function runOne(dir) {
     const costs = computeTradeCosts({ markUsd: r0.m, bidUsd: r0.b, askUsd: r0.a, indexPrice: s.spot, execModel: P.execModel });
     const row = { ts: s.ts, name, epLen: ep.n, days: (r0.e - s.ts) / 86400000,
       delta: Math.abs(r0.d ?? NaN), ivEntry: r0.iv, markEntry: r0.m,
-      rtcPct: costs?.roundTripCostPct ?? null, h: {} };
+      rtcPct: costs?.roundTripCostPct ?? null, h: {},
+      // Значения и состояния условий В МОМЕНТ ВХОДА: без них строка позиции не отвечает на вопрос
+      // «при каких показаниях мы вошли», а именно он и задаётся при разборе каждой сделки.
+      side: s.side, spot: s.spot, st: s.st, val: s.val, gateKeys: s.gateKeys,
+      epStartTs: ep.startTs, epEndTs: ep.endTs };
     for (const H of HORIZONS) {
       const tgt = s.ts + H * 3600000;
       let j = i0 + 1;
@@ -191,7 +199,7 @@ function runOne(dir) {
       // единицах, что круг издержек. Считается по индексу из строк тика, час к часу.
       const rvHold = realizedVolPctBetween(s.ts, times[j]);
       row.h[H] = { before, after: before - (costs?.roundTripCostPct ?? 0), ivExit: r1.iv,
-        heldH: (times[j] - times[i0]) / 3600000,
+        heldH: (times[j] - times[i0]) / 3600000, exitTs: times[j], markExit: r1.m,
         dIv: fin(r1.iv) && fin(r0.iv) ? r1.iv - r0.iv : null,
         volEdge: fin(rvHold) && fin(r0.iv) ? rvHold - r0.iv : null };
     }
@@ -289,6 +297,60 @@ for (const H of HORIZONS) {
   const aft = A.trades.map((t) => t.h[H]?.after).filter(fin);
   if (!aft.length) continue;
   console.log(`| ${H} ч | ${f(mean(bef), 2)}% | ${f(q(A.trades.map((t) => t.rtcPct), 0.5), 2)}% | **${f(mean(aft), 2)}%** | ${f((100 * aft.filter((x) => x > 0).length) / aft.length, 0)}% |`);
+}
+
+// ── позиции по одной строке. Ничего не считает заново: печатает поля, уже посчитанные выше, иначе
+// это была бы вторая копия правила проигрыша (класс дефекта, названный в шапке replay.js).
+if (WANT_TRADES) {
+  const H = fin(TRADES_H) ? TRADES_H : HORIZONS[0];
+  const rows = A.trades.filter((t) => t.h[H]);
+  const dropped = A.trades.length - rows.length;
+  const stamp = (ms) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+  console.log(`\n## 3b · Позиции по одной строке (горизонт ${H} ч)\n`);
+  console.log(`Одна строка = один эпизод = одна позиция. Выход здесь один и тот же для всех - `
+    + `фиксированный горизонт ${H} ч, ближайший снимок не раньше него; правила выхода самого пресета `
+    + `(тейк, стоп, падение воли) в этом расчёте НЕ применяются.`);
+  if (dropped) console.log(`Позиций без выхода внутри записи (горизонт за её краем): ${dropped} из ${A.trades.length}.`);
+  console.log();
+  console.log(`| № | вход UTC | инструмент | сторона | до эксп., д | дельта | IV входа | премия $ | выход UTC | держали, ч | марк выхода $ | до издержек, % | круг, % | после издержек, % | P&L $ | на суб-счёт $${S.equityUsd}, % |`);
+  console.log(`|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|`);
+  rows.forEach((t, i) => {
+    const h = t.h[H];
+    const premUsd = t.markEntry * REPLAY_LOT;
+    const pnlUsd = premUsd * (h.after / 100);
+    console.log(`| ${i + 1} | ${stamp(t.ts)} | ${t.name.replace("BTC_USDC-", "")} | ${t.side} | ${f(t.days, 1)} | `
+      + `${f(t.delta, 2)} | ${f(t.ivEntry, 1)} | ${f(premUsd, 2)} | ${stamp(h.exitTs)} | ${f(h.heldH, 1)} | `
+      + `${f(h.markExit * REPLAY_LOT, 2)} | ${f(h.before, 2)} | ${f(t.rtcPct, 2)} | **${f(h.after, 2)}** | `
+      + `${f(pnlUsd, 2)} | ${f((pnlUsd / S.equityUsd) * 100, 3)} |`);
+  });
+  if (rows.length) {
+    const aft = rows.map((t) => t.h[H].after);
+    const bef = rows.map((t) => t.h[H].before);
+    const ne = nEff(aft);
+    console.log(`\n| итог по ${rows.length} позициям | до издержек | после издержек |`);
+    console.log(`|---|---|---|`);
+    console.log(`| **среднее** | **${f(mean(bef), 2)}%** | **${f(mean(aft), 2)}%** |`);
+    console.log(`| медиана | ${f(q(bef, 0.5), 2)}% | ${f(q(aft, 0.5), 2)}% |`);
+    console.log(`| доля прибыльных | ${f((100 * bef.filter((x) => x > 0).length) / bef.length, 0)}% | ${f((100 * aft.filter((x) => x > 0).length) / aft.length, 0)}% |`);
+    console.log(`| худшая | ${f(Math.min(...bef), 2)}% | ${f(Math.min(...aft), 2)}% |`);
+    console.log(`| лучшая | ${f(Math.max(...bef), 2)}% | ${f(Math.max(...aft), 2)}% |`);
+    console.log(`| **n_eff** | ${f(ne, 1)} | ${f(ne, 1)} |`);
+    console.log(`\n**Среднее и медиана расходятся по построению, и платит среднее.** Тесный правый край`);
+    console.log(`с длинным левым хвостом даёт высокую долю прибыльных при отрицательном среднем: замер`);
+    console.log(`аудита 2026-08-08 давал медиану +7.9% и 56% прибыльных при среднем −5.7%.`);
+  }
+
+  console.log(`\n### Значения условий в момент входа\n`);
+  console.log(`Гейты помечены звёздочкой: все они по построению \`pass\`, иначе позиции бы не было.`);
+  console.log(`Остальные строки чеклиста идут в режиме info и вход не блокируют - их значения здесь`);
+  console.log(`ровно для того, чтобы было видно, ПРИ КАКОМ рынке сработал вход.\n`);
+  const head = REPLAY_CONDITION_KEYS.map((k) => (A.trades[0]?.gateKeys?.includes(k) ? `${k}*` : k));
+  console.log(`| № | вход UTC | ${head.join(" | ")} |`);
+  console.log(`|---|---|${REPLAY_CONDITION_KEYS.map(() => "---").join("|")}|`);
+  rows.forEach((t, i) => {
+    const cells = REPLAY_CONDITION_KEYS.map((k) => (fin(t.val?.[k]) ? f(t.val[k], 2) : (t.st?.[k] ?? "н/д")));
+    console.log(`| ${i + 1} | ${stamp(t.ts)} | ${cells.join(" | ")} |`);
+  });
 }
 
 if (results.length > 1) {
