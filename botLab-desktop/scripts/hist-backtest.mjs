@@ -66,7 +66,9 @@ if (!argOf("--dir") && !argOf("--compare")) {
   --exit k=v[,...]    переопределить поля выхода: takeProfitPct, stopLossPctPrem, timeStopH,
                       ivDropExitPts, minMoveSigma, preExpiryCloseH
   --exit-sweep        перебрать сетку правил выхода (тейк × стоп × тайм-стоп × падение воли)
-                      ВНУТРИ одного запуска: запись грузится один раз, а не на каждую клетку`);
+                      ВНУТРИ одного запуска: запись грузится один раз, а не на каждую клетку
+  --risk-sweep        перебрать риск на сделку при выбранных выходах: последовательная симуляция
+                      счёта, вход отклоняется, если свободных денег не хватает`);
   process.exit(1);
 }
 
@@ -96,8 +98,9 @@ const TRADES_H = Number(argOf("--trades-h", String(HORIZONS[0])));
 // Скрипт писался под восстановленную историю, где котировок нет и спред моделируется. По живой
 // записи он тоже работает (hist-build отдаёт РОВНО формат живой записи), но там bid/ask настоящие,
 // и печатать про них «модельные» значит соврать ровно в том месте, где живая запись и ценна.
-const WANT_EXITS = has("--exits") || has("--exit-sweep");
+const WANT_EXITS = has("--exits") || has("--exit-sweep") || has("--risk-sweep");
 const WANT_EXIT_SWEEP = has("--exit-sweep");
+const WANT_RISK_SWEEP = has("--risk-sweep");
 const EXITS = { ...SCAN_PRESETS[PRESET_ID].exits, ...parseKV(argOf("--exit")) };
 const QUOTES = argOf("--quotes", "modelled");
 if (QUOTES !== "modelled" && QUOTES !== "measured") {
@@ -614,6 +617,54 @@ if (WANT_EXIT_SWEEP) {
   console.log(`\n> Клеток ${out.length}, поэтому на уровне 95% около ${Math.round(out.length * 0.05)} обязаны выглядеть`);
   console.log(`> удачными случайно. Сырое первое место в этой таблице не значит ничего без проверки на`);
   console.log(`> половинах года и по месяцам.`);
+}
+
+// ── ПЕРЕБОР РИСКА НА СДЕЛКУ. Здесь моделируется НАСТОЯЩЕЕ ограничение движка, и это не счётчик
+// позиций: `maxConcurrent` в движке не ограничивает ничего, он входит только в справочную метрику
+// «комфортный капитал» (economics.js). Реально движок упирается в ДЕНЬГИ - `computeSizing` режет
+// размер по риску от текущего счёта и про уже открытые позиции не знает вовсе, поэтому при
+// длинных удержаниях свободных средств просто не остаётся и вход не состоится.
+// Симуляция последовательная и честная: счёт растёт и падает на закрытых сделках, размер каждой
+// новой позиции считается от ТЕКУЩЕГО счёта, вход отклоняется, если свободных денег не хватает.
+if (WANT_RISK_SWEEP) {
+  const all = A.trades.filter((t) => t.ex).sort((a, b) => a.ts - b.ts);
+  console.log(`\n## 8 · Риск на сделку: во что упирается движок\n`);
+  console.log(`Выходы: тейк +${EXITS.takeProfitPct}% · стоп −${EXITS.stopLossPctPrem}% · падение воли ${EXITS.ivDropExitPts} п.п. · тайм-стоп ${EXITS.timeStopH} ч.`);
+  console.log(`Симуляция последовательная: счёт меняется на закрытых сделках, вход без свободных денег не состоится.\n`);
+  console.log(`| капитал | риск на сделку | входов взято | из них | среднее после изд. | полоса 95% | счёт к концу года | макс. просадка |`);
+  console.log(`|---|---|---|---|---|---|---|---|`);
+  const EQS = (argOf("--equity-grid") ?? String(S.equityUsd)).split(",").map(Number).filter(fin);
+  const RISKS = (argOf("--risk-grid") ?? "2,3,5,7,10,15,20").split(",").map(Number).filter(fin);
+  for (const EQ0 of EQS) for (const risk of RISKS) {
+    let eq = EQ0, peak = eq, maxDd = 0;
+    const open = []; // { exitTs, stake, pnl }
+    const taken = [];
+    for (const t of all) {
+      while (open.length && open[0].exitTs <= t.ts) { const o = open.shift(); eq += o.pnl;
+        peak = Math.max(peak, eq); maxDd = Math.max(maxDd, (peak - eq) / peak); }
+      const used = open.reduce((x, o) => x + o.stake, 0);
+      const free = eq - used;
+      const sz = computeSizing({ markUsd: t.markEntry, lot: REPLAY_LOT, equityUsd: eq,
+        riskPerTradePct: risk, qtyMax: S.qtyMax, entryDepthUsd: null, maxQtyDepthPct: P.maxQtyDepthPct });
+      const qty = sz.ok ? sz.qtySuggested : null;
+      if (!qty) continue;
+      const stake = t.markEntry * qty;
+      if (stake > free) continue; // денег нет: движок физически не откроет
+      open.push({ exitTs: t.ex.exitTs, stake, pnl: stake * (t.ex.after / 100) });
+      open.sort((a, b) => a.exitTs - b.exitTs);
+      taken.push(t);
+    }
+    while (open.length) { const o = open.shift(); eq += o.pnl;
+      peak = Math.max(peak, eq); maxDd = Math.max(maxDd, (peak - eq) / peak); }
+    if (!taken.length) { console.log(`| $${EQ0} | ${risk}% | 0 | ${all.length} | н/д | н/д | н/д | н/д |`); continue; }
+    const aft = taken.map((t) => t.ex.after);
+    const ne = nEff(aft);
+    console.log(`| $${EQ0} | ${risk}% | **${taken.length}** | ${all.length} | ${f(mean(aft))}% | ±${f(ci95(aft, ne))}% | `
+      + `**$${f(eq)}** (${f(((eq / EQ0) - 1) * 100, 0)}%) | ${f(maxDd * 100, 1)}% |`);
+  }
+  console.log(`\n> Счёт в предпоследнем столбце это ИТОГ последовательной симуляции, а не сумма процентов.`);
+  console.log(`> Полоса в третьем столбце относится к средней сделке, а не к итогу счёта: по одной`);
+  console.log(`> реализации пути доверительный интервал итога не считается вовсе.`);
 }
 
 console.log(`\n## Границы этого расчёта\n`);
