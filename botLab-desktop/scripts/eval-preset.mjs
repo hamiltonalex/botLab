@@ -59,12 +59,16 @@ if (!DIR) {
   --depth assume|skip    У12 без стакана: считать пройденным (по умолчанию) или unknown
   --exec taker|mid       модель исполнения сделок (по умолчанию из пресета execModel)
   --trades               вести сделки от входа до выхода и печатать их
+  --trades-max N         сколько строк сделок печатать (по умолчанию 40)
   --quiet                только сводка`);
   process.exit(1);
 }
 const RECS = existsSync(join(DIR, "scan-records")) ? join(DIR, "scan-records") : DIR;
 const DEPTH_MODE = argOf("--depth", "assume");
 const WANT_TRADES = has("--trades");
+// Отчёт по обкатке обязан показать КАЖДУЮ сделку, а не первые сорок: обрезка молча превращает
+// «все входы» в «начало выборки», и по такому хвосту нельзя ни свериться, ни возразить.
+const TRADES_MAX = Number(argOf("--trades-max", "40"));
 const QUIET = has("--quiet");
 
 // ── пресет и настройки: пресет заморожен deepFreeze, поэтому строим НОВЫЙ объект
@@ -258,10 +262,10 @@ if (WANT_TRADES && signals.length) {
     if (!QUIET) {
       console.log(`| вход | инструмент | дельта | срок | держали | выход | результат |`);
       console.log(`|---|---|---|---|---|---|---|`);
-      for (const t of trades.slice(0, 40)) {
+      for (const t of trades.slice(0, TRADES_MAX)) {
         console.log(`| ${new Date(t.ts).toISOString().slice(5, 16).replace("T", " ")} | ${t.name.replace("BTC_USDC-", "")} | ${f(t.delta, 2)} | ${f(t.days, 1)}д | ${f(t.heldH, 1)} ч | ${t.why} | ${f(t.retPct, 1)}% |`);
       }
-      if (trades.length > 40) console.log(`\n... и ещё ${trades.length - 40} строк.`);
+      if (trades.length > TRADES_MAX) console.log(`\n... и ещё ${trades.length - TRADES_MAX} строк (см. \`--trades-max\`).`);
     }
     console.log(`\n> Число сделок здесь НЕ равно числу независимых наблюдений: кулдаун и параллельные`);
     console.log(`> входы дают несколько строк на один эпизод рынка. Независимых в трёхсуточной записи`);
