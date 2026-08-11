@@ -281,25 +281,50 @@ export function evaluateReplayTick({ tick: t, index: ix, preset: P, settings: S,
     ivRefHonest: best ? best.r.e === nearExp : null };
 }
 
-// Жизненный цикл: dwell подряд идущих вердиктов по ОДНОМУ ключу (инструмент, сторона), затем
-// кулдаун на этот ключ. Ровно та механика, что в scan-engine, и ровно та, что даёт «86 сигналов
-// на 13 эпизодов»: кулдаун меняет не что найдено, а сколько строк даёт один эпизод.
+// Жизненный цикл. Повторяет редьюсер scan-engine, и это не украшательство: разбор обкатки 6
+// показал, что прежняя упрощённая версия давала 57 строк журнала там, где движок дал 40, потому
+// что расходилась в двух местах сразу.
+//   1. ФАЗА ACTIVE. Родив сигнал, движок держит его до TTL и всё это время НЕ рождает новых -
+//      ни на этом инструменте, ни на любом другом (лайфсайкл один на бота, ветка `else if`
+//      scan-engine.js:447 при активном сигнале не исполняется вовсе). Прежний проигрыш начинал
+//      копить dwell сразу после сигнала.
+//   2. КОГДА СТАРТУЕТ КУЛДАУН. Движок ставит его в `endSignal` (scan-engine.js:420), то есть от
+//      момента КОНЦА сигнала, а не его рождения. Отсюда живой шаг между сигналами
+//      ttlSec + cooldownSec + dwell = 900 + 1800 + 3 такта = 46 минут против прежних 30.
+// Плюс кулдаун в движке СБРАСЫВАЕТ dwell (scan-engine.js:451-453), а не просто откладывает выдачу:
+// после снятия кулдауна условиям надо снова выстояться dwellTicks.
+// Чего эта модель по-прежнему не знает: блэкаут-окон (движок в них замораживает dwell и не рождает
+// сигналов) и инвалидации по исчезнувшему или укатившемуся инструменту. Оба эффекта только
+// УКОРАЧИВАЮТ ACTIVE, то есть работают в ту же сторону, что и TTL.
 export function replaySignals(evals, settings) {
   const S = { ...REPLAY_SETTINGS_DEFAULT, ...settings };
   const signals = [];
-  let dwell = 0, dwellKey = null;
   const cooldownUntil = new Map();
+  let phase = "idle", dwell = 0, dwellKey = null, failCount = 0, active = null;
+  const endActive = (ts) => {
+    cooldownUntil.set(active.key, ts + S.cooldownSec * 1000);
+    active = null; phase = "idle"; failCount = 0; dwell = 0; dwellKey = null;
+  };
   for (const e of evals ?? []) {
-    const key = e?.best ? `${e.best.r.n}|${e.side}` : null;
-    if (!e?.verdict || !key) { dwell = 0; dwellKey = null; continue; }
-    if (key !== dwellKey) { dwellKey = key; dwell = 0; }
-    dwell += 1;
-    if (dwell < S.dwellTicks) continue;
-    const until = cooldownUntil.get(key) ?? 0;
-    if (e.ts < until) continue;
-    signals.push(e);
-    cooldownUntil.set(key, e.ts + S.cooldownSec * 1000);
-    dwell = 0; dwellKey = null;
+    if (!e || !fin(e.ts)) continue;
+    const ts = e.ts;
+    for (const [k, until] of cooldownUntil) if (!(until > ts)) cooldownUntil.delete(k);
+    const key = e.best?.r?.n ? `${e.best.r.n}|${e.side}` : null;
+
+    if (phase === "active" && active) {
+      if (ts >= active.ttlUntil) endActive(ts);
+      else if (!e.verdict) { failCount += 1; if (failCount >= S.failTicks) endActive(ts); }
+      else failCount = 0;
+      continue; // такт, в котором сигнал жил или закончился, нового сигнала не рождает
+    }
+    if (!e.verdict || !key || cooldownUntil.has(key)) { phase = "idle"; dwell = 0; dwellKey = null; continue; }
+    if (phase !== "forming" || dwellKey !== key) { phase = "forming"; dwellKey = key; dwell = 1; }
+    else dwell += 1;
+    if (dwell >= S.dwellTicks) {
+      signals.push(e);
+      active = { key, ts, ttlUntil: ts + S.ttlSec * 1000 };
+      phase = "active"; failCount = 0; dwell = 0; dwellKey = null;
+    }
   }
   return signals;
 }

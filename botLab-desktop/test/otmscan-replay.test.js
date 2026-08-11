@@ -203,6 +203,58 @@ test("гистерезис: unknown стирает память, а смена �
   assert.ok(instKeys.every((k) => k.endsWith(passed.best.r.n)), "и это имя ЛУЧШЕГО кандидата такта");
 });
 
+// ── Жизненный цикл: ACTIVE, TTL и кулдаун от КОНЦА сигнала (scan-engine.js:420, 429-447).
+test("после сигнала движок держит ACTIVE и не рождает новых, а кулдаун идёт от конца", () => {
+  const mk = (ts, ok, name = "A") => ({ ts, verdict: ok, side: "call", best: { r: { n: name } } });
+  const step = 30000;
+  const cfg = { dwellTicks: 3, cooldownSec: 1800, ttlSec: 900, failTicks: 2 };
+  const evals = [];
+  for (let i = 0; i < 300; i++) evals.push(mk(NOW + i * step, true));
+  const s = replaySignals(evals, cfg);
+
+  assert.ok(s.length >= 2, "на 150 минутах помещается больше одного сигнала");
+  assert.equal(s[0].ts, NOW + 2 * step, "первый сигнал на третьем такте (dwell 3)");
+  // Шаг: TTL 900с + кулдаун 1800с + ЕЩЁ ДВА такта dwell = 2760с = ровно 46.0 мин. Такт, на котором
+  // кулдаун истёк, уже считается первым тактом dwell, поэтому слагаемое (dwellTicks − 1), а не
+  // dwellTicks. Это и есть шаг, наблюдавшийся в живом журнале обкатки 6: 23:46, 00:32, 01:18.
+  assert.equal((s[1].ts - s[0].ts) / 1000, 900 + 1800 + (3 - 1) * 30, "шаг между сигналами = TTL + кулдаун + dwell");
+  assert.equal((s[1].ts - s[0].ts) / 60000, 46, "то самое живое 46-минутное расстояние между сигналами");
+
+  // ACTIVE запирает лайфсайкл целиком: другой инструмент внутри TTL сигнала не рождает.
+  const other = [];
+  for (let i = 0; i < 3; i++) other.push(mk(NOW + i * step, true, "A"));
+  for (let i = 3; i < 20; i++) other.push(mk(NOW + i * step, true, "B"));
+  assert.equal(replaySignals(other, cfg).length, 1, "пока сигнал жив, второй не рождается ни на каком инструменте");
+});
+
+test("ACTIVE обрывается по failTicks, и кулдаун считается от этого момента", () => {
+  const mk = (ts, ok) => ({ ts, verdict: ok, side: "call", best: { r: { n: "A" } } });
+  const step = 30000;
+  const cfg = { dwellTicks: 3, cooldownSec: 60, ttlSec: 900, failTicks: 2 };
+  const evals = [mk(NOW, true), mk(NOW + step, true), mk(NOW + 2 * step, true)]; // сигнал на 3-м
+  evals.push(mk(NOW + 3 * step, false), mk(NOW + 4 * step, false)); // два провала подряд обрывают
+  for (let i = 5; i < 40; i++) evals.push(mk(NOW + i * step, true));
+  const s = replaySignals(evals, cfg);
+  assert.equal(s.length, 2, "после обрыва и кулдауна рождается второй сигнал");
+  // Обрыв на такте 4 (NOW+4*step), кулдаун 60с = 2 такта, затем dwell 3 такта.
+  const endTs = NOW + 4 * step;
+  assert.ok(s[1].ts >= endTs + 60000, "второй сигнал не раньше конца кулдауна");
+  assert.ok(s[1].ts <= endTs + 60000 + 4 * step, "и сразу после того, как условия выстоялись заново");
+});
+
+test("кулдаун СБРАСЫВАЕТ dwell, а не откладывает готовый сигнал", () => {
+  const mk = (ts, ok) => ({ ts, verdict: ok, side: "call", best: { r: { n: "A" } } });
+  const step = 30000;
+  // TTL 0 - сигнал заканчивается на следующем же такте, кулдаун ровно 2 такта.
+  const cfg = { dwellTicks: 3, cooldownSec: 60, ttlSec: 0, failTicks: 2 };
+  const evals = [];
+  for (let i = 0; i < 12; i++) evals.push(mk(NOW + i * step, true));
+  const s = replaySignals(evals, cfg);
+  assert.equal(s[0].ts, NOW + 2 * step, "первый на третьем такте");
+  // Конец на такте 3, кулдаун до такта 5, потом ЗАНОВО три такта dwell: 5, 6, 7 - сигнал на 7.
+  assert.equal(s[1].ts, NOW + 7 * step, "после кулдауна условиям надо выстояться заново, а не сработать сразу");
+});
+
 test("tri-state: пустой снимок даёт unknown всей инструментной группе и блокирует вход", () => {
   const empty = indexSnapshot([]);
   const e = evaluateReplayTick({ tick: tick(), index: empty, preset: P, settings: S });
