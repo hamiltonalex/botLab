@@ -152,6 +152,40 @@ export function black76Greeks({ forwardUsd, strikeUsd, ivPct, tYears, optionType
   };
 }
 
+// Обращение Блэка-76: волатильность по премии. Нужно там, где известна ЦЕНА, а волатильности либо
+// нет, либо она посчитана биржей не от той величины, что нам нужна (см. hist-surface.tradeToPoint:
+// поле `iv` ленты относится к цене СДЕЛКИ, то есть несёт полспреда, а нам нужен марк).
+//
+// Метод - бисекция, а не Ньютон, и это не осторожность ради осторожности: вега обращается в ноль на
+// дальних крыльях и у почти истёкших опционов, ровно там, где живут наши страйки, и Ньютон там
+// разъезжается. Бисекция на [ivFloor, ivCap] сходится всегда за фиксированные 60 шагов, что для
+// полутора миллионов точек года дешевле любой адаптивной схемы.
+//
+// null возвращается честно, а не подменяется краем: премия ниже внутренней стоимости (такое бывает
+// у стоячих котировок) и премия выше достижимой при ivCap - оба случая означают, что точка не
+// годится в подгонку, и молча подставить границу значило бы завести в поверхность выдуманное число.
+export function impliedVolPct({ priceUsd, forwardUsd, strikeUsd, tYears, optionType, ivFloor = 0.5, ivCap = 400 } = {}) {
+  const isCall = optionType === "call";
+  const isPut = optionType === "put";
+  if (!isCall && !isPut) return null;
+  if (!posNum(priceUsd) || !posNum(forwardUsd) || !posNum(strikeUsd) || !posNum(tYears)) return null;
+  const intrinsic = isCall ? Math.max(0, forwardUsd - strikeUsd) : Math.max(0, strikeUsd - forwardUsd);
+  if (priceUsd <= intrinsic) return null;
+  const priceAt = (ivPct) => black76Greeks({ forwardUsd, strikeUsd, ivPct, tYears, optionType }).priceUsd;
+  const hi0 = priceAt(ivCap);
+  if (!fin(hi0) || hi0 < priceUsd) return null;
+  const lo0 = priceAt(ivFloor);
+  if (!fin(lo0) || lo0 > priceUsd) return null;
+  let lo = ivFloor, hi = ivCap;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    const p = priceAt(mid);
+    if (!fin(p)) return null;
+    if (p < priceUsd) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 // Расхождение нашего расчёта с биржевым — материал сверки. Пишется по тем инструментам, у которых
 // есть тикер с греками; абсолютная и относительная (к |биржевому|) формы, null при отсутствии пары.
 export function greekDiff(ours, theirs) {

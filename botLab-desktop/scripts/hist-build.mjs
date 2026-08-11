@@ -66,7 +66,11 @@ if (has("--help") || !argOf("--out")) {
   --spread-mode ivPoints|pctPremium  шкала переноса спреда (по умолчанию ivPoints)
   --window-min <n>   окно подгонки назад, минут (по умолчанию 120)
   --half-life-min <n>  полураспад веса, минут (по умолчанию 30)
-  --step-min <n>     шаг восстановления, минут (по умолчанию 60)`);
+  --step-min <n>     шаг восстановления, минут (по умолчанию 60)
+  --no-vega-weight   отключить вес ×вега (правило П8; по умолчанию включён)
+  --iv-source trade|adjusted|mark  волатильность точки подгонки: сырое поле iv (по
+                     умолчанию); оно же за вычетом смещения бид-аск через вегу; обращение
+                     mark_price. Оси чувствительности, замеры в шапке hist-surface.js`);
   process.exit(argOf("--out") ? 0 : 1);
 }
 
@@ -77,6 +81,11 @@ const MAX_DAYS = Number(argOf("--max-days", "90"));
 const MAX_LOGM = Number(argOf("--max-logm", "0.6"));
 const SPREAD_SCALE = Number(argOf("--spread-scale", "1"));
 const SPREAD_MODE = argOf("--spread-mode", "ivPoints");
+const IV_SOURCE = argOf("--iv-source", "trade");
+if (!["adjusted", "mark", "trade"].includes(IV_SOURCE)) {
+  console.error(`--iv-source принимает adjusted, mark или trade, получено "${IV_SOURCE}"`);
+  process.exit(1);
+}
 const STEP_MS = Number(argOf("--step-min", "60")) * 60000;
 const FIT_OPTS = {
   ...SURFACE_DEFAULTS,
@@ -85,6 +94,9 @@ const FIT_OPTS = {
   halfLifeMs: Number(argOf("--half-life-min", String(SURFACE_DEFAULTS.halfLifeMs / 60000))) * 60000,
   minPoints: Number(argOf("--min-points", String(SURFACE_DEFAULTS.minPoints))),
   xMarginFrac: Number(argOf("--x-margin", String(SURFACE_DEFAULTS.xMarginFrac))),
+  // Дефолт живёт в SURFACE_DEFAULTS (правило П8, включено замером); флаги только перекрывают,
+  // иначе `has(...)` молча вернул бы false и отменил дефолт модуля.
+  vegaWeight: has("--no-vega-weight") ? false : has("--vega-weight") ? true : SURFACE_DEFAULTS.vegaWeight,
 };
 
 const cachePath = (...p) => join(CACHE, ...p);
@@ -276,7 +288,7 @@ for (let ts = Math.ceil(FROM / STEP_MS) * STEP_MS; ts < TO; ts += STEP_MS) {
   const fwdOf = forwardFactory(ts, spot);
   const points = [];
   for (const t of win) {
-    const p = tradeToPoint(t, (expiryMs) => fwdOf(expiryMs));
+    const p = tradeToPoint(t, (expiryMs) => fwdOf(expiryMs), { ivSource: IV_SOURCE });
     if (p) points.push(p);
   }
   const surf = buildSurface({ trades: points, nowMs: ts, opts: FIT_OPTS });
@@ -345,7 +357,7 @@ if (curDay) flushDay(curDay);
 const manifest = {
   builtAt: new Date().toISOString(),
   from: dayKey(FROM), to: dayKey(TO), stepMin: STEP_MS / 60000, tape: TAPE,
-  fit: { windowMin: FIT_OPTS.windowMs / 60000, halfLifeMin: FIT_OPTS.halfLifeMs / 60000, minPoints: FIT_OPTS.minPoints, xMarginFrac: FIT_OPTS.xMarginFrac },
+  fit: { windowMin: FIT_OPTS.windowMs / 60000, halfLifeMin: FIT_OPTS.halfLifeMs / 60000, minPoints: FIT_OPTS.minPoints, xMarginFrac: FIT_OPTS.xMarginFrac, ivSource: IV_SOURCE },
   caps: { maxDays: MAX_DAYS, maxLogMoneyness: MAX_LOGM },
   syntheticQuotes: { isAssumption: true, mode: SPREAD_MODE, scale: SPREAD_SCALE, provenance: COST_MODEL_PROVENANCE },
   noDepth: "стакана в истории нет: строк D нет, У12 требует --depth assume",
