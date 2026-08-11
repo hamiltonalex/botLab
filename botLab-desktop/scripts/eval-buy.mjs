@@ -23,6 +23,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { SCAN_PRESETS } from "../src/engine/otmscan/presets.js";
 import { optionFeePct } from "../src/engine/otmscan/economics.js";
+import { evaluateExit } from "../src/engine/otmscan/exits.js";
 
 const fin = (x) => Number.isFinite(x);
 const args = process.argv.slice(2);
@@ -123,13 +124,13 @@ function runTrade(t, timeStopH = TS_EFF, tpPct = TP_EFF) {
     const movePct = fin(spot0) && fin(r.f) ? ((r.f - spot0) / spot0) * 100 : null;
     const moveSigma = fin(movePct) && fin(s1d) && s1d > 0 ? Math.abs(movePct) / s1d : null;
 
-    let why = null;
-    if (r.m >= entryMark * (1 + tpPct / 100)) why = "тейк";
-    else if (r.m <= entryMark * (1 - X.stopLossPctPrem / 100)) why = "стоп";
-    else if (fin(ivIn) && fin(r.iv) && ivIn - r.iv >= X.ivDropExitPts) why = "падение воли";
-    else if (heldH >= timeStopH && (!fin(moveSigma) || moveSigma < X.minMoveSigma)) why = "тайм-стоп";
-    else if (fin(r.h) && r.h <= X.preExpiryCloseH) why = "преэкспирация";
-    else if (j === times.length - 1) why = "конец записи";
+    // Правило выхода одно на проект и живёт в exits.js (Е1-Е7). Здесь только подстановка величин
+    // и переопределения тейка/тайм-стопа, которыми свипует этот скрипт.
+    const ev = evaluateExit({ markUsd: r.m, entryMarkUsd: entryMark, ivPct: r.iv, entryIvPct: ivIn,
+      heldH, hoursToExpiry: r.h, moveSigma,
+      exits: { ...X, takeProfitPct: tpPct, timeStopH } });
+    let why = ev.reason;
+    if (!why && j === times.length - 1) why = "конец записи";
     if (why) {
       return { ts: t.ts, name, why, heldH, paid, pnl, entryPx, exitPx: px,
         retPct: (pnl / paid) * 100, costPct: ((cost0 + cost1) / paid) * 100,
