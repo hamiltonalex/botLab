@@ -131,10 +131,13 @@ function indexOf(si) {
 }
 
 const IDX = REPLAY_CONDITION_KEYS;
+let hystMemory = null; // память гистерезиса: без протаскивания по циклу липкость выключена
 function evaluate(t) {
   const si = snapBefore(t.ts);
   if (si < 0) return null;
-  return evaluateReplayTick({ tick: t, index: indexOf(si), preset: P, settings: S, depthMode: DEPTH_MODE });
+  const e = evaluateReplayTick({ tick: t, index: indexOf(si), preset: P, settings: S, depthMode: DEPTH_MODE, hyst: hystMemory });
+  if (e) hystMemory = e.hyst;
+  return e;
 }
 
 // ── прогон по всем тикам с механикой жизненного цикла

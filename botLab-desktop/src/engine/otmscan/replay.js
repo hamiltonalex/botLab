@@ -24,6 +24,11 @@
 
 import { computeTradeCosts, computeEconomics } from "./economics.js";
 import { computeSizing } from "./scan-engine.js";
+// Гистерезис берётся у ЖИВОГО движка, а не переписывается здесь. Своя копия липкости была бы
+// седьмым экземпляром класса дефектов из шапки: разбор обкатки 6 показал, что её отсутствие
+// давало 93% расхождения проигрыша с движком (235 тиков из 252 блокировались У4 со значениями
+// внутри полосы удержания 0.384-0.393 при пороге 0.4 и hystPct 5).
+import { applyHysteresis } from "./conditions.js";
 
 const fin = (x) => Number.isFinite(x);
 const posNum = (x) => fin(x) && x > 0;
@@ -113,8 +118,42 @@ export function conditionModes(P) {
   };
 }
 
+// Порог и оператор условия для гистерезиса - ТЕ ЖЕ, что строит conditions.js. Липкость считается
+// от ВЕЛИЧИНЫ порога, поэтому без этой таблицы applyHysteresis не с чем работать.
+// Инструментные условия (У9-У14) ключуются вместе с инструментом: смена лучшего кандидата обязана
+// сбрасывать память, иначе порог одного страйка удержал бы другой.
+function hystSpec(idx, P, side, bestName) {
+  const inst = (spec) => ({ ...spec, hkey: `${idx}|${bestName ?? "?"}` });
+  switch (idx) {
+    case "У1": return { op: ">", threshold: 0, hkey: idx };
+    case "У2": {
+      const wantMargin = P.ivFilterMode === "rvMargin" || P.ivFilterMode === "both";
+      return { op: wantMargin ? ">=" : "<=", threshold: wantMargin ? P.dIvPts : P.kBaseline, hkey: idx };
+    }
+    case "У3": return { op: ">", threshold: 0, hkey: idx };
+    case "У4": return { op: ">=", threshold: P.impulseMin, hkey: idx };
+    // У5 сравнивает сторону, а не величину: op "match" липкости не имеет ни здесь, ни в движке.
+    case "У5": return { op: "match", threshold: null, hkey: idx };
+    case "У6": return { op: ">=", threshold: P.fivMinPts, hkey: idx };
+    case "У7": return { op: side === "call" ? "<=" : ">=", threshold: side === "call" ? -P.skewMinPts : P.skewMinPts, hkey: idx };
+    case "У8": return { op: ">=", threshold: P.imbalanceMin, hkey: idx };
+    case "У9": return inst(P.strikeMode === "delta"
+      ? { op: "between", threshold: P.deltaMin, thresholdHi: P.deltaMax }
+      : { op: "between", threshold: P.sigmaMin, thresholdHi: P.sigmaMax });
+    case "У10": return inst({ op: "<=", threshold: P.premMaxPct });
+    case "У11": return inst({ op: "<=", threshold: P.spreadMaxPctPrem });
+    // У12 офлайн не имеет значения (стакана в поверхности нет), поэтому липкость к нему неприменима.
+    case "У12": return inst({ op: ">=", threshold: null });
+    case "У13": return inst({ op: "<=", threshold: P.thetaMaxPctDay });
+    case "У14": return inst({ op: "<=", threshold: P.costMaxPctPrem });
+    default: return { hkey: idx };
+  }
+}
+
 // Оценка одного такта. `tick` - строка записи тиков, `index` - indexSnapshot(строки снимка).
-export function evaluateReplayTick({ tick: t, index: ix, preset: P, settings: S, depthMode = "assume" } = {}) {
+// `hyst` - память гистерезиса прошлого такта; вернётся обновлённая в поле `hyst`. Вызывающий обязан
+// протаскивать её по циклу, иначе липкость выключена и проигрыш снова разойдётся с движком.
+export function evaluateReplayTick({ tick: t, index: ix, preset: P, settings: S, depthMode = "assume", hyst = null } = {}) {
   if (!t || !ix) return null;
   const spot = t.S;
   const side = t.sd;
@@ -209,6 +248,15 @@ export function evaluateReplayTick({ tick: t, index: ix, preset: P, settings: S,
   if (best) { for (const k of ["У9","У10","У11","У12","У13","У14"]) { st[k] = best.st[k]; val[k] = best.values[k]; } }
   else for (const k of ["У9","У10","У11","У12","У13","У14"]) { st[k] = "unknown"; val[k] = null; }
 
+  // ── гистерезис. Порядок тот же, что в scan-engine: сначала выбран лучший кандидат по СЫРЫМ
+  // вердиктам, затем липкость применяется к строкам выбранного, и только потом агрегат.
+  const hystRows = REPLAY_CONDITION_KEYS.map((k) => ({
+    idx: k, state: st[k], value: val[k], thresholdHi: null,
+    ...hystSpec(k, P, side, best?.r?.n ?? null),
+  }));
+  const hystOut = applyHysteresis(hystRows, hyst, S.hystPct);
+  for (const r of hystOut.rows) st[r.idx] = r.state;
+
   // ── агрегат (AND: все применимые gate-условия обязаны pass)
   const gateKeys = REPLAY_CONDITION_KEYS.filter((k) => st[k] !== "off" && (M[k] ?? "gate") === "gate");
   const passed = gateKeys.filter((k) => st[k] === "pass").length;
@@ -226,6 +274,7 @@ export function evaluateReplayTick({ tick: t, index: ix, preset: P, settings: S,
   const nInst = new Set([nearExp, farExp].filter((x) => x != null)).size * 2 + 2 + cands.length;
   const setSize = nInst + Math.min(2, cands.length) + 2;
   return { ts: t.ts, st, val, gateKeys, passed, applicable: gateKeys.length, unknown, verdict, sizeBlock, sizeFail,
+    hyst: hystOut.memory,
     best, nCand: cands.length, nearExp, farExp, ivRef, farIv, spot, side, setSize, nInst, weekend, s1d: t.s1d,
     // Честность IV_ref: У1/У2/У3/У6 считаются по ATM-IV ПЕРВОЙ экспирации окна, а покупаем мы
     // лучшего кандидата. Совпадают эти экспирации не всегда, и расхождение никем не проверяется.

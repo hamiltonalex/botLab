@@ -146,11 +146,12 @@ function runOne(dir) {
     while (lo <= hi) { const m = (lo + hi) >> 1; if (times[m] <= ts) { res = m; lo = m + 1; } else hi = m - 1; } return res; };
 
   const evals = [];
+  let hyst = null; // память гистерезиса: без протаскивания по циклу липкость выключена
   for (const t of ticks) {
     const si = snapBefore(t.ts);
     if (si < 0) continue;
-    const e = evaluateReplayTick({ tick: t, index: indexAt(times[si]), preset: P, settings: S, depthMode: DEPTH });
-    if (e) evals.push(e);
+    const e = evaluateReplayTick({ tick: t, index: indexAt(times[si]), preset: P, settings: S, depthMode: DEPTH, hyst });
+    if (e) { hyst = e.hyst; evals.push(e); }
   }
   const signals = replaySignals(evals, S);
   // ЭПИЗОД СТРОИТСЯ ПО ТАКТАМ С ВЕРДИКТОМ, А НЕ ПО СТРОКАМ ЖУРНАЛА - так его определил аудит

@@ -163,6 +163,46 @@ test("эпизод, а не строка журнала: один вход не 
   assert.equal(toEpisodes(two).length, 2);
 });
 
+// ── Гистерезис. Отсутствие липкости в проигрыше давало 93% расхождения с живым движком на записи
+// обкатки 6 (235 тиков из 252 блокировались У4 со значениями внутри полосы удержания). Порог У4 у
+// measure-v1 равен 0.4, hystPct 5, значит полоса удержания [0.38, 0.40).
+test("гистерезис: прошедшее условие держится внутри полосы, но не создаёт pass из ничего", () => {
+  const ix = snapshot();
+  const at = (imp, hyst) => evaluateReplayTick({ tick: tick({ imp }), index: ix, preset: P, settings: S, hyst });
+
+  const first = at(0.45, null);
+  assert.equal(first.st["У4"], "pass", "0.45 против порога 0.4 проходит сам по себе");
+
+  const held = at(0.39, first.hyst);
+  assert.equal(held.st["У4"], "pass", "0.39 внутри полосы [0.38, 0.40) удерживается памятью");
+  assert.equal(held.val["У4"], 0.39, "значение при этом НЕ подменяется порогом");
+
+  const dropped = at(0.37, first.hyst);
+  assert.equal(dropped.st["У4"], "fail", "0.37 за полосой удержания - честный fail");
+
+  // Липкость только в сторону удержания: без памяти то же 0.39 не проходит.
+  assert.equal(at(0.39, null).st["У4"], "fail", "гистерезис не создаёт pass на пустой памяти");
+  assert.equal(at(0.39, { "У4": "fail" }).st["У4"], "fail", "и не поднимает из fail");
+});
+
+test("гистерезис: unknown стирает память, а смена инструмента не переносит липкость чужого страйка", () => {
+  const ix = snapshot();
+  const passed = evaluateReplayTick({ tick: tick({ imp: 0.45 }), index: ix, preset: P, settings: S });
+  assert.equal(passed.st["У4"], "pass");
+
+  // Такт без импульса даёт unknown; applyHysteresis память по такому ключу НЕ пишет.
+  const blank = evaluateReplayTick({ tick: tick({ imp: null, V: {} }), index: ix, preset: P, settings: S, hyst: passed.hyst });
+  assert.equal(blank.st["У4"], "unknown");
+  assert.equal(blank.hyst["У4"], undefined, "unknown липкости не имеет и память стирает");
+  assert.equal(evaluateReplayTick({ tick: tick({ imp: 0.39 }), index: ix, preset: P, settings: S, hyst: blank.hyst }).st["У4"],
+    "fail", "после unknown удерживать нечего");
+
+  // Инструментные условия ключуются вместе с инструментом: память живёт под ключом со страйком.
+  const instKeys = Object.keys(passed.hyst).filter((k) => k.includes("|"));
+  assert.ok(instKeys.length > 0, "инструментные ключи содержат имя инструмента");
+  assert.ok(instKeys.every((k) => k.endsWith(passed.best.r.n)), "и это имя ЛУЧШЕГО кандидата такта");
+});
+
 test("tri-state: пустой снимок даёт unknown всей инструментной группе и блокирует вход", () => {
   const empty = indexSnapshot([]);
   const e = evaluateReplayTick({ tick: tick(), index: empty, preset: P, settings: S });
