@@ -38,6 +38,7 @@ import {
 } from "../src/engine/otmscan/replay.js";
 import { optionFeePct, computeTradeCosts } from "../src/engine/otmscan/economics.js";
 import { computeSizing } from "../src/engine/otmscan/scan-engine.js";
+import { evaluateExit } from "../src/engine/otmscan/exits.js";
 import { mean, sd, nEff, ci95 } from "../src/engine/otmscan/stats.js";
 
 const fin = (x) => Number.isFinite(x);
@@ -59,7 +60,13 @@ if (!argOf("--dir") && !argOf("--compare")) {
   --trades            печатать позиции по одной строке (вход, выход, P&L, значения условий)
   --trades-h <ч>      горизонт для таблицы позиций (по умолчанию первый из --horizons)
   --quotes modelled|measured  откуда bid/ask: модель hist-cost (восстановленная история, по
-                      умолчанию) или живая запись прогона, где котировки настоящие`);
+                      умолчанию) или живая запись прогона, где котировки настоящие
+  --exits             вести позиции ПРАВИЛАМИ ВЫХОДА ПРЕСЕТА (Е1-Е7), а не фиксированным
+                      горизонтом; печатает отдельный раздел, дефолтный вывод не меняет
+  --exit k=v[,...]    переопределить поля выхода: takeProfitPct, stopLossPctPrem, timeStopH,
+                      ivDropExitPts, minMoveSigma, preExpiryCloseH
+  --exit-sweep        перебрать сетку правил выхода (тейк × стоп × тайм-стоп × падение воли)
+                      ВНУТРИ одного запуска: запись грузится один раз, а не на каждую клетку`);
   process.exit(1);
 }
 
@@ -89,6 +96,9 @@ const TRADES_H = Number(argOf("--trades-h", String(HORIZONS[0])));
 // Скрипт писался под восстановленную историю, где котировок нет и спред моделируется. По живой
 // записи он тоже работает (hist-build отдаёт РОВНО формат живой записи), но там bid/ask настоящие,
 // и печатать про них «модельные» значит соврать ровно в том месте, где живая запись и ценна.
+const WANT_EXITS = has("--exits") || has("--exit-sweep");
+const WANT_EXIT_SWEEP = has("--exit-sweep");
+const EXITS = { ...SCAN_PRESETS[PRESET_ID].exits, ...parseKV(argOf("--exit")) };
 const QUOTES = argOf("--quotes", "modelled");
 if (QUOTES !== "modelled" && QUOTES !== "measured") {
   console.error(`--quotes принимает только modelled или measured, получено "${QUOTES}"`);
@@ -222,12 +232,39 @@ function runOne(dir) {
         dIv: fin(r1.iv) && fin(r0.iv) ? r1.iv - r0.iv : null,
         volEdge: fin(rvHold) && fin(r0.iv) ? rvHold - r0.iv : null };
     }
+    // Контекст протяжки позиции: нужен, чтобы правила выхода можно было применить МНОГО раз
+    // (перебор `--exit-sweep`) без перезагрузки записи. Сама протяжка ниже, в walkExit.
+    row.i0 = i0;
+    row.entryMark = r0.m;
+    row.entryIv = r0.iv;
+    row.s1d = s.s1d ?? null;
     trades.push(row);
   }
+  // ── ПРОТЯЖКА ПОЗИЦИИ ДО ВЫХОДА ПО ПРАВИЛАМ ПРЕСЕТА (Е1-Е7).
+  // Правило одно на проект и живёт в exits.js; здесь только подстановка величин снимка. Функция
+  // возвращается наружу, чтобы перебор комбинаций выходов шёл без повторной загрузки записи.
+  const walkExit = (t, exits) => {
+    for (let j = t.i0 + 1; j < times.length; j++) {
+      const r = snaps.get(times[j])?.get(t.name);
+      if (!r || !(r.m > 0)) continue;
+      const heldH = (times[j] - times[t.i0]) / 3600000;
+      const movePct = fin(t.spot) && fin(r.f) ? ((r.f - t.spot) / t.spot) * 100 : null;
+      const moveSigma = fin(movePct) && fin(t.s1d) && t.s1d > 0 ? Math.abs(movePct) / t.s1d : null;
+      const ev = evaluateExit({ markUsd: r.m, entryMarkUsd: t.entryMark, ivPct: r.iv,
+        entryIvPct: t.entryIv, heldH, hoursToExpiry: r.h, moveSigma, exits });
+      const last = j === times.length - 1;
+      if (!ev.exit && !last) continue;
+      const before = ((r.m - t.entryMark) / t.entryMark) * 100;
+      return { before, after: before - (t.rtcPct ?? 0), heldH, exitTs: times[j], markExit: r.m,
+        reason: ev.reason ?? "конец записи" };
+    }
+    return null;
+  };
+
   const spanH = (ticks.at(-1).ts - ticks[0].ts) / 3600000;
   const verdictTicks = evals.filter((e) => e.verdict).length;
   const stepMin = evals.length > 1 ? (evals[1].ts - evals[0].ts) / 60000 : null;
-  return { evals, signals, episodes, trades, spanH, verdictTicks, epNoSignal, stepMin, ticks: evals.length };
+  return { evals, signals, episodes, trades, spanH, verdictTicks, epNoSignal, stepMin, ticks: evals.length, walkExit };
 }
 
 // ── отчёт
@@ -423,6 +460,160 @@ if (has("--by-month")) {
     const g = byM.get(k);
     console.log(`| ${k} | ${g.length} | ${f(mean(g.map((t) => t.h[H]?.before)), 2)}% | ${f(mean(g.map((t) => t.h[H]?.after)), 2)}% | ${f(q(g.map((t) => t.ivEntry), 0.5), 1)} |`);
   }
+}
+
+// ── ВЫХОДЫ ПРЕСЕТА: то, ради чего заведён `--exits`. Это первый расчёт проекта, где позиция
+// закрывается ПРАВИЛОМ БОТА, а не секундомером, то есть первая честная попытка ответить «сколько
+// заработал бы движок целиком». До сих пор всё мерилось при фиксированном удержании, потому что
+// правила выхода были только числами в пресете: фаза S4 не начата, живой бот их не исполняет.
+if (WANT_EXITS) {
+  for (const t of A.trades) t.ex = A.walkExit(t, EXITS);
+  // ── ОГРАНИЧЕНИЕ ДВИЖКА НА ОДНОВРЕМЕННЫЕ ПОЗИЦИИ. Без него расчёт отвечает на вопрос «что дало бы
+  // правило выхода», а не «что заработал бы движок»: правила выхода растягивают удержание, позиции
+  // начинают перекрываться, и их среднее число доходит до величин, которые в счёт физически не
+  // помещаются (6.3 позиции по 20% риска это 125% депозита). Движок в такой ситуации просто НЕ
+  // ОТКРЫВАЕТ лишние: берёт первую и блокирует остальные до освобождения слота. Это не поправка
+  // на бумаге, а то самое правило, которое поедет в бой, поэтому применяется здесь же.
+  const MAXC = Math.max(1, Number(S.maxConcurrent) || 1);
+  const open = [];
+  let blocked = 0;
+  for (const t of A.trades.filter((x) => x.ex).sort((a, b) => a.ts - b.ts)) {
+    while (open.length && open[0] <= t.ts) open.shift();
+    if (open.length >= MAXC) { t.blocked = true; blocked += 1; continue; }
+    open.push(t.ex.exitTs);
+    open.sort((a, b) => a - b);
+  }
+  const rowsAll = A.trades.filter((t) => t.ex);
+  const rows = rowsAll.filter((t) => !t.blocked);
+  if (blocked) {
+    console.log(`> Ограничение движка на одновременные позиции (maxConcurrent ${MAXC}) сняло ${blocked} входов`);
+    console.log(`> из ${rowsAll.length}: слот был занят. Ниже считаются только те, что движок реально открыл бы.`);
+    const bAll = mean(rowsAll.map((t) => t.ex.after)), bOk = mean(rows.map((t) => t.ex.after));
+    console.log(`> Без ограничения среднее после издержек было бы ${f(bAll)}%, с ограничением ${f(bOk)}%.\n`);
+  }
+  console.log(`\n## 6 · Прибыль по ПРАВИЛАМ ВЫХОДА пресета (Е1-Е7)\n`);
+  console.log(`Тейк +${EXITS.takeProfitPct}% · стоп −${EXITS.stopLossPctPrem}% · падение воли ${EXITS.ivDropExitPts} п.п. · `
+    + `тайм-стоп ${EXITS.timeStopH} ч при движении менее ${EXITS.minMoveSigma}σ · закрытие за ${EXITS.preExpiryCloseH} ч до экспирации.\n`);
+  if (!rows.length) { console.log(`Ни одна позиция не дожила до выхода внутри записи.`); }
+  else {
+    const bef = rows.map((t) => t.ex.before), aft = rows.map((t) => t.ex.after);
+    const held = rows.map((t) => t.ex.heldH);
+    const mB = mean(bef), mA = mean(aft), neB = nEff(bef), neA = nEff(aft);
+    console.log(`| величина | значение |`);
+    console.log(`|---|---|`);
+    console.log(`| позиций ОТКРЫТО движком (лимит ${MAXC} одновременных) | ${rows.length} из ${A.trades.length} |`);
+    console.log(`| среднее ДО издержек | **${f(mB)}%** ± ${f(ci95(bef, neB))}% (n_eff ${f(neB, 1)}) |`);
+    console.log(`| среднее ПОСЛЕ издержек | **${f(mA)}%** ± ${f(ci95(aft, neA))}% |`);
+    console.log(`| медиана после издержек | ${f(q(aft, 0.5))}% |`);
+    console.log(`| доля прибыльных после издержек | ${f((aft.filter((x) => x > 0).length / aft.length) * 100, 0)}% |`);
+    console.log(`| удержание, медиана / p90 | ${f(q(held, 0.5), 1)} / ${f(q(held, 0.9), 1)} ч |`);
+    const by = new Map();
+    for (const t of rows) by.set(t.ex.reason, (by.get(t.ex.reason) ?? 0) + 1);
+    console.log(`\n| причина выхода | сколько | доля | среднее после издержек |`);
+    console.log(`|---|---|---|---|`);
+    for (const [why, n] of [...by.entries()].sort((a, b) => b[1] - a[1])) {
+      const sub = rows.filter((t) => t.ex.reason === why).map((t) => t.ex.after);
+      console.log(`| ${why} | ${n} | ${f((n / rows.length) * 100, 0)}% | ${f(mean(sub))}% |`);
+    }
+    // ДЕНЬГИ. Размер даёт живой `computeSizing`, а не один минимальный лот.
+    const sizeOf = (t) => computeSizing({ markUsd: t.markEntry, lot: REPLAY_LOT, equityUsd: S.equityUsd,
+      riskPerTradePct: S.riskPerTradePct, qtyMax: S.qtyMax, entryDepthUsd: null, maxQtyDepthPct: P.maxQtyDepthPct });
+    let pnl = 0, staked = 0;
+    for (const t of rows) {
+      const qty = sizeOf(t).qtySuggested ?? REPLAY_LOT;
+      const stake = t.markEntry * qty;
+      staked += stake; pnl += stake * (t.ex.after / 100);
+    }
+    // ДЕНЬГИ НАДО ПОДАВАТЬ ОСТОРОЖНО. Сумма P&L по 1113 ПОСЛЕДОВАТЕЛЬНЫМ сделкам, отнесённая к
+    // статичному депозиту, даёт бессмысленные «минус сотни процентов»: счёт обнулился бы задолго до
+    // конца года, и дальше торговать было бы нечем. Поэтому печатается средняя сделка в долларах и
+    // отдельно судьба счёта при реинвестировании, а не одна суммарная цифра.
+    const avgStake = staked / rows.length, avgPnl = pnl / rows.length;
+    let eq = S.equityUsd, ruinAt = null;
+    for (let k = 0; k < rows.length; k++) {
+      const t = rows[k];
+      eq *= 1 + (S.riskPerTradePct / 100) * (t.ex.after / 100);
+      if (eq < S.equityUsd * 0.01 && ruinAt == null) { ruinAt = k + 1; break; }
+    }
+    console.log(`\n**Деньги: средняя сделка ${f(avgPnl)} $ при средней ставке ${f(avgStake)} $.**`);
+    console.log(`Суммарно ${f(pnl)} $ по ${rows.length} позициям, но складывать их в одну цифру нельзя:`);
+    console.log(`позиции последовательные, и счёт по дороге меняется. Реинвестирование при риске`);
+    console.log(`${S.riskPerTradePct}% на сделку: депозит $${S.equityUsd} ${ruinAt ? `падает ниже 1% от начального на ${ruinAt}-й сделке` : `приходит к $${f(eq)} к концу года`}.`);
+    // ХВОСТ И ПРОСАДКА. Без них средняя доходность не говорит ничего: выключенный стоп улучшает
+    // среднее ровно тем, что перестаёт резать убыток, и цену этого надо показать отдельно.
+    const worst = rows.reduce((a, t) => (t.ex.after < a.ex.after ? t : a), rows[0]);
+    let peak = S.equityUsd, eq2 = S.equityUsd, maxDd = 0;
+    for (const t of rows) {
+      eq2 *= 1 + (S.riskPerTradePct / 100) * (t.ex.after / 100);
+      peak = Math.max(peak, eq2);
+      maxDd = Math.max(maxDd, (peak - eq2) / peak);
+    }
+    console.log(`\n| хвост и просадка | значение |`);
+    console.log(`|---|---|`);
+    console.log(`| худшая сделка | ${f(worst.ex.after)}% (${worst.name.replace("BTC_USDC-", "")}, держали ${f(worst.ex.heldH, 1)} ч) |`);
+    console.log(`| 5% худших, среднее | ${f(mean(rows.map((t) => t.ex.after).sort((a, b) => a - b).slice(0, Math.max(1, Math.round(rows.length * 0.05)))))}% |`);
+    console.log(`| максимальная просадка счёта при риске ${S.riskPerTradePct}% | ${f(maxDd * 100, 1)}% |`);
+    // ПО МЕСЯЦАМ: та же проверка, которая убила предыдущего кандидата свипа входа.
+    const byM = new Map();
+    for (const t of rows) {
+      const m = new Date(t.ts).toISOString().slice(0, 7);
+      if (!byM.has(m)) byM.set(m, []);
+      byM.get(m).push(t.ex.after);
+    }
+    const months = [...byM.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    console.log(`\n| месяц | позиций | среднее после издержек |`);
+    console.log(`|---|---|---|`);
+    for (const [m, a] of months) console.log(`| ${m} | ${a.length} | ${f(mean(a))}% |`);
+    const tot = rows.length, sum = rows.reduce((x, t) => x + t.ex.after, 0);
+    const top3 = months.map(([m, a]) => ({ m, n: a.length, s: a.reduce((x, y) => x + y, 0) }))
+      .sort((x, y) => y.s - x.s).slice(0, 3);
+    const drop = (names) => { const k = rows.filter((t) => !names.includes(new Date(t.ts).toISOString().slice(0, 7)));
+      return k.length ? mean(k.map((t) => t.ex.after)) : null; };
+    console.log(`\nТри лучших месяца дают ${f((top3.reduce((x, y) => x + y.s, 0) / sum) * 100, 0)}% итога при `
+      + `${f((top3.reduce((x, y) => x + y.n, 0) / tot) * 100, 0)}% сделок. `
+      + `Без лучшего месяца среднее ${f(drop([top3[0].m]))}%, без двух ${f(drop(top3.slice(0, 2).map((x) => x.m)))}%, `
+      + `без трёх ${f(drop(top3.map((x) => x.m)))}%.`);
+    console.log(`\n> Полоса считается по n_eff, а не по числу позиций. Правила выхода СОКРАЩАЮТ перекрытие`);
+    console.log(`> входов, поэтому n_eff здесь выше, чем при фиксированном удержании, но независимых`);
+    console.log(`> наблюдений всё равно меньше, чем строк.`);
+  }
+}
+
+// ── ПЕРЕБОР ПРАВИЛ ВЫХОДА. Это и есть попытка ВЫЖАТЬ прибыль из уже найденных входов: вход не
+// меняется вовсе, меняется только то, когда мы закрываемся. Запись загружена один раз, поэтому
+// сетка в сотни клеток считается за минуты, а не за полтора часа.
+if (WANT_EXIT_SWEEP) {
+  const TPs = [10, 15, 20, 30, 50, 90];
+  const SLs = [20, 35, 50, 99];
+  const TSs = [4, 8, 12, 24, 48];
+  const IVDs = [1.5, 3, 999];
+  const out = [];
+  for (const tp of TPs) for (const sl of SLs) for (const ts of TSs) for (const ivd of IVDs) {
+    const X = { ...EXITS, takeProfitPct: tp, stopLossPctPrem: sl, timeStopH: ts, ivDropExitPts: ivd };
+    const res = A.trades.map((t) => A.walkExit(t, X)).filter(Boolean);
+    if (!res.length) continue;
+    const aft = res.map((x) => x.after), bef = res.map((x) => x.before);
+    const ne = nEff(aft);
+    out.push({ tp, sl, ts, ivd, n: res.length, before: mean(bef), after: mean(aft),
+      ci: ci95(aft, ne), nEff: ne, win: (aft.filter((x) => x > 0).length / aft.length) * 100,
+      heldMed: q(res.map((x) => x.heldH), 0.5) });
+  }
+  out.sort((a, b) => b.after - a.after);
+  console.log(`\n## 7 · Перебор правил выхода: попытка выжать прибыль из тех же входов\n`);
+  console.log(`Клеток ${out.length} (тейк × стоп × тайм-стоп × падение воли). Вход НЕ меняется.\n`);
+  console.log(`| # | тейк | стоп | тайм-стоп | пад.воли | позиций | до изд. | **после изд.** | полоса 95% | приб. | держали, ч |`);
+  console.log(`|---|---|---|---|---|---|---|---|---|---|---|`);
+  out.slice(0, 15).forEach((r, i) => {
+    console.log(`| ${i + 1} | +${r.tp}% | −${r.sl}% | ${r.ts} ч | ${r.ivd === 999 ? "выкл" : r.ivd + " п."} | ${r.n} | `
+      + `${f(r.before)}% | **${f(r.after)}%** | ±${f(r.ci)}% | ${f(r.win, 0)}% | ${f(r.heldMed, 1)} |`);
+  });
+  const pos = out.filter((r) => r.after > 0);
+  const surv = pos.filter((r) => r.after > r.ci);
+  console.log(`\n**Клеток с положительным средним после издержек: ${pos.length} из ${out.length}.**`);
+  console.log(`Из них выходят за собственную полосу 95%: **${surv.length}**.`);
+  console.log(`\n> Клеток ${out.length}, поэтому на уровне 95% около ${Math.round(out.length * 0.05)} обязаны выглядеть`);
+  console.log(`> удачными случайно. Сырое первое место в этой таблице не значит ничего без проверки на`);
+  console.log(`> половинах года и по месяцам.`);
 }
 
 console.log(`\n## Границы этого расчёта\n`);
