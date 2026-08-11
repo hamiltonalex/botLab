@@ -37,6 +37,7 @@ import {
   REPLAY_SETTINGS_DEFAULT, REPLAY_LOT, REPLAY_CONDITION_KEYS,
 } from "../src/engine/otmscan/replay.js";
 import { optionFeePct, computeTradeCosts } from "../src/engine/otmscan/economics.js";
+import { computeSizing } from "../src/engine/otmscan/scan-engine.js";
 import { mean, sd, nEff, ci95 } from "../src/engine/otmscan/stats.js";
 
 const fin = (x) => Number.isFinite(x);
@@ -88,8 +89,18 @@ const TRADES_H = Number(argOf("--trades-h", String(HORIZONS[0])));
 // Скрипт писался под восстановленную историю, где котировок нет и спред моделируется. По живой
 // записи он тоже работает (hist-build отдаёт РОВНО формат живой записи), но там bid/ask настоящие,
 // и печатать про них «модельные» значит соврать ровно в том месте, где живая запись и ценна.
-const QUOTES = argOf("--quotes", "modelled") === "measured" ? "measured" : "modelled";
+const QUOTES = argOf("--quotes", "modelled");
+if (QUOTES !== "modelled" && QUOTES !== "measured") {
+  console.error(`--quotes принимает только modelled или measured, получено "${QUOTES}"`);
+  process.exit(1);
+}
 const QUOTES_MEASURED = QUOTES === "measured";
+// Горизонт таблицы позиций обязан быть посчитан: row.h заполняется только для HORIZONS, поэтому
+// чужой горизонт дал бы пустую таблицу с ложной причиной «за краем записи».
+if (WANT_TRADES && !HORIZONS.includes(TRADES_H)) {
+  console.error(`--trades-h ${TRADES_H} нет в --horizons ${HORIZONS.join(",")}: горизонт таблицы позиций должен быть среди считаемых`);
+  process.exit(1);
+}
 
 // ── загрузка восстановления
 function load(dir) {
@@ -310,8 +321,13 @@ for (const H of HORIZONS) {
   console.log(`| ${H} ч | ${f(mean(bef), 2)}% | ${f(q(A.trades.map((t) => t.rtcPct), 0.5), 2)}% | **${f(mean(aft), 2)}%** | ${f((100 * aft.filter((x) => x > 0).length) / aft.length, 0)}% |`);
 }
 
-// ── позиции по одной строке. Ничего не считает заново: печатает поля, уже посчитанные выше, иначе
-// это была бы вторая копия правила проигрыша (класс дефекта, названный в шапке replay.js).
+// ── позиции по одной строке. Проценты печатаются те же, что посчитаны выше; размер позиции берётся
+// у живого `computeSizing`, а не заводится здесь. Собственного правила проигрыша тут нет - это тот
+// класс дефекта, который назван в шапке replay.js.
+// ОГОВОРКА, которую надо знать при сравнении отчётов: долларовый итог ЗДЕСЬ и в `eval:preset` считан
+// по разным соглашениям об исполнении. Здесь обе ноги по марку, а круг издержек вычитается целиком
+// (computeTradeCosts); там обе ноги по середине книги и берутся только комиссии. На одной и той же
+// сделке расхождение доходит до полутора процентных пунктов, и это не расхождение данных.
 if (WANT_TRADES) {
   const H = fin(TRADES_H) ? TRADES_H : HORIZONS[0];
   const rows = A.trades.filter((t) => t.h[H]);
@@ -323,17 +339,30 @@ if (WANT_TRADES) {
     + `(тейк, стоп, падение воли) в этом расчёте НЕ применяются.`);
   if (dropped) console.log(`Позиций без выхода внутри записи (горизонт за её краем): ${dropped} из ${A.trades.length}.`);
   console.log();
-  console.log(`| № | вход UTC | инструмент | сторона | до эксп., д | дельта | IV входа | премия $ | выход UTC | держали, ч | марк выхода $ | до издержек, % | круг, % | после издержек, % | P&L $ | на суб-счёт $${S.equityUsd}, % |`);
+  // Размер позиции берётся из ЖИВОГО правила `computeSizing`, а не из одного минимального лота:
+  // при депозите $500 и риске 20% движок купил бы три-четыре лота, и долларовый итог по одному
+  // лоту занизил бы результат втрое. Проценты от премии от размера не зависят, доллары зависят.
+  const sizeOf = (t) => computeSizing({ markUsd: t.markEntry, lot: REPLAY_LOT, equityUsd: S.equityUsd,
+    riskPerTradePct: S.riskPerTradePct, qtyMax: S.qtyMax, entryDepthUsd: null, maxQtyDepthPct: P.maxQtyDepthPct });
+  console.log(`| № | вход UTC | инструмент | сторона | до эксп., д | дельта | IV входа | лотов | вложено $ | выход UTC | держали, ч | до издержек, % | круг, % | после издержек, % | P&L $ | на суб-счёт $${S.equityUsd}, % |`);
   console.log(`|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|`);
+  let pnlTotal = 0;
   rows.forEach((t, i) => {
     const h = t.h[H];
-    const premUsd = t.markEntry * REPLAY_LOT;
-    const pnlUsd = premUsd * (h.after / 100);
+    const qty = sizeOf(t).qtySuggested ?? REPLAY_LOT;
+    const stakeUsd = t.markEntry * qty;
+    const pnlUsd = stakeUsd * (h.after / 100);
+    pnlTotal += pnlUsd;
     console.log(`| ${i + 1} | ${stamp(t.ts)} | ${t.name.replace("BTC_USDC-", "")} | ${t.side} | ${f(t.days, 1)} | `
-      + `${f(t.delta, 2)} | ${f(t.ivEntry, 1)} | ${f(premUsd, 2)} | ${stamp(h.exitTs)} | ${f(h.heldH, 1)} | `
-      + `${f(h.markExit * REPLAY_LOT, 2)} | ${f(h.before, 2)} | ${f(t.rtcPct, 2)} | **${f(h.after, 2)}** | `
+      + `${f(t.delta, 2)} | ${f(t.ivEntry, 1)} | ${Math.round(qty / REPLAY_LOT)} | ${f(stakeUsd, 2)} | `
+      + `${stamp(h.exitTs)} | ${f(h.heldH, 1)} | ${f(h.before, 2)} | ${f(t.rtcPct, 2)} | **${f(h.after, 2)}** | `
       + `${f(pnlUsd, 2)} | ${f((pnlUsd / S.equityUsd) * 100, 3)} |`);
   });
+  if (rows.length) {
+    console.log(`\nИтог по закрытым позициям: **${f(pnlTotal, 2)} $ на суб-счёте $${S.equityUsd} = `
+      + `${f((pnlTotal / S.equityUsd) * 100, 2)}%**. Размер каждой позиции даёт \`computeSizing\` `
+      + `(депозит $${S.equityUsd}, риск ${S.riskPerTradePct}%), а не один минимальный лот.`);
+  }
   if (rows.length) {
     const aft = rows.map((t) => t.h[H].after);
     const bef = rows.map((t) => t.h[H].before);
@@ -399,7 +428,7 @@ console.log(`\n## Границы этого расчёта\n`);
 console.log(QUOTES_MEASURED
   ? `- bid/ask ИЗМЕРЕНЫ: котировки взяты из живой записи прогона, раздел 3 здесь не допущение, а замер.`
   : `- bid/ask МОДЕЛЬНЫЕ: истории котировок Deribit не хранит. Раздел 2 от них не зависит, раздел 3 зависит целиком.`);
-console.log(`- Стакана ${DEPTH === "assume" ? "в расчёте нет" : "нет"}: У12 идёт как \`--depth ${DEPTH}\`, проскальзывание не моделируется. Обе поправки против стратегии.`);
+console.log(`- Стакана нет: У12 идёт как \`--depth ${DEPTH}\`, проскальзывание не моделируется. Обе поправки против стратегии.`);
 if (!QUOTES_MEASURED) {
   console.log(`- Поверхность восстановлена из ленты с ошибкой около 0.6 пункта воли на инструмент (hist-validate).`);
   console.log(`  Для среднего по десяткам эпизодов она усредняется, для одной сделки - нет.`);

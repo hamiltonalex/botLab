@@ -69,6 +69,10 @@ const WANT_TRADES = has("--trades");
 // Отчёт по обкатке обязан показать КАЖДУЮ сделку, а не первые сорок: обрезка молча превращает
 // «все входы» в «начало выборки», и по такому хвосту нельзя ни свериться, ни возразить.
 const TRADES_MAX = Number(argOf("--trades-max", "40"));
+if (!Number.isInteger(TRADES_MAX) || TRADES_MAX < 1) {
+  console.error(`--trades-max должен быть целым числом ≥ 1, получено "${argOf("--trades-max")}"`);
+  process.exit(1);
+}
 const QUIET = has("--quiet");
 
 // ── пресет и настройки: пресет заморожен deepFreeze, поэтому строим НОВЫЙ объект
@@ -265,7 +269,7 @@ if (WANT_TRADES && signals.length) {
       for (const t of trades.slice(0, TRADES_MAX)) {
         console.log(`| ${new Date(t.ts).toISOString().slice(5, 16).replace("T", " ")} | ${t.name.replace("BTC_USDC-", "")} | ${f(t.delta, 2)} | ${f(t.days, 1)}д | ${f(t.heldH, 1)} ч | ${t.why} | ${f(t.retPct, 1)}% |`);
       }
-      if (trades.length > TRADES_MAX) console.log(`\n... и ещё ${trades.length - TRADES_MAX} строк (см. \`--trades-max\`).`);
+      if (trades.length > TRADES_MAX) console.log(`\n... и ещё ${trades.length - TRADES_MAX} строк.`);
     }
     console.log(`\n> Число сделок здесь НЕ равно числу независимых наблюдений: кулдаун и параллельные`);
     console.log(`> входы дают несколько строк на один эпизод рынка. Независимых в трёхсуточной записи`);
