@@ -110,6 +110,56 @@ function runOne(dir) {
     return bd <= 3 * HOUR_MS ? best : null;
   }
 
+  const endTs = times.at(-1);
+  // Форвард экспирации на каждом снимке. Нужен хеджу, когда КОНКРЕТНАЯ нога из записи пропала, а
+  // экспирация жива: форвард один на экспирацию, и брать его у соседней строки законно. Считается
+  // один раз, иначе цикл хеджа сканировал бы снимок целиком на каждом часовом шаге.
+  const fwdByTs = new Map();
+  for (const [t, m] of snaps) {
+    const byExp = new Map();
+    for (const r of m.values()) if (fin(r.e) && fin(r.f) && !byExp.has(r.e)) byExp.set(r.e, r.f);
+    fwdByTs.set(t, byExp);
+  }
+
+  // ── ГЛУБОКИЙ ПРЕДЕЛ ПРОПАВШЕЙ НОГИ. Нога исчезает из восстановления не когда попало: правило П3
+  // (hist-surface.js) запрещает продолжать смайл за наблюдённые страйки, поэтому строка пропадает
+  // ровно тогда, когда спот УШЁЛ ДАЛЕКО от страйка. Там опцион почти целиком внутренняя стоимость,
+  // а его дельта почти целиком индикатор «в деньгах», и обе величины считаются по индексу без
+  // всякой модели. Эти две функции обязаны быть согласованы между собой: цена ноги и её дельта
+  // берутся из одного и того же предельного приближения, иначе хедж считался бы к другой позиции,
+  // чем откуп.
+  // ОСТОРОЖНО, ЗНАК ЗДЕСЬ НЕ ТАКОЙ, КАК У ПОКУПАТЕЛЯ: внутренняя стоимость это НИЖНЯЯ граница цены,
+  // и для ПОКУПАТЕЛЯ она занижает результат, то есть щадит вывод. Продавец ноги должен, поэтому
+  // заниженная цена откупа ему ЛЬСТИТ. То есть эта оценка идёт в общий список «где расчёт льстит
+  // продавцу» из шапки файла, и вывод, который её переживает, тем сильнее.
+  const legIntrinsic = (isCall, strike, idx) => (posNum(idx) ? Math.max(0, isCall ? idx - strike : strike - idx) : null);
+  const legDeltaLimit = (isCall, strike, idx) => (posNum(idx) ? (isCall ? (idx > strike ? 1 : 0) : (idx < strike ? -1 : 0)) : null);
+
+  // ── ДЕЛЬТА-ХЕДЖ между снимками from..to. Раньше шаг, где не хватало любой из трёх строк, просто
+  // пропускался (`continue`), то есть за этот час хедж молча выключался, а базовый актив всё равно
+  // двигался. Пропуски не случайны и приходятся на худшие часы: замер по годовой записи дал медиану
+  // движения индекса на пропущенных шагах −9.9% при доле движений вверх 12%, и 2159 пропусков из
+  // 2543 это исчезнувшая нога КОЛЛА на большом падении. Час без хеджа в такой момент искажает
+  // сильнее, чем предельная дельта пропавшей ноги, поэтому шаг больше не пропускается.
+  const hedgeBetween = (from, to, c0, p0, e) => {
+    let hedge = 0, patched = 0;
+    const fwdAt = (t, r) => (r && fin(r.f) ? r.f : (fwdByTs.get(t)?.get(e) ?? spot.get(t) ?? null));
+    for (let k = from; k < to; k++) {
+      const ca = snaps.get(times[k])?.get(c0.n), pa = snaps.get(times[k])?.get(p0.n);
+      const cb = snaps.get(times[k + 1])?.get(c0.n);
+      const idx = spot.get(times[k]) ?? null;
+      const dc = ca && fin(ca.d) ? ca.d : legDeltaLimit(true, c0.k, idx);
+      const dp = pa && fin(pa.d) ? pa.d : legDeltaLimit(false, p0.k, idx);
+      if (!fin(dc) || !fin(dp)) continue;
+      if (!ca || !pa || !fin(ca.d) || !fin(pa.d)) patched += 1;
+      const fa = fwdAt(times[k], ca), fb = fwdAt(times[k + 1], cb);
+      if (!fin(fa) || !fin(fb)) continue;
+      // Короткий стрэнгл несёт дельту −(Δc+Δp)·qty; хедж компенсирует её движением форварда.
+      hedge += QTY * (dc + dp) * (fb - fa);
+    }
+    return { hedge, patched };
+  };
+
   const trades = [];
   for (let i = 0; i < times.length; i++) {
     const ts = times[i];
@@ -144,28 +194,51 @@ function runOne(dir) {
     const row = { ts, e, expiryH: (e - ts) / HOUR_MS, S, credit, feeIn, im,
       kc: c0.k, kp: p0.k, ivIn: (c0.iv + p0.iv) / 2, h: {}, exp: null };
 
-    // ── фиксированные горизонты: откуп по рынку, комиссия обеих сторон
+    // ── ФИКСИРОВАННЫЕ ГОРИЗОНТЫ: откуп по рынку, комиссия обеих сторон.
+    // Раньше здесь на все случаи стоял один `null`, а разделы 1 и 2 делали `.filter(fin)`, и позиция
+    // молча исчезала из строки. Для ПРОДАВЦА выпадение особенно опасно: нога пропадает, когда спот
+    // прошёл через её страйк, то есть ровно тогда, когда продавец ПРОИГРАЛ. Замер по годовой записи:
+    // на горизонте 168 ч так выпадало 442 позиции из 7924, у 77.8% из них нога была в деньгах,
+    // медиана движения индекса от входа −11.4%, и вычёркивала эта потеря единственное положительное
+    // среднее во всём разделе 1. Случаев четыре, и они разного качества:
+    //   1. обе ноги на месте        - замер;
+    //   2. контракт ЭКСПИРИРОВАЛ раньше горизонта - терминальная выплата по индексу, откуп не
+    //      платится вовсе; это ТОЧНЫЙ итог, та же арифметика, что в разделе 3;
+    //   3. нога ПРОПАЛА живой - откуп по внутренней стоимости (см. legIntrinsic: продавцу льстит);
+    //   4. горизонт за краем ЗАПИСИ - итога не существует, позиция честно исключается и считается.
     for (const H of HORIZONS) {
       const tgt = ts + H * HOUR_MS;
+      if (e <= tgt) {
+        // Экспирация раньше горизонта: позиция дожила до поставки, откупать нечего.
+        const Sx = idxAtOrBefore(e);
+        if (!posNum(Sx)) { row.h[H] = null; row.hMiss = (row.hMiss ?? 0) + 1; continue; }
+        let je = i;
+        while (je + 1 < times.length && times[je + 1] <= e) je++;
+        const hg = hedgeBetween(i, je, c0, p0, e);
+        const payout = (Math.max(0, Sx - c0.k) + Math.max(0, p0.k - Sx)) * QTY;
+        const pnl = credit - feeIn - payout;
+        row.h[H] = { pnl, pnlHedged: pnl + hg.hedge, hedge: hg.hedge, back: payout,
+          retIm: (pnl / im) * 100, how: "экспирация", patched: hg.patched };
+        continue;
+      }
       let j = i + 1;
       while (j < times.length && times[j] < tgt) j++;
-      if (j >= times.length) { row.h[H] = null; continue; }
-      const c1 = snaps.get(times[j])?.get(c0.n), p1 = snaps.get(times[j])?.get(p0.n);
+      if (j >= times.length) { row.h[H] = null; row.hBeyond = (row.hBeyond ?? 0) + 1; continue; }
       const S1 = idxAt(times[j]);
-      if (!c1 || !p1 || !posNum(c1.m) || !posNum(p1.m) || !posNum(S1)) { row.h[H] = null; continue; }
-      const back = (buyPx(c1) + buyPx(p1)) * QTY;
-      const feeOut = (feeUsd(c1.m, S1) + feeUsd(p1.m, S1)) * QTY;
+      if (!posNum(S1)) { row.h[H] = null; row.hMiss = (row.hMiss ?? 0) + 1; continue; }
+      const c1 = snaps.get(times[j])?.get(c0.n), p1 = snaps.get(times[j])?.get(p0.n);
+      // Цена откупа ноги: по книге, если строка есть, иначе предельная внутренняя стоимость.
+      const leg = (r, isCall, strike) => (r && posNum(r.m)
+        ? { px: buyPx(r), mark: r.m, synth: false }
+        : { px: legIntrinsic(isCall, strike, S1), mark: legIntrinsic(isCall, strike, S1), synth: true });
+      const bc = leg(c1, true, c0.k), bp = leg(p1, false, p0.k);
+      if (!fin(bc.px) || !fin(bp.px)) { row.h[H] = null; row.hMiss = (row.hMiss ?? 0) + 1; continue; }
+      const back = (bc.px + bp.px) * QTY;
+      const feeOut = (feeUsd(bc.mark, S1) + feeUsd(bp.mark, S1)) * QTY;
       const pnl = credit - back - feeIn - feeOut;
-      // Дельта-хедж: перевзвешивание на КАЖДОМ часовом снимке, комиссии хеджа НЕ берутся (потолок).
-      let hedge = 0;
-      for (let k = i; k < j; k++) {
-        const ca = snaps.get(times[k])?.get(c0.n), pa = snaps.get(times[k])?.get(p0.n);
-        const cb = snaps.get(times[k + 1])?.get(c0.n);
-        if (!ca || !pa || !cb || !fin(ca.d) || !fin(pa.d) || !fin(ca.f) || !fin(cb.f)) continue;
-        // Короткий стрэнгл несёт дельту −(Δc+Δp)·qty; хедж компенсирует её движением форварда.
-        hedge += QTY * (ca.d + pa.d) * (cb.f - ca.f);
-      }
-      row.h[H] = { pnl, pnlHedged: pnl + hedge, hedge, back, retIm: (pnl / im) * 100 };
+      const hg = hedgeBetween(i, j, c0, p0, e);
+      row.h[H] = { pnl, pnlHedged: pnl + hg.hedge, hedge: hg.hedge, back, retIm: (pnl / im) * 100,
+        how: bc.synth || bp.synth ? "внутренняя" : "снимок", patched: hg.patched };
     }
 
     // ── до экспирации: терминальная выплата по индексу, откуп не платится
@@ -231,6 +304,25 @@ console.log(`\n## 1 · Фиксированные горизонты, БЕЗ х�
 console.log(`| горизонт | входов | **среднее $** | медиана $ | доля > 0 | худший $ | n_eff | полоса 95% |`);
 console.log(`|---|---|---|---|---|---|---|---|`);
 for (const H of HORIZONS) block(`${H} ч`, A.trades.map((t) => t.h[H]?.pnl).filter(fin), H);
+
+// ── ИЗ ЧЕГО СОБРАН СТОЛБЕЦ «входов». Печатается всегда: молчание об этом однажды уже вычеркнуло
+// единственное положительное среднее раздела 1, потому что выпадали ровно проигравшие позиции.
+console.log(`\n## 1b · Чем закончилась каждая позиция на горизонте\n`);
+console.log(`| горизонт | обе ноги на месте | по экспирации | нога пропала, взята внутренняя | за краем записи | часов хеджа достроено |`);
+console.log(`|---|---|---|---|---|---|`);
+for (const H of HORIZONS) {
+  const hs = A.trades.map((t) => t.h[H]);
+  const by = (k) => hs.filter((x) => x?.how === k).length;
+  console.log(`| ${H} ч | ${by("снимок")} | ${by("экспирация")} | **${by("внутренняя")}** | ${hs.filter((x) => !x).length} | ${hs.reduce((a, x) => a + (x?.patched ?? 0), 0)} |`);
+}
+console.log(`\nСтолбцы 2-4 входят в строки разделов 1 и 2, столбец 5 нет: за краем записи итога не`);
+console.log(`существует. Нога пропадает из восстановления, когда спот прошёл через её страйк (правило`);
+console.log(`П3 не продолжает смайл за наблюдённые страйки), то есть ровно когда продавец проиграл, и`);
+console.log(`вычёркивать такие позиции нельзя - это отбор по исходу. Откуп пропавшей ноги считается по`);
+console.log(`ВНУТРЕННЕЙ стоимости, а она НИЖЕ настоящей цены, то есть продавцу эта оценка ЛЬСТИТ: она`);
+console.log(`в том же списке, что и хедж без комиссий. Последний столбец это часы, где дельта пропавшей`);
+console.log(`ноги взята предельной (1 в деньгах, 0 вне) вместо пропуска шага: пропуск молча выключал`);
+console.log(`хедж в часы самых больших движений, а именно в них он и нужен.`);
 
 console.log(`\n## 2 · То же С ДЕЛЬТА-ХЕДЖЕМ (чистая ставка на волатильность)\n`);
 console.log(`Перевзвешивание каждый час, комиссии хеджа НЕ берутся, то есть это потолок.\n`);

@@ -35,6 +35,12 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { SCAN_PRESETS } from "../src/engine/otmscan/presets.js";
 import { optionFeePct } from "../src/engine/otmscan/economics.js";
+// Правила выхода и протяжка позиции берутся у ОБЩЕГО модуля, а не переписываются здесь. До
+// 2026-08-12 в этом файле жила своя копия цепочки Е6-Е2-Е1-Е4-Е7, и она отличалась от общей дважды:
+// не имела охранных проверок порога (стоп, записанный нулём, срабатывал как безубыток и закрывал
+// 725 позиций из 799 на первом же шаге записи) и теряла позицию, у которой инструмент пропал из
+// восстановления до конца записи. Это была последняя невывезенная копия правила в проекте.
+import { walkExit } from "../src/engine/otmscan/exits.js";
 // Правила проигрыша живут в ОДНОМ месте и переиспользуются историческим бектестом (см. шапку
 // replay.js): две копии одного правила — тот класс дефекта, который проект ловил уже трижды.
 import {
@@ -231,6 +237,7 @@ if (WANT_TRADES && signals.length) {
   const buyPx = (r) => (EXEC === "mid" ? (fin(r.md) ? r.md : r.m) : fin(r.a) ? r.a : r.m);
   const sellPx = (r) => (EXEC === "mid" ? (fin(r.md) ? r.md : r.m) : fin(r.b) ? r.b : r.m);
   const trades = [];
+  let unpriced = 0;
   for (const s of signals) {
     const name = s.best.r.n;
     const i0 = snapBefore(s.ts);
@@ -239,26 +246,27 @@ if (WANT_TRADES && signals.length) {
     const entryPx = buyPx(r0), entryMark = r0.m;
     if (!posNum(entryPx)) continue;
     const paid = entryPx * REPLAY_LOT + feeOf(r0.m, s.spot) * REPLAY_LOT;
-    let out = null;
-    for (let j = i0 + 1; j < times.length; j++) {
-      const r = snaps.get(times[j])?.get(name);
-      if (!r || !fin(r.m)) continue;
-      const heldH = (times[j] - times[i0]) / 3600000;
-      const px = sellPx(r);
-      const movePct = fin(r.f) ? ((r.f - s.spot) / s.spot) * 100 : null;
-      const moveSigma = fin(movePct) && posNum(s.s1d) ? Math.abs(movePct) / s.s1d : null;
-      let why = null;
-      if (r.m >= entryMark * (1 + X.takeProfitPct / 100)) why = "тейк";
-      else if (r.m <= entryMark * (1 - X.stopLossPctPrem / 100)) why = "стоп";
-      else if (fin(r0.iv) && fin(r.iv) && r0.iv - r.iv >= X.ivDropExitPts) why = "падение воли";
-      else if (heldH >= X.timeStopH && (!fin(moveSigma) || moveSigma < X.minMoveSigma)) why = "тайм-стоп";
-      else if (fin(r.h) && r.h <= X.preExpiryCloseH) why = "преэкспирация";
-      else if (j === times.length - 1) why = "конец записи";
-      if (why) { const pnl = px * REPLAY_LOT - feeOf(r.m, r.f) * REPLAY_LOT - paid;
-        out = { ts: s.ts, name, why, heldH, paid, pnl, retPct: (pnl / paid) * 100,
-          days: (s.best.r.e - s.ts) / 86400000, delta: Math.abs(s.best.r.d ?? NaN) }; break; }
-    }
-    if (out) trades.push(out);
+    // Протяжка ОБЩИМ правилом. Здесь остаётся только подстановка величин снимка; решение «чем
+    // кончилась позиция, если ни одно правило не сработало» принимает exits.js, и позиция с
+    // пропавшим инструментом закрывается по последнему марку, а не исчезает из отчёта.
+    const from = i0 + 1;
+    const ex = walkExit({
+      count: times.length - from,
+      at: (k) => {
+        const r = snaps.get(times[from + k])?.get(name);
+        if (!r || !(r.m > 0)) return null;
+        const movePct = fin(r.f) ? ((r.f - s.spot) / s.spot) * 100 : null;
+        return { tsMs: times[from + k], markUsd: r.m, ivPct: r.iv, hoursToExpiry: r.h,
+          moveSigma: fin(movePct) && posNum(s.s1d) ? Math.abs(movePct) / s.s1d : null };
+      },
+      entryTsMs: times[i0], entryMarkUsd: entryMark, entryIvPct: r0.iv, exits: X,
+    });
+    if (!ex) { unpriced += 1; continue; } // инструмента нет ни в одном снимке после входа
+    const r1 = snaps.get(times[from + ex.index]).get(name);
+    const pnl = sellPx(r1) * REPLAY_LOT - feeOf(r1.m, r1.f) * REPLAY_LOT - paid;
+    trades.push({ ts: s.ts, name, why: ex.reason, heldH: ex.heldH, paid, pnl,
+      retPct: (pnl / paid) * 100, days: (s.best.r.e - s.ts) / 86400000,
+      delta: Math.abs(s.best.r.d ?? NaN) });
   }
   console.log(`\n## Сделки (исполнение ${EXEC === "mid" ? "по середине" : "тейкерское"}, размер ${REPLAY_LOT} BTC)\n`);
   if (!trades.length) console.log(`Сигналы есть, но ни одна сделка не закрылась внутри записи.`);
@@ -266,6 +274,15 @@ if (WANT_TRADES && signals.length) {
     const sum = trades.reduce((a, t) => a + t.pnl, 0), paid = trades.reduce((a, t) => a + t.paid, 0);
     console.log(`Сделок ${trades.length} · прибыльных ${f((100 * trades.filter((t) => t.pnl > 0).length) / trades.length, 0)}% · `
       + `медиана ${f(q(trades.map((t) => t.retPct), .5), 1)}% · итог на вложенное ${f((sum / paid) * 100, 1)}% · медиана удержания ${f(q(trades.map((t) => t.heldH), .5), 1)} ч\n`);
+    // Сколько сделок закрыто НЕ правилом, а исчезновением инструмента из восстановления, печатается
+    // всегда: пропадает инструмент, когда спот ушёл от страйка, то есть выпадение коррелирует с
+    // исходом, и молчание о нём это отбор по результату. На живой записи оба числа равны нулю.
+    const vanished = trades.filter((t) => t.why === "инструмент пропал").length;
+    if (vanished || unpriced) {
+      console.log(`Из них закрыто по причине «инструмент пропал»: ${vanished}`
+        + `${unpriced ? `; ещё ${unpriced} сигналов оценить нечем (инструмента нет ни в одном снимке после входа)` : ""}.`);
+      console.log(`Такая позиция закрывается по ПОСЛЕДНЕМУ известному марку; удержание до экспирации дало бы хуже.\n`);
+    }
     if (!QUIET) {
       console.log(`| вход | инструмент | дельта | срок | держали | выход | результат |`);
       console.log(`|---|---|---|---|---|---|---|`);

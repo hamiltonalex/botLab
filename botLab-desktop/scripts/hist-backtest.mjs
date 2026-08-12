@@ -38,7 +38,7 @@ import {
 } from "../src/engine/otmscan/replay.js";
 import { optionFeePct, computeTradeCosts } from "../src/engine/otmscan/economics.js";
 import { computeSizing } from "../src/engine/otmscan/scan-engine.js";
-import { evaluateExit } from "../src/engine/otmscan/exits.js";
+import { walkExit as walkExitRule, EXIT_REASONS } from "../src/engine/otmscan/exits.js";
 import { mean, sd, nEff, ci95 } from "../src/engine/otmscan/stats.js";
 
 const fin = (x) => Number.isFinite(x);
@@ -201,7 +201,15 @@ function runOne(dir) {
     return Math.sqrt(v) * Math.sqrt(365 * 24) * 100;
   }
 
-  const feeOf = (mark, index) => optionFeePct({ markUsd: mark, indexPrice: index }).feeUsd ?? 0;
+  // Индекс на метку: последняя строка тика не позже неё. Нужен там, где поверхность инструмент уже
+  // не отдаёт, а итог позиции всё равно ОПРЕДЕЛЁН (см. классификацию в цикле по горизонтам).
+  const idxAt = (T) => { let lo = 0, hi = spotAt.length - 1, res = null;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (spotAt[m].ts <= T) { res = spotAt[m].s; lo = m + 1; } else hi = m - 1; } return res; };
+  // Внутренняя стоимость по индексу. В экспирацию это ТОЧНЫЙ итог линейного опциона, до неё -
+  // строгая нижняя граница цены (цена = внутренняя + временная, временная неотрицательна).
+  const intrinsicAt = (r, T) => { const x = idxAt(T);
+    return fin(x) && fin(r?.k) ? Math.max(0, r.s === "C" ? x - r.k : r.k - x) : null; };
+  const endTs = times.at(-1);
   const trades = [];
   let epNoSignal = 0;
   for (const ep of episodes) {
@@ -219,21 +227,60 @@ function runOne(dir) {
       // «при каких показаниях мы вошли», а именно он и задаётся при разборе каждой сделки.
       side: s.side, spot: s.spot, st: s.st, val: s.val, gateKeys: s.gateKeys,
       epStartTs: ep.startTs, epEndTs: ep.endTs };
+    // ЧЕМ КОНЧИЛАСЬ ПОЗИЦИЯ НА ГОРИЗОНТЕ. Раньше здесь стоял один `null` на все случаи, а вызывающие
+    // делали `.filter(fin)`, и позиция молча выпадала из среднего. Случаев на самом деле ЧЕТЫРЕ, и
+    // они разного качества, а главное - выпадение КОРРЕЛИРУЕТ С ИСХОДОМ, поэтому молчаливое
+    // отбрасывание это отбор по результату (тот же дефект, что чинил walkExit, см. exits.js):
+    //   1. снимок есть            - замер, как и было;
+    //   2. контракт ЭКСПИРИРОВАЛ раньше горизонта - итог ТОЧНО известен по индексу, это арифметика
+    //      над наблюдённой величиной, а не модель;
+    //   3. инструмент ПРОПАЛ живым (спот ушёл от страйка, правило П3 не даёт продолжать смайл) -
+    //      цену на горизонте не узнать, берём ВНУТРЕННЮЮ стоимость по индексу. Она строго НИЖЕ
+    //      настоящей цены на величину временной стоимости, то есть эта оценка не может польстить
+    //      стратегии: положительный результат клетки после неё - настоящий, отрицательный - возможно
+    //      пессимистичный. Оптимистичная граница (последний известный марк) считается рядом и
+    //      печатается полосой, чтобы неопределённость была видна, а не спрятана в одно число;
+    //   4. горизонт за краем ЗАПИСИ - итога нет вовсе, позиция честно исключается и пересчитывается.
+    // Пропажа двусторонняя: страйк выходит за наблюдённый диапазон и когда уходит глубоко ВНЕ денег
+    // (убыток), и когда уходит глубоко В деньги (прибыль). На годе при горизонте 168 ч пропадали
+    // ровно вторые: 26 из 27 в деньгах, среднее +169%. Поэтому знак поправки заранее не известен.
     for (const H of HORIZONS) {
       const tgt = s.ts + H * 3600000;
       let j = i0 + 1;
       while (j < times.length && times[j] < tgt) j++;
       const r1 = j < times.length ? snaps.get(times[j])?.get(name) : null;
-      if (!r1 || !(r1.m > 0)) { row.h[H] = null; continue; }
-      const before = ((r1.m - r0.m) / r0.m) * 100;
-      // РЕАЛИЗОВАННАЯ ВОЛЯ ЗА САМО УДЕРЖАНИЕ против IV, которую за неё заплатили. Это центральная
-      // величина аудита 2026-08-08 («запас −0.53 пункта») и единственная, выраженная в тех же
-      // единицах, что круг издержек. Считается по индексу из строк тика, час к часу.
-      const rvHold = realizedVolPctBetween(s.ts, times[j]);
-      row.h[H] = { before, after: before - (costs?.roundTripCostPct ?? 0), ivExit: r1.iv,
-        heldH: (times[j] - times[i0]) / 3600000, exitTs: times[j], markExit: r1.m,
-        dIv: fin(r1.iv) && fin(r0.iv) ? r1.iv - r0.iv : null,
-        volEdge: fin(rvHold) && fin(r0.iv) ? rvHold - r0.iv : null };
+      const mk = (before, extra) => ({ before, after: before - (costs?.roundTripCostPct ?? 0), ...extra });
+      if (r1 && r1.m > 0) {
+        // РЕАЛИЗОВАННАЯ ВОЛЯ ЗА САМО УДЕРЖАНИЕ против IV, которую за неё заплатили. Это центральная
+        // величина аудита 2026-08-08 («запас −0.53 пункта») и единственная, выраженная в тех же
+        // единицах, что круг издержек. Считается по индексу из строк тика, час к часу.
+        const rvHold = realizedVolPctBetween(s.ts, times[j]);
+        row.h[H] = mk(((r1.m - r0.m) / r0.m) * 100, { ivExit: r1.iv, how: "снимок",
+          heldH: (times[j] - times[i0]) / 3600000, exitTs: times[j], markExit: r1.m,
+          dIv: fin(r1.iv) && fin(r0.iv) ? r1.iv - r0.iv : null,
+          volEdge: fin(rvHold) && fin(r0.iv) ? rvHold - r0.iv : null });
+        continue;
+      }
+      const expired = fin(r0.e) && r0.e <= tgt && r0.e <= endTs;
+      if (!expired && tgt > endTs) { row.h[H] = null; row.beyond = (row.beyond ?? 0) + 1; continue; }
+      const at = expired ? r0.e : tgt;
+      const val = intrinsicAt(r0, at);
+      if (!fin(val)) { row.h[H] = null; continue; }
+      // Вторая оценка для пропавшего живым: последний марк, который поверхность успела отдать.
+      // Это НЕ граница, а цена в более ранний момент: если инструмент после пропажи продолжал
+      // уходить в деньги, она занижает, если разворачивался - завышает. Печатается рядом, чтобы
+      // было видно, насколько строка зависит от способа оценки.
+      let last = null;
+      for (let x = i0 + 1; x < times.length && times[x] < tgt; x++) {
+        const r = snaps.get(times[x])?.get(name);
+        if (r && r.m > 0) last = r.m;
+      }
+      // ivExit/dIv/volEdge остаются null: воли у синтетического выхода нет, и выдумывать её нельзя
+      // (тот же tri-state, что во всём проекте). Раздел 2b поэтому считается только по замерам.
+      row.h[H] = mk(((val - r0.m) / r0.m) * 100, { ivExit: null, dIv: null, volEdge: null,
+        how: expired ? "экспирация" : "внутренняя", heldH: (at - times[i0]) / 3600000,
+        exitTs: at, markExit: val,
+        beforeOpt: expired || last == null ? null : ((last - r0.m) / r0.m) * 100 });
     }
     // Контекст протяжки позиции: нужен, чтобы правила выхода можно было применить МНОГО раз
     // (перебор `--exit-sweep`) без перезагрузки записи. Сама протяжка ниже, в walkExit.
@@ -244,24 +291,29 @@ function runOne(dir) {
     trades.push(row);
   }
   // ── ПРОТЯЖКА ПОЗИЦИИ ДО ВЫХОДА ПО ПРАВИЛАМ ПРЕСЕТА (Е1-Е7).
-  // Правило одно на проект и живёт в exits.js; здесь только подстановка величин снимка. Функция
-  // возвращается наружу, чтобы перебор комбинаций выходов шёл без повторной загрузки записи.
+  // Правило одно на проект и живёт в exits.js, включая решение «чем кончилась позиция, если ни одно
+  // правило не сработало». Здесь остаётся только подстановка величин снимка: лениво, потому что
+  // перебор выходов гоняет протяжку сотни раз по одной и той же записи. Функция возвращается
+  // наружу, чтобы перебор шёл без повторной загрузки записи.
+  // null означает ровно одно: инструмента нет ни в одном снимке после входа. Такие позиции
+  // СЧИТАЮТСЯ И ПЕЧАТАЮТСЯ (см. раздел 6), а не пропадают из отчёта.
   const walkExit = (t, exits) => {
-    for (let j = t.i0 + 1; j < times.length; j++) {
-      const r = snaps.get(times[j])?.get(t.name);
-      if (!r || !(r.m > 0)) continue;
-      const heldH = (times[j] - times[t.i0]) / 3600000;
-      const movePct = fin(t.spot) && fin(r.f) ? ((r.f - t.spot) / t.spot) * 100 : null;
-      const moveSigma = fin(movePct) && fin(t.s1d) && t.s1d > 0 ? Math.abs(movePct) / t.s1d : null;
-      const ev = evaluateExit({ markUsd: r.m, entryMarkUsd: t.entryMark, ivPct: r.iv,
-        entryIvPct: t.entryIv, heldH, hoursToExpiry: r.h, moveSigma, exits });
-      const last = j === times.length - 1;
-      if (!ev.exit && !last) continue;
-      const before = ((r.m - t.entryMark) / t.entryMark) * 100;
-      return { before, after: before - (t.rtcPct ?? 0), heldH, exitTs: times[j], markExit: r.m,
-        reason: ev.reason ?? "конец записи" };
-    }
-    return null;
+    const from = t.i0 + 1;
+    const ex = walkExitRule({
+      count: times.length - from,
+      at: (k) => {
+        const r = snaps.get(times[from + k])?.get(t.name);
+        if (!r || !(r.m > 0)) return null;
+        const movePct = fin(t.spot) && fin(r.f) ? ((r.f - t.spot) / t.spot) * 100 : null;
+        return { tsMs: times[from + k], markUsd: r.m, ivPct: r.iv, hoursToExpiry: r.h,
+          moveSigma: fin(movePct) && fin(t.s1d) && t.s1d > 0 ? Math.abs(movePct) / t.s1d : null };
+      },
+      entryTsMs: times[t.i0], entryMarkUsd: t.entryMark, entryIvPct: t.entryIv, exits,
+    });
+    if (!ex) return null;
+    const before = ((ex.markUsd - t.entryMark) / t.entryMark) * 100;
+    return { before, after: before - (t.rtcPct ?? 0), heldH: ex.heldH, exitTs: ex.tsMs,
+      markExit: ex.markUsd, reason: ex.reason };
   };
 
   const spanH = (ticks.at(-1).ts - ticks[0].ts) / 3600000;
@@ -325,6 +377,35 @@ for (const H of HORIZONS) {
 console.log(`\nПолоса считается по n_eff, а не по числу эпизодов: перекрывающиеся входы не добавляют`);
 console.log(`независимости, и деление на √n завысило бы уверенность.`);
 
+// ── ИЗ ЧЕГО СОБРАН СТОЛБЕЦ «эпизодов». Печатается всегда, потому что молчание об этом однажды уже
+// стоило проекту знака: на горизонте 168 ч выпадали ровно те позиции, что ушли глубоко В ДЕНЬГИ.
+// ОТДЕЛЬНЫМ разделом, а не подзаголовком внутри второго: `hist-sweep.mjs` разбирает вывод по
+// строкам «N ч» ВНУТРИ раздела (rowsByHorizon), и таблица с той же первой колонкой, оставленная
+// под `###`, затёрла бы разобранные числа последним совпадением. Ловушка тихая: свип продолжил бы
+// печатать сетку, только с чужими значениями.
+console.log(`\n## 2c · Чем закончилась каждая позиция на горизонте\n`);
+console.log(`| горизонт | по снимку | по экспирации | по внутренней стоимости | за краем записи | если по последнему марку |`);
+console.log(`|---|---|---|---|---|---|`);
+for (const H of HORIZONS) {
+  const hs = A.trades.map((t) => t.h[H]);
+  const by = (k) => hs.filter((h) => h?.how === k).length;
+  const nBeyond = hs.filter((h) => !h).length;
+  // Та же выборка, но пропавшие живыми оценены последним известным марком вместо внутренней.
+  const opt = A.trades.map((t) => { const h = t.h[H];
+    return h ? (h.how === "внутренняя" && fin(h.beforeOpt) ? h.beforeOpt : h.before) : null; }).filter(fin);
+  const base = hs.map((h) => h?.before).filter(fin);
+  const same = by("внутренняя") === 0 || Math.abs((mean(opt) ?? 0) - (mean(base) ?? 0)) < 0.005;
+  console.log(`| ${H} ч | ${by("снимок")} | ${by("экспирация")} | **${by("внутренняя")}** | ${nBeyond} | ${same ? "совпадает" : `**${f(mean(opt))}%** против ${f(mean(base))}%`} |`);
+}
+console.log(`\nСтолбцы 2-4 входят в среднее выше, столбец 5 нет: за краем записи итога не существует.`);
+console.log(`«По экспирации» это ТОЧНЫЙ итог по индексу. «По внутренней стоимости» это НИЖНЯЯ граница`);
+console.log(`цены: инструмент пропал живым (спот ушёл от страйка, правило П3 не продолжает смайл), и`);
+console.log(`временная стоимость отброшена. Занизить она может, польстить стратегии нет, поэтому плюс`);
+console.log(`в таблице выше настоящий, а минус может быть пессимистичным.`);
+console.log(`Последний столбец это НЕ вторая граница, а та же выборка, где пропавшие оценены последним`);
+console.log(`наблюдённым марком, то есть ценой в более ранний момент. Разошлись столбцы широко значит,`);
+console.log(`что строка чувствительна к способу оценки и одним числом не описывается.`);
+
 console.log(`\n## 2b · То же в единицах волатильности, где живут и издержки\n`);
 console.log(`Аудит 2026-08-08 свёл спор к одной паре чисел: круг издержек стоит **1.52 пункта воли**`);
 console.log(`на сроке 8-16 дней и **0.62** на 32-64, а фактически реализовавшийся запас за трое суток`);
@@ -378,15 +459,20 @@ if (WANT_TRADES) {
   console.log(`Одна строка = один эпизод = одна позиция. Выход здесь один и тот же для всех - `
     + `фиксированный горизонт ${H} ч, ближайший снимок не раньше него; правила выхода самого пресета `
     + `(тейк, стоп, падение воли) в этом расчёте НЕ применяются.`);
-  if (dropped) console.log(`Позиций без выхода внутри записи (горизонт за её краем): ${dropped} из ${A.trades.length}.`);
+  // Причину надо называть точно: раньше здесь стояло «горизонт за краем записи» на все случаи, а
+  // на деле часть позиций теряла инструмент задолго до края, и это были не те же позиции.
+  if (dropped) console.log(`Позиций без итога на горизонте (горизонт за краем записи): ${dropped} из ${A.trades.length}.`);
+  const synth = rows.filter((t) => t.h[H].how !== "снимок").length;
+  if (synth) console.log(`Из показанных ${rows.length} у ${synth} инструмента на горизонте в записи нет: `
+    + `итог посчитан по экспирации либо по внутренней стоимости (столбец «как»).`);
   console.log();
   // Размер позиции берётся из ЖИВОГО правила `computeSizing`, а не из одного минимального лота:
   // при депозите $500 и риске 20% движок купил бы три-четыре лота, и долларовый итог по одному
   // лоту занизил бы результат втрое. Проценты от премии от размера не зависят, доллары зависят.
   const sizeOf = (t) => computeSizing({ markUsd: t.markEntry, lot: REPLAY_LOT, equityUsd: S.equityUsd,
     riskPerTradePct: S.riskPerTradePct, qtyMax: S.qtyMax, entryDepthUsd: null, maxQtyDepthPct: P.maxQtyDepthPct });
-  console.log(`| № | вход UTC | инструмент | сторона | до эксп., д | дельта | IV входа | лотов | вложено $ | выход UTC | держали, ч | до издержек, % | круг, % | после издержек, % | P&L $ | на суб-счёт $${S.equityUsd}, % |`);
-  console.log(`|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|`);
+  console.log(`| № | вход UTC | инструмент | сторона | до эксп., д | дельта | IV входа | лотов | вложено $ | выход UTC | как | держали, ч | до издержек, % | круг, % | после издержек, % | P&L $ | на суб-счёт $${S.equityUsd}, % |`);
+  console.log(`|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|`);
   let pnlTotal = 0;
   rows.forEach((t, i) => {
     const h = t.h[H];
@@ -396,7 +482,7 @@ if (WANT_TRADES) {
     pnlTotal += pnlUsd;
     console.log(`| ${i + 1} | ${stamp(t.ts)} | ${t.name.replace("BTC_USDC-", "")} | ${t.side} | ${f(t.days, 1)} | `
       + `${f(t.delta, 2)} | ${f(t.ivEntry, 1)} | ${Math.round(qty / REPLAY_LOT)} | ${f(stakeUsd, 2)} | `
-      + `${stamp(h.exitTs)} | ${f(h.heldH, 1)} | ${f(h.before, 2)} | ${f(t.rtcPct, 2)} | **${f(h.after, 2)}** | `
+      + `${stamp(h.exitTs)} | ${h.how} | ${f(h.heldH, 1)} | ${f(h.before, 2)} | ${f(t.rtcPct, 2)} | **${f(h.after, 2)}** | `
       + `${f(pnlUsd, 2)} | ${f((pnlUsd / S.equityUsd) * 100, 3)} |`);
   });
   if (rows.length) {
@@ -471,6 +557,10 @@ if (has("--by-month")) {
 // правила выхода были только числами в пресете: фаза S4 не начата, живой бот их не исполняет.
 if (WANT_EXITS) {
   for (const t of A.trades) t.ex = A.walkExit(t, EXITS);
+  // Позиции, у которых после входа нет НИ ОДНОГО снимка инструмента: оценивать нечего в принципе.
+  // Печатаются числом, а не отфильтровываются молча - молчание здесь однажды уже стоило знака
+  // результата (проверка 2026-08-12, см. комментарий у walkExit в exits.js).
+  const unpriced = A.trades.filter((t) => !t.ex).length;
   // ── ОГРАНИЧЕНИЕ ДВИЖКА НА ОДНОВРЕМЕННЫЕ ПОЗИЦИИ. Без него расчёт отвечает на вопрос «что дало бы
   // правило выхода», а не «что заработал бы движок»: правила выхода растягивают удержание, позиции
   // начинают перекрываться, и их среднее число доходит до величин, которые в счёт физически не
@@ -505,6 +595,8 @@ if (WANT_EXITS) {
     console.log(`| величина | значение |`);
     console.log(`|---|---|`);
     console.log(`| позиций ОТКРЫТО движком (лимит ${MAXC} одновременных) | ${rows.length} из ${A.trades.length} |`);
+    console.log(`| из них закрыто по причине «${EXIT_REASONS.VANISHED}» | ${rows.filter((t) => t.ex.reason === EXIT_REASONS.VANISHED).length} |`);
+    console.log(`| позиций без единого снимка инструмента после входа (оценить нечем) | ${unpriced} |`);
     console.log(`| среднее ДО издержек | **${f(mB)}%** ± ${f(ci95(bef, neB))}% (n_eff ${f(neB, 1)}) |`);
     console.log(`| среднее ПОСЛЕ издержек | **${f(mA)}%** ± ${f(ci95(aft, neA))}% |`);
     console.log(`| медиана после издержек | ${f(q(aft, 0.5))}% |`);
@@ -517,6 +609,17 @@ if (WANT_EXITS) {
     for (const [why, n] of [...by.entries()].sort((a, b) => b[1] - a[1])) {
       const sub = rows.filter((t) => t.ex.reason === why).map((t) => t.ex.after);
       console.log(`| ${why} | ${n} | ${f((n / rows.length) * 100, 0)}% | ${f(mean(sub))}% |`);
+    }
+    if (by.get(EXIT_REASONS.VANISHED)) {
+      console.log(`\n> «${EXIT_REASONS.VANISHED}» это позиции, чей инструмент перестал восстанавливаться`);
+      console.log(`> ДО экспирации: спот ушёл от страйка, и правило П3 (не продолжать смайл за наблюдённые`);
+      console.log(`> страйки) оставляет его без значения; реже сделок не хватает на подгонку при страйке`);
+      console.log(`> внутри диапазона, а у самой экспирации сетку прореживает сам срок. Такая позиция`);
+      console.log(`> закрывается по ПОСЛЕДНЕМУ известному марку, то есть по самой щедрой из честных оценок:`);
+      console.log(`> удержание до экспирации дало бы примерно −100%. Пропажа коррелирует с убытком по`);
+      console.log(`> построению, поэтому вычёркивать такие позиции нельзя - это отбор по исходу. Строку надо`);
+      console.log(`> читать вместе с «конец записи»: там кончилась ЗАПИСЬ при живой позиции, здесь кончился`);
+      console.log(`> ИНСТРУМЕНТ.`);
     }
     // ДЕНЬГИ. Размер даёт живой `computeSizing`, а не один минимальный лот.
     const sizeOf = (t) => computeSizing({ markUsd: t.markEntry, lot: REPLAY_LOT, equityUsd: S.equityUsd,
