@@ -255,7 +255,10 @@ if (WANT_TRADES && signals.length) {
       at: (k) => {
         const r = snaps.get(times[from + k])?.get(name);
         if (!r || !(r.m > 0)) return null;
-        const movePct = fin(r.f) ? ((r.f - s.spot) / s.spot) * 100 : null;
+        // Форвард к форварду ОДНОЙ экспирации, а не форвард к споту: спот входа отличается от
+        // форварда на базис (медиана 0.435% на 28-56 днях против σ1d 2.078%, то есть 0.21σ при
+        // пороге minMoveSigma 0.1σ), и тайм-стоп срабатывал бы не там, где написано в пресете.
+        const movePct = fin(r.f) && fin(r0.f) ? ((r.f - r0.f) / r0.f) * 100 : null;
         return { tsMs: times[from + k], markUsd: r.m, ivPct: r.iv, hoursToExpiry: r.h,
           moveSigma: fin(movePct) && posNum(s.s1d) ? Math.abs(movePct) / s.s1d : null };
       },
