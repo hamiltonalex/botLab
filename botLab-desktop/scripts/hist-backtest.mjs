@@ -38,7 +38,7 @@ import {
 } from "../src/engine/otmscan/replay.js";
 import { optionFeePct, computeTradeCosts } from "../src/engine/otmscan/economics.js";
 import { computeSizing } from "../src/engine/otmscan/scan-engine.js";
-import { evaluateExit } from "../src/engine/otmscan/exits.js";
+import { walkExit as walkExitRule, EXIT_REASONS } from "../src/engine/otmscan/exits.js";
 import { mean, sd, nEff, ci95 } from "../src/engine/otmscan/stats.js";
 
 const fin = (x) => Number.isFinite(x);
@@ -244,24 +244,29 @@ function runOne(dir) {
     trades.push(row);
   }
   // ── ПРОТЯЖКА ПОЗИЦИИ ДО ВЫХОДА ПО ПРАВИЛАМ ПРЕСЕТА (Е1-Е7).
-  // Правило одно на проект и живёт в exits.js; здесь только подстановка величин снимка. Функция
-  // возвращается наружу, чтобы перебор комбинаций выходов шёл без повторной загрузки записи.
+  // Правило одно на проект и живёт в exits.js, включая решение «чем кончилась позиция, если ни одно
+  // правило не сработало». Здесь остаётся только подстановка величин снимка: лениво, потому что
+  // перебор выходов гоняет протяжку сотни раз по одной и той же записи. Функция возвращается
+  // наружу, чтобы перебор шёл без повторной загрузки записи.
+  // null означает ровно одно: инструмента нет ни в одном снимке после входа. Такие позиции
+  // СЧИТАЮТСЯ И ПЕЧАТАЮТСЯ (см. раздел 6), а не пропадают из отчёта.
   const walkExit = (t, exits) => {
-    for (let j = t.i0 + 1; j < times.length; j++) {
-      const r = snaps.get(times[j])?.get(t.name);
-      if (!r || !(r.m > 0)) continue;
-      const heldH = (times[j] - times[t.i0]) / 3600000;
-      const movePct = fin(t.spot) && fin(r.f) ? ((r.f - t.spot) / t.spot) * 100 : null;
-      const moveSigma = fin(movePct) && fin(t.s1d) && t.s1d > 0 ? Math.abs(movePct) / t.s1d : null;
-      const ev = evaluateExit({ markUsd: r.m, entryMarkUsd: t.entryMark, ivPct: r.iv,
-        entryIvPct: t.entryIv, heldH, hoursToExpiry: r.h, moveSigma, exits });
-      const last = j === times.length - 1;
-      if (!ev.exit && !last) continue;
-      const before = ((r.m - t.entryMark) / t.entryMark) * 100;
-      return { before, after: before - (t.rtcPct ?? 0), heldH, exitTs: times[j], markExit: r.m,
-        reason: ev.reason ?? "конец записи" };
-    }
-    return null;
+    const from = t.i0 + 1;
+    const ex = walkExitRule({
+      count: times.length - from,
+      at: (k) => {
+        const r = snaps.get(times[from + k])?.get(t.name);
+        if (!r || !(r.m > 0)) return null;
+        const movePct = fin(t.spot) && fin(r.f) ? ((r.f - t.spot) / t.spot) * 100 : null;
+        return { tsMs: times[from + k], markUsd: r.m, ivPct: r.iv, hoursToExpiry: r.h,
+          moveSigma: fin(movePct) && fin(t.s1d) && t.s1d > 0 ? Math.abs(movePct) / t.s1d : null };
+      },
+      entryTsMs: times[t.i0], entryMarkUsd: t.entryMark, entryIvPct: t.entryIv, exits,
+    });
+    if (!ex) return null;
+    const before = ((ex.markUsd - t.entryMark) / t.entryMark) * 100;
+    return { before, after: before - (t.rtcPct ?? 0), heldH: ex.heldH, exitTs: ex.tsMs,
+      markExit: ex.markUsd, reason: ex.reason };
   };
 
   const spanH = (ticks.at(-1).ts - ticks[0].ts) / 3600000;
@@ -471,6 +476,10 @@ if (has("--by-month")) {
 // правила выхода были только числами в пресете: фаза S4 не начата, живой бот их не исполняет.
 if (WANT_EXITS) {
   for (const t of A.trades) t.ex = A.walkExit(t, EXITS);
+  // Позиции, у которых после входа нет НИ ОДНОГО снимка инструмента: оценивать нечего в принципе.
+  // Печатаются числом, а не отфильтровываются молча - молчание здесь однажды уже стоило знака
+  // результата (проверка 2026-08-12, см. комментарий у walkExit в exits.js).
+  const unpriced = A.trades.filter((t) => !t.ex).length;
   // ── ОГРАНИЧЕНИЕ ДВИЖКА НА ОДНОВРЕМЕННЫЕ ПОЗИЦИИ. Без него расчёт отвечает на вопрос «что дало бы
   // правило выхода», а не «что заработал бы движок»: правила выхода растягивают удержание, позиции
   // начинают перекрываться, и их среднее число доходит до величин, которые в счёт физически не
@@ -505,6 +514,8 @@ if (WANT_EXITS) {
     console.log(`| величина | значение |`);
     console.log(`|---|---|`);
     console.log(`| позиций ОТКРЫТО движком (лимит ${MAXC} одновременных) | ${rows.length} из ${A.trades.length} |`);
+    console.log(`| из них закрыто по причине «${EXIT_REASONS.VANISHED}» | ${rows.filter((t) => t.ex.reason === EXIT_REASONS.VANISHED).length} |`);
+    console.log(`| позиций без единого снимка инструмента после входа (оценить нечем) | ${unpriced} |`);
     console.log(`| среднее ДО издержек | **${f(mB)}%** ± ${f(ci95(bef, neB))}% (n_eff ${f(neB, 1)}) |`);
     console.log(`| среднее ПОСЛЕ издержек | **${f(mA)}%** ± ${f(ci95(aft, neA))}% |`);
     console.log(`| медиана после издержек | ${f(q(aft, 0.5))}% |`);
@@ -517,6 +528,17 @@ if (WANT_EXITS) {
     for (const [why, n] of [...by.entries()].sort((a, b) => b[1] - a[1])) {
       const sub = rows.filter((t) => t.ex.reason === why).map((t) => t.ex.after);
       console.log(`| ${why} | ${n} | ${f((n / rows.length) * 100, 0)}% | ${f(mean(sub))}% |`);
+    }
+    if (by.get(EXIT_REASONS.VANISHED)) {
+      console.log(`\n> «${EXIT_REASONS.VANISHED}» это позиции, чей инструмент перестал восстанавливаться`);
+      console.log(`> ДО экспирации: спот ушёл от страйка, и правило П3 (не продолжать смайл за наблюдённые`);
+      console.log(`> страйки) оставляет его без значения; реже сделок не хватает на подгонку при страйке`);
+      console.log(`> внутри диапазона, а у самой экспирации сетку прореживает сам срок. Такая позиция`);
+      console.log(`> закрывается по ПОСЛЕДНЕМУ известному марку, то есть по самой щедрой из честных оценок:`);
+      console.log(`> удержание до экспирации дало бы примерно −100%. Пропажа коррелирует с убытком по`);
+      console.log(`> построению, поэтому вычёркивать такие позиции нельзя - это отбор по исходу. Строку надо`);
+      console.log(`> читать вместе с «конец записи»: там кончилась ЗАПИСЬ при живой позиции, здесь кончился`);
+      console.log(`> ИНСТРУМЕНТ.`);
     }
     // ДЕНЬГИ. Размер даёт живой `computeSizing`, а не один минимальный лот.
     const sizeOf = (t) => computeSizing({ markUsd: t.markEntry, lot: REPLAY_LOT, equityUsd: S.equityUsd,
