@@ -106,7 +106,7 @@ function runTrade(t, timeStopH = TS_EFF, tpPct = TP_EFF) {
   const index0 = t.S ?? r0.f;
   const cost0 = feeUsd(r0.m, index0) * QTY;
   const paid = entryPx * QTY + cost0;
-  const ivIn = r0.iv, s1d = t.s1d ?? null, spot0 = index0;
+  const ivIn = r0.iv, s1d = t.s1d ?? null, fwd0 = r0.f ?? null;
   // Триггеры тейка и стопа СРАБАТЫВАЮТ по mark, как их определяет пресет (EXITS_DEFAULT:
   // «mark ≥ entry·(1+x/100)»), а исполняются по стороне книги. Сравнивать бид с аском нельзя:
   // на спреде 4.3% премии «тейк +10%» превратился бы в требование роста mark на 14.3%, то есть
@@ -121,7 +121,10 @@ function runTrade(t, timeStopH = TS_EFF, tpPct = TP_EFF) {
     const gross = px * QTY;
     const cost1 = feeUsd(r.m, r.f) * QTY;
     const pnl = gross - cost1 - paid;
-    const movePct = fin(spot0) && fin(r.f) ? ((r.f - spot0) / spot0) * 100 : null;
+    // Форвард к форварду ОДНОЙ экспирации, а не форвард к споту: спот входа отличается от
+    // форварда на базис (медиана 0.435% на 28-56 днях против σ1d 2.078%, то есть 0.21σ при
+    // пороге minMoveSigma 0.1σ), и тайм-стоп срабатывал бы не там, где написано в пресете.
+    const movePct = fin(fwd0) && fin(r.f) ? ((r.f - fwd0) / fwd0) * 100 : null;
     const moveSigma = fin(movePct) && fin(s1d) && s1d > 0 ? Math.abs(movePct) / s1d : null;
 
     // Правило выхода одно на проект и живёт в exits.js (Е1-Е7). Здесь только подстановка величин

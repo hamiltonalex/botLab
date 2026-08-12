@@ -287,6 +287,14 @@ function runOne(dir) {
     row.i0 = i0;
     row.entryMark = r0.m;
     row.entryIv = r0.iv;
+    // ФОРВАРД ВХОДА, а не спот входа. Движение базового актива для тайм-стопа (Е4) считается по
+    // снимкам, а в снимке лежит ФОРВАРД экспирации, не спот. Сравнение форварда со спотом
+    // добавляло к движению базис, а он на этих сроках не мал: медиана 0.435% на 28-56 днях при
+    // σ1d 2.078%, то есть 0.21σ против порога minMoveSigma 0.1σ. Правило «позиция простояла без
+    // движения» тем самым читалось как «спот упал примерно на полпроцента», и читалось
+    // по-разному для коллов и путов. Форвард к форварду ОДНОЙ экспирации базис сокращает: он
+    // меняется только за счёт истечения срока (4.5% годовых × 0.5 суток = 0.006%).
+    row.entryFwd = r0.f ?? null;
     row.s1d = s.s1d ?? null;
     trades.push(row);
   }
@@ -304,7 +312,7 @@ function runOne(dir) {
       at: (k) => {
         const r = snaps.get(times[from + k])?.get(t.name);
         if (!r || !(r.m > 0)) return null;
-        const movePct = fin(t.spot) && fin(r.f) ? ((r.f - t.spot) / t.spot) * 100 : null;
+        const movePct = fin(t.entryFwd) && fin(r.f) ? ((r.f - t.entryFwd) / t.entryFwd) * 100 : null;
         return { tsMs: times[from + k], markUsd: r.m, ivPct: r.iv, hoursToExpiry: r.h,
           moveSigma: fin(movePct) && fin(t.s1d) && t.s1d > 0 ? Math.abs(movePct) / t.s1d : null };
       },

@@ -70,7 +70,7 @@ if (has("--help")) {
   --cache <dir>     каталог кэша (по умолчанию ~/botlab-hist-cache)
   --from <ISO-дата> начало окна UTC (по умолчанию 366 суток назад)
   --to <ISO-дата>   конец окна UTC, не включая (по умолчанию сегодня)
-  --what <список>   через запятую: meta,trades,candles,dvol (по умолчанию all)
+  --what <список>   через запятую: meta,trades,candles,dvol,funding (по умолчанию all)
   --rps <n>         запросов в секунду (по умолчанию 3; на IP идёт чужая обкатка)
   --force           перекачать даже то, что уже лежит
   --dry             показать план и выйти`);
@@ -332,6 +332,43 @@ async function fetchDvol() {
   if (cover < 90) log(`    ! покрытие DVOL ниже 90% - база У2 будет считаться по дырявому ряду`);
 }
 
+// ── 5. ФАНДИНГ ПЕРПА. Появился, когда дельта-хедж стал частью расчёта: хедж короткой опционной
+// ноги это позиция в перпе, а она платит или получает фандинг каждый час. Замер порядка величины
+// показал, что статья крупнее всей найденной кромки, поэтому предполагать её знак нельзя.
+//
+// `get_funding_rate_history` отдаёт ПОЧАСОВЫЕ записи с полем `interest_1h` (доля за час, уже за
+// час, а не годовая) и потолком 744 записи на ответ. Чанк берём 30 суток = 720 точек с запасом,
+// как у DVOL, и по той же причине: этот класс эндпоинтов режет ответ молча.
+//
+// ЗНАК, названный явно, потому что перепутать его дороже всего: положительный `interest_1h`
+// означает, что ЛОНГИ ПЛАТЯТ шортам. Значит P&L позиции q BTC за час = −q · S · interest_1h.
+async function fetchFunding() {
+  const rel = "funding/btc-perpetual-1h.json";
+  if (isDone(rel)) { log(`  = ${rel} (уже есть)`); return; }
+  const chunk = 30 * DAY_MS;
+  const byTs = new Map();
+  for (let s = FROM; s < TO; s += chunk) {
+    const e = Math.min(TO, s + chunk);
+    // ХОСТ ЗДЕСЬ ЖИВОЙ, А НЕ АРХИВНЫЙ, и это проверено вызовом: history.deribit.com отвечает на
+    // этот метод голым «Bad request» (даже не JSON-RPC-ошибкой), тогда как www отдаёт весь год.
+    const r = await rpc(WWW,
+      `public/get_funding_rate_history?instrument_name=BTC-PERPETUAL&start_timestamp=${s}&end_timestamp=${e}`);
+    const data = Array.isArray(r) ? r : [];
+    if (data.length >= 744) log(`    ! фандинг: чанк ${dayKey(s)} упёрся в потолок ответа (${data.length})`);
+    for (const d of data) {
+      if (!Number.isFinite(d?.timestamp)) continue;
+      byTs.set(d.timestamp, { ts: d.timestamp, r1h: d.interest_1h, r8h: d.interest_8h ?? null,
+        index: d.index_price ?? null });
+    }
+  }
+  const rows = [...byTs.values()].sort((a, b) => a.ts - b.ts);
+  const expect = Math.round((TO - FROM) / 3600000);
+  bytes += writeJson(rel, rows);
+  const sum = rows.reduce((a, x) => a + (Number.isFinite(x.r1h) ? x.r1h : 0), 0);
+  log(`  + ${rel}: ${rows.length} часовых точек из ${expect} (покрытие ${((100 * rows.length) / expect).toFixed(1)}%)`);
+  log(`    сумма ставок за окно ${(sum * 100).toFixed(2)}% - столько заплатил бы ЛОНГ на единицу нотионала`);
+}
+
 // ── прогон
 const t0 = Date.now();
 log(`# Кэш истории Deribit`);
@@ -343,6 +380,7 @@ ensure(CACHE);
 if (want("meta")) { log(`\n## мета инструментов`); await fetchMeta(); }
 if (want("candles")) { log(`\n## свечи`); await fetchCandles(); }
 if (want("dvol")) { log(`\n## DVOL`); await fetchDvol(); }
+if (want("funding")) { log(`\n## фандинг перпа`); await fetchFunding(); }
 if (want("trades")) { log(`\n## лента сделок`); await fetchTrades(); }
 
 writeJson("manifest.json", {

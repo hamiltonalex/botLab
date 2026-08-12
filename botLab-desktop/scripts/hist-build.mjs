@@ -246,7 +246,7 @@ function forwardFactory(ts, spot) {
 mkdirSync(join(OUT, "scan-records"), { recursive: true });
 const stats = {
   ticks: 0, ticksSkipped: 0, surfaceRows: 0, snapshots: 0,
-  noIv: 0, noForward: 0, noQuote: 0, instrumentsSeen: 0,
+  noIv: 0, noForward: 0, noPrice: 0, noQuote: 0, instrumentsSeen: 0,
   expiriesFitted: 0, tradesUsed: 0, tickNoSide: 0, tickNoRv: 0,
 };
 const filesOpen = new Map();
@@ -310,15 +310,27 @@ for (let ts = Math.ceil(FROM / STEP_MS) * STEP_MS; ts < TO; ts += STEP_MS) {
     if (!posNum(iv)) { stats.noIv += 1; continue; }
     const tY = yearsToExpiry(ts, m.expiration_timestamp);
     const g = black76Greeks({ forwardUsd: F, strikeUsd: m.strike, ivPct: iv, tYears: tY, optionType: m.option_type });
-    if (!posNum(g.priceUsd)) { stats.noQuote += 1; continue; }
+    if (!posNum(g.priceUsd)) { stats.noPrice += 1; continue; }
     const q = quotesFromMark({ deltaAbs: Math.abs(g.delta), daysToExpiry: days, markUsd: g.priceUsd, vegaUsd: g.vegaUsd, invariant: SPREAD_MODE, scale: SPREAD_SCALE });
-    if (!q) { stats.noQuote += 1; continue; }
+    // НЕТ КОТИРОВКИ - ЭТО НЕ «НЕТ ИНСТРУМЕНТА». Модель спреда молчит за границами измеренной
+    // сетки (|дельта| вне 0.05..0.8), а марк, IV и греки там вычислимы ровно так же. Раньше
+    // строка целиком не писалась, и запись оказывалась ОБРЕЗАНА ПО ДЕЛЬТЕ: позиция, ушедшая
+    // глубоко в деньги, исчезала из истории вместе со своим результатом. Замер на годе: на
+    // горизонте 168 ч так пропадало 1.4% наблюдений полосы, на 336 ч 6.5%, и это были выигрыши
+    // (среднее +173% по внутренней стоимости), то есть отбор по исходу в чистом виде. Причина
+    // доказана тестом брата: у 79.2% пропавших ЖИВ опцион того же страйка противоположного типа,
+    // а значит IV страйка на поверхности есть и правило П3 ни при чём.
+    // Теперь строка пишется всегда, а незнание спреда выражается tri-state: b/a = null. Ниже по
+    // тракту это уже обработано - instrRow (replay.js) требует конечных b/a, поэтому такой
+    // инструмент честно не может стать КАНДИДАТОМ на вход, но остаётся видимым в ТРАЕКТОРИИ.
+    if (!q) stats.noQuote += 1;
     // Ключи и округления - ровно как в surface.js живого рекордера.
     appendRow("surface", ts, {
       ts, n: m.instrument_name, e: m.expiration_timestamp, k: m.strike,
       s: m.option_type === "call" ? "C" : "P",
       h: r(tY * 365 * 24, 3), f: r(F, 2),
-      b: r(q.bid, 2), a: r(q.ask, 2), m: r(g.priceUsd, 2), md: r(q.mid, 2),
+      b: q ? r(q.bid, 2) : null, a: q ? r(q.ask, 2) : null, m: r(g.priceUsd, 2),
+      md: q ? r(q.mid, 2) : null,
       iv: r(iv, 2), oi: null, vu: null,
       d: r(g.delta, 4), th: r(g.thetaUsd, 3), vg: r(g.vegaUsd, 3),
     });
@@ -376,7 +388,8 @@ console.log(`| меток пропущено (нет спота/смайла/с�
 console.log(`| инструментов рассмотрено | ${stats.instrumentsSeen} |`);
 console.log(`| из них без IV (правила П3/П4) | ${stats.noIv} (${pct(stats.noIv, stats.instrumentsSeen)}%) |`);
 console.log(`| из них без форварда | ${stats.noForward} (${pct(stats.noForward, stats.instrumentsSeen)}%) |`);
-console.log(`| из них без котировки | ${stats.noQuote} (${pct(stats.noQuote, stats.instrumentsSeen)}%) |`);
+console.log(`| из них без цены Блэка-76 (строки нет) | ${stats.noPrice} (${pct(stats.noPrice, stats.instrumentsSeen)}%) |`);
+console.log(`| из них СО СТРОКОЙ, но без модельной котировки (b/a = null) | ${stats.noQuote} (${pct(stats.noQuote, stats.instrumentsSeen)}%) |`);
 console.log(`| тиков без стороны (импульс н/д) | ${stats.tickNoSide} |`);
 console.log(`| тиков без RV7d | ${stats.tickNoRv} |`);
 console.log(`| экспираций подогнано на снимок | ${stats.snapshots ? (stats.expiriesFitted / stats.snapshots).toFixed(1) : "н/д"} |`);
