@@ -78,12 +78,12 @@ test("determinism: two identical runSweep calls → deepEqual results", () => {
   assert.deepEqual(runSweep(args()), runSweep(args()));
 });
 
-test("shape + ranking: 108 combos, marginOk-first partition, sharpe DESC / net tiebreak in-group", () => {
+test("shape + ranking: 144 combos, marginOk-first partition, sharpe DESC / net tiebreak in-group", () => {
   const r = runSweep({ series: mkSeries(), chain: mkChain(), expiryMs: EXPIRY, baseSettings: { ...BASE } });
   assert.equal(r.seriesLen, 12);
   assert.equal(r.objective, "sharpe");
   assert.equal(r.excluded.length, 0);
-  assert.equal(r.combos.length, 108, "3 wings · 3 deadbands · 3 triggers · 4 lambdas");
+  assert.equal(r.combos.length, 144, "3 wings · 4 deadbands · 3 triggers · 4 lambdas");
   assert.equal(r.best, 0, "best indexes the ranked head");
 
   // combo shape — the documented keys, gridIndex stripped
@@ -95,7 +95,7 @@ test("shape + ranking: 108 combos, marginOk-first partition, sharpe DESC / net t
   // equity 13000 splits by wing width: ±5% IM ≈ 15560 (over) vs ±10/15% (under) — both groups present
   assert.ok(r.combos.every((c) => c.marginOk === (c.wingPct !== 5)), "marginOk ⇔ not the ±5% wings");
   const firstFalse = r.combos.findIndex((c) => !c.marginOk);
-  assert.equal(firstFalse, 72, "all 72 marginOk:true combos precede the 36 marginOk:false");
+  assert.equal(firstFalse, 96, "all 96 marginOk:true combos precede the 48 marginOk:false");
   for (let i = firstFalse; i < r.combos.length; i++) assert.equal(r.combos[i].marginOk, false);
 
   // within each group: sharpe non-increasing; equal sharpe → net non-increasing
@@ -152,14 +152,14 @@ test("metrics-reuse: the best combo's numbers equal a manual engine replay EXACT
 
 test("honest-data rule: snapshots without ±15%-wing quotes exclude every wingPct:15 combo", () => {
   const r = runSweep({ series: mkSeries([54400, 73600]), chain: mkChain(), expiryMs: EXPIRY, baseSettings: { ...BASE } });
-  assert.equal(r.excluded.length, 36, "3 deadbands · 3 triggers · 4 lambdas at wing 15");
+  assert.equal(r.excluded.length, 48, "4 deadbands · 3 triggers · 4 lambdas at wing 15");
   for (const x of r.excluded) {
     assert.equal(x.wingPct, 15);
     assert.ok(typeof x.reason === "string" && x.reason.length > 0, "reason present");
     assert.ok(x.reason.includes(nm(73600, "call")) && x.reason.includes(nm(54400, "put")), "reason names the unquoted wings");
     assert.ok("deadbandPreset" in x && "deadbandBtc" in x && "priceTriggerPct" in x && "lambda" in x, "combo params echoed");
   }
-  assert.equal(r.combos.length, 72, "grid size − excluded");
+  assert.equal(r.combos.length, 96, "grid size − excluded");
   assert.ok(r.combos.every((c) => c.wingPct !== 15), "no wing-15 combo was scored on guessed marks");
   assert.equal(r.best, 0);
 });
@@ -182,13 +182,13 @@ test("grid override: one value per axis → exactly 1 combo; per-axis override m
 
   // overriding a single axis keeps the other defaults: 3 · 3 · 3 · 1 = 27
   const partial = runSweep({ series: mkSeries(), chain: mkChain(), expiryMs: EXPIRY, baseSettings: { ...BASE }, grid: { lambda: [1.5] } });
-  assert.equal(partial.combos.length, 27);
+  assert.equal(partial.combos.length, 36);
   assert.ok(partial.combos.every((c) => c.lambda === 1.5));
 });
 
 test("paperEquityUsd 1 → every combo marginOk:false, still fully ranked, best = 0", () => {
   const r = runSweep({ series: mkSeries(), chain: mkChain(), expiryMs: EXPIRY, baseSettings: { qty: 1, paperEquityUsd: 1, deadbandRefQty: 1 } });
-  assert.equal(r.combos.length, 108);
+  assert.equal(r.combos.length, 144);
   assert.ok(r.combos.every((c) => c.marginOk === false), "min-size margin dwarfs a $1 deposit");
   assert.equal(r.best, 0);
   for (let i = 1; i < r.combos.length; i++) {

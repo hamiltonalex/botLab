@@ -4,6 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as engine from "../src/engine/btcopt/engine.js";
+import { effectiveDeadband } from "../src/engine/btcopt/hedge.js";
+import { SELLHEDGE_DEFAULTS } from "../src/engine/otmscan/sellhedge.js";
 
 const near = (a, b, tol, l) => assert.ok(Math.abs(a - b) < tol, `${l}: got ${a} want ${b} (±${tol})`);
 
@@ -322,8 +324,20 @@ test("lastRunMetrics: expiry settlement also freezes the finished run", () => {
 });
 
 // ── Deadband presets: the canonical table and the normalize helper ──────────────────────────────
-test("DEADBAND_PRESETS is the canonical aggressive/normal/conservative table", () => {
-  assert.deepEqual(engine.DEADBAND_PRESETS, { aggressive: 0.0005, normal: 0.001, conservative: 0.002 });
+test("DEADBAND_PRESETS is the canonical table", () => {
+  assert.deepEqual(engine.DEADBAND_PRESETS, { sellhedge: 0.0003, aggressive: 0.0005, normal: 0.001, conservative: 0.002 });
+});
+
+// Пресет продавца задан ЧЕРЕЗ КАЛИБРОВОЧНЫЙ РАЗМЕР, поэтому сырое число само по себе ничего не
+// значит. Проверяется то, ради чего он заведён: на одном контракте полоса равна измеренным 0.03,
+// то есть ровно bandBtc схемы из sellhedge.js. Эта связь и есть смысл пресета.
+test("пресет продавца даёт на 1.0 контракта ровно полосу схемы (0.03 BTC)", () => {
+  const w = engine.DEADBAND_PRESETS.sellhedge;
+  const refQty = engine.defaultSettings().deadbandRefQty;
+  near(effectiveDeadband({ deadbandBtc: w, structureQty: 1.0, refQty }), SELLHEDGE_DEFAULTS.bandBtc, 1e-12, "полоса на контракт");
+  near(effectiveDeadband({ deadbandBtc: w, structureQty: 1.37, refQty }), 1.37 * SELLHEDGE_DEFAULTS.bandBtc, 1e-12, "масштаб размером");
+  // и он ТЕСНЕЕ прежнего самого тесного: иначе заводить его было бы незачем
+  assert.ok(w < engine.DEADBAND_PRESETS.aggressive);
 });
 
 test("normalizeDeadband: a bare preset gains the table width; explicit width always wins", () => {
