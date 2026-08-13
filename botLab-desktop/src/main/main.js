@@ -27,7 +27,8 @@ import { buildXlsxBuffer } from "./xlsx-writer.js";
 import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes } from "../engine/store.js";
 import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
-import { buildStructure as s1buildStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry } from "../engine/btcopt/structure.js";
+import { buildStructure as s1buildStructure, buildSellStructure as s1buildSellStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry } from "../engine/btcopt/structure.js";
+import { pickSellLeg as s1pickSellLeg, SELLHEDGE_DEFAULTS } from "../engine/otmscan/sellhedge.js";
 import { payoffCurve as s1payoffCurve } from "../engine/btcopt/payoff.js";
 import { runSweep as s1runSweep } from "../engine/btcopt/sweep.js";
 import { summarize as s1summarize } from "../engine/btcopt/metrics.js";
@@ -111,7 +112,10 @@ const state = {
   // btc-options-history.json) and snapshotHistory (raw composite snapshots for the sweep, cap 600,
   // session-scoped). band = the polled ATM±{5,10,15}% instrument set; dvol = the cached index value.
   btcOptions: { engine: null, source: null, settings: {}, snapshot: null, running: false, chain: null, lastSnapshot: null,
-    ivHistory: [], snapshotHistory: [], band: null, dvol: null, dvolBackfilled: false, sweepResult: null, histDirtyAt: 0, histFlushedAt: 0 },
+    ivHistory: [], snapshotHistory: [], band: null, dvol: null, dvolBackfilled: false, sweepResult: null, histDirtyAt: 0, histFlushedAt: 0,
+    // Схема продавца (продажа колла с дельта-хеджем): срез поверхности для ВЫБОРА ноги и найденный
+    // кандидат. Оба живут только пока оператор держит тикет продавца, см. ensureBtcOptSellSurface.
+    sellSurface: null, sellCandidate: null },
   // OTM-сканер (S2) — изолированный сканер точек входа в покупку OTM-опционов (план otm-scanner).
   // Читается только scn:*-хендлерами / assembleDatasetScan(); в fa:push и s1:push не попадает.
   // Кольца и кэши живут ЗДЕСЬ (движок O(1) на тик, паттерн 3b бота 2): candles (1h, бэкфилл 10д +
@@ -550,7 +554,12 @@ function pointBtcOptSource() {
   const bo = state.btcOptions;
   if (!bo.source) return;
   const structLegs = bo.engine?.structure ? bo.engine.structure.legs.map((l) => l.instrument) : [];
-  const union = [...new Set([...structLegs, ...(bo.band?.instruments ?? [])])];
+  // Кандидат схемы продавца лежит ВНЕ полосы (у него срок 14-28 суток, а полоса это ближайшая
+  // экспирация не дальше трёх суток), поэтому его надо добавить в опрос отдельно. В primary он НЕ
+  // входит никогда: пропавшая котировка кандидата не имеет права ронять гейт греков открытой
+  // структуры, ровно как и вспомогательные ноги полосы.
+  const sellProbe = bo.sellCandidate?.instrument ? [bo.sellCandidate.instrument] : [];
+  const union = [...new Set([...structLegs, ...(bo.band?.instruments ?? []), ...sellProbe])];
   bo.source.setInstruments(union, structLegs);
 }
 
@@ -570,6 +579,86 @@ function refreshBtcOptBand(underlying) {
     bo.band = next;
     pointBtcOptSource();
   }
+}
+
+// ── СНАБЖЕНИЕ СХЕМЫ ПРОДАВЦА ────────────────────────────────────────────────────────────────────
+//
+// ЗАДАЧА, КОТОРОЙ У ПОКУПАТЕЛЯ НЕТ. Четырёхногая структура строится вокруг ATM ближайшей экспирации,
+// и всё, что ей нужно, уже лежит в полосе опроса. Схеме продавца нужен колл со сроком 336-672 ч и
+// |дельтой| у 0.45, то есть инструмент ЗАВЕДОМО вне полосы: `btcOptBand` берёт единственную
+// экспирацию из `pickExpiry`, а у того потолок трое суток. Без отдельного снабжения
+// `sellRowsFromSnapshot` не увидит ни одной строки и `buildSellStructure` всегда откажет.
+//
+// ПОЧЕМУ НЕ РАСШИРИТЬ ПОЛОСУ. Замер по записи за 2026 год (960 снимков): в окне 336-672 ч лежит
+// медиана 47 коллов, а в допуске дельты только 3. Тянуть тикеры на все 47 значило бы впятеро
+// увеличить число запросов ради одного победителя, а бюджет запросов Deribit у проекта уже измерен
+// как узкий: конкуренция сканера и бота 2 роняла покрытие опроса с 99.7% до 81%.
+//
+// ПОЭТОМУ ДВЕ СТУПЕНИ, и цена у них разная:
+//   A. ОДИН вызов book_summary отдаёт всю поверхность разом; `buildSurfaceRows` считает греки по
+//      Блэку-76 (погрешность дельты 0.13% против биржевой, замерено S0) и отдаёт строки в ТОМ ЖЕ
+//      формате, который читает `pickSellLeg`. Правило выбирает ногу, не потратив ни одного тикера.
+//   B. Для ОДНОЙ выбранной ноги берётся настоящий биржевой тикер. Дальше он течёт в движок обычным
+//      путём, и структура строится на наблюдённых числах, а не на оценке.
+// Обе ступени работают ТОЛЬКО по запросу тикета продавца, а не фоновым таймером: оператор, который
+// схему не открывал, за неё и не платит.
+const SELL_SURFACE_TTL_MS = 120000; // срез поверхности живёт 2 минуты: нога окна 14-28 суток за это
+                                    // время не меняется, а вызов тяжёлый по трафику
+let btcOptSellSurfaceInFlight = false;
+
+// Ступень A. Срез поверхности с греками, свой TTL-кэш и защита от параллельного вызова (паттерн
+// ensureScanSurface). Возвращает массив строк формата поверхности либо null.
+async function ensureBtcOptSellSurface(nowMs) {
+  const bo = state.btcOptions;
+  const chain = bo.chain;
+  if (!chain?.instruments?.length) return null; // страйк и срок живут в метах, без них строк не сшить
+  if (bo.sellSurface && nowMs - bo.sellSurface.fetchedAt < SELL_SURFACE_TTL_MS) return bo.sellSurface.rows;
+  if (btcOptSellSurfaceInFlight) return bo.sellSurface?.rows ?? null; // параллельный вызов ждёт свой тик
+  btcOptSellSurfaceInFlight = true;
+  try {
+    const summary = await deribit.getBookSummaryByCurrency({
+      currency: deribit.OPTION_CURRENCY,
+      kind: "option",
+      testnet: !!bo.settings.testnet,
+    });
+    const at = Date.now();
+    const { rows } = buildSurfaceRows({ summary, chainMetas: chain.instruments, nowMs: at });
+    bo.sellSurface = { rows, fetchedAt: at };
+    return rows;
+  } finally {
+    btcOptSellSurfaceInFlight = false;
+  }
+}
+
+// Живое разрешение схемы продавца: цепочка, ступень A, ступень B, снимок для сборки. Форма ответа
+// намеренно совпадает с `resolveBtcOptStructureLive`, чтобы вызывающие обрабатывали оба пути одинаково.
+// ОШИБКИ РАЗЛИЧАЮТСЯ ПО ТОЧКЕ ОТКАЗА, а не сводятся к одной строке: «правило не нашло ногу» и «биржа
+// не отдала котировку найденной ноги» требуют от оператора разных действий.
+async function resolveBtcOptSellStructureLive(params) {
+  const bo = state.btcOptions;
+  const cfg = { ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) };
+  const chain = await ensureBtcOptChain();
+  const rows = await ensureBtcOptSellSurface(Date.now());
+  if (!rows?.length) return { error: "не удалось получить срез поверхности Deribit" };
+  const leg = s1pickSellLeg(rows, cfg);
+  if (!leg) {
+    return { error: `нет колла в окне ${cfg.expiryMinH}-${cfg.expiryMaxH} ч с |дельтой| у ${cfg.deltaTarget} (срез поверхности)` };
+  }
+  const perpTk = await deribit.getTicker(deribit.PERP_INSTRUMENT, { testnet: !!bo.settings.testnet });
+  // Ступень B: настоящий тикер ОДНОЙ ноги. Кандидат запоминается и попадает в опрос следующих тиков,
+  // иначе открытая структура осталась бы без котировок до ближайшего пересчёта полосы.
+  const snap = await deribit.buildDeribitSnapshot({
+    legInstruments: [leg.n], testnet: !!bo.settings.testnet, nowMs: Date.now(),
+  });
+  if (!snap.perp || !snap.legs[leg.n]) {
+    return { error: `Deribit не отдал котировку ${leg.n}, повторите` };
+  }
+  bo.sellCandidate = { instrument: leg.n, pickedAt: Date.now() };
+  pointBtcOptSource();
+  // Тот же закон, что у покупателя: структура СТРОИТСЯ по цене перпа из пробы, а не по более свежей
+  // из тикера опциона, иначе выбор мог бы разойтись с тем, что реально прокотировано.
+  const buildSnap = { ...snap, underlying: perpTk.index_price };
+  return { chain, snap, buildSnap, params: { ...(params ?? {}), sellCfg: params?.sellCfg ?? null }, leg };
 }
 
 // Record the tick into the rings. The snapshot copy is taken BEFORE ivContext is attached, so history
@@ -885,8 +974,94 @@ async function resolveBtcOptStructureLive(params) {
   return { chain, snap, buildSnap, params, autoPicked };
 }
 
+// ── Реализации ветки продавца для s1:previewStructure / s1:openStructure ─────────────────────────
+//
+// ЧТО ЗДЕСЬ НЕ ДЕЛАЕТСЯ, и это главное: выбор контракта и расчёт размера НЕ повторяются. Их делает
+// `buildSellStructure` внутри движка, вызывая `pickSellLeg` и `lotsByMargin` из sellhedge.js. Здесь
+// только снабжение и форма ответа для интерфейса.
+async function previewSellStructure(params) {
+  const bo = state.btcOptions;
+  try {
+    const res = await resolveBtcOptSellStructureLive(params);
+    if (res.error) return { error: res.error };
+    const equityUsd = s1engine.account(bo.engine, res.snap).equity;
+    const built = s1buildSellStructure({ ...res.params, qty: params?.qty ?? null, equityUsd }, res.chain, res.buildSnap, Date.now());
+    if (built.error) return { error: built.error, sizing: built.sizing ?? null };
+    const metaByInstrument = {};
+    for (const l of built.legs) metaByInstrument[l.instrument] = res.chain.instruments.find((m) => m.instrument_name === l.instrument);
+    const checkSnap = bo.lastSnapshot
+      ? { ...res.snap, legs: { ...(bo.lastSnapshot.legs || {}), ...res.snap.legs } }
+      : res.snap;
+    const rejections = s1engine.preTradeCheck(bo.engine, built, metaByInstrument, checkSnap, Date.now());
+    const payoff = s1payoffCurve(built, { min: res.snap.underlying * 0.75, max: res.snap.underlying * 1.25, n: 96 });
+    const unit = (built.legs[0]?.qtyAbs ?? 0) * (built.legs[0]?.contractSize ?? 1);
+    const premiumCreditUsd = -built.entryDebitUsd; // дебет отрицателен у продавца: это полученный кредит
+    return {
+      ok: true,
+      kind: "sell-call",
+      underlying: res.snap.underlying,
+      chosenExpiry: built.expiryMs,
+      strikes: built.strikes, // только { atm }: тента у этой структуры нет, kc/kp отсутствуют намеренно
+      pickedLeg: built.pickedLeg,
+      entryDebitUsd: built.entryDebitUsd,
+      premiumCreditUsd,
+      entryCostUsd: built.entryCostUsd,
+      costs: built.costs,
+      sizing: built.sizing,
+      maxProfitUsd: premiumCreditUsd, // выше премии продавец не заработает никогда
+      // УБЫТОК НЕ ЧИСЛО. Непокрытый проданный колл теряет неограниченно вверх, и подставить сюда
+      // какое-либо конечное число значило бы соврать в самом опасном месте интерфейса.
+      maxLoss: "unbounded",
+      breakEvenUsd: unit > 0 ? built.strikes.atm + premiumCreditUsd / unit : null,
+      payoff,
+      valid: !rejections.some((r) => r.severity === "block"),
+      rejections,
+      legs: built.legs.map((l) => ({ instrument: l.instrument, side: l.side, type: l.type, strike: l.strike, entryMark: l.entryMark })),
+      fresh: res.snap.fresh,
+    };
+  } catch (e) {
+    return { error: `Deribit: ${String(e.message || e)}` };
+  }
+}
+
+async function openSellStructure(params) {
+  const bo = state.btcOptions;
+  try {
+    const res = await resolveBtcOptSellStructureLive(params);
+    if (res.error) return { error: res.error };
+    const r = s1engine.openStructure(
+      bo.engine,
+      { ...res.params, kind: "sell-call", qty: params?.qty ?? null, execStyle: params?.execStyle },
+      res.chain, res.buildSnap, Date.now(),
+    );
+    if (r.error) return { error: r.error, rejections: r.rejections ?? [] };
+    bo.lastSnapshot = res.snap;
+    bo.snapshot = s1engine.evaluate(bo.engine, res.snap, Date.now());
+    bo.sellCandidate = null; // нога переехала в structLegs, отдельная проба больше не нужна
+    ensureBtcOptSource();
+    saveBotState(baseDir, BTCOPT_ID, bo.engine);
+    push1();
+    return {
+      ok: true,
+      structureId: bo.engine.structure?.id,
+      chosenExpiry: bo.engine.structure?.expiryMs,
+      pickedLeg: bo.engine.structure?.pickedLeg ?? null,
+      rejections: r.rejections ?? [],
+    };
+  } catch (e) {
+    return { error: `Deribit: ${String(e.message || e)}` };
+  }
+}
+
 function wireIpcStrategy1() {
   ipcMain.handle("s1:getState", async () => assembleDataset1());
+  // Оператор закрыл тикет продавца, ничего не открыв. Это НЕ выводится из других вызовов, поэтому
+  // отдельный канал: без него лишний опрашиваемый инструмент остался бы за тем, кто просто передумал.
+  ipcMain.handle("s1:cancelSellPreview", async () => {
+    state.btcOptions.sellCandidate = null;
+    pointBtcOptSource();
+    return { ok: true };
+  });
 
   ipcMain.handle("s1:setSettings", async (_e, s) => {
     const bo = state.btcOptions;
@@ -969,6 +1144,10 @@ function wireIpcStrategy1() {
   // WITHOUT opening it (Zone-Ⅰ payoff preview + the launch-ticket estimates). Debounced by the renderer.
   ipcMain.handle("s1:previewStructure", async (_e, params) => {
     const bo = state.btcOptions;
+    // Ветка схемы продавца стоит ПЕРВОЙ строкой и не трогает покупательский путь ни одним символом:
+    // движок уже ветвится по `params.kind` внутри одной функции, и IPC повторяет это решение вместо
+    // того, чтобы заводить парный канал. Весь риск регресса сводится к «не сработал добавленный if».
+    if (params?.kind === "sell-call") return previewSellStructure(params);
     try {
       const res = await resolveBtcOptStructureLive(params);
       if (res.error) return { error: res.error };
@@ -1012,6 +1191,7 @@ function wireIpcStrategy1() {
 
   ipcMain.handle("s1:openStructure", async (_e, params) => {
     const bo = state.btcOptions;
+    if (params?.kind === "sell-call") return openSellStructure(params);
     try {
       const res = await resolveBtcOptStructureLive(params);
       if (res.error) return { error: res.error };

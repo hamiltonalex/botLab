@@ -327,6 +327,9 @@ body::before{
   box-shadow:0 1px 0 var(--edge-hi) inset;
 }
 .ctl{ display:flex; flex-direction:column; gap:6px; }
+/* Явный display перебивает UA-правило атрибута hidden: без этой строки скрытый контрол остаётся
+   на экране, а код считает его спрятанным. Тот же капкан уже описан у .ticket и .dl .row. */
+.ctl[hidden]{ display:none; }
 .ctl > label{ font-size:10px; letter-spacing:.9px; text-transform:uppercase; color:var(--txt-faint); font-weight:600; }
 
 /* segmented control */
@@ -549,6 +552,9 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible{
 .dl{ display:flex; flex-direction:column; gap:1px; }
 .dl .row{ display:grid; grid-template-columns:1fr auto; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line-soft); }
 .dl .row:last-child{ border-bottom:0; }
+/* Авторский display:grid перебивает UA-правило атрибута hidden, ровно как у .ticket ниже. Без этой
+   строки скрытые строки схемы продолжали бы рисоваться. */
+.dl .row[hidden], .ticket .trow[hidden]{ display:none; }
 .dl .row .k{ color:var(--txt-dim); font-size:12px; display:flex; align-items:center; gap:7px; min-width:0; }
 .dl .row .k .ic{ width:6px; height:6px; border-radius:1.5px; flex:none; }
 .dl .row .v{ font-family:var(--f-mono); font-size:12.5px; font-weight:600; text-align:right; }
@@ -1573,11 +1579,11 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
         <!-- ── Структура · 4 ноги + перп-нога ── -->
         <div class="card flush" id="optLegsCard">
           <div class="sec-head" style="padding:16px 16px 0;margin-bottom:10px">
-            <h2>Структура · winged straddle</h2>
-            <button class="help-btn" data-help="opt-legs">?</button>
+            <h2 id="optLegsTitle">Структура · winged straddle</h2>
+            <button class="help-btn" id="optLegsHelp" data-help="opt-legs">?</button>
             <span class="tag green">Deribit · live</span>
             <span class="cfg-pill" id="optExpiryPill">эксп. <b>—</b></span>
-            <span class="rule"></span><span class="hint">4 ноги · один экспиратор ≤3д</span>
+            <span class="rule"></span><span class="hint" id="optLegsHint">4 ноги · один экспиратор ≤3д</span>
           </div>
           <div class="table-scroll" style="max-height:240px">
             <table class="scan" id="optLegsTable">
@@ -1731,12 +1737,19 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
       <!-- ── Тулбар параметров структуры и движка (sticky) ── -->
       <nav class="toolbar reveal" id="optToolbar" aria-label="Параметры структуры и движка">
         <div class="ctl">
+          <label>Схема</label>
+          <div class="seg" id="optModeSel" role="group" aria-label="Схема">
+            <button data-v="straddle"  aria-pressed="true">4 ноги</button>
+            <button data-v="sell-call" aria-pressed="false">продажа колла</button>
+          </div>
+        </div>
+        <div class="ctl" id="optExpiryCtl">
           <label id="optExpiryLbl">Экспирация</label>
           <div class="assetsel" id="optExpirySel" role="group" aria-labelledby="optExpiryLbl">
             <button type="button" data-v="" aria-pressed="true">загрузка…</button>
           </div>
         </div>
-        <div class="ctl">
+        <div class="ctl" id="optWingCtl">
           <label>Офсет крыльев</label>
           <div class="seg" id="optWingSel" role="group" aria-label="Офсет крыльев">
             <button data-v="5"  class="num" aria-pressed="false">±5%</button>
@@ -1744,7 +1757,15 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
             <button data-v="15" class="num" aria-pressed="false">±15%</button>
           </div>
         </div>
-        <div class="ctl">
+        <!-- Депозит был только константой движка ($100) и в интерфейс не выходил вовсе. Схеме
+             продавца это отрезало путь целиком: залог за минимальный лот около $102, правило честно
+             давало ноль лотов, и открыть структуру было нечем ни при каких действиях оператора. -->
+        <div class="ctl" id="optDepositCtl">
+          <label for="optDeposit">Депозит, $</label>
+          <input id="optDeposit" class="num" type="number" min="1" step="1" value="100" inputmode="decimal"
+                 style="width:96px;font:600 12.5px var(--f-mono);color:var(--txt);background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;padding:6px 9px;text-align:right">
+        </div>
+        <div class="ctl" id="optQtyCtl">
           <label for="optQty">Кол-во, контрактов</label>
           <input id="optQty" class="num" type="number" min="0.01" step="0.01" value="0.01" inputmode="decimal"
                  style="width:96px;font:600 12.5px var(--f-mono);color:var(--txt);background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;padding:6px 9px;text-align:right">
@@ -1838,7 +1859,7 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
             </div>
             <div class="legend">
               <div class="it"><span class="sw line" style="background:var(--price)"></span>выплата Π(S_T)</div>
-              <div class="it"><span class="sw line" style="background:var(--neu);opacity:.7"></span>чистый дебет −D</div>
+              <div class="it"><span class="sw line" style="background:var(--neu);opacity:.7"></span><span id="optPayoffLegendD">чистый дебет −D</span></div>
               <div class="it"><span class="sw line" style="background:var(--accent)"></span>безубыток</div>
             </div>
           </div>
@@ -1849,26 +1870,43 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
               <span class="tag" id="optPreviewTag">гипотеза</span></div>
             <div class="dl" id="optStructPreview">
               <div class="row"><span class="k">базовый актив (Deribit)</span><span class="v num px" id="optStructSpot">—</span></div>
-              <div class="row"><span class="k">страйки K · Kc · Kp</span><span class="v num" id="optStructStrikes">—</span></div>
-              <div class="row"><span class="k">нетто-дебет D (оценка)</span><span class="v num neu" id="optStructDebit">—</span></div>
-              <div class="row"><span class="k">макс. убыток · макс. прибыль</span><span class="v num" id="optStructMax">—</span></div>
+              <div class="row" id="optRowStrikes"><span class="k">страйки K · Kc · Kp</span><span class="v num" id="optStructStrikes">—</span></div>
+              <div class="row" id="optRowDebit"><span class="k">нетто-дебет D (оценка)</span><span class="v num neu" id="optStructDebit">—</span></div>
+              <div class="row" id="optRowMax"><span class="k">макс. убыток · макс. прибыль</span><span class="v num" id="optStructMax">—</span></div>
+              <!-- Схема продавца: контракт выбирает правило, размер связывает залог, а убыток вверх
+                   не ограничен, поэтому вместо числа стоит слово. -->
+              <div class="row" id="optRowSellLeg" hidden><span class="k">контракт (выбор правила)</span><span class="v num" id="optStructSellLeg">—</span></div>
+              <div class="row" id="optRowSellCredit" hidden><span class="k">премия получена (кредит)</span><span class="v num pos" id="optStructSellCredit">—</span></div>
+              <div class="row" id="optRowSellSize" hidden><span class="k">лотов · залог</span><span class="v num" id="optStructSellSize">—</span></div>
+              <div class="row" id="optRowSellMax" hidden><span class="k">макс. прибыль · макс. убыток</span><span class="v num" id="optStructSellMax">—</span></div>
+              <div class="row" id="optStructSellErr" hidden><span class="k">почему не выходит</span><span class="v neg" id="optStructSellErrTxt" style="text-align:right;font-size:12px;font-weight:500">—</span></div>
             </div>
             <div class="launch-row">
               <button id="optOpenBtn" class="paperbtn open" aria-expanded="false" aria-controls="optLaunchTicket">▶ Открыть структуру (Paper Trading)</button>
               <button id="optAutoBtn" class="paperbtn" aria-expanded="false" aria-controls="optLaunchTicket"
                       title="Движок сам выберет ближайшую экспирацию ≤3д и ATM-страйки — подтверждение в тикете">▶ Старт (авто)</button>
               <button class="help-btn" data-help="opt-auto">?</button>
-              <span class="hint">winged straddle + дельта-хедж перпом · результат — в зоне «Хедж-движок» вверху</span>
+              <span class="hint" id="optOpenHint">winged straddle + дельта-хедж перпом · результат — в зоне «Хедж-движок» вверху</span>
             </div>
             <div id="optLaunchTicket" class="ticket" role="group" aria-label="Подтверждение открытия структуры (Paper Trading)" hidden>
               <div class="trow"><span class="k">экспирация</span><span class="num" id="optTicketExpiry">—</span></div>
-              <div class="trow"><span class="k">страйки K · Kc · Kp</span><span class="num" id="optTicketStrikes">—</span></div>
-              <div class="trow"><label class="k" for="optTicketQty">кол-во, контрактов</label>
+              <div class="trow" id="optTRowStrikes"><span class="k">страйки K · Kc · Kp</span><span class="num" id="optTicketStrikes">—</span></div>
+              <div class="trow" id="optTRowQty"><label class="k" for="optTicketQty">кол-во, контрактов</label>
                 <input id="optTicketQty" type="number" min="0.01" step="0.01" value="0.01" inputmode="decimal" aria-invalid="false" aria-describedby="optTicketQtyHint"></div>
-              <div class="trow"><span class="k faint" id="optTicketQtyHint">мин. 0.01 · шаг 0.01 (Deribit)</span><span></span></div>
+              <div class="trow" id="optTRowQtyHint"><span class="k faint" id="optTicketQtyHint">мин. 0.01 · шаг 0.01 (Deribit)</span><span></span></div>
+              <!-- Схема продавца. Размер по умолчанию считает правило от залога, поэтому поле пустое
+                   означает «как решит правило», а не «ноль». -->
+              <div class="trow" id="optTRowSellLeg" hidden><span class="k">контракт (выбор правила)</span><span class="num" id="optTicketSellLeg">—</span></div>
+              <div class="trow" id="optTRowSellCredit" hidden><span class="k">премия получена (кредит)</span><span class="num pos" id="optTicketSellCredit">—</span></div>
+              <div class="trow" id="optTRowSellQty" hidden><label class="k" for="optTicketSellQty">кол-во, контрактов</label>
+                <input id="optTicketSellQty" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="по залогу" aria-invalid="false" aria-describedby="optTicketSellQtyHint"></div>
+              <div class="trow" id="optTRowSellQtyHint" hidden><span class="k faint" id="optTicketSellQtyHint">пусто = размер по залогу (правило)</span><span></span></div>
+              <div class="trow" id="optTRowSellIM" hidden><span class="k">залог (IM), требуется</span><span class="num" id="optTicketSellIM">—</span></div>
+              <div class="trow" id="optTRowSellCost" hidden><span class="k">издержки входа</span><span class="num neg" id="optTicketSellCost">—</span></div>
+              <div class="trow" id="optTRowSellMax" hidden><span class="k">макс. прибыль · макс. убыток</span><span class="num" id="optTicketSellMax">—</span></div>
               <div class="trow"><span class="k">параметры движка</span><span class="num" id="optTicketEngine">—</span></div>
-              <div class="trow"><span class="k">нетто-дебет (оценка)</span><span class="num neu" id="optTicketDebit">—</span></div>
-              <div class="trow"><span class="k">макс. убыток · макс. прибыль</span><span class="num" id="optTicketMaxLoss">—</span></div>
+              <div class="trow" id="optTRowDebit"><span class="k">нетто-дебет (оценка)</span><span class="num neu" id="optTicketDebit">—</span></div>
+              <div class="trow" id="optTRowMax"><span class="k">макс. убыток · макс. прибыль</span><span class="num" id="optTicketMaxLoss">—</span></div>
               <div class="trow"><span class="k">готовность данных</span><span class="num" id="optTicketGate">—</span></div>
               <div id="optTicketRejects" role="list" aria-label="Причины пре-трейд проверки" hidden></div>
               <div id="optTicketErr" class="ticket-err" role="alert" hidden></div>
@@ -4158,6 +4196,13 @@ const HELP_BTC_OPTIONS = {
     '<li><b>Фильтр издержек</b> — ожидаемая выгода <span class="fx">|Δ-избыток|·S·m</span> сравнивается с оценкой издержек (комиссия+спред+проскальзывание+фандинг), помноженной на <span class="fx">λ≈1.25</span>. Хедж исполняется только если выгода перекрывает издержки с запасом λ.</li>'+
     '<li><b>Решение</b> — <b>ХЕДЖ</b>: ордер уходит (сторона, размер, округление до шага, тип); <b>ПРОПУСК</b>: повод есть, но фильтр не пройден — edge сохранён; <b>ПАУЗА</b>: окно расчёта 08:00 UTC или &lt;30 мин до экспирации — хедж приостановлен.</li>'+
     '<li>Параметры движка (дедбэнд, порог, λ, интервал хеджа, стиль исполнения, блэкаут) фиксируются при открытии структуры и показаны в шапке движка. Интервал реприса — настройка источника: меняется сразу и не замораживается.</li></ul>' },
+  'opt-legs-sell': { t:'Структура · продажа колла', b:
+    '<p>Одна короткая нога: продан колл со сроком 336-672 ч и |дельтой| около 0.45, дельта нейтрализуется бессрочным фьючерсом. Контракт и размер выбирает правило, оператор их не задаёт.</p><ul>'+
+    '<li><b>Размер связывает ЗАЛОГ</b>, а не премия: биржа требует обеспечение за проданный колл (медиана около $92 за минимальный лот против премии около $22), поэтому число лотов считается от свободного депозита, а не от стоимости опциона.</li>'+
+    '<li><b>Убыток вверх не ограничен.</b> Прибыль ограничена полученной премией, а рост базового актива убыток ничем не ограничивает. Оценку края смотрите в сценарии «хвост +10%» в разделе рисков.</li>'+
+    '<li><b>Штатный выход один: экспирация.</b> Досрочное закрытие кнопкой доступно, но в измеренный результат схемы оно не входит.</li>'+
+    '<li><b>Издержки входа</b> платятся один раз: опцион гасится сам, второй раз пересекать книгу не надо.</li>'+
+    '</ul>' },
   'opt-legs': { t:'Структура · winged straddle', b:
     '<p>Четыре опционные ноги одного экспиратора: куплены ATM колл и пут (длинная волатильность), проданы OTM колл (Kc≈+10%) и пут (Kp≈−10%) — «крылья» удешевляют структуру и ограничивают край.</p><ul>'+
     '<li><b>Сторона</b>: <span class="fx">LONG</span> — премия уплачена (расход, красный), <span class="fx">SHORT</span> — премия получена (приход, зелёный).</li>'+
@@ -4672,7 +4717,19 @@ let optAutoPick = null, optAutoBusy = false;      // 3a: { expiry } — пров
 let optDeltaRing = [], optLastStructId = null;     // локальное окно Total Δ (main серию не шлёт)
 let optChainLoaded = false, optHydrated = false;
 const optSel = { expiry:null, wing:10, qty:0.01, deadband:'normal', priceTrig:0.5,
-                 lambda:1.25, reprice:15, exec:'limit', blackout:'on' };
+                 lambda:1.25, reprice:15, exec:'limit', blackout:'on',
+                 mode:'straddle', sellQty:null }; /* mode: straddle | sell-call; sellQty null = размер по залогу */
+/* Гипотеза схемы продавца держится ОТДЕЛЬНО от покупательской: у них разные поля, и общий кэш
+   заставил бы каждую ветку проверять, чей ответ там лежит. */
+let optSellPreviewCache = null, optSellPreviewErr = null, optSellBusy = false;
+/* kind ПОСЛЕДНЕЙ структуры: после расчёта в экспирацию ds.structure становится null, а карточки ещё
+   должны объяснять, чем именно позиция была. */
+let optLastStructKind = null;
+/* Режим решает ОТКРЫТАЯ структура, а не тумблер: иначе переключение тулбара переписало бы подписи
+   уже открытой позиции и оператор читал бы чужую схему. */
+function optModeActive(){ return (LIVE_S1 && LIVE_S1.structure && LIVE_S1.structure.kind)
+  ? LIVE_S1.structure.kind : optSel.mode; }
+function optIsSell(){ return optModeActive()==='sell-call'; }
 
 /* — мелкие форматтеры домена — */
 const optSigned = (v,dp)=> (v>0?'+':(v<0?'−':'')) + Math.abs(Number(v)||0).toFixed(dp);
@@ -4722,6 +4779,8 @@ function applyS1Dataset(ds){
       requestOptPreview();
     }
     optDeltaRing=[]; optLastStructId=sid||null;
+    /* kind переживает закрытие: карточки ещё объясняют, чем позиция БЫЛА. */
+    if(ds.structure&&ds.structure.kind) optLastStructKind=ds.structure.kind;
   }
   if(cyc && Number.isFinite(cyc.total_delta_bs)){
     // одно кольцо (сброс на смене структуры) питает три графика: дельта, P&L-атрибуция, цена+маркеры
@@ -4967,7 +5026,7 @@ async function fetchOptLedgerRows(){
     if(r && r.events){
       /* только реально эмитируемые движком типы (engine.js appendLedger): фандинг — накопительный
          perpState.fundingCum, комиссии — поле feeUsd на строках hedge/close-perp, отдельных строк нет */
-      const tl={ open:'открытие', hedge:'хедж', 'close-perp':'закрытие перпа', 'close-options':'фиксация опционов', 'settle-options':'расчёт на экспирации' };
+      const tl={ open:'открытие', 'open-cost':'издержки входа', hedge:'хедж', 'close-perp':'закрытие перпа', 'close-options':'фиксация опционов', 'settle-options':'расчёт на экспирации' };
       $('optLedgerBody').innerHTML = r.events.map(ev=>{
         const pnlVal = ev.realizedUsd||0;
         return '<tr><td class="lft ts">'+optClock(ev.t)+'</td><td class="lft">'+(tl[ev.type]||ev.type)+'</td>'+
@@ -5152,7 +5211,70 @@ function renderOptExpiries(chain){
 }
 
 /* — превью структуры (карта + read-only тикета): открытая → cycle, иначе гипотеза-preview — */
+/* Схема продавца. Отдельная ветка, а не подстановка чисел в покупательские строки, и это НЕ
+   косметика: строка «страйки K · Kc · Kp» у одноногой структуры собиралась бы как
+   «70,000 · NaN · NaN» (kc/kp у неё нет вовсе), а ячейка «макс. убыток» молча показала бы прочерк
+   там, где убыток НЕОГРАНИЧЕН. Второе опаснее первого: прочерк читается как «риска нет». */
+function renderOptSellPreview(){
+  const ds=LIVE_S1||{}, st=ds.structure, pv=optSellPreviewCache;
+  const tag=$('optPreviewTag');
+  const dash='—';
+  let legTxt=dash, credit=null, sizeTxt=dash, spot=null, expMs=null, imUsd=null, costUsd=null;
+  if(st){
+    const l=st.legs&&st.legs[0];
+    legTxt = l ? l.instrument : dash;
+    credit = -st.entryDebitUsd;
+    spot = st.entryUnderlying; expMs = st.expiryMs;
+    imUsd = st.sizing ? st.sizing.imUsedUsd : null;
+    costUsd = st.entryCostUsd;
+    sizeTxt = st.sizing ? (st.sizing.lots+' лот · '+optDollars(st.sizing.imUsedUsd)) : dash;
+    if(tag){ tag.textContent='открыта'; tag.className='tag amber'; }
+  } else if(pv){
+    legTxt = pv.pickedLeg ? pv.pickedLeg.name : dash;
+    credit = pv.premiumCreditUsd; spot = pv.underlying; expMs = pv.chosenExpiry;
+    imUsd = pv.sizing ? pv.sizing.imUsedUsd : null; costUsd = pv.entryCostUsd;
+    sizeTxt = pv.sizing ? (pv.sizing.lots+' лот · '+optDollars(pv.sizing.imUsedUsd)) : dash;
+    if(tag){ tag.textContent='гипотеза'; tag.className='tag'; }
+  } else if(tag){
+    tag.textContent = optSellBusy ? 'идёт подбор' : (optSellPreviewErr ? 'не выходит' : 'нет данных');
+    tag.className = optSellPreviewErr ? 'tag amber' : 'tag';
+  }
+  /* ПРИЧИНА ОТКАЗА ПОКАЗЫВАЕТСЯ В САМОЙ ПАНЕЛИ, а не только в подсказке внутри тикета. Живой прогон
+     на чистом профиле упёрся ровно в это: депозит по умолчанию $100, залог за минимальный лот $102,
+     правило честно даёт ноль лотов, и панель молчала прочерками. Отказ, у которого не видно причины,
+     оператор читает как поломку интерфейса. */
+  const errRow=$('optStructSellErr'), errTxt=$('optStructSellErrTxt');
+  if(errRow){ const showErr = !st && !pv && !!optSellPreviewErr;
+    errRow.hidden = !showErr;
+    if(showErr && errTxt) errTxt.textContent = optSellPreviewErr; }
+  const expLabel = expMs ? optExpLabel(expMs) : null;
+  const creditTxt = credit!=null ? optDollars(credit) : dash;
+  /* Убыток словом, а не числом: непокрытый проданный колл теряет неограниченно вверх, и любое
+     конечное число в этой ячейке было бы ложью в самом опасном месте экрана. */
+  const maxTxt = credit!=null ? ('+'+optDollars(credit).replace('−','')+' · убыток не ограничен') : dash;
+  const setTxt=(id,v)=>{ const el=$(id); if(el) el.textContent=v; };
+  setTxt('optStructSpot', spot!=null?fmtUSD(spot,0):dash);
+  setTxt('optStructSellLeg', legTxt);
+  setTxt('optStructSellCredit', creditTxt);
+  setTxt('optStructSellSize', sizeTxt);
+  setTxt('optStructSellMax', maxTxt);
+  setTxt('optTicketExpiry', expLabel||dash);
+  setTxt('optTicketSellLeg', optSellBusy && !pv && !st ? 'идёт поиск контракта на Deribit, обычно 1-3 секунды' : legTxt);
+  setTxt('optTicketSellCredit', creditTxt);
+  setTxt('optTicketSellIM', imUsd!=null?optDollars(imUsd):dash);
+  setTxt('optTicketSellCost', costUsd!=null?optDollars(-Math.abs(costUsd)):dash);
+  setTxt('optTicketSellMax', maxTxt);
+  setTxt('optTicketEngine', optEngineLine());
+  const hint=$('optTicketSellQtyHint');
+  if(hint && !st){ const byRule = pv&&pv.sizing ? pv.sizing.lots : null;
+    hint.textContent = optSellPreviewErr ? optSellPreviewErr
+      : (byRule!=null ? ('пусто = размер по залогу: '+byRule+' лот') : 'пусто = размер по залогу (правило)');
+    hint.className = optSellPreviewErr ? 'k gate-bad' : 'k faint'; }
+  if(expLabel && !st && $('optExpiryPill')) $('optExpiryPill').innerHTML='эксп. <b>'+expLabel+'</b>';
+}
 function renderOptStructPreview(){
+  optApplyModeRows();
+  if(optIsSell()) return renderOptSellPreview();
   const ds=LIVE_S1||{};
   let strikes=null, debit=null, maxL=null, maxP=null, spot=null, expLabel=null;
   if(ds.structure){ const st=ds.structure, pf=ds.cycle&&ds.cycle.payoff;
@@ -5187,7 +5309,9 @@ function optPayoffData(){
   const ds=LIVE_S1||{}; let pf=null, spot=null, stress=null;
   if(ds.cycle && ds.cycle.payoff){ pf=ds.cycle.payoff; spot=ds.cycle.underlying_price;
     stress=((ds.cycle.stress&&ds.cycle.stress.scenarios)||[]).filter(s=>s.kind==='spot'&&s.id!=='flat'); }
-  else if(optPreviewCache && optPreviewCache.payoff){ pf=optPreviewCache.payoff; spot=optPreviewCache.underlying; }
+  else { /* гипотеза: кэш берётся по активной схеме, иначе график продавца молчал бы до открытия */
+    const pc = optIsSell() ? optSellPreviewCache : optPreviewCache;
+    if(pc && pc.payoff){ pf=pc.payoff; spot=pc.underlying; } }
   if(!pf || !pf.pts || !pf.pts.length) return null;
   const be=pf.breakEvens||[];
   return { pts:pf.pts, K:pf.K, Kc:pf.Kc, Kp:pf.Kp, D:pf.D, spot:spot, beLo:be[0], beHi:be[1], stress:stress };
@@ -5356,6 +5480,54 @@ function drawDelta(cv, data, tipEl){
 
 /* ── тулбар: параметры структуры (гипотеза) + параметры движка (setSettings) ── */
 function optStructParams(){ return { expiry:optSel.expiry, callOffsetPct:optSel.wing, putOffsetPct:optSel.wing, qty:optSel.qty, execStyle:optSel.exec }; }
+/* Схема продавца НЕ передаёт ни экспирацию, ни крылья: срок и страйк выбирает правило в движке.
+   qty === null означает «размер считает lotsByMargin», и это отличается от «ноль». */
+function optSellStructParams(){ return { kind:'sell-call', qty:optSel.sellQty, execStyle:optSel.exec }; }
+let optSellPrevTimer;
+/* Тот же дебаунс, что у покупателя, но с ЧЕСТНОЙ меткой ожидания: раунд-трип объективно длиннее
+   (срез всей поверхности плюс тикер выбранной ноги), и молчащий экран читался бы как поломка. */
+function requestOptSellPreview(){
+  if(!window.s1){ renderOptStructPreview(); return; }
+  clearTimeout(optSellPrevTimer);
+  optSellBusy = true; renderOptStructPreview();
+  optSellPrevTimer=setTimeout(async ()=>{
+    try{ const pv=await window.s1.previewStructure(optSellStructParams());
+      if(pv && pv.ok){ optSellPreviewCache=pv; optSellPreviewErr=null; }
+      else { optSellPreviewCache=null; optSellPreviewErr=(pv&&pv.error)||'не удалось подобрать контракт'; }
+    }catch(e){ optSellPreviewCache=null; optSellPreviewErr='ошибка IPC: '+String(e&&e.message||e).slice(0,60); }
+    optSellBusy=false;
+    renderOptStructPreview(); renderOptCharts();
+    if($('optLaunchTicket') && !$('optLaunchTicket').hidden) optTicketValidate({showErrors:false});
+  }, 500);
+}
+/* Строки схемы: показываем ровно один набор. Дешевле и надёжнее, чем прятать поштучно по месту. */
+function optApplyModeRows(){
+  const sell = optIsSell();
+  const show = (id, on) => { const el=$(id); if(el) el.hidden = !on; };
+  for(const id of ['optRowStrikes','optRowDebit','optRowMax','optTRowStrikes','optTRowQty','optTRowQtyHint','optTRowDebit','optTRowMax']) show(id, !sell);
+  for(const id of ['optRowSellLeg','optRowSellCredit','optRowSellSize','optRowSellMax',
+                   'optTRowSellLeg','optTRowSellCredit','optTRowSellQty','optTRowSellQtyHint','optTRowSellIM','optTRowSellCost','optTRowSellMax']) show(id, sell);
+  if(!sell){ const e=$('optStructSellErr'); if(e) e.hidden=true; } /* причину отказа решает renderOptSellPreview */
+  /* Тулбарные крутилки покупателя в режиме продавца не просто лишние: срок и страйк выбирает
+     правило, и оставленный на экране выбор экспирации обещал бы влияние, которого нет. */
+  for(const id of ['optExpiryCtl','optWingCtl','optQtyCtl']) show(id, !sell);
+  const auto=$('optAutoBtn'); if(auto) auto.hidden = sell; /* у схемы продавца «неавто» варианта нет */
+  const sweep=$('optSweep'); if(sweep) sweep.hidden = sell; /* свип перебирает крылья и дедбэнд, к схеме не относится */
+  const openHint=$('optOpenHint');
+  if(openHint) openHint.textContent = sell
+    ? 'продажа колла + дельта-хедж перпом · штатный выход один: экспирация'
+    : 'winged straddle + дельта-хедж перпом · результат в зоне «Хедж-движок» вверху';
+  const legD=$('optPayoffLegendD');
+  if(legD) legD.textContent = sell ? 'чистый кредит +П' : 'чистый дебет −D';
+  const legsHelp=$('optLegsHelp'); if(legsHelp) legsHelp.setAttribute('data-help', sell?'opt-legs-sell':'opt-legs');
+  const legsTitle=$('optLegsTitle'), legsHint=$('optLegsHint');
+  if(legsTitle) legsTitle.textContent = sell ? 'Структура · продажа колла' : 'Структура · winged straddle';
+  if(legsHint) legsHint.textContent = sell ? '1 нога · срок 336-672 ч · дельта у 0.45' : '4 ноги · один экспиратор ≤3д';
+  const closeBtn=$('optCloseBtn');
+  if(closeBtn) closeBtn.title = sell
+    ? 'Схема рассчитана на удержание до экспирации: досрочный выход в её измеренный результат не входит'
+    : '';
+}
 let optPrevTimer;
 function requestOptPreview(){
   if(!window.s1 || !optSel.expiry){ renderOptStructPreview(); return; }
@@ -5392,6 +5564,7 @@ function hydrateOptToolbar(s){
   if(optHydrated || !s) return; optHydrated=true;
   if(s.callOffsetPct!=null) optSel.wing=s.callOffsetPct;
   if(s.qty!=null) optSel.qty=s.qty;
+  if(s.paperEquityUsd!=null && $('optDeposit')) $('optDeposit').value=String(s.paperEquityUsd);
   if(s.execStyle) optSel.exec=s.execStyle;
   if(s.deadbandPreset) optSel.deadband=s.deadbandPreset;
   if(s.priceTriggerPct!=null) optSel.priceTrig=s.priceTriggerPct;
@@ -5465,7 +5638,31 @@ async function openOptTicketAuto(){
   optAutoBusy=false; if(b){ b.disabled=false; b.textContent=label; }
   openOptTicket(); // существующий фокус на qty + валидация + рендер превью
 }
-function optTicketValidate(o){ o=o||{}; const qi=$('optTicketQty'), q=Number(qi.value);
+/* Валидация тикета продавца. ПУСТОЕ поле здесь легально и означает «размер решает правило от
+   залога», а это не то же самое, что ноль, поэтому пустая строка не ошибка. */
+function optSellTicketValidate(o){ o=o||{}; const qi=$('optTicketSellQty'); if(!qi) return false;
+  const raw=String(qi.value).trim(); const q=Number(raw); const min=0.01, step=0.01;
+  let reason='';
+  if(raw!==''){
+    if(!(Number.isFinite(q)&&q>0)) reason='введите размер или оставьте поле пустым';
+    else if(q<min) reason='ниже минимального размера '+min+' (Deribit)';
+    else if(Math.abs(Math.round(q/step)*step-q)>1e-9) reason='не кратно шагу '+step;
+  }
+  const ok=!reason;
+  if(o.showErrors){ qi.setAttribute('aria-invalid', ok?'false':'true');
+    const hint=$('optTicketSellQtyHint');
+    if(hint && reason){ hint.textContent=reason; hint.className='k gate-bad'; } }
+  const next = raw==='' ? null : (Number.isFinite(q)&&q>0 ? q : optSel.sellQty);
+  if(next!==optSel.sellQty){ optSel.sellQty=next; requestOptSellPreview(); }
+  /* Гейт: блокирующие причины движка плюс наличие подобранного контракта. Без кандидата
+     подтверждать нечего, и кнопка обязана быть мёртвой, а не «попробуем и посмотрим». */
+  const rej=(optSellPreviewCache&&optSellPreviewCache.rejections)||[];
+  const gate = !!optSellPreviewCache && !rej.some(r=>r.severity==='block');
+  const btn=$('optTicketConfirm'); if(btn) btn.disabled = !(ok&&gate);
+  renderOptTicketRejections(rej);
+  return ok&&gate; }
+function optTicketValidate(o){ if(optIsSell()) return optSellTicketValidate(o);
+  o=o||{}; const qi=$('optTicketQty'), q=Number(qi.value);
   const min=0.01, step=0.01;
   let reason=''; if(!(Number.isFinite(q)&&q>0)) reason='введите размер (контрактов)';
   else if(q<min) reason='ниже минимального размера '+min+' (Deribit)';
@@ -5480,24 +5677,38 @@ function optTicketValidate(o){ o=o||{}; const qi=$('optTicketQty'), q=Number(qi.
   $('optTicketConfirm').disabled = !(ok&&gate);
   return ok&&gate; } /* qty-валидность И гейт: confirm-guard не должен пропускать hard block */
 function openOptTicket(){ const t=$('optLaunchTicket'); if(!t) return;
-  $('optTicketQty').value=String(optSel.qty); $('optTicketErr').hidden=true; $('optTicketErr').textContent='';
+  const sell=optIsSell();
+  if(sell){ const si=$('optTicketSellQty'); if(si) si.value = optSel.sellQty!=null?String(optSel.sellQty):''; }
+  else $('optTicketQty').value=String(optSel.qty);
+  $('optTicketErr').hidden=true; $('optTicketErr').textContent='';
+  if(sell && !optSellPreviewCache) requestOptSellPreview();
   renderOptStructPreview(); optTicketValidate({showErrors:false});
   t.hidden=false; $('optOpenBtn').setAttribute('aria-expanded','true');
   if($('optAutoBtn')) $('optAutoBtn').setAttribute('aria-expanded','true');
-  const inp=$('optTicketQty'); inp.focus({preventScroll:true}); inp.select(); }
+  const inp=$(sell?'optTicketSellQty':'optTicketQty'); if(inp){ inp.focus({preventScroll:true}); inp.select(); } }
 function closeOptTicket(focusBack){ const t=$('optLaunchTicket'); if(!t || t.hidden) return;
   t.hidden=true; $('optOpenBtn').setAttribute('aria-expanded','false');
   if($('optAutoBtn')) $('optAutoBtn').setAttribute('aria-expanded','false');
+  /* Оператор передумал: снимаем пробу с опроса. Иначе лишний инструмент опрашивался бы вечно за
+     того, кто просто закрыл тикет. Не трогаем, если структура уже открыта: там нога рабочая. */
+  releaseOptSellProbe();
   if(focusBack) $('optOpenBtn').focus({preventScroll:true}); }
+function releaseOptSellProbe(){
+  if(!window.s1 || !window.s1.cancelSellPreview) return;
+  if(LIVE_S1 && LIVE_S1.structure && LIVE_S1.structure.kind==='sell-call') return;
+  window.s1.cancelSellPreview().catch(()=>{}); }
 async function confirmOptStructure(){ const err=$('optTicketErr');
   if(!window.s1){ err.textContent='нет моста s1 (режим file:// без main-процесса) — открытие недоступно'; err.hidden=false; return; }
-  if(!optTicketValidate({showErrors:true})){ $('optTicketQty').focus(); return; }
+  const sell=optIsSell();
+  if(!optTicketValidate({showErrors:true})){ const f=$(sell?'optTicketSellQty':'optTicketQty'); if(f) f.focus(); return; }
   const btn=$('optTicketConfirm'); btn.disabled=true;
-  try{ const r=await window.s1.openStructure(optStructParams());
+  try{ const r=await window.s1.openStructure(sell?optSellStructParams():optStructParams());
     if(r && r.error){ // 3a: движок — источник истины; его структурированные причины показываем как есть
-      if(r.rejections){ if(optPreviewCache) optPreviewCache.rejections=r.rejections;
-        renderOptTicketRejections(r.rejections); optGateReady(); }
-      err.textContent=r.error; err.hidden=false; $('optTicketQty').focus({preventScroll:true}); }
+      if(r.rejections){ const cache = sell?optSellPreviewCache:optPreviewCache;
+        if(cache) cache.rejections=r.rejections;
+        renderOptTicketRejections(r.rejections); if(!sell) optGateReady(); }
+      err.textContent=r.error; err.hidden=false;
+      const f=$(sell?'optTicketSellQty':'optTicketQty'); if(f) f.focus({preventScroll:true}); }
     else{ const ds=await window.s1.getState(); if(ds) applyS1Dataset(ds);
       closeOptTicket(false); const z=$('optZoneTrade');
       if(z){ z.scrollIntoView({behavior:smoothOk()?'smooth':'auto'});
@@ -5550,6 +5761,18 @@ function optRecalc(){ const b=$('optRecalcBtn'); const t=b.textContent; b.disabl
 function initOpt(){ if(!$('view-btc-options')) return;
   wireOptSeg('optWingSel','wing', v=>parseFloat(v), { struct:true,
     patch:v=>({ callOffsetPct:parseFloat(v), putOffsetPct:parseFloat(v) }) }); // персист: переживает рестарт, питает свип
+  /* Переключатель схемы. Не через wireOptSeg: у него единый путь «выбрал, отправил в настройки», а
+     здесь смена режима меняет ВИДИМОСТЬ половины тулбара и требует своей гипотезы. */
+  (function(){ const el=$('optModeSel'); if(!el) return;
+    el.addEventListener('click', (ev)=>{ const b=ev.target.closest('button[data-v]'); if(!b) return;
+      const v=b.getAttribute('data-v'); if(v===optSel.mode) return;
+      if(LIVE_S1&&LIVE_S1.structure){ return; } /* структура открыта: схему на ходу не меняют */
+      optSel.mode=v;
+      for(const x of el.querySelectorAll('button[data-v]')) x.setAttribute('aria-pressed', String(x.getAttribute('data-v')===v));
+      closeOptTicket(false);
+      if(v==='sell-call'){ requestOptSellPreview(); }
+      else { releaseOptSellProbe(); optSellPreviewCache=null; optSellPreviewErr=null; requestOptPreview(); }
+      renderOptStructPreview(); renderOptCharts(); }); })();
   wireOptSeg('optExecSel','exec', null, { setting:'execStyle' });
   wireOptSeg('optDeadbandSel','deadband', null, { setting:'deadbandPreset' });
   wireOptSeg('optPriceTrigSel','priceTrig', v=>parseFloat(v), { setting:'priceTriggerPct', settingCast:v=>parseFloat(v) });
@@ -5557,6 +5780,13 @@ function initOpt(){ if(!$('view-btc-options')) return;
   wireOptSeg('optBlackoutSel','blackout', null, { setting:'settlementBlackout', settingCast:v=>v==='on' });
   if($('optQty')) $('optQty').addEventListener('input', ()=>{ optSel.qty=Number($('optQty').value);
     pushOptQty(optSel.qty); onOptStructParamChange(); });
+  /* Депозит: у продавца от него напрямую зависит число лотов (lotsByMargin), поэтому после правки
+     гипотезу надо переспросить, а не только сохранить настройку. */
+  if($('optDeposit')) $('optDeposit').addEventListener('input', ()=>{
+    const v=Number($('optDeposit').value);
+    if(!(Number.isFinite(v) && v>0)) return;
+    pushOptSetting('paperEquityUsd', v);
+    if(optIsSell()) requestOptSellPreview(); else onOptStructParamChange(); });
   /* λ: валидируем явно (finite и ≥1 — λ<1 опускает порог ниже издержек, а Number('')===0 раньше
      молча превращался в 1.25 и пушился). Невалидный ввод помечается aria-invalid и НЕ уходит в
      настройки; blur/Enter возвращают последнее принятое значение. */
