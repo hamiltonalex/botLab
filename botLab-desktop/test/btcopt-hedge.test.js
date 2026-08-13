@@ -12,6 +12,7 @@ import {
   decideHedge,
   applyFill,
   effectiveDeadband,
+  benefitMoveFrac,
   DEADBAND_REF_QTY,
 } from "../src/engine/btcopt/hedge.js";
 
@@ -301,4 +302,29 @@ test("decideHedge: на впятеро большей структуре пол�
   assert.deepEqual(big.trigger_reason, [], "тот же перекос на большем размере триггер не взводит");
   near(small.delta_excess, 0.003, 1e-15);
   assert.equal(big.delta_excess, 0);
+});
+
+// ── Масштаб выгоды отдельно от ценового триггера (fix 2026-08-13, Д2) ────────────────────────────
+test("benefitMoveFrac: свой knob, с откатом на priceTriggerPct у старых профилей", () => {
+  near(benefitMoveFrac({ benefitMovePct: 2, priceTriggerPct: 0.5 }), 0.02, 1e-15, "свой knob выигрывает");
+  near(benefitMoveFrac({ priceTriggerPct: 0.5 }), 0.005, 1e-15, "старый профиль сохраняет поведение");
+  assert.equal(benefitMoveFrac({}), 0, "нет ни того, ни другого - выгода нулевая");
+});
+
+test("масштаб выгоды теперь настраивается, НЕ взводя ценовой триггер", () => {
+  // Ровно то, что было невозможно до правки: один knob менял и порог триггера, и масштаб выгоды.
+  const base = { ...baseCfg, deadbandBtc: 0.001, deadbandRefQty: 0.01, settlementBlackout: false,
+    priceTriggerPct: 0.5, slippageRate: 0.0002 };
+  const args = (cfg) => ({
+    optionDelta: -0.0015, Qperp: 0, snapshot: { underlying: 60000, perp: { mark: 60000, funding8h: 0 } },
+    liquidity: { halfSpread: 0 }, cfg, nowMs: NOON, expiryMs: EXPIRY_FAR, createdAt: NOON,
+    lastHedgeAt: NOON, lastHedgeUnderlying: 60000, step: 0, structureQty: 0.01,
+  });
+  const stingy = decideHedge(args({ ...base, benefitMovePct: 0.01 }));
+  const generous = decideHedge(args({ ...base, benefitMovePct: 5 }));
+  assert.equal(stingy.decision, "SKIP", "мелкая ожидаемая выгода не окупает перекладку");
+  assert.equal(generous.decision, "HEDGE", "крупная окупает");
+  // Ценовой триггер при этом НЕ участвовал ни в одном из двух прогонов.
+  for (const d of [stingy, generous]) assert.ok(!d.trigger_reason.includes("price"), "триггер цены молчит");
+  assert.ok(generous.estimated_benefit > stingy.estimated_benefit, "менялась именно выгода");
 });

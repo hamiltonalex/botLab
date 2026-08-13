@@ -76,6 +76,11 @@ export function defaultSettings() {
     // rather than a constant: at qty 1 the same 0.001 means a band 100x tighter in relative terms.
     deadbandRefQty: 0.01,
     priceTriggerPct: 0.5, // % move since last hedge that arms the price trigger
+    // The move the benefit estimate is measured against. Equal to priceTriggerPct by default, so the
+    // default configuration is unchanged, but it is now a SEPARATE knob: one number used to mean both
+    // "when does the price trigger fire" and "how big a move is the hedge worth", which made the two
+    // impossible to tune (or even measure) apart. See benefitMoveFrac in hedge.js.
+    benefitMovePct: 0.5,
     rehedgeSec: 60, // time-trigger interval (a prompt to re-price, not a must-trade)
     lambda: 1.25, // hedge cost multiplier (gate: benefit > cost * lambda)
     repriceSec: 15, // Deribit poll cadence (source owns the timer); one of the toolbar presets 5/15/30

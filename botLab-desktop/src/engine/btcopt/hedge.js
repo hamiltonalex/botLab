@@ -46,6 +46,19 @@ export function effectiveDeadband({ deadbandBtc, structureQty, refQty = DEADBAND
   return deadbandBtc * (structureQty / refQty);
 }
 
+// The price move fraction the benefit estimate is tuned to protect against.
+//
+// SEPARATE KNOB, AND ITS ABSENCE WAS A DEFECT. Until 2026-08-13 expectedBenefit read
+// cfg.priceTriggerPct for this, so ONE number meant two unrelated things: the threshold at which
+// the price trigger fires, and the size of the move the benefit is measured against. They could
+// neither be tuned apart nor even MEASURED apart (a parity run isolating the benefit filter had to
+// arm the price trigger with it). benefitMovePct now carries the modelling assumption; the fallback
+// to priceTriggerPct preserves the behaviour of any profile written before the split.
+export function benefitMoveFrac(cfg) {
+  const pct = cfg?.benefitMovePct ?? cfg?.priceTriggerPct;
+  return Number.isFinite(pct) ? pct / 100 : 0;
+}
+
 // Settlement / expiry blackout window. Hedging pauses around the daily 08:00 UTC settlement and
 // in the final minutes before an expiry (thin books, settlement prints — hedges there are noise).
 //   secOfDay via the (%+%)% idiom so a negative nowMs still maps into [0,86400).
@@ -194,7 +207,7 @@ export function decideHedge({
   const estimated_benefit = expectedBenefit({
     deltaExcess: delta_excess,
     underlying: snapshot.underlying,
-    m: cfg.priceTriggerPct / 100,
+    m: benefitMoveFrac(cfg), // собственный knob, а не порог ценового триггера (см. benefitMoveFrac)
   });
   const estimated_cost = estimateCost({
     hedgeQty,

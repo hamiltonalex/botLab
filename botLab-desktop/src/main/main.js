@@ -460,7 +460,15 @@ function push() {
 const BTCOPT_ID = "btc-options";
 
 function loadOrInitBtcOptions() {
-  const settings = { ...s1engine.defaultSettings(), ...loadBotSettings(baseDir, BTCOPT_ID) };
+  const persisted = loadBotSettings(baseDir, BTCOPT_ID);
+  const settings = { ...s1engine.defaultSettings(), ...persisted };
+  // One-shot heal of pre-split profiles: benefitMovePct used to BE priceTriggerPct (one number did
+  // both jobs). A profile that tuned the trigger away from the default carried that value into the
+  // benefit estimate too, so adopting the new default would silently change how much re-hedging it
+  // considers worthwhile. Copy the old coupled value forward; profiles written after the split have
+  // their own benefitMovePct and pass through untouched.
+  const healedBenefit = persisted && persisted.benefitMovePct == null && Number.isFinite(persisted.priceTriggerPct);
+  if (healedBenefit) settings.benefitMovePct = persisted.priceTriggerPct;
   // One-shot heal of pre-fix profiles: the toolbar used to persist the deadband PRESET without its
   // width, so settings.json may carry e.g. preset='aggressive' with the stale 0.001 width. The preset
   // is the user's recorded intent — realign the width to the canonical table. Sweep-applied pairs are
@@ -473,7 +481,7 @@ function loadOrInitBtcOptions() {
   // Realign to the UI default 15 s; user-chosen 5/15/30 values pass through untouched.
   const healedReprice = settings.repriceSec === 3;
   if (healedReprice) settings.repriceSec = 15;
-  if (healed || healedReprice) saveBotSettings(baseDir, BTCOPT_ID, settings);
+  if (healed || healedReprice || healedBenefit) saveBotSettings(baseDir, BTCOPT_ID, settings);
   // А6 R1 (ратифицировано 2026-07-20): битый btc-options.json КАРАНТИНИТСЯ (.corrupt-<ts>), а не
   // перезаписывается молча свежим движком - леджер, открытая структура и realizedOptionsUsd не
   // уничтожаются одной плохой записью (закон positions.json / сканера, аудит M32 + §7 случай 17).
@@ -491,6 +499,10 @@ function loadOrInitBtcOptions() {
   // The frozen engineCfg of an ALREADY-open structure is deliberately untouched (frozen-at-open law).
   if (healed && st.settings) st.settings = { ...st.settings, deadbandPreset: settings.deadbandPreset, deadbandBtc: settings.deadbandBtc };
   if (healedReprice && st.settings) st.settings = { ...st.settings, repriceSec: settings.repriceSec };
+  // Открытая структура своим frozen engineCfg не трогается (закон заморозки при открытии), и это
+  // безопасно: у неё benefitMovePct нет вовсе, а fallback в benefitMoveFrac даёт ровно прежнее
+  // поведение до самого закрытия.
+  if (healedBenefit && st.settings) st.settings = { ...st.settings, benefitMovePct: settings.benefitMovePct };
   state.btcOptions.engine = st;
   state.btcOptions.settings = settings;
   // Phase 3b: the persisted IV history (its OWN file — never inside btc-options.json) survives
