@@ -57,23 +57,36 @@ test("markStructure: multi-leg Σ (long call +1890, short put +100) = +1990", ()
 // ── markPerp (INVERSE $10 perpetual — BTC-denominated PnL) ───────────────────────────────────────
 test("markPerp inverse: short −13 @63000, mark 60000 → gains as price drops", () => {
   const r = markPerp({ qty: -13, avgEntry: 63000 }, { mark: 60000, contractSize: 10 });
-  near(r.futuresDeltaBtc, -0.0021667, 1e-6, "futuresDeltaBtc"); // −130/60000
+  near(r.futuresDeltaBtc, -0.0020635, 1e-6, "futuresDeltaBtc"); // −130/63000 = ∂upl_usd/∂mark
+  near(r.futuresNotionalBtc, -0.0021667, 1e-6, "futuresNotionalBtc"); // −130/60000 = BTC face
   near(r.upl_usd, 6.190476, 1e-5, "upl_usd"); // −130·(60000−63000)/63000, short PROFITS
   near(r.upl_btc, 0.00010317, 1e-6, "upl_btc"); // −130·(1/63000 − 1/60000)
   assert.equal(r.notionalUsd, 130); // |−13|·10
   assert.ok(r.upl_usd > 0, "short must profit as price falls");
 });
 
+// The delta is the DERIVATIVE of the P&L this same function reports, pinned against upl_usd
+// itself, not against a repeat of the formula, so a future edit cannot drift them apart silently.
+test("markPerp: futuresDeltaBtc IS ∂upl_usd/∂mark, and it does not move with price", () => {
+  const pos = { qty: -13, avgEntry: 63000 };
+  const a = markPerp(pos, { mark: 60000, contractSize: 10 });
+  const b = markPerp(pos, { mark: 60001, contractSize: 10 });
+  near(b.upl_usd - a.upl_usd, a.futuresDeltaBtc, 1e-9, "P&L per $1 of spot == delta");
+  near(b.futuresDeltaBtc, a.futuresDeltaBtc, 1e-12, "delta is constant between fills");
+  assert.ok(Math.abs(b.futuresNotionalBtc) < Math.abs(a.futuresNotionalBtc), "face shrinks as price rises");
+});
+
 test("markPerp inverse: long +13 is the exact mirror (sign lock)", () => {
   const r = markPerp({ qty: +13, avgEntry: 63000 }, { mark: 60000, contractSize: 10 });
   near(r.upl_usd, -6.190476, 1e-5, "upl_usd"); // long LOSES as price falls
-  near(r.futuresDeltaBtc, 0.0021667, 1e-6, "futuresDeltaBtc");
+  near(r.futuresDeltaBtc, 0.0020635, 1e-6, "futuresDeltaBtc");
+  near(r.futuresNotionalBtc, 0.0021667, 1e-6, "futuresNotionalBtc");
   assert.ok(r.upl_usd < 0, "long must lose as price falls");
 });
 
 test("markPerp: flat / unpriced (qty 0, avgEntry 0) → all zeros", () => {
   const r = markPerp({ qty: 0, avgEntry: 0 }, { mark: 60000, contractSize: 10 });
-  assert.deepEqual(r, { futuresDeltaBtc: 0, upl_usd: 0, upl_btc: 0, notionalUsd: 0 });
+  assert.deepEqual(r, { futuresDeltaBtc: 0, futuresNotionalBtc: 0, upl_usd: 0, upl_btc: 0, notionalUsd: 0 });
 });
 
 test("markPerp: upl_usd equals upl_btc·mark (inverse identity)", () => {

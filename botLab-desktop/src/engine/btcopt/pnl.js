@@ -35,24 +35,44 @@ export function markStructure(structure, snapshot) {
 }
 
 // ── Inverse perpetual hedge (BTC-denominated PnL) ───────────────────────────────────────────────
-// markPerp(perpState, perp) → { futuresDeltaBtc, upl_usd, upl_btc, notionalUsd }.
+// markPerp(perpState, perp) → { futuresDeltaBtc, futuresNotionalBtc, upl_usd, upl_btc, notionalUsd }.
 // Flat / unpriced (qty===0 || avgEntry<=0) → all zeros. Otherwise (INVERSE math):
-//   futuresDeltaBtc = qty·contractSize / mark              (BTC delta the futures leg carries now)
-//   upl_btc         = qty·contractSize·(1/avgEntry − 1/mark)
-//   upl_usd         = upl_btc·mark = qty·contractSize·(mark − avgEntry)/avgEntry
-//   notionalUsd     = |qty|·contractSize                   (USD face; $10 per contract)
+//   futuresDeltaBtc    = qty·contractSize / avgEntry       (USD-PnL delta, see below)
+//   futuresNotionalBtc = qty·contractSize / mark           (BTC face at the CURRENT price)
+//   upl_btc            = qty·contractSize·(1/avgEntry − 1/mark)
+//   upl_usd            = upl_btc·mark = qty·contractSize·(mark − avgEntry)/avgEntry
+//   notionalUsd        = |qty|·contractSize                (USD face; $10 per contract)
+//
+// TWO NUMBERS, NOT ONE, AND CONFLATING THEM COST REAL EXPOSURE. Until 2026-08-13 this function
+// returned only qty·cs/mark and called it the delta. That is the BTC FACE of the position, and it
+// is the right answer to "how much BTC am I carrying", and the wrong answer to "how does my USD
+// PnL move when spot moves". The second answer follows directly from the upl_usd line above:
+//   upl_usd = qty·cs·(mark − avgEntry)/avgEntry  ⇒  ∂upl_usd/∂mark = qty·cs/avgEntry = CONSTANT.
+// The two differ by exactly mark/avgEntry, i.e. by how far price has travelled from the position's
+// average entry. Feeding the face into the delta-neutrality test (engine.js) silently re-introduced
+// a directional bet: precisely the exposure the hedge exists to remove.
+//
+// MEASURED, NOT ARGUED (scripts/parity-sellhedge.mjs, 5 years of record, 2.5 bps hedge cost): the
+// face-as-delta variant returned ×13.20 against the reference ×10.24 (BETTER), while over the
+// falling year 2025-08..2026-08 it returned ×1.22 against ×1.28 (WORSE). An effect whose sign
+// tracks market direction is a directional bet, and the five-year gain was a bull-sample artefact.
+//
+// WHICH CONSUMER GETS WHICH: the hedge decision and the δ_fut readout take futuresDeltaBtc; the
+// position-size display and exchangeDeltaTotal take futuresNotionalBtc, because the latter
+// reconciles against Deribit's own account delta_total, which is reported on the face convention.
 export function markPerp(perpState, perp) {
   const qty = perpState?.qty ?? 0;
   const avgEntry = perpState?.avgEntry ?? 0;
   if (qty === 0 || avgEntry <= 0) {
-    return { futuresDeltaBtc: 0, upl_usd: 0, upl_btc: 0, notionalUsd: 0 };
+    return { futuresDeltaBtc: 0, futuresNotionalBtc: 0, upl_usd: 0, upl_btc: 0, notionalUsd: 0 };
   }
   const cs = perp.contractSize;
-  const futuresDeltaBtc = (qty * cs) / perp.mark;
+  const futuresDeltaBtc = (qty * cs) / avgEntry;
+  const futuresNotionalBtc = (qty * cs) / perp.mark;
   const upl_btc = qty * cs * (1 / avgEntry - 1 / perp.mark);
   const upl_usd = upl_btc * perp.mark;
   const notionalUsd = Math.abs(qty) * cs;
-  return { futuresDeltaBtc, upl_usd, upl_btc, notionalUsd };
+  return { futuresDeltaBtc, futuresNotionalBtc, upl_usd, upl_btc, notionalUsd };
 }
 
 // ── Funding accrual (mutates perpState.fundingCum) ──────────────────────────────────────────────

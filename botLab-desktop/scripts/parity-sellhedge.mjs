@@ -145,7 +145,9 @@ const VARIANTS = [
   { key: "blk", label: "+ блэкаут расчёта", cfg: engineCfg({ lambda: 1.25, priceTriggerPct: 0.5, rehedgeSec: 60, settlementBlackout: true }) },
   { key: "b2", label: "полоса бота 2 (0.001 ÷ лот = 0.1)", cfg: engineCfg({ lambda: 1.25, priceTriggerPct: 0.5, rehedgeSec: 60, settlementBlackout: true, deadbandBtc: 0.001 / LOT }) },
   { key: "fwd", label: "дельта по СПОТУ (× F/S)", cfg: engineCfg({}), spotDelta: true },
-  { key: "drift", label: "дельта движка (qty·cs/mark)", cfg: engineCfg({}), driftDelta: true },
+  // Конвенция ДО правки 2026-08-13: markPerp отдавал номинал под именем дельты. Вариант оставлен
+  // как контрфакт (он и поймал дефект), а в боте 2 это уже починено - см. шапку markPerp.
+  { key: "drift", label: "дельта номиналом (конвенция до fix)", cfg: engineCfg({}), driftDelta: true },
   // КАДАНС ПРОВЕРКИ отдельно от учёта: P&L и фандинг копятся на КАЖДОМ снимке, а решение
   // спрашивается раз в N снимков. Только так видно, решает полоса или частота. Замер по живой
   // записи (48 часов) говорил, что не решает; здесь тот же вопрос задаётся пяти годам.

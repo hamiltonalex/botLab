@@ -442,3 +442,38 @@ test("R3: ingest через 8ч разрыв - фандинг клампится
   assert.equal(st.perpState.fundingGapSec, 8 * 3600 - 300 + (1800 - 300), "гэпы аддитивны");
   assert.equal(st.ledger.filter((e) => e.type === "funding-gap").length, 2);
 });
+
+// ── Дельта перпа против его номинала (fix 2026-08-13) ────────────────────────────────────────────
+// Ни один прежний тест не держал позицию, у которой средний вход РАЗОШЁЛСЯ с марком, поэтому
+// подмена дельты номиналом жила в коде незамеченной. Здесь цена уходит на 10% после перекладки.
+test("после движения цены дельта перпа считается от avgEntry, а номинал от марка", () => {
+  const { st, snap } = opened();
+  engine.ingest(st, snap, NOON);
+  engine.evaluate(st, snap, NOON); // ставит хедж: 12 контрактов по 61000
+  assert.equal(st.perpState.qty, 12, "хедж исполнен");
+  near(st.perpState.avgEntry, 61000, 1e-9, "средний вход равен цене перекладки");
+
+  const up = 67100; // +10%
+  const moved = { ...mkSnapshot(NOON + 60_000), underlying: up, index: up,
+    perp: { ...mkSnapshot().perp, mark: up, index: up },
+    liquidity: { bid: up - 1, ask: up + 1, mid: up, halfSpread: 1 } };
+  engine.ingest(st, moved, NOON + 60_000);
+  const cyc = engine.evaluate(st, moved, NOON + 60_000);
+
+  near(cyc.current_futures_delta, 120 / 61000, 1e-12, "дельта от avgEntry и по цене НЕ уплыла");
+  near(cyc.perp_position.btc, 120 / up, 1e-12, "номинал от текущего марка");
+  near(cyc.current_futures_delta / cyc.perp_position.btc, up / 61000, 1e-9, "разошлись в mark/avgEntry");
+
+  // Проверка не повтором формулы, а через P&L: дельта обязана быть производной upl_usd по цене.
+  // Позиция между двумя замерами обязана быть ОДНА И ТА ЖЕ, иначе сравнивались бы разные позиции
+  // и тест был бы зелёным по случайности. Фикса не было: дельта уже в дедбэнде (см. ниже).
+  assert.equal(cyc.decision, "SKIP", "после правки фантомного дрейфа нет и перекладка не нужна");
+  const qtyBefore = st.perpState.qty;
+  const nudge = { ...moved, underlying: up + 1, index: up + 1,
+    perp: { ...moved.perp, mark: up + 1, index: up + 1 } };
+  engine.ingest(st, nudge, NOON + 61_000);
+  const c2 = engine.evaluate(st, nudge, NOON + 61_000);
+  assert.equal(st.perpState.qty, qtyBefore, "позиция не менялась между замерами");
+  near(c2.perp_position.upl_usd - cyc.perp_position.upl_usd, cyc.current_futures_delta, 1e-9,
+    "P&L на доллар движения спота равен заявленной дельте");
+});

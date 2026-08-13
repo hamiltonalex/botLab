@@ -190,15 +190,17 @@ test("долларовая дельта обратного перпа счита
   near(usdDeltaOfInversePerp(pos), uplUsd / (66000 - 60000), 1e-12, "дельта = P&L / движение");
 });
 
-test("markPerp меряет НОМИНАЛ, а не долларовую дельту: расхождение ровно mark/avgEntry", () => {
-  const perpState = { qty: 6000, avgEntry: 60000 };
-  const m = markPerp(perpState, { mark: 66000, contractSize: 10 });
-  near(m.futuresDeltaBtc, 60000 / 66000, 1e-9, "номинал в BTC по текущей цене");
-  const usd = usdDeltaOfInversePerp({ qty: 6000, contractSize: 10, avgEntry: 60000 });
-  near(usd / m.futuresDeltaBtc, 66000 / 60000, 1e-9, "разошлись ровно в mark/avgEntry раз");
-  // Зазор 0.09 BTC на дельте 1.0 - ВТРОЕ шире рабочей полосы 0.03: подстановка номинальной дельты
-  // в проверку нейтральности возвращает направленную ставку, а не даёт мелкую погрешность.
-  assert.ok(usd - m.futuresDeltaBtc > 3 * SELLHEDGE_DEFAULTS.bandBtc);
+// СВЯЗЬ ДВУХ МОДУЛЕЙ, а не дубль расчёта: продавец и хедж бота 2 обязаны считать дельту ОДНОЙ
+// конвенцией, иначе перенос схемы в бой снова разъедется. Тест зовёт настоящий markPerp, поэтому
+// смена конвенции в боте 2 уронит его здесь, а не в бою.
+test("продавец и бот 2 считают долларовую дельту перпа ОДИНАКОВО", () => {
+  const pos = { qty: 6000, contractSize: 10, avgEntry: 60000 };
+  const m = markPerp({ qty: pos.qty, avgEntry: pos.avgEntry }, { mark: 66000, contractSize: 10 });
+  near(usdDeltaOfInversePerp(pos), m.futuresDeltaBtc, 1e-12, "одна конвенция на два модуля");
+  near(m.futuresNotionalBtc, 60000 / 66000, 1e-9, "номинал остаётся отдельным числом");
+  // Зазор 0.09 BTC на дельте 1.0 - ВТРОЕ шире рабочей полосы 0.03: подстановка номинала в проверку
+  // нейтральности возвращает направленную ставку, а не даёт мелкую погрешность.
+  assert.ok(m.futuresDeltaBtc - m.futuresNotionalBtc > 3 * SELLHEDGE_DEFAULTS.bandBtc);
 });
 
 test("плоская позиция даёт ноль, а не NaN: applyFill обнуляет avgEntry вместе с qty", () => {

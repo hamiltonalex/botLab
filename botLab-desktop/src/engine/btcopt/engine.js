@@ -166,6 +166,9 @@ export function evaluate(state, snapshot, nowMs) {
   const optionDelta = structure ? optionDeltaTotal(structure, snapshot) : 0;
   const greeks = structure ? netGreeks(structure, snapshot) : { delta: 0, gamma: 0, vega: 0, theta: 0 };
   const mp = markPerp(state.perpState, perp || {});
+  // Qperp = ДОЛЛАРОВАЯ дельта перпа (qty·cs/avgEntry), а не его номинал в BTC: нейтральность
+  // сводится в той же системе отсчёта, в какой считается P&L опционов. Разбор конвенций и замер,
+  // поймавший подмену, в шапке markPerp (pnl.js).
   const Qperp = mp.futuresDeltaBtc;
   const totalDelta = optionDelta + Qperp;
   const liquidity =
@@ -208,7 +211,10 @@ export function evaluate(state, snapshot, nowMs) {
   // Capture the pre-fill position, price-move and P&L now; the fill is applied below as a side-effect.
   const perp_position = {
     contracts: state.perpState.qty,
-    btc: Qperp,
+    // РАЗМЕР позиции показывается номиналом по текущей цене - это то, что видно в терминале
+    // Deribit. Дельта той же позиции лежит рядом в current_futures_delta и с ней НЕ совпадает,
+    // пока цена не равна среднему входу (разбор в шапке markPerp).
+    btc: mp.futuresNotionalBtc,
     avgEntry: state.perpState.avgEntry,
     notionalUsd: mp.notionalUsd,
     upl_usd: mp.upl_usd,
@@ -350,7 +356,9 @@ export function evaluate(state, snapshot, nowMs) {
     total_delta_bs: totalDelta,
     current_futures_delta: Qperp,
     perp_position,
-    exchange_delta_total: exchangeDeltaTotal(structure, snapshot, Qperp),
+    // Сверка с биржей идёт по НОМИНАЛУ: Deribit отдаёт дельту фьючерса в своей конвенции, и монитор
+    // существует ровно затем, чтобы сойтись с её числом, а не с нашим (хеджем он не управляет).
+    exchange_delta_total: exchangeDeltaTotal(structure, snapshot, mp.futuresNotionalBtc),
     target_futures_delta: decision.target_futures_delta,
     hedge_deadband_btc: cfg.deadbandBtc,
     delta_excess: decision.delta_excess,
