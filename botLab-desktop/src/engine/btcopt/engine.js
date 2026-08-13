@@ -47,7 +47,16 @@ function buildCfg(settings) {
 // The canonical preset → ±BTC half-width table. Single source of truth: the settings toolbar (via
 // normalizeDeadband at the s1:setSettings boundary) and the sweep grid both read THIS table, so the
 // preset label and the width the hedge engine actually uses can never drift apart again.
+// ЗНАЧЕНИЯ ЗАДАНЫ НА КАЛИБРОВОЧНОМ РАЗМЕРЕ deadbandRefQty (0.01), а не на контракте: полосу
+// масштабирует effectiveDeadband. Чтобы прочитать пресет «на 1.0 контракта», умножьте на 100.
 export const DEADBAND_PRESETS = {
+  // Полоса схемы продажи колла: 0.03 BTC НА КОНТРАКТ, то есть 0.0003 на калибровочном размере.
+  // Число не выбрано на глаз и не универсально: оно найдено перебором сетки против стоимости
+  // перекладки и от неё ЗАВИСИТ (sellhedge.js: при мейкере теснее всегда лучше, при 10 б.п. лучше
+  // шире, а 0.01 даёт ×0.98). 0.03 это оптимум при реалистичных 2.5 б.п. Оставлять схему на
+  // ближайшем пресете было бы подменой: самый тесный из прежних (0.05 на контракт) шире
+  // калиброванной в 1.67 раза, и хедж шёл бы не по тому правилу, каким схема измерена.
+  sellhedge: 0.0003,
   aggressive: 0.0005,
   normal: 0.001,
   conservative: 0.002,
