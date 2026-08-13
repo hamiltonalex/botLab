@@ -62,6 +62,8 @@ if (has("--help") || !argOf("--out")) {
   --tape inverse|both  какая лента кормит подгонку (по умолчанию inverse; см. шапку)
   --max-days <n>     потолок срока восстанавливаемых инструментов (по умолчанию 90)
   --max-logm <x>     потолок |ln(K/F)| (по умолчанию 0.6)
+  --chain linear|inverse|auto  какая цепочка даёт набор инструментов (по умолчанию auto:
+                     линейная, если она листингована на начало окна, иначе обратная)
   --spread-scale <x> множитель модельного спреда (по умолчанию 1)
   --spread-mode ivPoints|pctPremium  шкала переноса спреда (по умолчанию ivPoints)
   --window-min <n>   окно подгонки назад, минут (по умолчанию 120)
@@ -114,10 +116,36 @@ function loadMeta(kind) {
   return out;
 }
 
-const optMeta = [...loadMeta("usdc-option").values()]
-  .filter((m) => m.instrument_name.startsWith("BTC_USDC-") && fin(m.expiration_timestamp) && posNum(m.strike))
+// ── КАКАЯ ЦЕПОЧКА ДАЁТ НАБОР ИНСТРУМЕНТОВ.
+//
+// По умолчанию линейная (BTC_USDC-*): именно ею торгует сканер. Но она существует не всегда.
+// ЗАМЕР 2026-08-13: самый ранний `creation_timestamp` среди 17975 инструментов BTC_USDC равен
+// 2025-08-06, и это НЕ предел хранения архива - в той же выгрузке SOL_USDC лежит с 2024-02-12,
+// XRP_USDC с 2024-03-07, MATIC_USDC жил 2024-03..2024-08. То есть линейные опционы на BTC биржа
+// просто запустила 6 августа 2025, и раньше этой даты их не было. Попытка собрать 2024 год по
+// линейной цепочке даёт 0 инструментов на каждой метке и 8529 пропущенных меток подряд.
+//
+// Обратная цепочка (BTC-*) торгуется непрерывно с 2016 года: 550-694 инструмента в любую дату
+// 2024. Волатильность контрактом не определяется (шапка hist-surface.js), поэтому на её страйках
+// и сроках можно посчитать ТУ ЖЕ поверхность и оценить премию в долларах Блэком-76.
+//
+// ЧТО ЭТО ЗНАЧИТ И ЧЕГО НЕ ЗНАЧИТ, названо прямо: получается КОНТРФАКТИЧЕСКАЯ запись «как если бы
+// линейный контракт на этих страйках существовал». Сетка страйков и экспираций настоящая, IV
+// настоящая, комиссия в долларах совпадает (0.0003 индекса за сторону в обеих цепочках). Отличается
+// обеспечение: у обратных опционов оно в BTC. Для замера волатильностной премии это не важно, для
+// расчёта маржи на счёте - важно, и в отчёте это надо оговаривать.
+const CHAIN = argOf("--chain", "auto");
+if (!["linear", "inverse", "auto"].includes(CHAIN)) {
+  console.error(`--chain принимает linear, inverse или auto, получено "${CHAIN}"`);
+  process.exit(1);
+}
+const metaOf = (kind, prefix) => [...loadMeta(kind).values()]
+  .filter((m) => m.instrument_name.startsWith(prefix) && fin(m.expiration_timestamp) && posNum(m.strike)
+    && fin(m.creation_timestamp))
   .sort((a, b) => a.expiration_timestamp - b.expiration_timestamp || a.strike - b.strike);
-if (!optMeta.length) { console.error(`в кэше ${CACHE} нет меты линейных опционов - сначала npm run hist:download`); process.exit(1); }
+const linMeta = metaOf("usdc-option", "BTC_USDC-");
+const invMeta = metaOf("btc-option", "BTC-");
+const linFirst = linMeta.length ? Math.min(...linMeta.map((m) => m.creation_timestamp)) : Infinity;
 
 // ── свечи: перп (прокси индекса и вход RV) + фьючерсы (форвард экспираций)
 // Файл ряда несёт своё покрытие (fromMs/toMs) - см. грабли резюмируемости в hist-download.mjs.
@@ -189,6 +217,18 @@ const cacheDays = existsSync(cachePath("trades"))
 if (!cacheDays.length) { console.error("в кэше нет ленты сделок"); process.exit(1); }
 const FROM = argOf("--from") ? Date.parse(`${argOf("--from")}T00:00:00Z`) : cacheDays[0] + DAY_MS;
 const TO = argOf("--to") ? Date.parse(`${argOf("--to")}T00:00:00Z`) : cacheDays.at(-1) + DAY_MS;
+
+// Выбор цепочки решается ПОКРЫТИЕМ ОКНА, а не наличием файла: линейная мета лежит всегда, но
+// может не доставать до начала окна, и тогда молчаливый выбор линейной дал бы пустую запись.
+const useInverse = CHAIN === "inverse" || (CHAIN === "auto" && linFirst > FROM);
+const optMeta = useInverse ? invMeta : linMeta;
+if (!optMeta.length) { console.error(`в кэше ${CACHE} нет меты опционов - сначала npm run hist:download`); process.exit(1); }
+if (useInverse && CHAIN === "auto") {
+  console.log(`> Окно начинается ${dayKey(FROM)}, а линейные BTC_USDC листингованы с ${dayKey(linFirst)}.`);
+  console.log(`> Набор инструментов взят с ОБРАТНОЙ цепочки BTC-*: сетка страйков и сроков настоящая,`);
+  console.log(`> премия считается в долларах Блэком-76, комиссия совпадает. Обеспечение у обратных`);
+  console.log(`> опционов в BTC - для замера премии это не важно, для маржи на счёте важно.\n`);
+}
 
 // ── индекс на метке: последние сделки НЕ ПОЗЖЕ t (index_price приходит в каждой строке ленты).
 // Перп берётся фолбэком: он торгуется с базисом к индексу, поэтому это второй выбор, а не первый.
@@ -371,6 +411,9 @@ const manifest = {
   from: dayKey(FROM), to: dayKey(TO), stepMin: STEP_MS / 60000, tape: TAPE,
   fit: { windowMin: FIT_OPTS.windowMs / 60000, halfLifeMin: FIT_OPTS.halfLifeMs / 60000, minPoints: FIT_OPTS.minPoints, xMarginFrac: FIT_OPTS.xMarginFrac, ivSource: IV_SOURCE },
   caps: { maxDays: MAX_DAYS, maxLogMoneyness: MAX_LOGM },
+  chain: { requested: CHAIN, used: useInverse ? "inverse" : "linear",
+    linearListedFrom: Number.isFinite(linFirst) ? dayKey(linFirst) : null,
+    note: useInverse ? "набор инструментов с обратной цепочки: премия в USD по Блэку-76, обеспечение у обратных опционов в BTC" : null },
   syntheticQuotes: { isAssumption: true, mode: SPREAD_MODE, scale: SPREAD_SCALE, provenance: COST_MODEL_PROVENANCE },
   noDepth: "стакана в истории нет: строк D нет, У12 требует --depth assume",
   stats,
