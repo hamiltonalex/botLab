@@ -1,0 +1,379 @@
+#!/usr/bin/env node
+// hist-sellhedge.mjs - ПРОДАЖА ОПЦИОНА С ДЕЛЬТА-ХЕДЖЕМ по восстановленной истории. READ-ONLY.
+//
+// ЭТО ЭТАЛОН, С КОТОРЫМ СВЕРЯЕТСЯ ЖИВОЙ ДВИЖОК. Первая конфигурация проекта, показавшая прибыль
+// на пяти годах и во всех режимах рынка сразу. Всё остальное семейство (покупка опциона по
+// чеклисту, `hist-backtest.mjs`) измерено убыточным: 630 конфигураций выхода и 201 конфигурация
+// входа, ни одной прибыльной клетки.
+//
+// ПОЧЕМУ ПОКУПКА НЕ РАБОТАЕТ, одним числом: круг издержек опциона Deribit эквивалентен движению
+// BTC на 0.20%, а лучшее найденное правило входа предсказывает движение на 0.03-0.04%. Плата за
+// проход впятеро больше того, что можно предсказать.
+//
+// ЧТО ДЕЛАЕТ СХЕМА, по шагам:
+//   1. берём колл со сроком 336-672 ч, |дельта| ближайшая к 0.45 (допуск 0.10);
+//   2. продаём его, получаем премию;
+//   3. немедленно покупаем перп на величину дельты - это снимает ставку на направление;
+//   4. пока держим, подравниваем перп, когда |нужный − текущий| выходит за полосу (по умолчанию
+//      0.03 BTC на контракт);
+//   5. НИЧЕГО не закрываем досрочно: ни тейка, ни стопа, ни тайм-стопа;
+//   6. в экспирацию опцион гасится сам, перп закрывается, сразу открывается следующая сделка.
+//
+// ОТКУДА БЕРЁТСЯ ДОХОД. Гамма и тета почти компенсируют друг друга (замер: −0.071% премии за
+// сутки), поэтому чистая волатильностная ставка близка к честной. Зарабатывает разница между
+// уплаченной покупателем волатильностью и реализовавшейся, а хедж убирает дельту, которая иначе
+// даёт 81% дисперсии итога и никакого преимущества.
+//
+// ПОЛОСА ХЕДЖА ВЫБРАНА СЕТКОЙ, А НЕ НА ГЛАЗ, и её оптимум ЗАВИСИТ ОТ СТОИМОСТИ ПЕРЕКЛАДКИ
+// (`--band-sweep` показывает это заново на любых данных):
+//   мейкер:  0.01 ×1.91 · 0.03 ×1.85 · 0.08 ×1.77 · 0.20 ×1.63  (теснее всегда лучше)
+//   2.5 б.п: 0.01 ×1.62 · 0.03 ×1.65 · 0.08 ×1.64 · 0.20 ×1.55  (оптимум ровно на 0.03)
+//   10 б.п:  0.01 ×0.98 · 0.03 ×1.16 · 0.08 ×1.31 · 0.20 ×1.34  (шире лучше)
+// Дефолт 0.03: лучшая при реалистичных 2.5 б.п. и не разваливается ни в одну сторону. Полоса 0.01
+// держится ИСКЛЮЧИТЕЛЬНО на допущении бесплатного исполнения, а проскальзывание здесь не
+// моделируется вовсе.
+//
+// ЧЕГО РАСЧЁТ НЕ ЗНАЕТ, и это ограничивает вывод:
+//   - проскальзывания хеджа сверх комиссии (глубины перпа в записи нет);
+//   - выпуклости обратного перпа: доход хеджа считается линейно как q·ΔS;
+//   - комиссии биржи за расчёт опциона в деньгах;
+//   - до августа 2025 линейных BTC_USDC не существовало, поэтому ранние годы считаются на
+//     обратной цепочке. Сверка на годе, где есть обе, даёт разницу в 1.4 раза в пользу обратной,
+//     поэтому есть флаг `--chain-adj` (0.69 приводит к торгуемому контракту).
+
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { gunzipSync } from "node:zlib";
+import { priceAt, makePriceStats, countPrice, formatPriceStats } from "../src/engine/otmscan/hist-price.js";
+import { computeTradeCosts } from "../src/engine/otmscan/economics.js";
+import { legMargin } from "../src/engine/btcopt/margin.js";
+
+const fin = (x) => Number.isFinite(x);
+const args = process.argv.slice(2);
+const argOf = (n, d = null) => { const i = args.indexOf(n); return i >= 0 && i + 1 < args.length ? args[i + 1] : d; };
+const has = (n) => args.includes(n);
+
+if (has("--help") || !argOf("--dir")) {
+  console.log(`hist-sellhedge.mjs - продажа опциона с дельта-хеджем по восстановленной истории
+
+  --dir <каталог>     запись восстановления (обязательно)
+  --funding <файл>    почасовой фандинг перпа (по умолчанию из кэша hist-download)
+  --expiry <a,b>      окно срока в часах (по умолчанию 336,672)
+  --delta <x>         целевая |дельта| (по умолчанию 0.45, допуск 0.10)
+  --band <x>          полоса хеджа, BTC на контракт (по умолчанию 0.03)
+  --perp-fee <x>      комиссия перпа долей (0 мейкер, 0.0005 тейкер; по умолчанию 0)
+  --spread-scale <x>  множитель модельного спреда (по умолчанию 1.10, замер по живой записи)
+  --iv-haircut <x>    продавать на x пунктов воли ниже марка (проверка смещения подгонки)
+  --chain-adj <x>     множитель итога сделки (0.69 приводит обратную цепочку к линейной)
+  --no-funding        не учитывать фандинг (контрольный прогон)
+  --deposit <$,...>   стартовые депозиты для симуляции счёта (по умолчанию 500,2000,20000)
+  --periods <д,...>   границы режимов рынка для разбивки (даты UTC)
+  --trades            печатать все сделки по одной строке
+  --band-sweep        перебрать полосу при трёх стоимостях перекладки
+  --stress            перебрать сценарии исполнения и параметры`);
+  process.exit(argOf("--dir") ? 0 : 1);
+}
+
+const DIR = argOf("--dir");
+const [E_MIN, E_MAX] = (argOf("--expiry", "336,672")).split(",").map(Number);
+const D_TARGET = Number(argOf("--delta", "0.45"));
+const D_TOL = 0.10;
+const BAND = Number(argOf("--band", "0.03"));
+const PERP_FEE = Number(argOf("--perp-fee", "0"));
+const SPREAD = Number(argOf("--spread-scale", "1.10"));
+const HAIRCUT = Number(argOf("--iv-haircut", "0"));
+const CHAIN_ADJ = Number(argOf("--chain-adj", "1"));
+const USE_FUNDING = !has("--no-funding");
+const DEPOSITS = (argOf("--deposit", "500,2000,20000")).split(",").map(Number).filter(fin);
+const PERIODS = (argOf("--periods") ?? "").split(",").filter(Boolean).map((d) => Date.parse(`${d}T00:00:00Z`));
+const LOT = 0.01, DEPLOY = 0.70;
+
+// ── запись
+function load(dir) {
+  const D = readdirSync(dir).some((f) => f === "scan-records") ? join(dir, "scan-records") : dir;
+  const snaps = new Map(); const ticks = [];
+  for (const f of readdirSync(D).sort()) {
+    const kind = f.includes("-ticks-") ? "t" : f.includes("-surface-") ? "s" : null;
+    if (!kind) continue;
+    for (const line of readFileSync(join(D, f), "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      const r = JSON.parse(line);
+      if (kind === "t") ticks.push(r);
+      else { let m = snaps.get(r.ts); if (!m) { m = new Map(); snaps.set(r.ts, m); } m.set(r.n, r); }
+    }
+  }
+  ticks.sort((a, b) => a.ts - b.ts);
+  const times = [...snaps.keys()].sort((a, b) => a - b);
+  // СПОТ ПОДБИРАЕТСЯ БЛИЖАЙШИМ ТИКОМ НЕ ПОЗЖЕ МЕТКИ, а не точным совпадением: в восстановленной
+  // записи метки совпадают по построению, а в ЖИВОЙ нет (тики раз в 30 с, поверхность раз в 300 с
+  // со своей меткой), и точное совпадение молча обнулило бы весь расчёт.
+  const tts = ticks.map((t) => t.ts);
+  const spot = times.map((t) => {
+    let lo = 0, hi = tts.length - 1, res = null;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (tts[m] <= t) { res = m; lo = m + 1; } else hi = m - 1; }
+    return res == null ? null : ticks[res].S ?? null;
+  });
+  const byExp = new Map();
+  for (const [ts, m] of snaps) {
+    const e = new Map();
+    for (const r of m.values()) { let a = e.get(r.e); if (!a) { a = []; e.set(r.e, a); } a.push(r); }
+    byExp.set(ts, e);
+  }
+  return { snaps, times, spot, byExp, stats: makePriceStats() };
+}
+const R = load(DIR);
+const N = R.times.length;
+if (!N) { console.error(`пусто: ${DIR}`); process.exit(1); }
+
+// ── фандинг: положительная ставка означает, что ЛОНГИ ПЛАТЯТ. Хедж короткого колла это лонг перпа.
+const FUND = new Map();
+{
+  const rel = argOf("--funding") ?? join(homedir(), "botlab-hist-cache", "funding", "btc-perpetual-1h.json");
+  for (const p of [rel, `${rel}.gz`]) {
+    try {
+      const buf = readFileSync(p);
+      for (const f of JSON.parse((p.endsWith(".gz") ? gunzipSync(buf) : buf).toString("utf8")))
+        if (fin(f?.ts) && fin(f?.r1h)) FUND.set(Math.floor(f.ts / 3600000) * 3600000, f.r1h);
+      break;
+    } catch { /* следующий вариант пути */ }
+  }
+}
+const fundRate = (ts) => (USE_FUNDING ? FUND.get(Math.floor(ts / 3600000) * 3600000) ?? 0 : 0);
+
+const mean = (a) => { const s = a.filter(fin); return s.length ? s.reduce((x, y) => x + y, 0) / s.length : NaN; };
+const sd = (a) => { const s = a.filter(fin); if (s.length < 2) return NaN; const m = mean(s);
+  return Math.sqrt(s.reduce((x, y) => x + (y - m) ** 2, 0) / (s.length - 1)); };
+const q = (a, p) => { const s = a.filter(fin).sort((x, y) => x - y); if (!s.length) return NaN;
+  const i = (s.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (i - lo); };
+const f2 = (x, d = 2) => (fin(x) ? x.toFixed(d) : "н/д");
+const dt = (ms) => new Date(ms).toISOString().slice(0, 10);
+const spotBefore = (T) => { let lo = 0, hi = N - 1, res = null;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (R.times[m] <= T) { res = R.spot[m]; lo = m + 1; } else hi = m - 1; } return res; };
+
+// Кандидат: колл нужного срока с |дельтой| ближе всего к целевой.
+function pickLeg(i, cfg) {
+  const snap = R.snaps.get(R.times[i]); const S = R.spot[i];
+  if (!snap || !(S > 0)) return null;
+  let best = null, bd = Infinity;
+  for (const r of snap.values()) {
+    if (!fin(r.h) || r.h < cfg.eMin || r.h > cfg.eMax || r.s !== "C") continue;
+    if (!(r.m > 0) || !fin(r.d) || !fin(r.b) || !fin(r.a) || !fin(r.iv) || !fin(r.vg)) continue;
+    const dd = Math.abs(Math.abs(r.d) - cfg.dTarget);
+    if (dd < bd) { bd = dd; best = r; }
+  }
+  return best && bd <= D_TOL ? best : null;
+}
+
+// Одна сделка НА ОДИН КОНТРАКТ 1.0 BTC, от входа до экспирации.
+function runTrade(i, leg, cfg) {
+  const S0 = R.spot[i];
+  const half = ((leg.a - leg.b) / 2) * cfg.spread;
+  const costs = computeTradeCosts({ markUsd: leg.m, bidUsd: leg.m - half, askUsd: leg.m + half,
+    indexPrice: S0, execModel: cfg.execModel });
+  if (!costs) return null;
+  // Продаём на haircut пунктов воли ниже марка: прямая проверка смещения подгонки. Замер по живой
+  // записи даёт смещение +0.03 пункта на сроке 14-28 суток, то есть запас здесь огромный.
+  const premSold = leg.m - (cfg.haircut > 0 ? leg.vg * cfg.haircut : 0);
+  if (!(premSold > 0)) return null;
+  // До экспирации платится только ВХОД: опцион гасится сам, второй раз книгу пересекать не надо.
+  const optCost = (costs.roundTripCostPct / 100) * leg.m / 2;
+  const im = legMargin({ type: "call", side: "short", strike: leg.k, mark: leg.m,
+    underlying: S0, index: S0, amount: 1 }).im;
+  const meta = { name: leg.n, expiryMs: leg.e, strikeUsd: leg.k, type: "C" };
+
+  let qPerp = leg.d, hedgeFee = Math.abs(qPerp) * S0 * cfg.perpFee, hedgePnl = 0, funding = 0, reh = 1;
+  let prevS = S0, prevTs = R.times[i], endIdx = i, exitVal = null;
+  for (let k = i + 1; k < N; k++) {
+    const S = R.spot[k];
+    if (!(S > 0)) continue;
+    hedgePnl += qPerp * (S - prevS);
+    funding += qPerp * S * fundRate(R.times[k]) * ((R.times[k] - prevTs) / 3600000);
+    prevS = S; prevTs = R.times[k];
+    const p = countPrice(R.stats, priceAt({ snapshot: R.snaps.get(R.times[k]),
+      expiryRows: R.byExp.get(R.times[k])?.get(leg.e), meta, tsMs: R.times[k],
+      spotAtExpiry: spotBefore(leg.e) }));
+    if (!p) return null;
+    endIdx = k;
+    if (R.times[k] >= leg.e) { exitVal = p.markUsd; break; }
+    const want = p.delta ?? 0;
+    if (Math.abs(want - qPerp) > cfg.band) {
+      hedgeFee += Math.abs(want - qPerp) * S * cfg.perpFee;
+      qPerp = want; reh += 1;
+    }
+  }
+  if (exitVal == null) return null;
+  hedgeFee += Math.abs(qPerp) * prevS * cfg.perpFee;
+  const pnl = ((premSold - exitVal) + hedgePnl - optCost - hedgeFee - funding) * cfg.chainAdj;
+  return { i, endIdx, ts: R.times[i], exitTs: R.times[endIdx], pnl, im, prem: leg.m, iv: leg.iv,
+    strike: leg.k, spot0: S0, spotEnd: R.spot[endIdx], reh,
+    retIm: (pnl / im) * 100, retPrem: (pnl / leg.m) * 100,
+    optLeg: premSold - exitVal, hedgeLeg: hedgePnl, cost: optCost + hedgeFee, fund: funding };
+}
+
+// ЦЕПОЧКА: закрылась сделка, в тот же день открывается следующая. Ни пропусков, ни выбора момента.
+function chain(cfg, start = 0) {
+  const out = [];
+  let i = start;
+  while (i < N - 1) {
+    const leg = pickLeg(i, cfg);
+    if (!leg) { i += 1; continue; }
+    const t = runTrade(i, leg, cfg);
+    if (!t) { i += 1; continue; }
+    out.push(t);
+    i = t.endIdx + 1;
+  }
+  return out;
+}
+const CFG = { eMin: E_MIN, eMax: E_MAX, dTarget: D_TARGET, band: BAND, perpFee: PERP_FEE,
+  spread: SPREAD, haircut: HAIRCUT, chainAdj: CHAIN_ADJ, execModel: "maker-mid" };
+
+const equity = (rows, pick = (r) => r.retIm) => {
+  let eq = 1, peak = 1, dd = 0;
+  for (const r of rows) { eq *= 1 + pick(r) / 100; peak = Math.max(peak, eq); dd = Math.max(dd, (peak - eq) / peak); }
+  return { eq, dd: dd * 100 };
+};
+
+// ── ОТЧЁТ
+console.log(`# Продажа опциона с дельта-хеджем\n`);
+console.log(`Запись ${DIR}: ${N} снимков, ${dt(R.times[0])} .. ${dt(R.times.at(-1))}.`);
+console.log(`Срок ${E_MIN}-${E_MAX} ч · дельта ${D_TARGET} · полоса хеджа ${BAND} BTC · `
+  + `комиссия перпа ${(PERP_FEE * 1e4).toFixed(1)} б.п. · спред ×${SPREAD}`
+  + `${HAIRCUT ? ` · вычет ${HAIRCUT} п. воли` : ""}${CHAIN_ADJ !== 1 ? ` · поправка цепочки ×${CHAIN_ADJ}` : ""}.`);
+console.log(`Фандинг ${USE_FUNDING ? `учтён почасово (${FUND.size} записей)` : "ОТКЛЮЧЁН (контроль)"}.\n`);
+
+const rows = chain(CFG);
+if (!rows.length) { console.error("сделок не получилось: проверьте окно срока и полосу дельты"); process.exit(1); }
+
+console.log(`## 1 · Цепочка\n`);
+console.log(`| величина | значение |`);
+console.log(`|---|---|`);
+console.log(`| сделок подряд | **${rows.length}** |`);
+console.log(`| первый вход / последний выход | ${dt(rows[0].ts)} / ${dt(rows.at(-1).exitTs)} |`);
+console.log(`| прибыльных | ${rows.filter((r) => r.pnl > 0).length} (${f2((100 * rows.filter((r) => r.pnl > 0).length) / rows.length, 0)}%) |`);
+console.log(`| средняя сделка | ${f2(mean(rows.map((r) => r.retIm)))}% залога |`);
+console.log(`| медиана | ${f2(q(rows.map((r) => r.retIm), 0.5))}% |`);
+console.log(`| лучшая / худшая | ${f2(Math.max(...rows.map((r) => r.retIm)))}% / ${f2(Math.min(...rows.map((r) => r.retIm)))}% |`);
+console.log(`| держали, суток (медиана) | ${f2(q(rows.map((r) => (r.exitTs - r.ts) / 86400000), 0.5), 1)} |`);
+console.log(`| поправок хеджа на сделку (медиана) | ${f2(q(rows.map((r) => r.reh), 0.5), 0)} |`);
+console.log(`| поправок хеджа всего | ${rows.reduce((a, r) => a + r.reh, 0)} |`);
+const E = equity(rows);
+console.log(`| залог вырос в | **${f2(E.eq)} раза** |`);
+console.log(`| максимальная просадка залога | ${f2(E.dd, 1)}% |`);
+
+console.log(`\n## 2 · Из чего сложился итог, USD на один контракт\n`);
+const sum = (k) => rows.reduce((a, r) => a + r[k], 0) * (k === "cost" || k === "fund" ? -1 : 1);
+console.log(`| статья | всего | на сделку |`);
+console.log(`|---|---|---|`);
+for (const [k, label] of [["optLeg", "премия минус выкуп"], ["hedgeLeg", "хедж по перпу"],
+  ["cost", "издержки опциона и комиссии хеджа"], ["fund", "фандинг"]]) {
+  console.log(`| ${label} | ${f2(sum(k), 0)} | ${f2(sum(k) / rows.length, 0)} |`);
+}
+console.log(`| **итого** | **${f2(rows.reduce((a, r) => a + r.pnl, 0), 0)}** | **${f2(mean(rows.map((r) => r.pnl)), 0)}** |`);
+console.log(`\nЗалог за контракт: медиана $${f2(q(rows.map((r) => r.im), 0.5), 0)}, за минимальный лот $${f2(q(rows.map((r) => r.im), 0.5) * LOT, 0)}.`);
+console.log(`Премия за минимальный лот: медиана $${f2(q(rows.map((r) => r.prem), 0.5) * LOT)}.`);
+
+// ── счёт целыми лотами: зернистость лота видна только так
+console.log(`\n## 3 · Счёт целыми лотами (в залоге не более ${DEPLOY * 100}% счёта)\n`);
+console.log(`| старт | сделок сыграно | пропущено | конец | рост | макс. просадка |`);
+console.log(`|---|---|---|---|---|---|`);
+const accounts = {};
+for (const start of DEPOSITS) {
+  let acc = start, peak = start, maxDd = 0, skipped = 0, played = 0;
+  const log = [];
+  for (const t of rows) {
+    const imLot = t.im * LOT;
+    const lots = Math.floor((acc * DEPLOY) / imLot);
+    if (lots < 1) { skipped += 1; log.push({ t, lots: 0, pnl: 0, acc }); continue; }
+    const pnl = t.pnl * LOT * lots;
+    acc += pnl; played += 1;
+    peak = Math.max(peak, acc);
+    maxDd = Math.max(maxDd, (peak - acc) / peak);
+    log.push({ t, lots, pnl, acc, imUsed: imLot * lots });
+    if (acc < imLot) break;
+  }
+  accounts[start] = { acc, maxDd: maxDd * 100, log };
+  console.log(`| $${start} | ${played} | ${skipped} | **$${f2(acc, 0)}** | ×${f2(acc / start, 1)} | ${f2(maxDd * 100, 1)}% |`);
+}
+
+// ── разбивка по режимам рынка
+if (PERIODS.length) {
+  console.log(`\n## 4 · По режимам рынка\n`);
+  const edges = [-Infinity, ...PERIODS, Infinity];
+  console.log(`| период | спот | сделок | средняя | залог вырос в | просадка |`);
+  console.log(`|---|---|---|---|---|---|`);
+  for (let k = 0; k < edges.length - 1; k++) {
+    const sub = rows.filter((r) => r.ts >= edges[k] && r.ts < edges[k + 1]);
+    if (!sub.length) continue;
+    const e = equity(sub);
+    console.log(`| ${dt(sub[0].ts)} .. ${dt(sub.at(-1).exitTs)} | ${f2(sub[0].spot0, 0)} в ${f2(sub.at(-1).spotEnd, 0)} | `
+      + `${sub.length} | ${f2(mean(sub.map((r) => r.retIm)))}% | ${f2(e.eq)} | ${f2(e.dd, 1)}% |`);
+  }
+}
+
+if (has("--trades")) {
+  const start = DEPOSITS.at(-1);
+  console.log(`\n## Сделки по одной строке (счёт $${start})\n`);
+  console.log(`| № | открыли | закрыли | спот вход | выход | страйк | лотов | P&L $ | счёт $ | % залога |`);
+  console.log(`|---|---|---|---|---|---|---|---|---|---|`);
+  accounts[start].log.forEach((x, k) => {
+    console.log(`| ${k + 1} | ${dt(x.t.ts)} | ${dt(x.t.exitTs)} | ${f2(x.t.spot0, 0)} | ${f2(x.t.spotEnd, 0)} | `
+      + `${x.t.strike} | ${x.lots} | ${f2(x.pnl, 0)} | ${f2(x.acc, 0)} | ${f2(x.t.retIm)}% |`);
+  });
+}
+
+// ── ПЕРЕБОР ПОЛОСЫ. Смысл не в поиске максимума, а в показе того, что оптимум ДВИГАЕТСЯ вместе
+// со стоимостью перекладки. Конфигурация, выбранная при одной стоимости, при другой вредна.
+if (has("--band-sweep")) {
+  console.log(`\n## Перебор полосы хеджа против стоимости перекладки\n`);
+  const fees = [[0, "мейкер"], [0.00025, "2.5 б.п."], [0.001, "10 б.п."]];
+  const bands = [0.01, 0.02, 0.03, 0.05, 0.08, 0.12, 0.20];
+  console.log(`| полоса | ${fees.map((f) => f[1]).join(" | ")} | просадка (мейкер) | перекладок (мейкер) |`);
+  console.log(`|---|${fees.map(() => "---").join("|")}|---|---|`);
+  for (const band of bands) {
+    const cells = [], extra = [];
+    for (const [fee] of fees) {
+      const rs = chain({ ...CFG, band, perpFee: fee });
+      const e = equity(rs);
+      cells.push(rs.length ? `${f2(e.eq)}` : "-");
+      if (fee === 0) extra.push(f2(e.dd, 1) + "%", String(Math.round(mean(rs.map((r) => r.reh)))));
+    }
+    console.log(`| ${band} | ${cells.join(" | ")} | ${extra.join(" | ")} |`);
+  }
+  console.log(`\nЧитать так: при бесплатном хедже теснее всегда лучше и предела в сетке нет, при`);
+  console.log(`дорогом наоборот. Настройка обязана выбираться под ФАКТИЧЕСКУЮ стоимость исполнения.`);
+}
+
+// ── СТРЕСС: те же сделки при худших допущениях.
+if (has("--stress")) {
+  console.log(`\n## Стресс по допущениям\n`);
+  console.log(`| сценарий | сделок | залог вырос в | просадка | средняя сделка |`);
+  console.log(`|---|---|---|---|---|`);
+  const cases = [
+    ["база", {}],
+    ["хедж 2.5 б.п.", { perpFee: 0.00025 }],
+    ["хедж тейкером 5 б.п.", { perpFee: 0.0005 }],
+    ["хедж тейкером 10 б.п.", { perpFee: 0.001 }],
+    ["вход в опцион тейкером", { execModel: "taker-cross" }],
+    ["вычет 0.5 п. воли", { haircut: 0.5 }],
+    ["вычет 1.0 п. воли", { haircut: 1.0 }],
+    ["спред ×1.5", { spread: 1.5 }],
+    ["дельта 0.30", { dTarget: 0.30 }],
+    ["дельта 0.60", { dTarget: 0.60 }],
+  ];
+  for (const [label, over] of cases) {
+    const rs = chain({ ...CFG, ...over });
+    if (!rs.length) { console.log(`| ${label} | 0 | | | |`); continue; }
+    const e = equity(rs);
+    console.log(`| ${label} | ${rs.length} | ${f2(e.eq)} | ${f2(e.dd, 1)}% | ${f2(mean(rs.map((r) => r.retIm)))}% |`);
+  }
+}
+
+console.log(`\n## Границы расчёта\n`);
+console.log(`- ${formatPriceStats(R.stats)}`);
+console.log(`- проскальзывание хеджа сверх комиссии НЕ моделируется (глубины перпа в записи нет);`);
+console.log(`- доход хеджа считается линейно q·ΔS, выпуклость обратного перпа не учтена;`);
+console.log(`- комиссия биржи за расчёт опциона в деньгах не учтена;`);
+console.log(`- bid/ask в восстановленной записи МОДЕЛЬНЫЕ; сверка с живой записью даёт занижение`);
+console.log(`  круга на 6% в рабочей полосе дельты, отсюда дефолт --spread-scale 1.10.`);
