@@ -15,6 +15,7 @@ import {
   benefitMoveFrac,
   DEADBAND_REF_QTY,
 } from "../src/engine/btcopt/hedge.js";
+import { markPerp } from "../src/engine/btcopt/pnl.js";
 
 const near = (a, b, tol, label) =>
   assert.ok(Math.abs(a - b) <= tol, `${label}: got ${a}, want ${b} (+/-${tol})`);
@@ -264,6 +265,45 @@ test("applyFill inverse: open short then close for realized USD", () => {
   near(perpState.avgEntry, 63000, 1e-9, "avgEntry after partial close");
   near(close.realizedUsd, 5.714, 1e-3, "realizedUsd close");
   near(perpState.realizedUsd, 5.714, 1e-3, "cumulative realizedUsd");
+});
+
+// ── Средний вход обратного контракта (fix 2026-08-13, найдено прогоном записи) ───────────────────
+// Позиция, набранная по РАЗНЫМ ценам: дельта и P&L обязаны равняться сумме по лотам, а не считаться
+// от арифметического среднего входа (оно занижает и то, и другое; равенство только при P₁ = P₂).
+test("applyFill: средний вход набирается по 1/P, дельта равна Σqᵢ·cs/Pᵢ", () => {
+  const cs = 10;
+  const perpState = { qty: 0, avgEntry: 0, feesCum: 0, realizedUsd: 0 };
+  const cfg = { makerFeeRate: 0, takerFeeRate: 0 };
+  const buy = (btc, P) =>
+    applyFill(perpState, { side: "buy", amount_rounded_btc: btc, order_type: "limit" }, P, { contractSize: cs }, cfg);
+
+  const f1 = buy(0.45, 47000);
+  const f2 = buy(0.03, 48000);
+  const f3 = buy(0.02, 51500);
+  const lots = [[f1.filledContracts, 47000], [f2.filledContracts, 48000], [f3.filledContracts, 51500]];
+  const trueDelta = lots.reduce((s, [q, P]) => s + (q * cs) / P, 0);
+  near((perpState.qty * cs) / perpState.avgEntry, trueDelta, 1e-12, "дельта от avgEntry = сумма по лотам");
+
+  const M = 60000;
+  const truePnl = lots.reduce((s, [q, P]) => s + (q * cs * (M - P)) / P, 0);
+  const booked = markPerp(perpState, { mark: M, contractSize: cs }).upl_usd;
+  near(booked, truePnl, 1e-9, "P&L от avgEntry = сумма по лотам");
+});
+
+test("хедж попадает в СОБСТВЕННУЮ цель: после заливки невязки дельта равна нужной", () => {
+  const cs = 10;
+  const perpState = { qty: 0, avgEntry: 0, feesCum: 0, realizedUsd: 0 };
+  const cfg = { makerFeeRate: 0, takerFeeRate: 0 };
+  const delta = () => (perpState.qty === 0 ? 0 : (perpState.qty * cs) / perpState.avgEntry);
+  const hedgeTo = (want, P) => {
+    const raw = want - delta();
+    applyFill(perpState, { side: raw > 0 ? "buy" : "sell", amount_rounded_btc: Math.abs(raw), order_type: "limit" },
+      P, { contractSize: cs }, cfg);
+  };
+  // цена растёт, цель растёт: промах не имеет права КОПИТЬСЯ от перекладки к перекладке
+  hedgeTo(0.45, 47000);
+  for (let i = 1; i <= 10; i++) hedgeTo(0.45 + i * 0.01, 47000 + i * 1000);
+  near(delta(), 0.55, 1e-9, "дельта после десяти перекладок равна цели");
 });
 
 // ── Полоса против размера позиции (fix 2026-08-13, Д3) ───────────────────────────────────────────

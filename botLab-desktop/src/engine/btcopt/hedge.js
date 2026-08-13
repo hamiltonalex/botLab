@@ -240,20 +240,42 @@ export function decideHedge({
 // signed $10 contracts at priceRef, then either grows the position (weighted-average entry) or
 // reduces/flips it (booking inverse realized USD = closedSigned·cs·(priceRef−avgEntry)/avgEntry).
 // Mutates perpState in place and returns this fill's summary.
+//
+// СРЕДНИЙ ВХОД ОБРАТНОГО КОНТРАКТА УСРЕДНЯЕТСЯ ПО 1/P, А НЕ ПО P, И ЭТО НЕ ОТТЕНОК. У обратного
+// контракта и P&L, и дельта линейны по 1/вход, а не по входу:
+//   upl_usd = Σ qᵢ·cs·(P − Pᵢ)/Pᵢ,   ∂upl_usd/∂P = Σ qᵢ·cs/Pᵢ.
+// Значит средний вход обязан сохранять СУММУ qᵢ/Pᵢ, то есть быть средним гармоническим. Пока он
+// складывался арифметически, обе величины считались НЕВЕРНО для позиции, набранной по разным ценам
+// (совпадение получалось только когда все лоты по одной цене - ровно этот случай и покрывали тесты).
+//
+// АЛГЕБРА РАСХОЖДЕНИЯ, чтобы это не выглядело вкусовщиной. Для двух лотов равенство
+//   (q₁+q₂)²·P₁P₂ = (q₁P₁+q₂P₂)(q₁P₂+q₂P₁)  сводится к  2P₁P₂ = P₁²+P₂²  ⟺  (P₁−P₂)² = 0,
+// то есть арифметический вход точен ТОЛЬКО при равных ценах, а в остальных случаях занижает и
+// дельту, и P&L. Замер (позиция 2115 контрактов по 47000 плюс 144 по 48000): дельта 0.4799873
+// вместо 0.4800000, P&L при 52000 равен 2369.34 вместо 2370.00.
+//
+// ЧЕМ ЭТО ЛОВИЛОСЬ И ПОЧЕМУ ВАЖНО ХЕДЖУ. Дефект найден прогоном истории через живой движок
+// (`scripts/replay-sellhedge.mjs`): движок НЕ ПОПАДАЛ В СОБСТВЕННУЮ ЦЕЛЬ хеджа. На ДОБАВЛЕНИИ сама
+// заявка считалась верно (Δq = невязка·P/cs добавляет ровно невязку долларовой дельты), а уплывало
+// ИЗМЕРЕНИЕ позиции после неё, и промах КОПИЛСЯ: 1.3e-5 BTC после одной перекладки на движении 2%,
+// 4.4e-4 после десяти. Хедж, который мажет мимо своей цели, возвращает направленную ставку -
+// ровно ту, ради снятия которой он и заводится.
 export function applyFill(perpState, hedge_order, priceRef, meta, cfg) {
   const cs = meta.contractSize;
   const signedBtc = (hedge_order.side === "buy" ? 1 : -1) * hedge_order.amount_rounded_btc;
-  const contractsDelta = Math.round((signedBtc * priceRef) / cs); // BTC → $10 contracts
+  const contractsDelta = Math.round((signedBtc * priceRef) / cs); // BTC to $10 contracts
 
   const qty = perpState.qty;
   let realized = 0;
   if (qty === 0 || Math.sign(contractsDelta) === Math.sign(qty)) {
-    // opening or adding in the same direction — blend the entry
-    const absQty = Math.abs(qty);
+    // opening or adding in the same direction: blend the entry on 1/P (see header).
+    // Открытие с нуля (qty 0, avgEntry 0) даёт 0/0, поэтому держимая часть учитывается только когда
+    // она есть И оценена: иначе весь размер считается вошедшим по priceRef, что для входа и верно.
+    const absQty = Math.abs(qty) > 0 && perpState.avgEntry > 0 ? Math.abs(qty) : 0;
     const absAdd = Math.abs(contractsDelta);
     const denom = absQty + absAdd;
     if (denom > 0) {
-      perpState.avgEntry = (absQty * perpState.avgEntry + absAdd * priceRef) / denom;
+      perpState.avgEntry = denom / (absQty > 0 ? absQty / perpState.avgEntry + absAdd / priceRef : absAdd / priceRef);
     }
   } else {
     // reducing or flipping — realize P&L on the closed contracts (inverse: USD per contract)
