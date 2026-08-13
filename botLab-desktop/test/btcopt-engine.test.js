@@ -56,7 +56,7 @@ const PARAMS = { expiry: EXPIRY, callOffsetPct: 10, putOffsetPct: 10, qty: 1, ex
 
 // A fresh engine with the structure opened at NOON.
 function opened() {
-  const st = engine.create({ nowMs: NOON });
+  const st = engine.create({ nowMs: NOON, settings: { deadbandRefQty: 1 } });
   const snap = mkSnapshot();
   const r = engine.openStructure(st, PARAMS, mkChain(), snap, NOON);
   assert.equal(r.ok, true, r.error);
@@ -347,7 +347,7 @@ test("exec style: limit fills at MID with maker fee 0; market crosses the spread
   near(limFill.feeUsd, 0, 1e-12, "maker fee 0.00%");
 
   // market: same book, execStyle market frozen at open via state.settings
-  const st = engine.create({ nowMs: NOON, settings: { execStyle: "market" } });
+  const st = engine.create({ nowMs: NOON, settings: { execStyle: "market", deadbandRefQty: 1 } });
   const snap = mkSnapshot();
   const r = engine.openStructure(st, { ...PARAMS, execStyle: "market" }, mkChain(), snap, NOON);
   assert.equal(r.ok, true, r.error);
@@ -396,7 +396,7 @@ test("closeStructure with a FLAT perp closes fine even without a priced perp (no
 // ── engineCfg freeze (audit №10): the position hedges by the ACTUAL open params, not by settings ─
 test("engineCfg overlays the ticket's actual params over settings (debounce-race honesty)", () => {
   // settings still say limit (the debounced push hasn't landed), but the ticket opened as market
-  const st = engine.create({ nowMs: NOON, settings: { execStyle: "limit" } });
+  const st = engine.create({ nowMs: NOON, settings: { execStyle: "limit", deadbandRefQty: 1 } });
   const snap = mkSnapshot();
   const r = engine.openStructure(st, { ...PARAMS, execStyle: "market", qty: 2 }, mkChain(), snap, NOON);
   assert.equal(r.ok, true, r.error);
@@ -413,7 +413,7 @@ test("engineCfg overlays the ticket's actual params over settings (debounce-race
 // клампа ВИДИМ - копится в perpState.fundingGapSec и оставляет строку funding-gap в леджере.
 // Сам кламп (fundingMaxGapSec 300с) не меняется: начислено ровно за клампованное время.
 test("R3: ingest через 8ч разрыв - фандинг клампится 300с, пропуск видим (fundingGapSec + строка леджера)", () => {
-  const st = engine.create({ nowMs: NOON });
+  const st = engine.create({ nowMs: NOON, settings: { deadbandRefQty: 1 } });
   st.perpState.qty = -12; // короткий хедж 12 контрактов по $10
   st.perpState.avgEntry = 61000;
   st.lastIngestAt = NOON;

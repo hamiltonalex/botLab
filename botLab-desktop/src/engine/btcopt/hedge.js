@@ -17,6 +17,35 @@ export function roundToStep(x, step) {
   return step > 0 ? Math.round(x / step) * step : x;
 }
 
+// ── Deadband scaling ────────────────────────────────────────────────────────────────────────────
+// The structure size deadbandBtc is calibrated AT. Default = the engine's default qty, so the band
+// a live profile actually hedges by is unchanged by the scaling below.
+export const DEADBAND_REF_QTY = 0.01;
+
+// effectiveDeadband({ deadbandBtc, structureQty, refQty }) → the ±BTC half-width to hedge by.
+//
+// WHY A FLAT NUMBER WAS A DEFECT, and it is subtler than "it does not scale". deadbandBtc is a band
+// on the structure's DELTA, and that delta grows linearly with position size. Held flat while size
+// grows, the band silently TIGHTENS in relative terms: at 5x the size it admits a fifth of the
+// relative drift, so the same market produces several times the re-hedges and several times the
+// fees, with nobody having asked for it.
+//
+// THE REAL DEFECT WAS THE MISSING ANCHOR. The number never said which size it was calibrated for,
+// and the codebase disagreed with itself about the answer: the spec's worked example runs at qty 1
+// (net delta −0.0019 against a 0.001 band, so the band is about half the delta), while the shipped
+// default is qty 0.01 (the $100 paper deposit). Same number, two meanings, differing by 100x. Making
+// the anchor an explicit setting is the fix; choosing a different anchor is a CALIBRATION decision
+// and is deliberately left to the operator, not smuggled in here.
+//
+// Scaling is LINEAR in size for the same reason the delta is: holding band/delta constant keeps the
+// hedge's relative tightness (and therefore its cost) invariant to how much capital is deployed.
+// A missing or non-positive size falls back to the raw setting rather than guessing.
+export function effectiveDeadband({ deadbandBtc, structureQty, refQty = DEADBAND_REF_QTY } = {}) {
+  if (!(deadbandBtc >= 0)) return 0;
+  if (!(structureQty > 0) || !(refQty > 0)) return deadbandBtc;
+  return deadbandBtc * (structureQty / refQty);
+}
+
 // Settlement / expiry blackout window. Hedging pauses around the daily 08:00 UTC settlement and
 // in the final minutes before an expiry (thin books, settlement prints — hedges there are noise).
 //   secOfDay via the (%+%)% idiom so a negative nowMs still maps into [0,86400).
@@ -102,10 +131,13 @@ export function decideHedge({
   lastHedgeAt,
   lastHedgeUnderlying,
   step,
+  structureQty,
 }) {
   const totalDelta = optionDelta + Qperp;
   const target = -optionDelta;
-  const deadband = cfg.deadbandBtc;
+  // Полоса масштабируется размером структуры (см. effectiveDeadband). При дефолтном qty 0.01 она
+  // равна настройке в точности, поэтому дефолтная конфигурация не меняется.
+  const deadband = effectiveDeadband({ deadbandBtc: cfg.deadbandBtc, structureQty, refQty: cfg.deadbandRefQty });
   const blackout = settlementBlackout(nowMs, expiryMs, cfg);
 
   // (1) blackout gate — do not hedge into settlement / the pre-expiry window.
@@ -118,6 +150,7 @@ export function decideHedge({
       hedge_order: null,
       target_futures_delta: target,
       delta_excess: Math.max(0, Math.abs(totalDelta) - deadband),
+      deadband_btc: deadband,
       blackout,
     };
   }
@@ -139,6 +172,9 @@ export function decideHedge({
     trigger_reason: t.reasons,
     target_futures_delta: target,
     delta_excess,
+    // ФАКТИЧЕСКАЯ полоса, по которой принято это решение: она масштабируется размером структуры,
+    // и показывать вместо неё настройку значило бы врать в UI ровно там, где решение объясняется.
+    deadband_btc: deadband,
     blackout,
   };
 

@@ -68,7 +68,13 @@ export function normalizeDeadband(patch) {
 export function defaultSettings() {
   return {
     deadbandPreset: "normal", // aggressive | normal | conservative
-    deadbandBtc: 0.001, // ±BTC (normal preset)
+    deadbandBtc: 0.001, // ±BTC (normal preset), calibrated at deadbandRefQty below
+    // The structure size deadbandBtc is calibrated at; the band scales linearly with the actual size
+    // from here (effectiveDeadband in hedge.js). Default = qty below, so a live profile's effective
+    // band is exactly its setting and nothing changes until the operator opens a DIFFERENT size.
+    // Re-anchoring this is a calibration decision with real cost consequences, so it is a setting
+    // rather than a constant: at qty 1 the same 0.001 means a band 100x tighter in relative terms.
+    deadbandRefQty: 0.01,
     priceTriggerPct: 0.5, // % move since last hedge that arms the price trigger
     rehedgeSec: 60, // time-trigger interval (a prompt to re-price, not a must-trade)
     lambda: 1.25, // hedge cost multiplier (gate: benefit > cost * lambda)
@@ -192,6 +198,8 @@ export function evaluate(state, snapshot, nowMs) {
       lastHedgeAt: state.lastHedgeAt,
       lastHedgeUnderlying: state.lastHedgeUnderlying,
       step,
+      // Размер структуры масштабирует полосу: закон равных ног даёт одну величину на все четыре.
+      structureQty: structure.legs[0]?.qtyAbs ?? cfg.qty,
     });
   } else {
     decision = {
@@ -202,6 +210,8 @@ export function evaluate(state, snapshot, nowMs) {
       hedge_order: null,
       target_futures_delta: -optionDelta,
       delta_excess: Math.max(0, Math.abs(totalDelta) - cfg.deadbandBtc),
+      // Структуры нет - масштабировать нечем, полоса равна настройке.
+      deadband_btc: cfg.deadbandBtc,
       blackout: { active: false, reason: null },
     };
   }
@@ -360,7 +370,9 @@ export function evaluate(state, snapshot, nowMs) {
     // существует ровно затем, чтобы сойтись с её числом, а не с нашим (хеджем он не управляет).
     exchange_delta_total: exchangeDeltaTotal(structure, snapshot, mp.futuresNotionalBtc),
     target_futures_delta: decision.target_futures_delta,
-    hedge_deadband_btc: cfg.deadbandBtc,
+    // ФАКТИЧЕСКАЯ полоса решения, а не настройка: она масштабируется размером структуры, и UI
+    // объясняет Δ-триггер именно этим числом (index.html: «|Δ-избыток| ≤ дедбэнд»).
+    hedge_deadband_btc: decision.deadband_btc ?? cfg.deadbandBtc,
     delta_excess: decision.delta_excess,
     price_move_since_last_hedge_pct: priceMovePct,
     trigger_reason: decision.trigger_reason,
