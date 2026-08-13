@@ -6,8 +6,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   SELLHEDGE_DEFAULTS, pickSellLeg, openSellTrade, halfSpreadUsd, wantHedge, shouldRehedge,
-  walkSellTrade, settleSellTrade, lotsByMargin,
+  walkSellTrade, settleSellTrade, lotsByMargin, usdDeltaOfInversePerp,
 } from "../src/engine/otmscan/sellhedge.js";
+import { markPerp } from "../src/engine/btcopt/pnl.js";
 import { near } from "./otmscan-helpers.mjs";
 
 const C = SELLHEDGE_DEFAULTS;
@@ -175,6 +176,35 @@ test("итог: поправка цепочки множит ИТОГ, а не �
   near(b.pnl, a.pnl * 0.69, 1e-9);
   assert.equal(a.optLeg, b.optLeg, "статьи разложения поправкой не трогаются");
   assert.equal(a.cost, 70, "издержки это вход в опцион плюс комиссии хеджа");
+});
+
+// ── долларовая дельта обратного перпа
+test("долларовая дельта обратного перпа считается от avgEntry и по цене НЕ уплывает", () => {
+  // Длинная позиция $60 000 номинала, вход 60 000: долларовая дельта ровно 1.0 BTC.
+  const pos = { qty: 6000, contractSize: 10, avgEntry: 60000 };
+  near(usdDeltaOfInversePerp(pos), 1.0, 1e-12, "на входе");
+  // Цена ушла на +10%: долларовая дельта ОБЯЗАНА остаться 1.0. Проверяется прямым P&L, а не
+  // повтором формулы: спот-позиция 1.0 BTC дала бы ровно те же $6000.
+  const uplUsd = pos.qty * pos.contractSize * (66000 - pos.avgEntry) / pos.avgEntry;
+  near(uplUsd, 6000, 1e-9, "P&L обратной позиции равен P&L одного BTC спота");
+  near(usdDeltaOfInversePerp(pos), uplUsd / (66000 - 60000), 1e-12, "дельта = P&L / движение");
+});
+
+test("markPerp меряет НОМИНАЛ, а не долларовую дельту: расхождение ровно mark/avgEntry", () => {
+  const perpState = { qty: 6000, avgEntry: 60000 };
+  const m = markPerp(perpState, { mark: 66000, contractSize: 10 });
+  near(m.futuresDeltaBtc, 60000 / 66000, 1e-9, "номинал в BTC по текущей цене");
+  const usd = usdDeltaOfInversePerp({ qty: 6000, contractSize: 10, avgEntry: 60000 });
+  near(usd / m.futuresDeltaBtc, 66000 / 60000, 1e-9, "разошлись ровно в mark/avgEntry раз");
+  // Зазор 0.09 BTC на дельте 1.0 - ВТРОЕ шире рабочей полосы 0.03: подстановка номинальной дельты
+  // в проверку нейтральности возвращает направленную ставку, а не даёт мелкую погрешность.
+  assert.ok(usd - m.futuresDeltaBtc > 3 * SELLHEDGE_DEFAULTS.bandBtc);
+});
+
+test("плоская позиция даёт ноль, а не NaN: applyFill обнуляет avgEntry вместе с qty", () => {
+  assert.equal(usdDeltaOfInversePerp({ qty: 0, contractSize: 10, avgEntry: 0 }), 0);
+  assert.equal(usdDeltaOfInversePerp({ qty: 100, contractSize: 10, avgEntry: 0 }), 0);
+  assert.equal(usdDeltaOfInversePerp({}), 0);
 });
 
 // ── размер
