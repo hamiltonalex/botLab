@@ -15,7 +15,7 @@
 //   account                          — paper equity/margin estimate.
 // All time-dependent behaviour takes an explicit nowMs (never Date.now()) so tests are reproducible.
 
-import { buildStructure, optionDeltaTotal, netGreeks, netDebit, pickExpiry, structureRejections } from "./structure.js";
+import { buildStructure, buildSellStructure, optionDeltaTotal, netGreeks, netDebit, pickExpiry, structureRejections } from "./structure.js";
 import { payoffCurve, payoffAt } from "./payoff.js";
 import { decideHedge, applyFill, settlementBlackout } from "./hedge.js";
 import { markStructure, markPerp, accrueFunding, attribute, noHedgeAttribute, appendLedger } from "./pnl.js";
@@ -450,13 +450,26 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   // via closeStructure) and leave the perp hedge sized for the discarded legs. The IPC resolve path is
   // async, so a double-click/retried invoke CAN land here twice — the guard, not the UI, is the invariant.
   if (state.structure) return { error: "структура уже открыта — сначала закройте текущую" };
-  if (params && params.expiry == null) {
-    const cfg = buildCfg(state.settings);
-    const exp = pickExpiry(chain, nowMs, { minLeadMs: (cfg.preExpirySec ?? 1800) * 1000 });
-    if (exp == null) return { error: "нет живых экспираций ≤3д — авто-подбор невозможен" };
-    params = { ...params, expiry: exp };
+  // ВЕТКА ПРОДАВЦА (params.kind === "sell-call"): контракт выбирает `pickSellLeg`, размер считает
+  // `lotsByMargin` от ФАКТИЧЕСКОГО счёта; оба правила живут в sellhedge.js и здесь только зовутся.
+  // Экспирация не подбирается и не передаётся: у этой схемы её выбирает окно срока внутри правила.
+  // Дальше путь ОДИН на обе структуры (preTradeCheck, заморозка cfg, леджер, сброс метрик); второй
+  // путь открытия означал бы второй набор предторговых проверок.
+  let built;
+  if (params?.kind === "sell-call") {
+    built = buildSellStructure(
+      { ...params, equityUsd: params.equityUsd ?? account(state, snapshot).equity },
+      chain, snapshot, nowMs,
+    );
+  } else {
+    if (params && params.expiry == null) {
+      const cfg = buildCfg(state.settings);
+      const exp = pickExpiry(chain, nowMs, { minLeadMs: (cfg.preExpirySec ?? 1800) * 1000 });
+      if (exp == null) return { error: "нет живых экспираций ≤3д, авто-подбор невозможен" };
+      params = { ...params, expiry: exp };
+    }
+    built = buildStructure(params, chain, snapshot);
   }
-  const built = buildStructure(params, chain, snapshot);
   if (built.error) return built;
 
   const metas = Array.isArray(chain) ? chain : chain?.instruments ?? [];
@@ -482,8 +495,23 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
     t: nowMs,
     type: "open",
     priceRef: snapshot.underlying ?? 0,
-    note: `winged straddle Kp${built.strikes.kp}/K${built.strikes.atm}/Kc${built.strikes.kc} · x${built.legs[0].qtyAbs}`,
+    note:
+      built.kind === "sell-call"
+        ? `продажа колла ${built.legs[0].instrument} · x${built.legs[0].qtyAbs}`
+        : `winged straddle Kp${built.strikes.kp}/K${built.strikes.atm}/Kc${built.strikes.kc} · x${built.legs[0].qtyAbs}`,
   });
+  // Издержки входа в опцион книжатся ОТДЕЛЬНОЙ строкой и сразу: они уплачены при пересечении книги, а
+  // не при экспирации. Сумма идёт в realizedOptionsUsd (а не в feesCum перпа), поэтому ledgerReconciles
+  // сходится: строки realizedUsd сверяются с СУММОЙ обоих накопителей, а feeUsd - только с перповым.
+  if (Number.isFinite(built.entryCostUsd) && built.entryCostUsd !== 0) {
+    state.realizedOptionsUsd = (state.realizedOptionsUsd || 0) - built.entryCostUsd;
+    appendLedger(state, {
+      t: nowMs,
+      type: "open-cost",
+      realizedUsd: -built.entryCostUsd,
+      note: `издержки входа ${built.legs[0].instrument}: круг ${built.costs?.roundTripCostPct?.toFixed(3)}% премии, платится половина`,
+    });
+  }
   return { ok: true, structure: built, rejections };
 }
 
@@ -493,7 +521,10 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
 function flattenPerp(state, snapshot, nowMs, cfg) {
   const perp = snapshot.perp || null;
   if (state.perpState.qty === 0 || !perp || !perp.mark) return;
-  const closeBtc = (-state.perpState.qty * perp.contractSize) / perp.mark; // BTC to bring perp → flat
+  // BTC ДЕЛЬТЫ, снимающие позицию в ноль. Считается от avgEntry, а не от марка: заявка выражена в
+  // дельте, а дельта позиции равна qty·cs/avgEntry (см. markPerp). По марку получилось бы
+  // qty·avgEntry/mark контрактов вместо qty, то есть «закрытие», оставляющее хвост позиции.
+  const closeBtc = -markPerp(state.perpState, perp).futuresDeltaBtc;
   const side = closeBtc > 0 ? "buy" : "sell";
   const order = { side, amount_btc: Math.abs(closeBtc), amount_rounded_btc: Math.abs(closeBtc), order_type: "market", post_only: false };
   const priceRef = side === "buy" ? snapshot.liquidity?.ask ?? perp.mark : snapshot.liquidity?.bid ?? perp.mark;
@@ -567,10 +598,17 @@ export function settleStructure(state, snapshot, nowMs) {
     realizedUsd: optSettleUsd,
     // meta feeds the delivery-price reconcile (pnl.planSettleAdjustments): unit = legs[0]
     // qtyAbs·contractSize — the same per-unit scale payoff.js derives (equal-qty legs law).
+    // НОГИ ЗАПИСЫВАЮТСЯ ЯВНО, и это не дубль strikes. Пересчёт по одним страйкам умеет только тент:
+    // структуре из одной проданной ноги формула тента молча вернула бы |S−K| (модуль страйка вместо
+    // короткого колла), то есть НЕВЕРНУЮ поправку, а не ошибку. Список ног задаёт геометрию любой
+    // структуры однозначно; strikes остаётся для строк, записанных до этой правки.
     meta: {
       expiryMs: structure.expiryMs,
       strikes: structure.strikes,
       unit: (structure.legs[0]?.qtyAbs ?? 1) * (structure.legs[0]?.contractSize ?? 1),
+      legs: (structure.legs ?? []).map((l) => ({
+        type: l.type, strike: l.strike, qtyAbs: l.qtyAbs, qtySigned: l.qtySigned, contractSize: l.contractSize,
+      })),
     },
     note:
       `экспирация ${structure.id} · расчёт по индексу (прокси delivery-цены Deribit)` +

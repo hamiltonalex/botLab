@@ -45,7 +45,7 @@
 //     обратной цепочке. Сверка на годе, где есть обе, даёт разницу в 1.4 раза в пользу обратной,
 //     поэтому есть флаг `--chain-adj` (0.69 приводит к торгуемому контракту).
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { gunzipSync } from "node:zlib";
@@ -77,6 +77,9 @@ if (has("--help") || !argOf("--dir")) {
   --deposit <$,...>   стартовые депозиты для симуляции счёта (по умолчанию 500,2000,20000)
   --periods <д,...>   границы режимов рынка для разбивки (даты UTC)
   --trades            печатать все сделки по одной строке
+  --book <файл>       записать книгу сделок (TSV) для сверки с прогоном движка
+  --book-lots <n>     книга ФИКСИРОВАННЫМ размером в лотах вместо счёта: убирает обратную связь
+                      счёта (итог задаёт лоты, лоты задают итог) и делает каждую сделку независимой точкой
   --band-sweep        перебрать полосу при трёх стоимостях перекладки
   --stress            перебрать сценарии исполнения и параметры`);
   process.exit(argOf("--dir") ? 0 : 1);
@@ -195,8 +198,8 @@ function runTrade(i, leg, cfg) {
   const s = settleSellTrade({ open, walk, cfg });
   const endIdx = base + walk.exitIndex;
   return { i, endIdx, ts: R.times[i], exitTs: R.times[endIdx], pnl: s.pnl, im, prem: leg.m, iv: leg.iv,
-    strike: leg.k, spot0: S0, spotEnd: R.spot[endIdx], reh: walk.rehedges,
-    retIm: (s.pnl / im) * 100, retPrem: (s.pnl / leg.m) * 100,
+    strike: leg.k, spot0: S0, spotEnd: R.spot[endIdx], reh: walk.rehedges, name: leg.n,
+    turnover: walk.turnoverBtc, retIm: (s.pnl / im) * 100, retPrem: (s.pnl / leg.m) * 100,
     optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, cost: s.cost, fund: s.fund };
 }
 
@@ -310,6 +313,30 @@ if (has("--trades")) {
     console.log(`| ${k + 1} | ${dt(x.t.ts)} | ${dt(x.t.exitTs)} | ${f2(x.t.spot0, 0)} | ${f2(x.t.spotEnd, 0)} | `
       + `${x.t.strike} | ${x.lots} | ${f2(x.pnl, 0)} | ${f2(x.acc, 0)} | ${f2(x.t.retIm)}% |`);
   });
+}
+
+// ── КНИГА СДЕЛОК для сверки с прогоном живого движка (`replay-sellhedge.mjs --book`). Формат ОДИН
+// на обе стороны, чтобы сверка была diff, а не чтением глазами. Масштаб - счёт целыми лотами
+// (последний депозит из --deposit): статьи считаются на 1.0 контракта и множатся на лот × лоты,
+// потому что P&L схемы линеен по размеру, а гранулярность лота видна только на счёте.
+// ЗНАК ФАНДИНГА нормализован к «вкладу в итог»: у эталона `fund` положителен, когда фандинг УПЛАЧЕН,
+// а в книге это отрицательный вклад - иначе колонки двух сторон значили бы разное.
+if (argOf("--book")) {
+  const start = DEPOSITS.at(-1);
+  const FIXED = argOf("--book-lots") == null ? null : Number(argOf("--book-lots"));
+  const f6 = (x, d) => (fin(x) ? x.toFixed(d) : "н/д");
+  const iso = (ms) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+  const lines = [["#", "инструмент", "открыт", "закрыт", "лотов", "залог", "перекладок", "оборот BTC",
+    "премия-выкуп", "хедж", "издержки", "фандинг", "итого"].join("\t")];
+  accounts[start].log.forEach((x, k) => {
+    const lots = FIXED ?? x.lots;
+    const q = lots * LOT;
+    const pnl = FIXED == null ? x.pnl : x.t.pnl * q;
+    lines.push([k + 1, x.t.name, iso(x.t.ts), iso(x.t.exitTs), lots, f6(x.t.im * q, 2), x.t.reh,
+      f6(x.t.turnover * q, 6), f6(x.t.optLeg * q, 2), f6(x.t.hedgeLeg * q, 2), f6(x.t.cost * q, 2),
+      f6(-x.t.fund * q, 2), f6(pnl, 2)].join("\t"));
+  });
+  writeFileSync(argOf("--book"), lines.join("\n") + "\n");
 }
 
 // ── ПЕРЕБОР ПОЛОСЫ. Смысл не в поиске максимума, а в показе того, что оптимум ДВИГАЕТСЯ вместе

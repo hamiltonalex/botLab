@@ -4,6 +4,10 @@
 // position (long ATM call + long ATM put − short OTM call − short OTM put); market greeks come FROM the
 // composite snapshot (Deribit), never priced here. engine.js later stamps id/createdAt — NOT here.
 
+import { legMargin } from "./margin.js";
+import { computeTradeCosts } from "../otmscan/economics.js";
+import { SELLHEDGE_DEFAULTS, pickSellLeg, lotsByMargin, halfSpreadUsd, openSellTrade } from "../otmscan/sellhedge.js";
+
 // Accept a raw chain array OR a { instruments:[...] } envelope (get_instruments result shape).
 const asMetas = (chain) => (Array.isArray(chain) ? chain : chain?.instruments ?? []);
 
@@ -88,6 +92,123 @@ export function buildStructure(params, chain, snapshot) {
     legs,
     entryDebitUsd,
     entryUnderlying: underlying,
+  };
+}
+
+// ── ПРОДАЖА ОДНОЙ НОГИ (схема sellhedge.js) ─────────────────────────────────────────────────────
+//
+// ПОЧЕМУ ЗДЕСЬ, А НЕ В ОТДЕЛЬНОМ МОДУЛЕ. Прибыльная схема проекта - продажа колла срока 336-672 ч с
+// |дельтой| у 0.45 и дельта-хеджем перпом до экспирации. Её ПРАВИЛА лежат в `otmscan/sellhedge.js` и
+// покрыты тестами; сюда они не переписываются, а ВЫЗЫВАЮТСЯ (`pickSellLeg`, `lotsByMargin`). Всё
+// остальное, что схеме нужно, у бота 2 уже есть и к числу ног безразлично: `decideHedge`+`applyFill`
+// (хедж), `structureMargin` (залог тем же `legMargin`, каким его считает эталон), `accrueFunding`,
+// `settleStructure` (единственный выход схемы - дожить до экспирации), леджер и счёт. Четырёхногость
+// бота 2 жила ровно в двух местах - `buildStructure` ниже и формула тента в `payoff.js`; второе
+// обобщено по ногам, первое дополнено этим строителем. Отдельный модуль-исполнитель означал бы
+// ВТОРОЙ жизненный цикл рядом с `evaluate`, то есть ровно тот дефект («две части системы решают одну
+// задачу разными правилами»), который проект ловил четырежды.
+//
+// РАЗМЕР СЧИТАЕТСЯ ОТ ЗАЛОГА, А НЕ ОТ ПРЕМИИ: продавца связывает маржа (замер: $92 за лот против
+// премии $21.91), и правило этого счёта - `lotsByMargin`, а не покупательский `computeSizing`.
+
+// Строки поверхности из живого снимка: `pickSellLeg` читает формат записи сканера (h/s/m/d/b/a/iv/vg),
+// а бот 2 живёт на тикерах Deribit. Адаптер нужен затем, чтобы движок звал ПРАВИЛО, а не повторял его.
+// Инструмент без тикера в снимке не строится вовсе: нога без марка, дельты или веги правилом не
+// оценивается, и подставлять сюда оценку вместо наблюдения нельзя.
+export function sellRowsFromSnapshot(chain, snapshot, nowMs) {
+  const rows = [];
+  for (const m of asMetas(chain)) {
+    const g = snapshot?.legs?.[m?.instrument_name];
+    if (!g) continue;
+    rows.push({
+      n: m.instrument_name,
+      e: m.expiration_timestamp,
+      k: m.strike,
+      s: m.option_type === "call" ? "C" : "P",
+      h: (m.expiration_timestamp - nowMs) / 3600000,
+      m: g.mark,
+      d: g.delta,
+      b: g.bid,
+      a: g.ask,
+      iv: g.markIv,
+      vg: g.vega,
+    });
+  }
+  return rows;
+}
+
+// buildSellStructure(params, chain, snapshot, nowMs) → структура из ОДНОЙ короткой ноги в той же
+// форме, что и четырёхногая (id/createdAt/engineCfg штампует engine.js).
+//   params.qty       - размер; null ⇒ считается от залога по `lotsByMargin` при params.equityUsd;
+//   params.sellCfg   - перекрытие SELLHEDGE_DEFAULTS (окно срока, дельта, лот, доля счёта);
+//   params.equityUsd - счёт для расчёта размера (нужен только при qty == null).
+export function buildSellStructure(params, chain, snapshot, nowMs) {
+  const underlying = snapshot?.underlying;
+  if (!Number.isFinite(underlying)) return { error: "Нет цены базового актива в снапшоте" };
+  const cfg = { ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) };
+  const leg = pickSellLeg(sellRowsFromSnapshot(chain, snapshot, nowMs), cfg);
+  if (!leg) return { error: `Нет колла в окне ${cfg.expiryMinH}-${cfg.expiryMaxH} ч с |дельтой| у ${cfg.deltaTarget}` };
+
+  const meta = asMetas(chain).find((m) => m.instrument_name === leg.n);
+  const g = snapshot.legs[leg.n];
+  const index = snapshot.index ?? underlying;
+  const contractSize = g.contractSize ?? meta?.contract_size ?? 1;
+  // Залог ЗА ОДИН КОНТРАКТ - та же функция и те же аргументы, что у эталона (mark, underlying, index).
+  const imPerContract = legMargin({
+    type: "call", side: "short", strike: leg.k, mark: leg.m, underlying, index, amount: 1,
+  }).im;
+
+  let qtyAbs = params?.qty ?? null;
+  let sizing = null;
+  if (qtyAbs == null) {
+    if (!Number.isFinite(params?.equityUsd)) return { error: "Нет счёта для расчёта размера от залога" };
+    const s = lotsByMargin({ imUsdPerContract: imPerContract, equityUsd: params.equityUsd, cfg });
+    sizing = { ...s, imPerContract };
+    if (!(s.lots >= 1)) return { error: `Залог $${Math.round(s.imLotUsd ?? 0)} за лот не помещается в счёт $${Math.round(params.equityUsd)}`, sizing };
+    qtyAbs = s.lots * cfg.lot;
+  } else {
+    sizing = { lots: Math.round(qtyAbs / cfg.lot), imLotUsd: imPerContract * cfg.lot, imUsedUsd: imPerContract * qtyAbs, imPerContract };
+  }
+
+  // ИЗДЕРЖКИ ВХОДА В ОПЦИОН. Бот 2 их не моделировал вовсе (структура открывалась по entryMark без
+  // комиссии), а у эталона это отдельная статья итога. Считает её `openSellTrade` тем же
+  // `computeTradeCosts` - единым источником издержек проекта; здесь только подача. ДО ЭКСПИРАЦИИ
+  // ПЛАТИТСЯ ТОЛЬКО ВХОД: опцион гасится сам, второй раз книгу пересекать не надо.
+  const half = halfSpreadUsd(leg, cfg);
+  const costs = computeTradeCosts({
+    markUsd: leg.m, bidUsd: leg.m - half, askUsd: leg.m + half, indexPrice: underlying, execModel: cfg.execModel,
+  });
+  const open = costs ? openSellTrade({ leg, spotUsd: underlying, costs, imUsd: imPerContract, cfg }) : null;
+  if (!open) return { error: `Не считаются издержки входа: нет bid/ask/mark у ${leg.n}` };
+
+  const legs = [{
+    instrument: leg.n,
+    type: "call",
+    side: "short",
+    strike: leg.k,
+    expiryMs: leg.e,
+    qtyAbs,
+    qtySigned: -qtyAbs,
+    entryMark: g.mark ?? null,
+    contractSize,
+    minTradeAmount: g.minTradeAmount ?? meta?.min_trade_amount ?? cfg.lot,
+    tickSize: g.tickSize ?? meta?.tick_size ?? null,
+    markInUsd: g.markInUsd ?? true,
+  }];
+  return {
+    expiryMs: leg.e,
+    kind: "sell-call",
+    params: { qty: qtyAbs, execStyle: params?.execStyle, sellCfg: params?.sellCfg ?? null },
+    // Страйк проданной ноги под тем же ключом `atm`, каким его читает UI; тента у этой структуры нет,
+    // поэтому kc/kp отсутствуют и геометрия тента (breakEvens/plateau) честно отдаёт null.
+    strikes: { atm: leg.k },
+    legs,
+    entryDebitUsd: legs.reduce((s, l) => s + l.qtySigned * (l.entryMark ?? 0) * l.contractSize, 0),
+    entryUnderlying: underlying,
+    entryCostUsd: open.optCost * qtyAbs * contractSize,
+    pickedLeg: { name: leg.n, strike: leg.k, expiryMs: leg.e, mark: leg.m, delta: leg.d, ivPct: leg.iv, bid: leg.b, ask: leg.a, vega: leg.vg, hoursToExpiry: leg.h },
+    costs,
+    sizing,
   };
 }
 

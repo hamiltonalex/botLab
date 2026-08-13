@@ -35,16 +35,45 @@ test("appendLedger: meta проезжает целиком, строки без 
   assert.equal(withMeta.seq, 2);
 });
 
-test("settleStructure: settle-строка несёт meta {expiryMs, strikes, unit} и правильный payoff", () => {
+test("settleStructure: settle-строка несёт meta {expiryMs, strikes, unit, legs} и правильный payoff", () => {
   const st = s1engine.create({ nowMs: 0 });
   st.structure = mkStructure();
   const res = s1engine.settleStructure(st, { index: 95 }, EXPIRY + 1000);
   assert.equal(res.settled, true);
   const row = st.ledger.find((r) => r.type === "settle-options");
   assert.ok(row, "settle-строка существует");
-  assert.deepEqual(row.meta, { expiryMs: EXPIRY, strikes: { atm: 100, kc: 110, kp: 90 }, unit: 0.01 });
+  assert.equal(row.meta.expiryMs, EXPIRY);
+  assert.equal(row.meta.unit, 0.01);
+  assert.deepEqual(row.meta.strikes, { atm: 100, kc: 110, kp: 90 });
+  // Ноги записаны явно: по одним страйкам геометрию умеет только тент (см. planSettleAdjustments).
+  assert.deepEqual(row.meta.legs, [
+    { type: "call", strike: 100, qtyAbs: 0.01, qtySigned: 0.01, contractSize: 1 },
+    { type: "put", strike: 100, qtyAbs: 0.01, qtySigned: 0.01, contractSize: 1 },
+    { type: "call", strike: 110, qtyAbs: 0.01, qtySigned: -0.01, contractSize: 1 },
+    { type: "put", strike: 90, qtyAbs: 0.01, qtySigned: -0.01, contractSize: 1 },
+  ]);
   // интринсик пута 100−95=5 на unit 0.01 минус дебет 5 → −4.95
   near(row.realizedUsd, 0.01 * intrinsicAt(row.meta.strikes, 95) - 5, 1e-12, "payoff на прокси");
+});
+
+// РЕГРЕСС, РАДИ КОТОРОГО meta.legs И ЗАВЕДЕНО. Структура из одной проданной ноги по страйкам тента
+// получила бы |S−K| вместо −max(S−K,0), то есть НЕВЕРНУЮ поправку молча, а не ошибку.
+test("planSettleAdjustments: продажа одного колла считается по ногам, а не формулой тента", () => {
+  const st = s1engine.create({ nowMs: 0 });
+  st.structure = {
+    id: `s1-${EXPIRY}-100-0`, expiryMs: EXPIRY, createdAt: 0, kind: "sell-call",
+    strikes: { atm: 100 }, entryDebitUsd: -0.5, params: {},
+    legs: [{ instrument: "C-100", type: "call", side: "short", strike: 100, qtyAbs: 0.01, qtySigned: -0.01, contractSize: 1, entryMark: 50 }],
+  };
+  s1engine.settleStructure(st, { index: 105 }, EXPIRY + 1000);
+  const row = st.ledger.find((r) => r.type === "settle-options");
+  // проданный колл в деньгах на 5: 0.01·(−5) минус дебет (−0.5) = +0.45
+  near(row.realizedUsd, 0.01 * -5 + 0.5, 1e-12, "payoff проданного колла");
+  const p = planSettleAdjustments(st.ledger, { "2026-07-18": 108 })[0];
+  // поправка = unit·(−max(108−100,0) + max(105−100,0)) = 0.01·(−8 + 5) = −0.03
+  near(p.adjustUsd, 0.01 * (-8 + 5), 1e-12, "поправка по ноге");
+  // формула тента дала бы |108−100| − |105−100| = +3 → +0.03, ровно противоположный знак
+  assert.ok(p.adjustUsd < 0, "знак поправки не тентовый");
 });
 
 test("planSettleAdjustments: поправка = unit·(intr(delivery) − intr(proxy)); пропуски и повторы", () => {

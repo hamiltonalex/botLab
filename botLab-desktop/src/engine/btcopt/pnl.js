@@ -11,7 +11,7 @@
 // Everything here is a pure function of (state, snapshot); accrueFunding is the only mutator and it
 // only touches perpState.fundingCum, exactly as documented.
 
-import { intrinsicAt } from "./payoff.js";
+import { intrinsicAt, intrinsicOfLegs } from "./payoff.js";
 
 // ── Options structure (LINEAR USDC — marks already in USD) ──────────────────────────────────────
 // markStructure(structure, snapshot) → { upl_usd, byLeg:[{ instrument, upl_usd, value_usd }] }.
@@ -164,12 +164,17 @@ export function planSettleAdjustments(ledger, deliveryByDate) {
   const out = [];
   for (const r of rows) {
     if (r.type !== "settle-options" || !r.meta || adjusted.has(r.seq)) continue;
-    const { expiryMs, strikes, unit } = r.meta;
-    if (!Number.isFinite(expiryMs) || !strikes || !Number.isFinite(unit)) continue;
+    const { expiryMs, strikes, unit, legs } = r.meta;
+    if (!Number.isFinite(expiryMs) || !Number.isFinite(unit) || !(legs?.length || strikes)) continue;
     const date = new Date(expiryMs).toISOString().slice(0, 10);
     const deliveryPrice = deliveryByDate ? deliveryByDate[date] : undefined;
     if (!Number.isFinite(deliveryPrice)) continue;
-    const adjustUsd = unit * (intrinsicAt(strikes, deliveryPrice) - intrinsicAt(strikes, r.priceRef));
+    // Геометрия берётся из НОГ; строки, записанные до появления meta.legs, считаются по страйкам
+    // тента, как и считались (у них другой структуры и не было).
+    const perUnit = legs?.length
+      ? (S) => intrinsicOfLegs({ legs }, S)
+      : (S) => intrinsicAt(strikes, S);
+    const adjustUsd = unit * (perUnit(deliveryPrice) - perUnit(r.priceRef));
     out.push({ srcSeq: r.seq, date, proxyPrice: r.priceRef, deliveryPrice, adjustUsd });
   }
   return out;

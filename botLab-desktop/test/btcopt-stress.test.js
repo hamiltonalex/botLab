@@ -8,7 +8,18 @@ import { payoffAt } from "../src/engine/btcopt/payoff.js";
 
 const near = (a, b, tol, l) => assert.ok(Math.abs(a - b) < tol, `${l}: got ${a} want ${b}`);
 const S0 = 61000;
-const structure = { strikes: { atm: 61000, kc: 67000, kp: 55000 }, entryDebitUsd: 777, legs: [{ qtyAbs: 1, contractSize: 1 }] };
+// Ноги записаны полностью: терминальная стоимость считается ПО НОГАМ (payoff.js), поэтому заглушка
+// «одна нога только ради масштаба» больше не задаёт геометрию. Числа сценариев от этого не меняются:
+// у равных ног сумма по ногам тождественна формуле тента.
+const leg = (type, side, strike) => ({
+  instrument: `${type}-${strike}`, type, side, strike,
+  qtyAbs: 1, qtySigned: side === "long" ? 1 : -1, contractSize: 1,
+});
+const structure = {
+  strikes: { atm: 61000, kc: 67000, kp: 55000 },
+  entryDebitUsd: 777,
+  legs: [leg("call", "long", 61000), leg("put", "long", 61000), leg("call", "short", 67000), leg("put", "short", 55000)],
+};
 const snapshot = { underlying: S0, index: S0, perp: { contractSize: 10, funding8h: 0.0001 } };
 const by = (rows, id) => rows.find((r) => r.id === id);
 

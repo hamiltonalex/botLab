@@ -11,10 +11,12 @@ import {
   estimateCost,
   decideHedge,
   applyFill,
+  contractsForDelta,
   effectiveDeadband,
   benefitMoveFrac,
   DEADBAND_REF_QTY,
 } from "../src/engine/btcopt/hedge.js";
+import { markPerp } from "../src/engine/btcopt/pnl.js";
 
 const near = (a, b, tol, label) =>
   assert.ok(Math.abs(a - b) <= tol, `${label}: got ${a}, want ${b} (+/-${tol})`);
@@ -257,13 +259,82 @@ test("applyFill inverse: open short then close for realized USD", () => {
   near(open.feeUsd, 0.065, 1e-9, "feeUsd open");
   near(open.realizedUsd, 0, 1e-9, "realizedUsd open");
 
-  // close (buy) 0.002 BTC @ 60000 → +12 contracts, partial cover of the -13 short
-  const close = applyFill(perpState, { side: "buy", amount_rounded_btc: 0.002 }, 60000, meta, cfg);
-  assert.equal(close.filledContracts, 12);
-  assert.equal(perpState.qty, -1);
+  // ЧАСТИЧНОЕ ПОКРЫТИЕ. Заявка выражена в ДЕЛЬТЕ, а закрываемые контракты несут базис ПОЗИЦИИ
+  // (63000), а не цену сделки (60000): 0.001·63000/10 = 6.3 → 6 контрактов. Пересчёт по цене
+  // сделки дал бы 6 контрактов из 0.001·60000/10 = 6.0 и снял бы НЕ ТУ дельту (см. contractsForDelta).
+  const close = applyFill(perpState, { side: "buy", amount_rounded_btc: 0.001 }, 60000, meta, cfg);
+  assert.equal(close.filledContracts, 6);
+  assert.equal(perpState.qty, -7);
   near(perpState.avgEntry, 63000, 1e-9, "avgEntry after partial close");
-  near(close.realizedUsd, 5.714, 1e-3, "realizedUsd close");
-  near(perpState.realizedUsd, 5.714, 1e-3, "cumulative realizedUsd");
+  near(close.realizedUsd, (6 * 10 * 3000) / 63000, 1e-9, "realizedUsd close"); // +2.857
+  near(perpState.realizedUsd, (6 * 10 * 3000) / 63000, 1e-9, "cumulative realizedUsd");
+});
+
+// РЕГРЕСС: пересчёт дельты в контракты обязан быть точным в обе стороны, иначе хедж мажет мимо
+// собственной цели тем сильнее, чем дальше цена ушла от среднего входа.
+test("contractsForDelta: добавление по цене сделки, уменьшение по базису позиции, переворот через ноль", () => {
+  const cs = 10;
+  const flat = { qty: 0, avgEntry: 0 };
+  near(contractsForDelta(flat, 0.002, 60000, cs), 12, 1e-9, "с нуля, по цене сделки");
+
+  const long = { qty: 2000, avgEntry: 50000 }; // дельта = 2000·10/50000 = 0.4
+  near((long.qty * cs) / long.avgEntry, 0.4, 1e-12, "исходная дельта");
+  near(contractsForDelta(long, 0.05, 60000, cs), (0.05 * 60000) / cs, 1e-9, "добавление, по 60000");
+  // уменьшение: контракты несут базис 50000, поэтому −0.05 дельты это −250 контрактов, не −300
+  near(contractsForDelta(long, -0.05, 60000, cs), -250, 1e-9, "уменьшение, по базису");
+  // и снятая дельта равна ЗАПРОШЕННОЙ
+  near((-250 * cs) / long.avgEntry, -0.05, 1e-12, "снятая дельта равна запросу");
+  // переворот: закрыть все 2000 (снимает 0.4), остаток −0.1 открыть по 60000 ⇒ −2000 − 600
+  near(contractsForDelta(long, -0.5, 60000, cs), -2000 - 600, 1e-9, "переворот через ноль");
+});
+
+test("закрытие позиции в ноль снимает ВСЮ дельту, а не qty·avgEntry/mark", () => {
+  const cs = 10;
+  const perpState = { qty: 2000, avgEntry: 50000, feesCum: 0, realizedUsd: 0 };
+  const held = (perpState.qty * cs) / perpState.avgEntry; // 0.4
+  applyFill(perpState, { side: "sell", amount_rounded_btc: held, order_type: "market" }, 60000,
+    { contractSize: cs }, { takerFeeRate: 0 });
+  assert.equal(perpState.qty, 0, "позиция закрыта целиком, хвоста не осталось");
+  assert.equal(perpState.avgEntry, 0);
+});
+
+// ── Средний вход обратного контракта (fix 2026-08-13, найдено прогоном записи) ───────────────────
+// Позиция, набранная по РАЗНЫМ ценам: дельта и P&L обязаны равняться сумме по лотам, а не считаться
+// от арифметического среднего входа (оно занижает и то, и другое; равенство только при P₁ = P₂).
+test("applyFill: средний вход набирается по 1/P, дельта равна Σqᵢ·cs/Pᵢ", () => {
+  const cs = 10;
+  const perpState = { qty: 0, avgEntry: 0, feesCum: 0, realizedUsd: 0 };
+  const cfg = { makerFeeRate: 0, takerFeeRate: 0 };
+  const buy = (btc, P) =>
+    applyFill(perpState, { side: "buy", amount_rounded_btc: btc, order_type: "limit" }, P, { contractSize: cs }, cfg);
+
+  const f1 = buy(0.45, 47000);
+  const f2 = buy(0.03, 48000);
+  const f3 = buy(0.02, 51500);
+  const lots = [[f1.filledContracts, 47000], [f2.filledContracts, 48000], [f3.filledContracts, 51500]];
+  const trueDelta = lots.reduce((s, [q, P]) => s + (q * cs) / P, 0);
+  near((perpState.qty * cs) / perpState.avgEntry, trueDelta, 1e-12, "дельта от avgEntry = сумма по лотам");
+
+  const M = 60000;
+  const truePnl = lots.reduce((s, [q, P]) => s + (q * cs * (M - P)) / P, 0);
+  const booked = markPerp(perpState, { mark: M, contractSize: cs }).upl_usd;
+  near(booked, truePnl, 1e-9, "P&L от avgEntry = сумма по лотам");
+});
+
+test("хедж попадает в СОБСТВЕННУЮ цель: после заливки невязки дельта равна нужной", () => {
+  const cs = 10;
+  const perpState = { qty: 0, avgEntry: 0, feesCum: 0, realizedUsd: 0 };
+  const cfg = { makerFeeRate: 0, takerFeeRate: 0 };
+  const delta = () => (perpState.qty === 0 ? 0 : (perpState.qty * cs) / perpState.avgEntry);
+  const hedgeTo = (want, P) => {
+    const raw = want - delta();
+    applyFill(perpState, { side: raw > 0 ? "buy" : "sell", amount_rounded_btc: Math.abs(raw), order_type: "limit" },
+      P, { contractSize: cs }, cfg);
+  };
+  // цена растёт, цель растёт: промах не имеет права КОПИТЬСЯ от перекладки к перекладке
+  hedgeTo(0.45, 47000);
+  for (let i = 1; i <= 10; i++) hedgeTo(0.45 + i * 0.01, 47000 + i * 1000);
+  near(delta(), 0.55, 1e-9, "дельта после десяти перекладок равна цели");
 });
 
 // ── Полоса против размера позиции (fix 2026-08-13, Д3) ───────────────────────────────────────────
