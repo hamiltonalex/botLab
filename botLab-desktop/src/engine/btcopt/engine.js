@@ -493,7 +493,10 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
 function flattenPerp(state, snapshot, nowMs, cfg) {
   const perp = snapshot.perp || null;
   if (state.perpState.qty === 0 || !perp || !perp.mark) return;
-  const closeBtc = (-state.perpState.qty * perp.contractSize) / perp.mark; // BTC to bring perp → flat
+  // BTC ДЕЛЬТЫ, снимающие позицию в ноль. Считается от avgEntry, а не от марка: заявка выражена в
+  // дельте, а дельта позиции равна qty·cs/avgEntry (см. markPerp). По марку получилось бы
+  // qty·avgEntry/mark контрактов вместо qty, то есть «закрытие», оставляющее хвост позиции.
+  const closeBtc = -markPerp(state.perpState, perp).futuresDeltaBtc;
   const side = closeBtc > 0 ? "buy" : "sell";
   const order = { side, amount_btc: Math.abs(closeBtc), amount_rounded_btc: Math.abs(closeBtc), order_type: "market", post_only: false };
   const priceRef = side === "buy" ? snapshot.liquidity?.ask ?? perp.mark : snapshot.liquidity?.bid ?? perp.mark;

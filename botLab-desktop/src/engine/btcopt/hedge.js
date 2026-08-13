@@ -236,6 +236,31 @@ export function decideHedge({
   return { decision: "SKIP", estimated_cost, estimated_benefit, hedge_order: null, ...base };
 }
 
+// contractsForDelta(perpState, deltaBtc, priceRef, cs) → сколько контрактов сдвигает ДОЛЛАРОВУЮ
+// дельту позиции ровно на deltaBtc. Дробное число: округление до целого контракта делает вызывающий.
+//
+// ПОЧЕМУ НЕ ПРОСТО deltaBtc·P/cs, И ЭТО ВТОРАЯ ПОЛОВИНА ТОГО ЖЕ ДЕФЕКТА. У обратного контракта
+// вклад лота в дельту равен q·cs/ЦЕНА_ЛОТА. Значит:
+//   ДОБАВЛЕНИЕ открывает НОВЫЙ лот по priceRef, и его вклад q·cs/priceRef ⇒ q = deltaBtc·priceRef/cs;
+//   УМЕНЬШЕНИЕ закрывает СТАРЫЕ контракты, несущие базис позиции, и каждый уносит cs/avgEntry
+//     ⇒ q = deltaBtc·avgEntry/cs. Пересчёт по текущей цене снимает НЕ СТОЛЬКО, сколько просили;
+//   ПЕРЕВОРОТ делает и то, и другое: закрывает всё по базису, остаток открывает по priceRef.
+//
+// ЗАМЕР, КОТОРЫМ ЭТО ПОЙМАНО (прогон записи, первая сделка 2021-08-16): после каждого УМЕНЬШЕНИЯ
+// хеджа движок промахивался мимо своей цели на raw·(P−A)/A, то есть на 1.6% полосы после первой
+// перекладки вниз и на 3.7% после второй. На тике 2021-08-17 04:00 промах перевернул решение:
+// эталон видел разрыв 0.0302 при полосе 0.03 и перекладывался, движок видел 0.0291 и стоял.
+// Знак ошибки следует за тем, выше или ниже цена среднего входа - подпись направленной ставки.
+export function contractsForDelta(perpState, deltaBtc, priceRef, cs) {
+  const qty = perpState?.qty ?? 0;
+  const avgEntry = perpState?.avgEntry ?? 0;
+  if (!(cs > 0) || !(priceRef > 0) || !Number.isFinite(deltaBtc)) return 0;
+  const held = qty !== 0 && avgEntry > 0 ? (qty * cs) / avgEntry : 0; // текущая долларовая дельта
+  if (qty === 0 || held === 0 || Math.sign(deltaBtc) === Math.sign(qty)) return (deltaBtc * priceRef) / cs;
+  if (Math.abs(deltaBtc) <= Math.abs(held)) return (deltaBtc * avgEntry) / cs; // уменьшение
+  return -qty + ((held + deltaBtc) * priceRef) / cs; // переворот: закрыть всё, остаток по priceRef
+}
+
 // Apply a (paper) perp fill to perpState, inverse-contract aware. Converts the BTC order size to
 // signed $10 contracts at priceRef, then either grows the position (weighted-average entry) or
 // reduces/flips it (booking inverse realized USD = closedSigned·cs·(priceRef−avgEntry)/avgEntry).
@@ -258,12 +283,16 @@ export function decideHedge({
 // (`scripts/replay-sellhedge.mjs`): движок НЕ ПОПАДАЛ В СОБСТВЕННУЮ ЦЕЛЬ хеджа. На ДОБАВЛЕНИИ сама
 // заявка считалась верно (Δq = невязка·P/cs добавляет ровно невязку долларовой дельты), а уплывало
 // ИЗМЕРЕНИЕ позиции после неё, и промах КОПИЛСЯ: 1.3e-5 BTC после одной перекладки на движении 2%,
-// 4.4e-4 после десяти. Хедж, который мажет мимо своей цели, возвращает направленную ставку -
+// 4.4e-4 после десяти. Вторая половина того же промаха жила в пересчёте заявки на УМЕНЬШЕНИИ - см.
+// contractsForDelta выше. Хедж, который мажет мимо своей цели, возвращает направленную ставку -
 // ровно ту, ради снятия которой он и заводится.
 export function applyFill(perpState, hedge_order, priceRef, meta, cfg) {
   const cs = meta.contractSize;
   const signedBtc = (hedge_order.side === "buy" ? 1 : -1) * hedge_order.amount_rounded_btc;
-  const contractsDelta = Math.round((signedBtc * priceRef) / cs); // BTC to $10 contracts
+  // Дельта в BTC переводится в целые контракты по $10. Пересчёт зависит от того, добавляем мы лот или закрываем
+  // старые контракты со своим базисом (см. contractsForDelta): «по текущей цене» верно лишь для
+  // добавления. Округление до целого контракта и есть настоящая гранулярность биржи.
+  const contractsDelta = Math.round(contractsForDelta(perpState, signedBtc, priceRef, cs));
 
   const qty = perpState.qty;
   let realized = 0;
