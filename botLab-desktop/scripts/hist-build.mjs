@@ -35,6 +35,7 @@
 
 import { readFileSync, readdirSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { buildSurface, ivAt, tradeToPoint, parseOptionName, SURFACE_DEFAULTS } from "../src/engine/otmscan/hist-surface.js";
@@ -56,7 +57,7 @@ if (has("--help") || !argOf("--out")) {
   console.log(`hist-build.mjs - восстановление записи сканера из кэша истории
 
   --out <dir>        КУДА писать (обязательно); внутри создаётся scan-records/
-  --cache <dir>      кэш истории (по умолчанию ~/botlab-hist-cache)
+  --cache <dir>      кэш истории (по умолчанию data/deribit-cache в репозитории)
   --from <дата>      начало окна UTC (по умолчанию начало кэша)
   --to <дата>        конец окна UTC, не включая
   --tape inverse|both  какая лента кормит подгонку (по умолчанию inverse; см. шапку)
@@ -76,7 +77,14 @@ if (has("--help") || !argOf("--out")) {
   process.exit(argOf("--out") ? 0 : 1);
 }
 
-const CACHE = argOf("--cache", join(homedir(), "botlab-hist-cache"));
+// КЭШ ПО УМОЛЧАНИЮ ЛЕЖИТ В РЕПОЗИТОРИИ. Сырьё биржи невоспроизводимо: архив Deribit со временем
+// теряет глубину (линейные BTC_USDC он отдаёт только с 2025-08-06), поэтому оно хранится рядом со
+// скриптами, а не в домашнем каталоге, и после клона всё считается без единой закачки.
+// Старый путь ~/botlab-hist-cache остаётся запасным, чтобы прежние машины не сломались.
+const REPO_CACHE = fileURLToPath(new URL("../../data/deribit-cache", import.meta.url));
+const HOME_CACHE = join(homedir(), "botlab-hist-cache");
+const DEFAULT_CACHE = existsSync(REPO_CACHE) ? REPO_CACHE : HOME_CACHE;
+const CACHE = argOf("--cache", DEFAULT_CACHE);
 const OUT = argOf("--out");
 const TAPE = argOf("--tape", "inverse");
 const MAX_DAYS = Number(argOf("--max-days", "90"));
@@ -102,17 +110,31 @@ const FIT_OPTS = {
 };
 
 const cachePath = (...p) => join(CACHE, ...p);
-const readJson = (rel) => JSON.parse(readFileSync(cachePath(rel), "utf8"));
+// Кэш читается в ОБЕИХ раскладках: новой (сжатый JSON, мета по годам, лента по годам) и старой
+// (плоские несжатые файлы). Старые кэши продолжают работать без перекачки.
+const pickPath = (rel) => (existsSync(cachePath(rel)) ? cachePath(rel)
+  : existsSync(cachePath(`${rel}.gz`)) ? cachePath(`${rel}.gz`) : null);
+const readJson = (rel) => {
+  const p = pickPath(rel);
+  if (!p) return null;
+  const buf = readFileSync(p);
+  return JSON.parse((p.endsWith(".gz") ? gunzipSync(buf) : buf).toString("utf8"));
+};
 const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10);
 
 // ── мета: истёкшие + живые, одна карта на семейство
 function loadMeta(kind) {
   const out = new Map();
-  for (const half of ["expired", "active"]) {
-    const rel = `meta/${kind}-${half}.json`;
-    if (!existsSync(cachePath(rel))) continue;
-    for (const m of readJson(rel)) if (m?.instrument_name) out.set(m.instrument_name, m);
+  const take = (rel) => { const a = readJson(rel); for (const m of a ?? []) if (m?.instrument_name) out.set(m.instrument_name, m); };
+  const dir = cachePath("meta");
+  if (existsSync(dir)) {
+    for (const f of readdirSync(dir)) {
+      const base = f.replace(/\.gz$/, "");
+      if (!base.startsWith(`${kind}-`) || !base.endsWith(".json") || base.endsWith("-index.json")) continue;
+      take(`meta/${base}`);
+    }
   }
+  for (const half of ["expired", "active"]) take(`meta/${kind}-${half}.json`);
   return out;
 }
 
@@ -149,7 +171,7 @@ const linFirst = linMeta.length ? Math.min(...linMeta.map((m) => m.creation_time
 
 // ── свечи: перп (прокси индекса и вход RV) + фьючерсы (форвард экспираций)
 // Файл ряда несёт своё покрытие (fromMs/toMs) - см. грабли резюмируемости в hist-download.mjs.
-const barsOf = (rel) => (existsSync(cachePath(rel)) ? readJson(rel)?.bars ?? [] : []);
+const barsOf = (rel) => (pickPath(rel) ? readJson(rel)?.bars ?? [] : []);
 const perp = barsOf("candles/BTC-PERPETUAL.json");
 if (!perp.length) { console.error("нет свечей перпа в кэше - сначала npm run hist:download"); process.exit(1); }
 const perpByBarEnd = new Map(perp.map((c) => [c.ts + HOUR_MS, c.close]));
@@ -165,7 +187,7 @@ for (const f of loadMeta("btc-future").values()) {
 
 // ── DVOL: часовой ряд, из него дневные закрытия, из них скользящая база за 90 суток
 // (правило SCAN_DATA_RULES)
-const dvol = existsSync(cachePath("dvol/btc-hourly.json")) ? readJson("dvol/btc-hourly.json") : [];
+const dvol = pickPath("dvol/btc-hourly.json") ? readJson("dvol/btc-hourly.json") ?? [] : [];
 const dvolDailyClose = new Map();
 for (const d of dvol) if (posNum(d.close)) dvolDailyClose.set(Math.floor(d.ts / DAY_MS), d.close);
 const dvolHour = new Map(dvol.filter((d) => posNum(d.close)).map((d) => [Math.floor(d.ts / HOUR_MS) * HOUR_MS, d.close]));
@@ -186,7 +208,10 @@ const tapeCache = new Map();
 function tradesOfDay(cur, dayMs) {
   const key = `${cur}|${dayMs}`;
   if (tapeCache.has(key)) return tapeCache.get(key);
-  const rel = `trades/${cur.toLowerCase()}-option-${dayKey(dayMs)}.ndjson.gz`;
+  const dk = dayKey(dayMs);
+  const yearRel = `trades/${dk.slice(0, 4)}/${cur.toLowerCase()}-option-${dk}.ndjson.gz`;
+  const flatRel = `trades/${cur.toLowerCase()}-option-${dk}.ndjson.gz`;
+  const rel = existsSync(cachePath(yearRel)) ? yearRel : flatRel;
   let rows = [];
   if (existsSync(cachePath(rel))) {
     const txt = gunzipSync(readFileSync(cachePath(rel))).toString("utf8");
@@ -211,9 +236,20 @@ function tradesInWindow(fromMs, toMs) {
 }
 
 // ── окно восстановления
-const cacheDays = existsSync(cachePath("trades"))
-  ? readdirSync(cachePath("trades")).filter((f) => f.startsWith("btc-option-")).map((f) => Date.parse(`${f.slice(11, 21)}T00:00:00Z`)).sort((a, b) => a - b)
-  : [];
+// Перечень суток кэша собирается по обеим раскладкам: плоской и разложенной по годам.
+const cacheDays = (() => {
+  const root = cachePath("trades");
+  if (!existsSync(root)) return [];
+  const out = [];
+  const scan = (dir) => { for (const f of readdirSync(dir, { withFileTypes: true })) {
+    if (f.isDirectory()) { scan(join(dir, f.name)); continue; }
+    if (!f.name.startsWith("btc-option-")) continue;
+    const t = Date.parse(`${f.name.slice(11, 21)}T00:00:00Z`);
+    if (Number.isFinite(t)) out.push(t);
+  } };
+  scan(root);
+  return out.sort((a, b) => a - b);
+})();
 if (!cacheDays.length) { console.error("в кэше нет ленты сделок"); process.exit(1); }
 const FROM = argOf("--from") ? Date.parse(`${argOf("--from")}T00:00:00Z`) : cacheDays[0] + DAY_MS;
 const TO = argOf("--to") ? Date.parse(`${argOf("--to")}T00:00:00Z`) : cacheDays.at(-1) + DAY_MS;
