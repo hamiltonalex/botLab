@@ -570,10 +570,17 @@ export function settleStructure(state, snapshot, nowMs) {
     realizedUsd: optSettleUsd,
     // meta feeds the delivery-price reconcile (pnl.planSettleAdjustments): unit = legs[0]
     // qtyAbs·contractSize — the same per-unit scale payoff.js derives (equal-qty legs law).
+    // НОГИ ЗАПИСЫВАЮТСЯ ЯВНО, и это не дубль strikes. Пересчёт по одним страйкам умеет только тент:
+    // структуре из одной проданной ноги формула тента молча вернула бы |S−K| (модуль страйка вместо
+    // короткого колла), то есть НЕВЕРНУЮ поправку, а не ошибку. Список ног задаёт геометрию любой
+    // структуры однозначно; strikes остаётся для строк, записанных до этой правки.
     meta: {
       expiryMs: structure.expiryMs,
       strikes: structure.strikes,
       unit: (structure.legs[0]?.qtyAbs ?? 1) * (structure.legs[0]?.contractSize ?? 1),
+      legs: (structure.legs ?? []).map((l) => ({
+        type: l.type, strike: l.strike, qtyAbs: l.qtyAbs, qtySigned: l.qtySigned, contractSize: l.contractSize,
+      })),
     },
     note:
       `экспирация ${structure.id} · расчёт по индексу (прокси delivery-цены Deribit)` +
