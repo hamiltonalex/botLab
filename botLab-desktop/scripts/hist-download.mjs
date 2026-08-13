@@ -51,10 +51,11 @@
 // РЕЗЮМИРУЕМОСТЬ. Каждый файл пишется через .part и переименовывается атомарно, готовые пропускаются.
 // Прерванная закачка продолжается с того же места; повтор целиком - только с --force.
 
-import { mkdirSync, existsSync, writeFileSync, renameSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, existsSync, writeFileSync, renameSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { gzipSync } from "node:zlib";
+import { gzipSync, gunzipSync } from "node:zlib";
 
 const HISTORY = "https://history.deribit.com/api/v2";
 const WWW = "https://www.deribit.com/api/v2";
@@ -67,7 +68,7 @@ const has = (n) => args.includes(n);
 if (has("--help")) {
   console.log(`hist-download.mjs - кэш годовой истории Deribit
 
-  --cache <dir>     каталог кэша (по умолчанию ~/botlab-hist-cache)
+  --cache <dir>     каталог кэша (по умолчанию data/deribit-cache в репозитории)
   --from <ISO-дата> начало окна UTC (по умолчанию 366 суток назад)
   --to <ISO-дата>   конец окна UTC, не включая (по умолчанию сегодня)
   --what <список>   через запятую: meta,trades,candles,dvol,funding (по умолчанию all)
@@ -77,7 +78,14 @@ if (has("--help")) {
   process.exit(0);
 }
 
-const CACHE = argOf("--cache", join(homedir(), "botlab-hist-cache"));
+// КЭШ ПО УМОЛЧАНИЮ ЛЕЖИТ В РЕПОЗИТОРИИ. Сырьё биржи невоспроизводимо: архив Deribit со временем
+// теряет глубину (линейные BTC_USDC он отдаёт только с 2025-08-06), поэтому оно хранится рядом со
+// скриптами, а не в домашнем каталоге, и после клона всё считается без единой закачки.
+// Старый путь ~/botlab-hist-cache остаётся запасным, чтобы прежние машины не сломались.
+const REPO_CACHE = fileURLToPath(new URL("../../data/deribit-cache", import.meta.url));
+const HOME_CACHE = join(homedir(), "botlab-hist-cache");
+const DEFAULT_CACHE = existsSync(REPO_CACHE) ? REPO_CACHE : HOME_CACHE;
+const CACHE = argOf("--cache", DEFAULT_CACHE);
 const RPS = Math.max(0.2, Number(argOf("--rps", "3")) || 3);
 const FORCE = has("--force");
 const DRY = has("--dry");
@@ -92,6 +100,11 @@ if (!Number.isFinite(FROM) || !Number.isFinite(TO) || TO <= FROM) {
   process.exit(1);
 }
 const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10);
+// ЛЕНТА РАСКЛАДЫВАЕТСЯ ПО ГОДАМ: 4000 файлов в одном каталоге неудобны и в git, и глазами, а по
+// годам видно, что уже скачано, и можно взять один год. Старая плоская раскладка читается тоже.
+const tradesRel = (currency, dayMs) =>
+  `trades/${dayKey(dayMs).slice(0, 4)}/${currency.toLowerCase()}-option-${dayKey(dayMs)}.ndjson.gz`;
+const tradesRelFlat = (currency, dayMs) => `trades/${currency.toLowerCase()}-option-${dayKey(dayMs)}.ndjson.gz`;
 
 // ── сеть: один общий троттлер и честный разбор ошибок Deribit
 let lastCall = 0;
@@ -127,8 +140,22 @@ async function rpc(base, path, { retries = 6 } = {}) {
 
 // ── диск: атомарная запись, готовое не трогаем
 const ensure = (d) => { if (!existsSync(d)) mkdirSync(d, { recursive: true }); return d; };
+// JSON КЭША ЛЕЖИТ СЖАТЫМ, и это не экономия места ради экономии. Кэш хранится В РЕПОЗИТОРИИ
+// вместе со скриптами, потому что сырьё биржи невоспроизводимо: архив Deribit со временем теряет
+// глубину (линейные BTC_USDC он отдаёт только с 2025-08-06), и потерять его нельзя. А несжатая
+// мета USDC весит 119 МБ, то есть упирается в жёсткий лимит GitHub на файл в 100 МБ.
+// Сжатие снимает это одним движением: мета жмётся в 43 раза, весь кэш с 799 МБ до ~600.
+// Читается ЛЮБОЙ из двух вариантов, пишется всегда сжатый: старые кэши продолжают работать.
 const donePath = (rel) => join(CACHE, rel);
-const isDone = (rel) => !FORCE && existsSync(donePath(rel)) && statSync(donePath(rel)).size > 0;
+const gzPath = (rel) => `${donePath(rel)}.gz`;
+const existingPath = (rel) => (existsSync(donePath(rel)) ? donePath(rel) : existsSync(gzPath(rel)) ? gzPath(rel) : null);
+const isDone = (rel) => { if (FORCE) return false; const p = existingPath(rel); return !!p && statSync(p).size > 0; };
+const readJson = (rel) => {
+  const p = existingPath(rel);
+  if (!p) return null;
+  const buf = readFileSync(p);
+  return JSON.parse((p.endsWith(".gz") ? gunzipSync(buf) : buf).toString("utf8"));
+};
 
 function writeAtomic(rel, buf) {
   const p = donePath(rel);
@@ -138,7 +165,7 @@ function writeAtomic(rel, buf) {
   renameSync(tmp, p);
   return buf.length;
 }
-const writeJson = (rel, obj) => writeAtomic(rel, Buffer.from(JSON.stringify(obj)));
+const writeJson = (rel, obj) => writeAtomic(`${rel}.gz`, gzipSync(Buffer.from(JSON.stringify(obj))));
 const writeNdjsonGz = (rel, rows) =>
   writeAtomic(rel, gzipSync(Buffer.from(rows.map((r) => JSON.stringify(r)).join("\n") + (rows.length ? "\n" : ""))));
 
@@ -147,33 +174,57 @@ let bytes = 0;
 const log = (s) => console.log(s);
 
 // ── 1. мета инструментов: архив (истёкшие) + www (живые), обе половины обязательны
+//
+// РАСКЛАДЫВАЕТСЯ ПО ГОДАМ ЭКСПИРАЦИИ, а не одним куском. Причина числовая: биржа отдаёт весь
+// список одним ответом, и для USDC он весит 119 МБ, то есть упирается в жёсткий лимит GitHub на
+// файл в 100 МБ, а кэш лежит В РЕПОЗИТОРИИ (сырьё биржи невоспроизводимо: архив со временем
+// теряет глубину). Разбивка по годам снимает лимит и заодно позволяет тянуть один год, не
+// выкачивая всю историю. Плюс сжатие: мета жмётся в 43 раза.
+const metaYear = (m) => (Number.isFinite(m?.expiration_timestamp)
+  ? new Date(m.expiration_timestamp).getUTCFullYear() : "unknown");
+
 async function fetchMeta() {
-  const jobs = [
-    ["meta/usdc-option-expired.json", HISTORY, "public/get_instruments?currency=USDC&kind=option&expired=true"],
-    ["meta/usdc-option-active.json", WWW, "public/get_instruments?currency=USDC&kind=option&expired=false"],
-    ["meta/btc-option-expired.json", HISTORY, "public/get_instruments?currency=BTC&kind=option&expired=true"],
-    ["meta/btc-option-active.json", WWW, "public/get_instruments?currency=BTC&kind=option&expired=false"],
-    ["meta/btc-future-expired.json", HISTORY, "public/get_instruments?currency=BTC&kind=future&expired=true"],
-    ["meta/btc-future-active.json", WWW, "public/get_instruments?currency=BTC&kind=future&expired=false"],
+  const kinds = [
+    ["usdc-option", "currency=USDC&kind=option"],
+    ["btc-option", "currency=BTC&kind=option"],
+    ["btc-future", "currency=BTC&kind=future"],
   ];
-  for (const [rel, base, path] of jobs) {
-    if (isDone(rel)) { log(`  = ${rel} (уже есть)`); continue; }
-    const r = await rpc(base, path);
-    bytes += writeJson(rel, r);
-    log(`  + ${rel}: ${r.length} инструментов`);
+  for (const [kind, q] of kinds) {
+    // Отметка о скачивании: без неё повторный запуск не отличил бы «уже разложено по годам» от
+    // «года ещё не создан», потому что имена файлов заранее не известны.
+    if (isDone(`meta/${kind}-index.json`)) { log(`  = meta/${kind} (уже есть)`); continue; }
+    const all = new Map();
+    for (const [base, expired] of [[HISTORY, "true"], [WWW, "false"]]) {
+      const r = await rpc(base, `public/get_instruments?${q}&expired=${expired}`);
+      for (const m of r ?? []) if (m?.instrument_name) all.set(m.instrument_name, m);
+    }
+    const byYear = new Map();
+    for (const m of all.values()) {
+      const y = metaYear(m);
+      if (!byYear.has(y)) byYear.set(y, []);
+      byYear.get(y).push(m);
+    }
+    for (const [y, arr] of [...byYear.entries()].sort()) bytes += writeJson(`meta/${kind}-${y}.json`, arr);
+    bytes += writeJson(`meta/${kind}-index.json`, { fetchedAt: new Date().toISOString(),
+      instruments: all.size, years: [...byYear.keys()].sort() });
+    log(`  + meta/${kind}: ${all.size} инструментов в ${byYear.size} файлах по годам`);
   }
 }
 
-// Объединённая мета: истёкшие + живые, дубли по instrument_name схлопываются.
+// Объединённая мета по всем годам. Читает и новую раскладку, и старые монолиты: кэши, собранные
+// до этой правки, продолжают работать без перекачки.
 function loadMeta(kind) {
   const out = new Map();
-  for (const half of ["expired", "active"]) {
-    const rel = `meta/${kind}-${half}.json`;
-    if (!existsSync(donePath(rel))) continue;
-    for (const m of JSON.parse(readFileSync(donePath(rel), "utf8"))) {
-      if (m?.instrument_name) out.set(m.instrument_name, m);
+  const dir = join(CACHE, "meta");
+  const take = (rel) => { const a = readJson(rel); for (const m of a ?? []) if (m?.instrument_name) out.set(m.instrument_name, m); };
+  if (existsSync(dir)) {
+    for (const f of readdirSync(dir)) {
+      const base = f.replace(/\.gz$/, "");
+      if (!base.startsWith(`${kind}-`) || !base.endsWith(".json") || base.endsWith("-index.json")) continue;
+      take(`meta/${base}`);
     }
   }
+  for (const half of ["expired", "active"]) take(`meta/${kind}-${half}.json`);
   return [...out.values()];
 }
 
@@ -182,8 +233,10 @@ function loadMeta(kind) {
 // ЗАЩИТА ОТ ЗАЦИКЛИВАНИЯ: если страница целиком легла в одну миллисекунду, сдвигаем начало на +1 мс
 // и говорим об этом вслух - молча терять сделки нельзя.
 async function fetchTradesDay(currency, dayMs) {
-  const rel = `trades/${currency.toLowerCase()}-option-${dayKey(dayMs)}.ndjson.gz`;
-  if (isDone(rel)) return { rel, skipped: true };
+  const rel = tradesRel(currency, dayMs);
+  // Готовым считается и файл СТАРОЙ плоской раскладки: перекачивать 800 МБ ради переименования
+  // было бы расточительством и к бирже, и ко времени.
+  if (isDone(rel) || isDone(tradesRelFlat(currency, dayMs))) return { rel, skipped: true };
   const end = dayMs + DAY_MS;
   const seen = new Set();
   const rows = [];
