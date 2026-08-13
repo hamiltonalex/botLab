@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 // hist-sellhedge.mjs - ПРОДАЖА ОПЦИОНА С ДЕЛЬТА-ХЕДЖЕМ по восстановленной истории. READ-ONLY.
 //
+// ПРАВИЛА СХЕМЫ ЛЕЖАТ В ДВИЖКЕ: `src/engine/otmscan/sellhedge.js`. Здесь только снабжение записью
+// и отчёт. Иначе сверка живого движка с эталоном была бы сверкой ДВУХ РАЗНЫХ реализаций одного
+// правила, а это тот самый класс дефекта, который проект ловил уже четырежды.
+//
 // ЭТО ЭТАЛОН, С КОТОРЫМ СВЕРЯЕТСЯ ЖИВОЙ ДВИЖОК. Первая конфигурация проекта, показавшая прибыль
 // на пяти годах и во всех режимах рынка сразу. Всё остальное семейство (покупка опциона по
 // чеклисту, `hist-backtest.mjs`) измерено убыточным: 630 конфигураций выхода и 201 конфигурация
@@ -48,6 +52,9 @@ import { gunzipSync } from "node:zlib";
 import { priceAt, makePriceStats, countPrice, formatPriceStats } from "../src/engine/otmscan/hist-price.js";
 import { computeTradeCosts } from "../src/engine/otmscan/economics.js";
 import { legMargin } from "../src/engine/btcopt/margin.js";
+import {
+  pickSellLeg, openSellTrade, halfSpreadUsd, walkSellTrade, settleSellTrade, lotsByMargin,
+} from "../src/engine/otmscan/sellhedge.js";
 
 const fin = (x) => Number.isFinite(x);
 const args = process.argv.slice(2);
@@ -152,64 +159,45 @@ const dt = (ms) => new Date(ms).toISOString().slice(0, 10);
 const spotBefore = (T) => { let lo = 0, hi = N - 1, res = null;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (R.times[m] <= T) { res = R.spot[m]; lo = m + 1; } else hi = m - 1; } return res; };
 
-// Кандидат: колл нужного срока с |дельтой| ближе всего к целевой.
+// Кандидат: правило живёт в sellhedge.js, здесь только подача строк снимка.
 function pickLeg(i, cfg) {
   const snap = R.snaps.get(R.times[i]); const S = R.spot[i];
   if (!snap || !(S > 0)) return null;
-  let best = null, bd = Infinity;
-  for (const r of snap.values()) {
-    if (!fin(r.h) || r.h < cfg.eMin || r.h > cfg.eMax || r.s !== "C") continue;
-    if (!(r.m > 0) || !fin(r.d) || !fin(r.b) || !fin(r.a) || !fin(r.iv) || !fin(r.vg)) continue;
-    const dd = Math.abs(Math.abs(r.d) - cfg.dTarget);
-    if (dd < bd) { bd = dd; best = r; }
-  }
-  return best && bd <= D_TOL ? best : null;
+  return pickSellLeg(snap.values(), cfg);
 }
 
-// Одна сделка НА ОДИН КОНТРАКТ 1.0 BTC, от входа до экспирации.
+// Одна сделка НА ОДИН КОНТРАКТ 1.0 BTC, от входа до экспирации. Решения (что продать, когда
+// переложить хедж, чем кончается сделка) принимает sellhedge.js; здесь снабжение записью.
 function runTrade(i, leg, cfg) {
   const S0 = R.spot[i];
-  const half = ((leg.a - leg.b) / 2) * cfg.spread;
+  const half = halfSpreadUsd(leg, cfg);
   const costs = computeTradeCosts({ markUsd: leg.m, bidUsd: leg.m - half, askUsd: leg.m + half,
     indexPrice: S0, execModel: cfg.execModel });
   if (!costs) return null;
-  // Продаём на haircut пунктов воли ниже марка: прямая проверка смещения подгонки. Замер по живой
-  // записи даёт смещение +0.03 пункта на сроке 14-28 суток, то есть запас здесь огромный.
-  const premSold = leg.m - (cfg.haircut > 0 ? leg.vg * cfg.haircut : 0);
-  if (!(premSold > 0)) return null;
-  // До экспирации платится только ВХОД: опцион гасится сам, второй раз книгу пересекать не надо.
-  const optCost = (costs.roundTripCostPct / 100) * leg.m / 2;
   const im = legMargin({ type: "call", side: "short", strike: leg.k, mark: leg.m,
     underlying: S0, index: S0, amount: 1 }).im;
+  const open = openSellTrade({ leg, spotUsd: S0, costs, imUsd: im, cfg });
+  if (!open) return null;
   const meta = { name: leg.n, expiryMs: leg.e, strikeUsd: leg.k, type: "C" };
 
-  let qPerp = leg.d, hedgeFee = Math.abs(qPerp) * S0 * cfg.perpFee, hedgePnl = 0, funding = 0, reh = 1;
-  let prevS = S0, prevTs = R.times[i], endIdx = i, exitVal = null;
-  for (let k = i + 1; k < N; k++) {
-    const S = R.spot[k];
-    if (!(S > 0)) continue;
-    hedgePnl += qPerp * (S - prevS);
-    funding += qPerp * S * fundRate(R.times[k]) * ((R.times[k] - prevTs) / 3600000);
-    prevS = S; prevTs = R.times[k];
-    const p = countPrice(R.stats, priceAt({ snapshot: R.snaps.get(R.times[k]),
-      expiryRows: R.byExp.get(R.times[k])?.get(leg.e), meta, tsMs: R.times[k],
-      spotAtExpiry: spotBefore(leg.e) }));
-    if (!p) return null;
-    endIdx = k;
-    if (R.times[k] >= leg.e) { exitVal = p.markUsd; break; }
-    const want = p.delta ?? 0;
-    if (Math.abs(want - qPerp) > cfg.band) {
-      hedgeFee += Math.abs(want - qPerp) * S * cfg.perpFee;
-      qPerp = want; reh += 1;
-    }
-  }
-  if (exitVal == null) return null;
-  hedgeFee += Math.abs(qPerp) * prevS * cfg.perpFee;
-  const pnl = ((premSold - exitVal) + hedgePnl - optCost - hedgeFee - funding) * cfg.chainAdj;
-  return { i, endIdx, ts: R.times[i], exitTs: R.times[endIdx], pnl, im, prem: leg.m, iv: leg.iv,
-    strike: leg.k, spot0: S0, spotEnd: R.spot[endIdx], reh,
-    retIm: (pnl / im) * 100, retPrem: (pnl / leg.m) * 100,
-    optLeg: premSold - exitVal, hedgeLeg: hedgePnl, cost: optCost + hedgeFee, fund: funding };
+  const base = i + 1;
+  const walk = walkSellTrade({
+    count: N - base,
+    tsAt: (k) => R.times[base + k],
+    spotAt: (k) => R.spot[base + k],
+    priceAt: (k) => countPrice(R.stats, priceAt({ snapshot: R.snaps.get(R.times[base + k]),
+      expiryRows: R.byExp.get(R.times[base + k])?.get(leg.e), meta, tsMs: R.times[base + k],
+      spotAtExpiry: spotBefore(leg.e) })),
+    fundRateAt: fundRate,
+    expiryMs: leg.e, entry: open, entryTsMs: R.times[i], entrySpot: S0, cfg,
+  });
+  if (!walk) return null;
+  const s = settleSellTrade({ open, walk, cfg });
+  const endIdx = base + walk.exitIndex;
+  return { i, endIdx, ts: R.times[i], exitTs: R.times[endIdx], pnl: s.pnl, im, prem: leg.m, iv: leg.iv,
+    strike: leg.k, spot0: S0, spotEnd: R.spot[endIdx], reh: walk.rehedges,
+    retIm: (s.pnl / im) * 100, retPrem: (s.pnl / leg.m) * 100,
+    optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, cost: s.cost, fund: s.fund };
 }
 
 // ЦЕПОЧКА: закрылась сделка, в тот же день открывается следующая. Ни пропусков, ни выбора момента.
@@ -226,8 +214,9 @@ function chain(cfg, start = 0) {
   }
   return out;
 }
-const CFG = { eMin: E_MIN, eMax: E_MAX, dTarget: D_TARGET, band: BAND, perpFee: PERP_FEE,
-  spread: SPREAD, haircut: HAIRCUT, chainAdj: CHAIN_ADJ, execModel: "maker-mid" };
+const CFG = { expiryMinH: E_MIN, expiryMaxH: E_MAX, deltaTarget: D_TARGET, deltaTol: D_TOL,
+  bandBtc: BAND, perpFee: PERP_FEE, spreadScale: SPREAD, ivHaircut: HAIRCUT, chainAdj: CHAIN_ADJ,
+  lot: LOT, deployPct: DEPLOY, execModel: "maker-mid" };
 
 const equity = (rows, pick = (r) => r.retIm) => {
   let eq = 1, peak = 1, dd = 0;
@@ -283,8 +272,8 @@ for (const start of DEPOSITS) {
   let acc = start, peak = start, maxDd = 0, skipped = 0, played = 0;
   const log = [];
   for (const t of rows) {
-    const imLot = t.im * LOT;
-    const lots = Math.floor((acc * DEPLOY) / imLot);
+    // Размер продавца связывает ЗАЛОГ, а не премия: правило в sellhedge.js, здесь только счёт.
+    const { lots, imLotUsd: imLot } = lotsByMargin({ imUsdPerContract: t.im, equityUsd: acc, cfg: CFG });
     if (lots < 1) { skipped += 1; log.push({ t, lots: 0, pnl: 0, acc }); continue; }
     const pnl = t.pnl * LOT * lots;
     acc += pnl; played += 1;
@@ -334,7 +323,7 @@ if (has("--band-sweep")) {
   for (const band of bands) {
     const cells = [], extra = [];
     for (const [fee] of fees) {
-      const rs = chain({ ...CFG, band, perpFee: fee });
+      const rs = chain({ ...CFG, bandBtc: band, perpFee: fee });
       const e = equity(rs);
       cells.push(rs.length ? `${f2(e.eq)}` : "-");
       if (fee === 0) extra.push(f2(e.dd, 1) + "%", String(Math.round(mean(rs.map((r) => r.reh)))));
@@ -356,11 +345,11 @@ if (has("--stress")) {
     ["хедж тейкером 5 б.п.", { perpFee: 0.0005 }],
     ["хедж тейкером 10 б.п.", { perpFee: 0.001 }],
     ["вход в опцион тейкером", { execModel: "taker-cross" }],
-    ["вычет 0.5 п. воли", { haircut: 0.5 }],
-    ["вычет 1.0 п. воли", { haircut: 1.0 }],
-    ["спред ×1.5", { spread: 1.5 }],
-    ["дельта 0.30", { dTarget: 0.30 }],
-    ["дельта 0.60", { dTarget: 0.60 }],
+    ["вычет 0.5 п. воли", { ivHaircut: 0.5 }],
+    ["вычет 1.0 п. воли", { ivHaircut: 1.0 }],
+    ["спред ×1.5", { spreadScale: 1.5 }],
+    ["дельта 0.30", { deltaTarget: 0.30 }],
+    ["дельта 0.60", { deltaTarget: 0.60 }],
   ];
   for (const [label, over] of cases) {
     const rs = chain({ ...CFG, ...over });

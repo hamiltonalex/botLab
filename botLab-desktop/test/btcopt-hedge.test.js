@@ -11,6 +11,9 @@ import {
   estimateCost,
   decideHedge,
   applyFill,
+  effectiveDeadband,
+  benefitMoveFrac,
+  DEADBAND_REF_QTY,
 } from "../src/engine/btcopt/hedge.js";
 
 const near = (a, b, tol, label) =>
@@ -261,4 +264,67 @@ test("applyFill inverse: open short then close for realized USD", () => {
   near(perpState.avgEntry, 63000, 1e-9, "avgEntry after partial close");
   near(close.realizedUsd, 5.714, 1e-3, "realizedUsd close");
   near(perpState.realizedUsd, 5.714, 1e-3, "cumulative realizedUsd");
+});
+
+// ── Полоса против размера позиции (fix 2026-08-13, Д3) ───────────────────────────────────────────
+test("effectiveDeadband: на калибровочном размере равна настройке, дальше растёт линейно", () => {
+  const db = 0.001;
+  near(effectiveDeadband({ deadbandBtc: db, structureQty: 0.01, refQty: 0.01 }), db, 1e-15, "1x");
+  near(effectiveDeadband({ deadbandBtc: db, structureQty: 0.05, refQty: 0.01 }), db * 5, 1e-15, "5x");
+  near(effectiveDeadband({ deadbandBtc: db, structureQty: 1, refQty: 0.01 }), db * 100, 1e-12, "100x");
+  // ОТНОСИТЕЛЬНАЯ теснота полосы и есть инвариант, ради которого правка делалась.
+  const rel = (q) => effectiveDeadband({ deadbandBtc: db, structureQty: q, refQty: 0.01 }) / q;
+  near(rel(0.01), rel(0.37), 1e-15, "полоса на единицу размера не зависит от размера");
+});
+
+test("effectiveDeadband: размер неизвестен - берётся сырая настройка, а не догадка", () => {
+  const db = 0.002;
+  near(effectiveDeadband({ deadbandBtc: db }), db, 1e-15, "нет размера");
+  near(effectiveDeadband({ deadbandBtc: db, structureQty: 0 }), db, 1e-15, "нулевой размер");
+  near(effectiveDeadband({ deadbandBtc: db, structureQty: 0.05, refQty: 0 }), db, 1e-15, "нулевой якорь");
+  assert.equal(effectiveDeadband({}), 0, "нет настройки - нет полосы");
+  assert.equal(DEADBAND_REF_QTY, 0.01, "якорь по умолчанию равен дефолтному размеру движка");
+});
+
+test("decideHedge: на впятеро большей структуре полоса впятеро шире", () => {
+  const cfg = { ...baseCfg, deadbandBtc: 0.001, deadbandRefQty: 0.01, settlementBlackout: false };
+  const args = (structureQty) => ({
+    optionDelta: -0.004, Qperp: 0, snapshot: { underlying: 60000, perp: { mark: 60000, funding8h: 0 } },
+    liquidity: { halfSpread: 0 }, cfg, nowMs: NOON, expiryMs: EXPIRY_FAR, createdAt: NOON,
+    lastHedgeAt: NOON, lastHedgeUnderlying: 60000, step: 0, structureQty,
+  });
+  const small = decideHedge(args(0.01));
+  const big = decideHedge(args(0.05));
+  near(small.deadband_btc, 0.001, 1e-15, "полоса на калибровочном размере");
+  near(big.deadband_btc, 0.005, 1e-15, "полоса на впятеро большем размере");
+  // Один и тот же перекос дельты: у малой структуры он ЗА полосой, у большой внутри.
+  assert.deepEqual(small.trigger_reason, ["delta"]);
+  assert.deepEqual(big.trigger_reason, [], "тот же перекос на большем размере триггер не взводит");
+  near(small.delta_excess, 0.003, 1e-15);
+  assert.equal(big.delta_excess, 0);
+});
+
+// ── Масштаб выгоды отдельно от ценового триггера (fix 2026-08-13, Д2) ────────────────────────────
+test("benefitMoveFrac: свой knob, с откатом на priceTriggerPct у старых профилей", () => {
+  near(benefitMoveFrac({ benefitMovePct: 2, priceTriggerPct: 0.5 }), 0.02, 1e-15, "свой knob выигрывает");
+  near(benefitMoveFrac({ priceTriggerPct: 0.5 }), 0.005, 1e-15, "старый профиль сохраняет поведение");
+  assert.equal(benefitMoveFrac({}), 0, "нет ни того, ни другого - выгода нулевая");
+});
+
+test("масштаб выгоды теперь настраивается, НЕ взводя ценовой триггер", () => {
+  // Ровно то, что было невозможно до правки: один knob менял и порог триггера, и масштаб выгоды.
+  const base = { ...baseCfg, deadbandBtc: 0.001, deadbandRefQty: 0.01, settlementBlackout: false,
+    priceTriggerPct: 0.5, slippageRate: 0.0002 };
+  const args = (cfg) => ({
+    optionDelta: -0.0015, Qperp: 0, snapshot: { underlying: 60000, perp: { mark: 60000, funding8h: 0 } },
+    liquidity: { halfSpread: 0 }, cfg, nowMs: NOON, expiryMs: EXPIRY_FAR, createdAt: NOON,
+    lastHedgeAt: NOON, lastHedgeUnderlying: 60000, step: 0, structureQty: 0.01,
+  });
+  const stingy = decideHedge(args({ ...base, benefitMovePct: 0.01 }));
+  const generous = decideHedge(args({ ...base, benefitMovePct: 5 }));
+  assert.equal(stingy.decision, "SKIP", "мелкая ожидаемая выгода не окупает перекладку");
+  assert.equal(generous.decision, "HEDGE", "крупная окупает");
+  // Ценовой триггер при этом НЕ участвовал ни в одном из двух прогонов.
+  for (const d of [stingy, generous]) assert.ok(!d.trigger_reason.includes("price"), "триггер цены молчит");
+  assert.ok(generous.estimated_benefit > stingy.estimated_benefit, "менялась именно выгода");
 });

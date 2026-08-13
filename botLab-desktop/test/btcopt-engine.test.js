@@ -56,7 +56,7 @@ const PARAMS = { expiry: EXPIRY, callOffsetPct: 10, putOffsetPct: 10, qty: 1, ex
 
 // A fresh engine with the structure opened at NOON.
 function opened() {
-  const st = engine.create({ nowMs: NOON });
+  const st = engine.create({ nowMs: NOON, settings: { deadbandRefQty: 1 } });
   const snap = mkSnapshot();
   const r = engine.openStructure(st, PARAMS, mkChain(), snap, NOON);
   assert.equal(r.ok, true, r.error);
@@ -347,7 +347,7 @@ test("exec style: limit fills at MID with maker fee 0; market crosses the spread
   near(limFill.feeUsd, 0, 1e-12, "maker fee 0.00%");
 
   // market: same book, execStyle market frozen at open via state.settings
-  const st = engine.create({ nowMs: NOON, settings: { execStyle: "market" } });
+  const st = engine.create({ nowMs: NOON, settings: { execStyle: "market", deadbandRefQty: 1 } });
   const snap = mkSnapshot();
   const r = engine.openStructure(st, { ...PARAMS, execStyle: "market" }, mkChain(), snap, NOON);
   assert.equal(r.ok, true, r.error);
@@ -396,7 +396,7 @@ test("closeStructure with a FLAT perp closes fine even without a priced perp (no
 // ── engineCfg freeze (audit №10): the position hedges by the ACTUAL open params, not by settings ─
 test("engineCfg overlays the ticket's actual params over settings (debounce-race honesty)", () => {
   // settings still say limit (the debounced push hasn't landed), but the ticket opened as market
-  const st = engine.create({ nowMs: NOON, settings: { execStyle: "limit" } });
+  const st = engine.create({ nowMs: NOON, settings: { execStyle: "limit", deadbandRefQty: 1 } });
   const snap = mkSnapshot();
   const r = engine.openStructure(st, { ...PARAMS, execStyle: "market", qty: 2 }, mkChain(), snap, NOON);
   assert.equal(r.ok, true, r.error);
@@ -413,7 +413,7 @@ test("engineCfg overlays the ticket's actual params over settings (debounce-race
 // клампа ВИДИМ - копится в perpState.fundingGapSec и оставляет строку funding-gap в леджере.
 // Сам кламп (fundingMaxGapSec 300с) не меняется: начислено ровно за клампованное время.
 test("R3: ingest через 8ч разрыв - фандинг клампится 300с, пропуск видим (fundingGapSec + строка леджера)", () => {
-  const st = engine.create({ nowMs: NOON });
+  const st = engine.create({ nowMs: NOON, settings: { deadbandRefQty: 1 } });
   st.perpState.qty = -12; // короткий хедж 12 контрактов по $10
   st.perpState.avgEntry = 61000;
   st.lastIngestAt = NOON;
@@ -441,4 +441,39 @@ test("R3: ingest через 8ч разрыв - фандинг клампится
   engine.ingest(st, { perp, underlying: 61000 }, wake + 1800_000); // ещё 30 мин
   assert.equal(st.perpState.fundingGapSec, 8 * 3600 - 300 + (1800 - 300), "гэпы аддитивны");
   assert.equal(st.ledger.filter((e) => e.type === "funding-gap").length, 2);
+});
+
+// ── Дельта перпа против его номинала (fix 2026-08-13) ────────────────────────────────────────────
+// Ни один прежний тест не держал позицию, у которой средний вход РАЗОШЁЛСЯ с марком, поэтому
+// подмена дельты номиналом жила в коде незамеченной. Здесь цена уходит на 10% после перекладки.
+test("после движения цены дельта перпа считается от avgEntry, а номинал от марка", () => {
+  const { st, snap } = opened();
+  engine.ingest(st, snap, NOON);
+  engine.evaluate(st, snap, NOON); // ставит хедж: 12 контрактов по 61000
+  assert.equal(st.perpState.qty, 12, "хедж исполнен");
+  near(st.perpState.avgEntry, 61000, 1e-9, "средний вход равен цене перекладки");
+
+  const up = 67100; // +10%
+  const moved = { ...mkSnapshot(NOON + 60_000), underlying: up, index: up,
+    perp: { ...mkSnapshot().perp, mark: up, index: up },
+    liquidity: { bid: up - 1, ask: up + 1, mid: up, halfSpread: 1 } };
+  engine.ingest(st, moved, NOON + 60_000);
+  const cyc = engine.evaluate(st, moved, NOON + 60_000);
+
+  near(cyc.current_futures_delta, 120 / 61000, 1e-12, "дельта от avgEntry и по цене НЕ уплыла");
+  near(cyc.perp_position.btc, 120 / up, 1e-12, "номинал от текущего марка");
+  near(cyc.current_futures_delta / cyc.perp_position.btc, up / 61000, 1e-9, "разошлись в mark/avgEntry");
+
+  // Проверка не повтором формулы, а через P&L: дельта обязана быть производной upl_usd по цене.
+  // Позиция между двумя замерами обязана быть ОДНА И ТА ЖЕ, иначе сравнивались бы разные позиции
+  // и тест был бы зелёным по случайности. Фикса не было: дельта уже в дедбэнде (см. ниже).
+  assert.equal(cyc.decision, "SKIP", "после правки фантомного дрейфа нет и перекладка не нужна");
+  const qtyBefore = st.perpState.qty;
+  const nudge = { ...moved, underlying: up + 1, index: up + 1,
+    perp: { ...moved.perp, mark: up + 1, index: up + 1 } };
+  engine.ingest(st, nudge, NOON + 61_000);
+  const c2 = engine.evaluate(st, nudge, NOON + 61_000);
+  assert.equal(st.perpState.qty, qtyBefore, "позиция не менялась между замерами");
+  near(c2.perp_position.upl_usd - cyc.perp_position.upl_usd, cyc.current_futures_delta, 1e-9,
+    "P&L на доллар движения спота равен заявленной дельте");
 });

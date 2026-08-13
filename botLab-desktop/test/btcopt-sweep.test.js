@@ -71,7 +71,7 @@ const mkSeries = (omitStrikes = []) => PATH.map((u, i) => mkSnap(T0 + i * 300_00
 
 // qty 1 → realistic hedge sizes; equity 13000 splits marginOk by wing width at series[0] marks:
 // short-leg IM totals ≈ 15560 (±5%) / 12680 (±10%) / 11900 (±15%) — only the ±5% wings exceed it.
-const BASE = { qty: 1, paperEquityUsd: 13000 };
+const BASE = { qty: 1, paperEquityUsd: 13000, deadbandRefQty: 1 };
 
 test("determinism: two identical runSweep calls → deepEqual results", () => {
   const args = () => ({ series: mkSeries(), chain: mkChain(), expiryMs: EXPIRY, baseSettings: { ...BASE } });
@@ -187,7 +187,7 @@ test("grid override: one value per axis → exactly 1 combo; per-axis override m
 });
 
 test("paperEquityUsd 1 → every combo marginOk:false, still fully ranked, best = 0", () => {
-  const r = runSweep({ series: mkSeries(), chain: mkChain(), expiryMs: EXPIRY, baseSettings: { qty: 1, paperEquityUsd: 1 } });
+  const r = runSweep({ series: mkSeries(), chain: mkChain(), expiryMs: EXPIRY, baseSettings: { qty: 1, paperEquityUsd: 1, deadbandRefQty: 1 } });
   assert.equal(r.combos.length, 108);
   assert.ok(r.combos.every((c) => c.marginOk === false), "min-size margin dwarfs a $1 deposit");
   assert.equal(r.best, 0);
