@@ -114,7 +114,9 @@ export function shouldRehedge({ want, have, bandBtc } = {}) {
 
 // ── 5. Протяжка до экспирации. ЕДИНСТВЕННЫЙ выход - экспирация: ни тейка, ни стопа, ни падения
 // воли, ни тайм-стопа. Возвращает { exitVal, exitIndex, hedgePnl, hedgeFee, funding, rehedges,
-// lastSpot } либо null, если цена не вышла хотя бы на одном шаге (см. шапку).
+// turnoverBtc, lastSpot } либо null, если цена не вышла хотя бы на одном шаге (см. шапку).
+// `turnoverBtc` - суммарный ОБОРОТ хеджа (вход плюс все поправки, без закрытия перпа в экспирацию):
+// число перекладок само по себе ничего не говорит о том, сколько через них прошло.
 //   count       - сколько шагов доступно ПОСЛЕ входа, k = 0..count−1;
 //   tsAt(k)     - метка шага;
 //   spotAt(k)   - индекс на шаге либо null: снимок без спота пропускается целиком;
@@ -133,6 +135,7 @@ export function walkSellTrade({
   let hedgePnl = 0;
   let funding = 0;
   let rehedges = 1; // вход в хедж это уже одна поправка
+  let turnoverBtc = Math.abs(qPerp); // и один оборот
   let prevS = entrySpot;
   let prevTs = entryTsMs;
   let exitIndex = -1;
@@ -156,13 +159,14 @@ export function walkSellTrade({
     const want = wantHedge(p.delta ?? 0);
     if (shouldRehedge({ want, have: qPerp, bandBtc: cfg.bandBtc })) {
       hedgeFee += Math.abs(want - qPerp) * S * cfg.perpFee;
+      turnoverBtc += Math.abs(want - qPerp);
       qPerp = want;
       rehedges += 1;
     }
   }
   if (exitVal == null) return null;
   hedgeFee += Math.abs(qPerp) * prevS * cfg.perpFee; // закрытие перпа в экспирацию
-  return { exitVal, exitIndex, hedgePnl, hedgeFee, funding, rehedges, lastSpot: prevS };
+  return { exitVal, exitIndex, hedgePnl, hedgeFee, funding, rehedges, turnoverBtc, lastSpot: prevS };
 }
 
 // Итог одной сделки на ОДИН контракт 1.0 BTC. Поправка цепочки применяется к ИТОГУ, а не к статьям:
