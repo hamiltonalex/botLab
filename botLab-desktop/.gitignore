@@ -3,3 +3,7 @@ release/
 *.log
 .DS_Store
 # local data cache written at runtime lives in the OS userData dir, not the repo
+
+# восстановленные записи производны от data/deribit-cache и весят гигабайты: пересобираются
+# командой npm run hist:build за минуты
+scan-records/
