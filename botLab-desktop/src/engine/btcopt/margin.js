@@ -12,23 +12,34 @@
 // The put is asymmetric to the call: its initial floor is 0.10·Strike (not 0.10·Index) and maintenance
 // uses 0.075·MIN(Index, Strike) — because a put's loss is bounded by the strike, not the (higher) index.
 
-const otmAmount = (type, underlying, strike) =>
-  type === "call" ? Math.max(strike - underlying, 0) : Math.max(underlying - strike, 0);
+// ДОЛЯ ВНЕ ДЕНЕГ МЕРИТСЯ ОТ ИНДЕКСА, А НЕ ОТ ФОРВАРДА, И ЭТО НЕ ПРИДИРКА. Формула биржи целиком
+// стоит на индексной цене (`max(0.15 − OTM/Index, 0.1)·Index + Mark`), и обе другие её части здесь
+// уже считаются от индекса. А `snapshot.underlying` у опциона это `underlying_price` тикера, то есть
+// ФОРВАРД его экспирации: он отстоит от индекса тем дальше, чем длиннее срок, и у схемы продавца
+// срок как раз 14-28 суток. Подстановка форварда занижала долю вне денег у колла и завышала у пута,
+// то есть двигала требование залога в разные стороны для разных ног одного счёта.
+// На записи расхождения нет вовсе (там индекс и форвард это одно и то же число), поэтому пятилетние
+// числа этой правкой не двигаются - она чинит ЖИВОЙ тракт.
+const otmAmount = (type, index, strike) =>
+  type === "call" ? Math.max(strike - index, 0) : Math.max(index - strike, 0);
 
 // legMargin({ type, side, strike, mark, underlying, index, amount }) → { im, mm } in USDC.
 // Long (or non-short) legs contribute nothing; a missing/zero underlying is treated as no requirement.
 export function legMargin(leg) {
   const { type, side, strike, mark = 0, underlying, index, amount = 0 } = leg;
   if (side !== "short" || !(underlying > 0)) return { im: 0, mm: 0 };
-  const otm = otmAmount(type, underlying, strike);
-  const reduced = 0.15 - otm / underlying; // 0.15 minus the OTM fraction of the underlying
+  // Индекс это база всей формулы; `underlying` остаётся только запасным вариантом, когда индекса в
+  // снимке нет вовсе (тогда лучше посчитать по форварду, чем не посчитать).
+  const idx = index > 0 ? index : underlying;
+  const otm = otmAmount(type, idx, strike);
+  const reduced = 0.15 - otm / idx; // 0.15 minus the OTM fraction of the INDEX
   let im, mm;
   if (type === "call") {
-    im = (Math.max(reduced, 0.1) * index + mark) * amount;
-    mm = (0.075 * index + mark) * amount;
+    im = (Math.max(reduced, 0.1) * idx + mark) * amount;
+    mm = (0.075 * idx + mark) * amount;
   } else {
-    im = (Math.max(reduced * index, 0.1 * strike) + mark) * amount; // put floor = 0.10·Strike
-    mm = (0.075 * Math.min(index, strike) + mark) * amount; // put maintenance capped at the strike
+    im = (Math.max(reduced * idx, 0.1 * strike) + mark) * amount; // put floor = 0.10·Strike
+    mm = (0.075 * Math.min(idx, strike) + mark) * amount; // put maintenance capped at the strike
   }
   return { im, mm };
 }

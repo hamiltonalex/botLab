@@ -660,7 +660,14 @@ async function resolveBtcOptSellStructureLive(params) {
   // Тот же закон, что у покупателя: структура СТРОИТСЯ по цене перпа из пробы, а не по более свежей
   // из тикера опциона, иначе выбор мог бы разойтись с тем, что реально прокотировано.
   const buildSnap = { ...snap, underlying: perpTk.index_price };
-  return { chain, snap, buildSnap, params: { ...(params ?? {}), sellCfg: params?.sellCfg ?? null }, leg };
+  // МНОЖИТЕЛЬ СПРЕДА В ЖИВОМ ТРАКТЕ РАВЕН ЕДИНИЦЕ, И ЭТО НЕ НАСТРОЙКА, А ГРАНИЦА ПРИМЕНИМОСТИ.
+  // `spreadScale` = 1.10 в SELLHEDGE_DEFAULTS это ПОПРАВКА НА МОДЕЛЬНЫЕ КОТИРОВКИ восстановленной
+  // записи: её bid/ask синтетические и занижают круг издержек на 6% против живого замера. Здесь
+  // bid/ask настоящие, биржевые, и та же поправка раздувала бы уже наблюдённый спред ещё на десятую
+  // часть, то есть завышала бы издержки входа на ровном месте. Офлайн-скрипты своё значение задают
+  // сами (`--spread-scale`), поэтому эталонные числа этой строкой не двигаются.
+  const liveSellCfg = { ...(params?.sellCfg ?? {}), spreadScale: 1 };
+  return { chain, snap, buildSnap, params: { ...(params ?? {}), sellCfg: liveSellCfg }, leg };
 }
 
 // Record the tick into the rings. The snapshot copy is taken BEFORE ivContext is attached, so history
