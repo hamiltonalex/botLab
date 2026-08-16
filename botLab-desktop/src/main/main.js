@@ -818,6 +818,22 @@ function assembleDataset1() {
       fundingGapSec: ps.fundingGapSec ?? 0, // А6 R3: неоценённое время фандинга (кламп) - аддитивно
     },
     chain: bo.chain ? groupBtcOptChain(bo.chain, cycle?.underlying_price ?? bo.lastSnapshot?.underlying) : null,
+    // ЦЕПОЧКА СХЕМЫ ПРОДАВЦА. `stats` считает движок (`sellChainStats`), здесь только подача плюс
+    // две вещи, которых у чистого движка быть не может: причина последней неудачной попытки
+    // перевхода и время следующей. Молчащая цепочка, неделю не открывающая сделку, обязана быть
+    // отличима от работающей.
+    sellChain: eng.sellChain
+      ? {
+          on: !!eng.sellChain.on,
+          stopRequested: !!eng.sellChain.stopRequested,
+          armedAt: eng.sellChain.armedAt ?? null,
+          stoppedAt: eng.sellChain.stoppedAt ?? null,
+          trades: eng.sellChain.trades ?? [],
+          stats: s1engine.sellChainStats(eng),
+          last: bo.sellChainLast ?? null,
+          nextTryAt: eng.sellChain.on && !eng.structure ? sellChainNextTryAt : null,
+        }
+      : null,
     sweep: bo.sweepResult ?? null, // Phase 3b: the last runSweep result rides every dataset (re-render safe)
     fresh: bo.source
       ? bo.source.status()
@@ -1078,7 +1094,7 @@ const SELL_CHAIN_RETRY_MS = 30000;
 
 function maybeOpenNextSell() {
   const bo = state.btcOptions;
-  const chain = bo.settings?.sellChain;
+  const chain = bo.engine?.sellChain;
   if (!chain?.on) return;
   if (
     sellChainInFlight ||
@@ -1091,8 +1107,10 @@ function maybeOpenNextSell() {
     // Цепочка остановлена оператором И сделка дожила до конца: гасим флаг, чтобы после перезапуска
     // схема не воскресла сама. Остановка обязана быть окончательной, а не отложенной.
     if (chain.stopRequested && !bo.engine?.structure) {
-      bo.settings = { ...bo.settings, sellChain: { ...chain, on: false, stoppedAt: Date.now() } };
-      saveBotSettings(baseDir, BTCOPT_ID, bo.settings);
+      chain.on = false;
+      chain.stoppedAt = Date.now();
+      saveBotState(baseDir, BTCOPT_ID, bo.engine);
+      push1();
     }
     return;
   }
@@ -1270,6 +1288,41 @@ function wireIpcStrategy1() {
     } catch (e) {
       return { error: `Deribit: ${String(e.message || e)}` };
     }
+  });
+
+  // ── ВКЛЮЧЕНИЕ И ОСТАНОВКА ЦЕПОЧКИ ────────────────────────────────────────────────────────────
+  // Один канал на оба действия, потому что это одно состояние с двумя значениями, а не две команды.
+  // ВКЛЮЧЕНИЕ заводит опрос сразу: цепочка без опроса это открытая позиция без хеджа.
+  // ОСТАНОВКА текущую сделку НЕ закрывает - она доживает до экспирации, а следующая не открывается;
+  // окончательно флаг гаснет в `maybeOpenNextSell`, когда структуры не останется. Отмена остановки
+  // возможна ровно до этого момента, и это не поблажка, а свойство схемы: досрочный выход выводит
+  // результат за пределы измеренного, поэтому «остановить» и «закрыть» обязаны быть разными
+  // кнопками с разной ценой.
+  ipcMain.handle("s1:setChain", async (_e, patch) => {
+    const bo = state.btcOptions;
+    const ch = bo.engine.sellChain;
+    if (!ch) return { error: "состояние цепочки не поднято" };
+    if (patch?.on === true) {
+      ch.on = true;
+      ch.stopRequested = false;
+      ch.armedAt = Date.now();
+      ch.stoppedAt = null;
+      ch.params = patch.params ?? { qty: null, execStyle: bo.settings?.execStyle ?? "limit" };
+      sellChainNextTryAt = 0; // включили - пробуем на ближайшем тике, а не через окно троттлинга
+      ensureBtcOptSource();
+    } else if (patch?.on === false) {
+      // Структуры нет - гасим сразу; есть - помечаем и ждём экспирации.
+      ch.stopRequested = true;
+      if (!bo.engine.structure) {
+        ch.on = false;
+        ch.stoppedAt = Date.now();
+      }
+    } else if (patch?.stopRequested === false) {
+      ch.stopRequested = false; // отмена остановки
+    }
+    saveBotState(baseDir, BTCOPT_ID, bo.engine);
+    push1();
+    return { ok: true, sellChain: { on: ch.on, stopRequested: ch.stopRequested } };
   });
 
   ipcMain.handle("s1:closeStructure", async () => {
@@ -2553,7 +2606,7 @@ app.whenReady().then(async () => {
   if (S1_AUTOSTART) {
     ensureBtcOptSource();
     console.log("[s1] S1_AUTOSTART=1: опрос заведён на буте без показа вкладки");
-  } else if (state.btcOptions.engine?.structure || state.btcOptions.settings?.sellChain?.on) {
+  } else if (state.btcOptions.engine?.structure || state.btcOptions.engine?.sellChain?.on) {
     // ОТКРЫТАЯ ПОЗИЦИЯ ИЛИ ВКЛЮЧЁННАЯ ЦЕПОЧКА ЗАВОДЯТ ОПРОС САМИ, без переменной окружения.
     // Прежде это умел только флаг S1_AUTOSTART, то есть после перезагрузки машины уже открытая
     // бумажная позиция оставалась БЕЗ ХЕДЖА до тех пор, пока человек не нажмёт кнопку LIVE:

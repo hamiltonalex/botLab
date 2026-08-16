@@ -354,6 +354,25 @@ console.log(`Запись ${DIR}: ${N} снимков, ${dt(R.times[0])} .. ${dt
 console.log(`Депозит $${DEPOSIT} · размер ${QTY_FIXED ?? "от залога (lotsByMargin)"} · полоса ${BAND} BTC на контракт `
   + `· комиссия перпа ${(PERP_FEE * 1e4).toFixed(1)} б.п.${PERP_CS !== 10 ? ` · контракт перпа $${PERP_CS} (диагностика)` : ""}${DROP ? ` · КОНТРОЛЬ: заглушено правило ${DROP}` : ""}.`);
 console.log(`Движок: openStructure(kind: "sell-call") зовёт pickSellLeg и lotsByMargin, evaluate зовёт decideHedge, applyFill и settleStructure.\n`);
+
+// ── НАКОПИТЕЛЬ ЦЕПОЧКИ. Печатается ровно то, что увидит оператор на экране бота 2: карточка «Цепочка
+// · итог» читает `sellChainStats` и ничего больше не считает. Смысл раздела в том, чтобы числа
+// интерфейса были проверяемы теми же данными, что и книга: если они разойдутся с публикацией
+// эталона, разойдётся и экран, а поймать это на живом счёте нечем - там нет второй стороны сверки.
+{
+  const cs = s1engine.sellChainStats(st);
+  console.log(`## Накопитель цепочки (то, что покажет интерфейс)\n`);
+  console.log(`| показатель | значение |`);
+  console.log(`|---|---|`);
+  console.log(`| сделок в цепочке | ${cs.n} |`);
+  console.log(`| прибыльных | ${cs.wins} (${f(cs.winPct, 0)}%) |`);
+  console.log(`| средняя сделка | ${f(cs.avgRetPct, 2)}% залога |`);
+  console.log(`| залог вырос в | ${f(cs.equityMult, 2)} раза |`);
+  console.log(`| максимальная просадка залога | ${f(cs.maxDdPct, 1)}% |`);
+  console.log(`| итог, USD | ${f(cs.pnlUsd, 2)} |`);
+  console.log(`| медиана удержания | ${f(cs.medianHoldD, 1)} сут · ${f(cs.perYear, 1)} сделок в год |`);
+  console.log(`| досрочных выходов | ${cs.manual} |\n`);
+}
 console.log(`## Книга\n`);
 console.log(`| величина | значение |`);
 console.log(`|---|---|`);

@@ -125,6 +125,12 @@ export function create(params) {
     lastUnderlying: null, // last seen BTC price
     metrics: initMetrics(), // run-metrics accumulators (Phase 2b) — O(1) scalars, reset at each structure open
     lastRunMetrics: null, // frozen summary of the LAST finished run — the only survivor of openStructure's metrics reset
+    // ЦЕПОЧКА СХЕМЫ ПРОДАВЦА. Отдельный накопитель нужен потому, что `metrics` обнуляется КАЖДЫМ
+    // открытием, а `lastRunMetrics` хранит ровно одну прошлую сделку: на вопрос «схема из
+    // семнадцати сделок работает или нет» ответить было нечем. Леджер накопительный, то есть данные
+    // были, но их никто не считал. `trades` пишется на КАЖДУЮ проданную ногу, открытую цепочкой или
+    // руками: разделять их значило бы прятать от оператора часть его же истории.
+    sellChain: { on: false, stopRequested: false, armedAt: null, stoppedAt: null, params: null, trades: [], mark: null },
   };
 }
 
@@ -332,6 +338,11 @@ export function evaluate(state, snapshot, nowMs) {
   // ── Run metrics (Phase 2b): fold this reprice cycle into the O(1) accumulators. Only while a
   // structure is open (idle flat ticks would dilute Sharpe/hit-rate). maintUtil is wired in 2c.
   if (typeof state.metrics?.n !== "number") state.metrics = initMetrics(); // forward-migrate old {} state
+  // Профиль, записанный до появления цепочки, поднимается без неё: накопитель заводится пустым, а
+  // не роняет тик. Сделки, закрытые ДО этой версии, в цепочку не попадают - восстановить их из
+  // леджера можно, но это была бы вторая реализация того же счёта.
+  if (!Array.isArray(state.sellChain?.trades))
+    state.sellChain = { on: false, stopRequested: false, armedAt: null, stoppedAt: null, params: null, trades: [], mark: null };
   if (structure) {
     foldCycle(state.metrics, {
       net: pnl.net_total,
@@ -460,6 +471,7 @@ export function preTradeCheck(state, structure, metaByInstrument, snapshot, nowM
 // the nearest live expiry itself (≤3d, skipping any already inside the pre-expiry blackout — opening into
 // delta decay is never right). Gated by preTradeCheck; "warn" rejections ride along in the OK response.
 export function openStructure(state, params, chain, snapshot, nowMs) {
+  if (!state.sellChain) state.sellChain = { on: false, stopRequested: false, armedAt: null, stoppedAt: null, params: null, trades: [], mark: null };
   // One structure at a time: a second open would silently orphan the first (its MtM is realized only
   // via closeStructure) and leave the perp hedge sized for the discarded legs. The IPC resolve path is
   // async, so a double-click/retried invoke CAN land here twice — the guard, not the UI, is the invariant.
@@ -504,6 +516,9 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
 
   built.id = `s1-${built.expiryMs}-${built.strikes.atm}-${nowMs}`;
   built.createdAt = nowMs;
+  // Замер счётчиков ДО строки `open-cost`: издержки входа обязаны попасть в сделку, которая их
+  // заплатила, а не раствориться между сделками цепочки.
+  if (built.kind === "sell-call") chainMarkOpen(state, nowMs);
   // Freeze the engine params at open (read-only while running). The ACTUAL open params (ticket
   // qty/offsets/execStyle) overlay the settings snapshot: the toolbar pushes settings through a
   // debounce, so a confirm racing a just-toggled control could otherwise freeze a stale value —
@@ -560,6 +575,96 @@ function flattenPerp(state, snapshot, nowMs, cfg) {
   appendLedger(state, { t: nowMs, type: "close-perp", side, contracts: fill.filledContracts, priceRef, feeUsd: fill.feeUsd, realizedUsd: fill.realizedUsd });
 }
 
+// ── ЦЕПОЧКА: ЗАМЕР НА ВХОДЕ И СТРОКА НА ВЫХОДЕ ─────────────────────────────────────────────────
+//
+// ИТОГ СДЕЛКИ СЧИТАЕТСЯ РАЗНОСТЬЮ НАКОПИТЕЛЕЙ, а не собственной арифметикой, и это принципиально:
+// у бота 2 уже есть один ответ на вопрос «сколько заработано» (`attribute`), и второй ответ рядом
+// с ним разошёлся бы с первым при первой же правке. Берутся ровно те четыре счётчика, из которых
+// `attribute` складывает net_total, и в том же знаке:
+//   net = опционы + перп + фандинг − комиссии.
+// Замер снимается В САМОМ НАЧАЛЕ открытия, до строки `open-cost`, поэтому издержки входа попадают
+// в сделку, которая их заплатила.
+function chainCounters(state) {
+  return {
+    opt: state.realizedOptionsUsd || 0,
+    perp: state.perpState.realizedUsd || 0,
+    fund: state.perpState.fundingCum || 0,
+    fees: state.perpState.feesCum || 0,
+  };
+}
+
+function chainMarkOpen(state, nowMs) {
+  state.sellChain.mark = { at: nowMs, ...chainCounters(state) };
+}
+
+// Дописать закрытую сделку. `reason` различает штатный выход и досрочный: схема измерена ТОЛЬКО с
+// выходом в экспирацию, и сделка, закрытая руками, обязана нести это на себе постоянно, иначе итог
+// цепочки молча смешает измеренное с неизмеренным.
+function chainAppendTrade(state, nowMs, reason) {
+  const st = state.structure;
+  const m = state.sellChain?.mark;
+  if (!st || st.kind !== "sell-call" || !m) return;
+  const now = chainCounters(state);
+  const pnl = now.opt - m.opt + (now.perp - m.perp) + (now.fund - m.fund) - (now.fees - m.fees);
+  const leg = st.legs?.[0] ?? {};
+  const im = st.sizing?.imUsedUsd ?? null;
+  state.sellChain.trades.push({
+    instrument: leg.instrument ?? null,
+    openedAt: st.createdAt ?? m.at,
+    closedAt: nowMs,
+    expiryMs: st.expiryMs ?? null,
+    qtyAbs: leg.qtyAbs ?? null,
+    lots: st.sizing?.lots ?? null,
+    imUsd: im,
+    premiumUsd: st.pickedLeg?.mark ?? null,
+    strike: leg.strike ?? null,
+    pnlUsd: pnl,
+    // Доходность считается на ЗАЛОГ - та же база, в которой опубликован бектест («средняя +4.15%
+    // залога»). Без залога процент не считается вовсе: подставлять вместо него премию или счёт
+    // значило бы сравнивать с эталоном разные величины.
+    retImPct: im > 0 ? (pnl / im) * 100 : null,
+    fundingUsd: now.fund - m.fund,
+    feesUsd: now.fees - m.fees,
+    reason, // "expiry" | "manual"
+  });
+  state.sellChain.mark = null;
+}
+
+// sellChainStats(state) — сводка цепочки. Чистая, считается из уже записанных сделок, нигде не
+// хранится. `equityMult` перемножает (1 + доходность залога), как это делает эталон, поэтому число
+// сравнимо с публикацией бектеста напрямую.
+export function sellChainStats(state) {
+  const trades = state.sellChain?.trades ?? [];
+  const closed = trades.filter((t) => Number.isFinite(t.retImPct));
+  const n = trades.length;
+  if (!n) return { n: 0, wins: 0, winPct: null, avgRetPct: null, equityMult: null, maxDdPct: null,
+    pnlUsd: 0, manual: 0, medianHoldD: null, perYear: null, firstAt: null, lastAt: null };
+  let eq = 1, peak = 1, dd = 0;
+  for (const t of closed) {
+    eq *= 1 + t.retImPct / 100;
+    peak = Math.max(peak, eq);
+    dd = Math.max(dd, (peak - eq) / peak);
+  }
+  const holds = trades.map((t) => (t.closedAt - t.openedAt) / 86400000).filter((x) => x > 0).sort((a, b) => a - b);
+  const medianHoldD = holds.length ? holds[(holds.length - 1) >> 1] : null;
+  return {
+    n,
+    wins: trades.filter((t) => t.pnlUsd > 0).length,
+    winPct: (trades.filter((t) => t.pnlUsd > 0).length / n) * 100,
+    avgRetPct: closed.length ? closed.reduce((s, t) => s + t.retImPct, 0) / closed.length : null,
+    equityMult: closed.length ? eq : null,
+    maxDdPct: closed.length ? dd * 100 : null,
+    pnlUsd: trades.reduce((s, t) => s + t.pnlUsd, 0),
+    manual: trades.filter((t) => t.reason === "manual").length,
+    medianHoldD,
+    // Ожидание сделок за год берётся из ФАКТИЧЕСКОГО срока удержания, а не из константы 17: срок
+    // зависит от того, какие экспирации листингованы, и врать тут нечем.
+    perYear: medianHoldD > 0 ? 365 / medianHoldD : null,
+    firstAt: trades[0].openedAt,
+    lastAt: trades[n - 1].closedAt,
+  };
+}
+
 // Freeze the finished run's metrics BEFORE the structure ref is dropped — openStructure wipes
 // state.metrics at the next open, so this snapshot is the only survivor of a completed run.
 function snapshotRunMetrics(state, nowMs) {
@@ -590,6 +695,9 @@ export function closeStructure(state, snapshot, nowMs) {
   appendLedger(state, { t: nowMs, type: "close-options", realizedUsd: optMtm, note: `closed ${state.structure.id}` });
 
   state.lastRunMetrics = snapshotRunMetrics(state, nowMs);
+  // ДОСРОЧНЫЙ выход помечается навсегда: схема измерена только с выходом в экспирацию, и цепочка,
+  // содержащая ручное закрытие, обязана говорить об этом рядом со своим итогом.
+  chainAppendTrade(state, nowMs, "manual");
   state.structure = null;
   state.lastHedgeAt = null;
   state.lastHedgeUnderlying = null;
@@ -644,6 +752,7 @@ export function settleStructure(state, snapshot, nowMs) {
   });
 
   state.lastRunMetrics = snapshotRunMetrics(state, nowMs);
+  chainAppendTrade(state, nowMs, "expiry"); // ШТАТНЫЙ выход схемы, единственный измеренный
   state.structure = null;
   state.lastHedgeAt = null;
   state.lastHedgeUnderlying = null;
