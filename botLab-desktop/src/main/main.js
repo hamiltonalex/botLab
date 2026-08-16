@@ -53,6 +53,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const S1_SMOKE = process.env.S1_SMOKE === "1"; // bot-2 self-test: open→live ticks→close through the real s1 IPC
 const SCN_SMOKE = process.env.SCN_SMOKE === "1"; // S2 self-test сканера: живой scanCycle через реальный scn-IPC
 const SCN_AUTOSTART = process.env.SCN_AUTOSTART === "1"; // обкатка: завести опрос сканера на буте, без показа вкладки
+const S1_AUTOSTART = process.env.S1_AUTOSTART === "1"; // прогон бота 2: завести опрос на буте, без показа вкладки
 const SMOKE = process.env.FA_SMOKE === "1" || S1_SMOKE || SCN_SMOKE; // isolate profile + hidden window + skip updater
 isolateSmokeProfile(app, { enabled: SMOKE });
 // А6 (fault-tolerance, находка C1): один профиль - один процесс. Без лока второй `npm start` на том
@@ -2479,6 +2480,16 @@ app.whenReady().then(async () => {
   if (SCN_AUTOSTART) {
     ensureScanSource();
     console.log("[scn] SCN_AUTOSTART=1: опрос заведён на буте без показа вкладки");
+  }
+  // S1_AUTOSTART=1 — тот же приём для бота 2, и нужен он по той же причине, но острее. Опрос бота 2
+  // заводится ТОЛЬКО из renderer (кнопка LIVE) или при открытии структуры, поэтому после любого
+  // перезапуска машины уже открытая бумажная позиция осталась бы БЕЗ ХЕДЖА: структура из состояния
+  // поднимается, а источник котировок нет, и дельта поехала бы без присмотра до тех пор, пока
+  // человек не нажмёт кнопку. Схема продажи колла живёт до экспирации, то есть недели, и пережить
+  // за это время ребут или падение обязана сама. Флаг ничего не меняет без явной установки.
+  if (S1_AUTOSTART) {
+    ensureBtcOptSource();
+    console.log("[s1] S1_AUTOSTART=1: опрос заведён на буте без показа вкладки");
   }
   // S0: если приложение было закрыто в момент экспирации, pending settle-строки сверяются с
   // официальной delivery-ценой уже на буте (fire-and-forget; сам гейтится по pending/троттлингу).
