@@ -27,6 +27,7 @@
     "parity:sellhedge": "node --max-old-space-size=12000 scripts/parity-sellhedge.mjs",
     "hist:repack": "node scripts/hist-repack.mjs",
     "e2e:ui": "node scripts/e2e-ui.mjs",
+    "e2e:chain": "node scripts/e2e-chain.mjs",
     "verify:loris": "node scripts/verify-loris.mjs",
     "start": "electron .",
     "dist": "electron-builder",
