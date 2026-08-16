@@ -7,6 +7,8 @@
 //     only for SMALL moves; beyond that the bounded TERMINAL payoff (payoffAt, which pins to the wing
 //     cap) is the true, smaller outcome. We report min(instant, terminal-gain) and label the winner
 //     `instant` / `expiry`, so a spot row can never exceed the structure's max possible P&L (the wings).
+//     ОБЕ ВЕТКИ ХЕДЖИРОВАНЫ: терминальная включает вклад держимого перпа на том же движении, иначе
+//     две клетки одной таблицы стояли бы на разных базах (разбор у самой функции ниже).
 //   • IV — ΔV ≈ net_vega·ΔIV (vol points), the spec's first-class vol dimension (mode `instant`).
 //   • funding — one horizon of accrual on the held perp at 3× the current rate (mode `horizon`).
 
@@ -21,10 +23,26 @@ export function computeScenarios(structure, snapshot, greeks, perpState, cfg) {
   const base = payoffAt(structure, S0); // terminal payoff at the current spot (reference for the gain)
   const out = [];
 
+  // ОБЕ КЛЕТКИ СТОЯТ НА ХЕДЖИРОВАННОЙ БАЗЕ, И ПРЕЖДЕ ЭТО БЫЛО НЕ ТАК.
+  // `gammaEst` есть оценка ПРИ ХЕДЖЕ (первый порядок снят, остаётся выпуклость), а `terminalGain`
+  // считался по одному опциону, то есть БЕЗ хеджа. Правило `min(...)` сравнивало два числа в разных
+  // системах отсчёта, и на структуре с КОРОТКОЙ гаммой (схема продавца) смещение выходило
+  // разнонаправленным: верхний хвост показывал нехеджированный убыток короткого колла вместо
+  // хеджированного (пессимизм в разы), нижний - чистую гамма-оценку вместо статически хеджированной
+  // (оптимизм). Ни то ни другое не описывало книгу, которую оператор реально держит.
+  // Терминальная часть теперь включает вклад перпа на том же движении: позиция обратного контракта
+  // даёт ДОЛЛАРОВУЮ дельту `qty·cs/avgEntry` (та же конвенция, что у markPerp и usdDeltaOfInversePerp),
+  // и на сдвиге `dS` это `дельта·dS`. Хедж при этом СТОИТ НА МЕСТЕ - это честное допущение сценария
+  // «шок случился раньше, чем мы успели переложиться», в отличие от гамма-оценки, которая
+  // предполагает непрерывную перекладку. Правило `min` выбирает худшее из двух допущений и потому
+  // остаётся консервативным, но теперь обе ветки хотя бы про одну и ту же книгу.
+  const perpQty = perpState?.qty ?? 0;
+  const perpAvg = perpState?.avgEntry ?? 0;
+  const perpDeltaUsd = perpQty !== 0 && perpAvg > 0 ? (perpQty * (snapshot.perp?.contractSize ?? 10)) / perpAvg : 0;
   const spot = (id, p) => {
     const dS = S0 * p;
-    const gammaEst = 0.5 * gamma * dS * dS; // instant convexity (long gamma ⇒ ≥0)
-    const terminalGain = payoffAt(structure, S0 * (1 + p)) - base; // bounded by the wings (near-expiry)
+    const gammaEst = 0.5 * gamma * dS * dS; // instant convexity (long gamma ⇒ ≥0), delta already hedged
+    const terminalGain = payoffAt(structure, S0 * (1 + p)) - base + perpDeltaUsd * dS;
     const useInstant = gammaEst <= terminalGain; // gamma holds only while it's below the terminal bound
     out.push({
       id,

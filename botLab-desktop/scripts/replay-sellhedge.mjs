@@ -35,6 +35,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { priceAt, makePriceStats, countPrice, formatPriceStats } from "../src/engine/otmscan/hist-price.js";
+import { shouldOpenNext } from "../src/engine/otmscan/sellhedge.js";
 import * as s1engine from "../src/engine/btcopt/engine.js";
 
 const fin = (x) => Number.isFinite(x);
@@ -143,23 +144,32 @@ const spotBefore = (T) => { let lo = 0, hi = N - 1, res = null;
 // 3600 с: с дефолтом каждое начисление урезалось бы до 1/12 и фандинг занизился бы в двенадцать раз.
 // Кламп существует против разрыва тиков при засыпании машины (оценивать многочасовой разрыв текущей
 // мгновенной ставкой неверно), но у ЧАСОВОЙ записи разрыва нет - есть её собственный шаг.
+//
+// ЧТО ИЗ ЭТОГО СПИСКА ДРАЙВЕР БОЛЬШЕ НЕ ЗАДАЁТ, И ЭТО ГЛАВНОЕ ИЗМЕНЕНИЕ СВЕРКИ. Полосу, λ, оба
+// триггера и блэкаут расчёта теперь ставит САМ ДВИЖОК при открытии структуры-продавца
+// (`sellhedgeEngineCfg` в sellhedge.js, применяется в `openStructure`). Пока их выставлял драйвер,
+// сверка доказывала свойство СКРИПТА: «если движку вручную задать шесть чисел, он согласится с
+// эталоном». Ответа на вопрос «а что сделает приложение с профилем по умолчанию» она не давала, и
+// ответ был бы ×24.2 вместо ×46.5. Теперь драйвер их не трогает, и совпадение книги проверяет
+// конфигурацию, которая реально доедет до боя.
 const settings = {
-  deadbandBtc: DROP === "band-off" ? 0 : BAND, // КОНТРОЛЬ band-off: полосы нет, хедж на каждом тике
-  deadbandRefQty: 1.0,
-  priceTriggerPct: 1e9, // «никогда»
-  benefitMovePct: 0.5, // масштаб выгоды: отдельный knob (иначе 1e9 утёк бы в expectedBenefit)
-  rehedgeSec: 1e9, // «никогда»
-  lambda: 0, // гейт вырождается в benefit > 0 ⇒ решает полоса
+  benefitMovePct: 0.5, // масштаб выгоды: отдельный knob (иначе 1e9 из priceTriggerPct утёк бы в него)
   execStyle: "limit",
   makerFeeRate: PERP_FEE,
   takerFeeRate: PERP_FEE, // закрытие перпа в экспирацию у бота 2 ВСЕГДА market; у эталона ставка одна
   slippageRate: 0.0002, // входит только в estimateCost, а тот при λ = 0 не решает
-  settlementBlackout: false,
   fundingMaxGapSec: 1e9, // см. выше
   paperEquityUsd: DEPOSIT,
   qty: QTY_FIXED ?? LOT,
 };
-const sellCfg = { bandBtc: BAND, lot: LOT, execModel: "maker-mid" };
+// БЛЭКАУТ РАСЧЁТА ЗДЕСЬ НАМЕРЕННО НЕ ВЫКЛЮЧЕН: в профиле он остаётся дефолтным `true`, и выключить
+// его обязан сам движок веткой продавца. Если однажды перестанет - сверка это увидит, потому что
+// экспирации Deribit наступают ровно в 08:00 UTC, то есть в самом окне блэкаута.
+const sellCfg = {
+  bandBtc: DROP === "band-off" ? 0 : BAND, // КОНТРОЛЬ band-off: полосы нет, хедж на каждом тике
+  lot: LOT,
+  execModel: "maker-mid",
+};
 
 // ── СБОРКА СНИМКА ИЗ ЗАПИСИ: ровно тот контракт, что отдаёт `buildDeribitSnapshot`.
 // Цена ОТКРЫТОЙ ноги всегда идёт через лестницу `priceAt` (как у эталона), даже когда строка в
@@ -245,9 +255,13 @@ for (let i = 0; i < N; i++) {
   prevTs = ts;
   s1engine.ingest(st, snapshot, ts);
   const hadStructure = !!st.structure;
-  // Открытие пробуем ДО evaluate и только когда движок плоский - так же, как это делает main.js
-  // (s1:openStructure, затем evaluate на ТОМ ЖЕ снимке).
-  if (!hadStructure) {
+  // ПЕРЕВХОД СПРАШИВАЕТСЯ У ПРАВИЛА, А НЕ РЕШАЕТСЯ ЗДЕСЬ. Прежде тут стояло `if (!hadStructure)`,
+  // то есть цепочку строил САМ ДРАЙВЕР, и сверка книг доказывала свойство скрипта: в приложении эту
+  // строку не исполняет никто, после экспирации позиция просто исчезала. Теперь условие приходит из
+  // `sellhedge.js`, и тот же вызов делает боевой тракт. Порядок (до `evaluate`) - часть правила:
+  // на тике экспирации структура ещё открыта, поэтому расчёт делает `evaluate` этого тика, а
+  // следующая сделка открывается СЛЕДУЮЩИМ тиком, как `i = endIdx + 1` у эталона.
+  if (shouldOpenNext({ hasStructure: hadStructure, chainOn: true, stopRequested: false })) {
     const before = st.ledger.length;
     const res = s1engine.openStructure(
       st,
@@ -340,6 +354,25 @@ console.log(`Запись ${DIR}: ${N} снимков, ${dt(R.times[0])} .. ${dt
 console.log(`Депозит $${DEPOSIT} · размер ${QTY_FIXED ?? "от залога (lotsByMargin)"} · полоса ${BAND} BTC на контракт `
   + `· комиссия перпа ${(PERP_FEE * 1e4).toFixed(1)} б.п.${PERP_CS !== 10 ? ` · контракт перпа $${PERP_CS} (диагностика)` : ""}${DROP ? ` · КОНТРОЛЬ: заглушено правило ${DROP}` : ""}.`);
 console.log(`Движок: openStructure(kind: "sell-call") зовёт pickSellLeg и lotsByMargin, evaluate зовёт decideHedge, applyFill и settleStructure.\n`);
+
+// ── НАКОПИТЕЛЬ ЦЕПОЧКИ. Печатается ровно то, что увидит оператор на экране бота 2: карточка «Цепочка
+// · итог» читает `sellChainStats` и ничего больше не считает. Смысл раздела в том, чтобы числа
+// интерфейса были проверяемы теми же данными, что и книга: если они разойдутся с публикацией
+// эталона, разойдётся и экран, а поймать это на живом счёте нечем - там нет второй стороны сверки.
+{
+  const cs = s1engine.sellChainStats(st);
+  console.log(`## Накопитель цепочки (то, что покажет интерфейс)\n`);
+  console.log(`| показатель | значение |`);
+  console.log(`|---|---|`);
+  console.log(`| сделок в цепочке | ${cs.n} |`);
+  console.log(`| прибыльных | ${cs.wins} (${f(cs.winPct, 0)}%) |`);
+  console.log(`| средняя сделка | ${f(cs.avgRetPct, 2)}% залога |`);
+  console.log(`| залог вырос в | ${f(cs.equityMult, 2)} раза |`);
+  console.log(`| максимальная просадка залога | ${f(cs.maxDdPct, 1)}% |`);
+  console.log(`| итог, USD | ${f(cs.pnlUsd, 2)} |`);
+  console.log(`| медиана удержания | ${f(cs.medianHoldD, 1)} сут · ${f(cs.perYear, 1)} сделок в год |`);
+  console.log(`| досрочных выходов | ${cs.manual} |\n`);
+}
 console.log(`## Книга\n`);
 console.log(`| величина | значение |`);
 console.log(`|---|---|`);

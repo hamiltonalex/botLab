@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld("s1", {
   reset: () => ipcRenderer.invoke("s1:reset"),
   getChain: (req) => ipcRenderer.invoke("s1:getChain", req), // instrument picker for manual entry
   cancelSellPreview: () => ipcRenderer.invoke("s1:cancelSellPreview"), // тикет продавца закрыт без открытия
+  setChain: (patch) => ipcRenderer.invoke("s1:setChain", patch), // включить/остановить цепочку схемы продавца
   runSweep: () => ipcRenderer.invoke("s1:runSweep"), // Phase 3b: parameter sweep over the captured history
   getLedger: (req) => ipcRenderer.invoke("s1:getLedger", req),
   exportLedger: (req) => ipcRenderer.invoke("s1:exportLedger", req),

@@ -164,7 +164,16 @@ export function buildSellStructure(params, chain, snapshot, nowMs) {
     if (!Number.isFinite(params?.equityUsd)) return { error: "Нет счёта для расчёта размера от залога" };
     const s = lotsByMargin({ imUsdPerContract: imPerContract, equityUsd: params.equityUsd, cfg });
     sizing = { ...s, imPerContract };
-    if (!(s.lots >= 1)) return { error: `Залог $${Math.round(s.imLotUsd ?? 0)} за лот не помещается в счёт $${Math.round(params.equityUsd)}`, sizing };
+    // ОТКАЗ НАЗЫВАЕТ НУЖНЫЙ ДЕПОЗИТ, А НЕ ТОЛЬКО ФАКТ НЕХВАТКИ. Дефолтный бумажный счёт $100 не даёт
+    // ни одного лота (медиана залога за лот $92-102 при потолке развёртывания 70%), то есть на чистом
+    // профиле схема не открывается НИКОГДА, и оператору надо сказать не «не помещается», а сколько
+    // именно завести. Правило размера при этом не трогается: оно совпадает с эталоном и закреплено
+    // тестом, а ноль лотов при недостаточном счёте это верный ответ, а не дефект.
+    if (!(s.lots >= 1)) {
+      const need = Math.ceil((s.imLotUsd ?? 0) / (cfg.deployPct || 1));
+      return { error: `Залог $${Math.round(s.imLotUsd ?? 0)} за лот не помещается в счёт $${Math.round(params.equityUsd)}: `
+        + `нужно от $${need} (потолок развёртывания ${Math.round((cfg.deployPct || 0) * 100)}% счёта)`, sizing };
+    }
     qtyAbs = s.lots * cfg.lot;
   } else {
     sizing = { lots: Math.round(qtyAbs / cfg.lot), imLotUsd: imPerContract * cfg.lot, imUsedUsd: imPerContract * qtyAbs, imPerContract };

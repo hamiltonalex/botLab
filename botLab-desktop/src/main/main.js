@@ -29,6 +29,7 @@ import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
 import { buildStructure as s1buildStructure, buildSellStructure as s1buildSellStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry } from "../engine/btcopt/structure.js";
 import { pickSellLeg as s1pickSellLeg, SELLHEDGE_DEFAULTS } from "../engine/otmscan/sellhedge.js";
+import * as s1sellhedge from "../engine/otmscan/sellhedge.js";
 import { payoffCurve as s1payoffCurve } from "../engine/btcopt/payoff.js";
 import { runSweep as s1runSweep } from "../engine/btcopt/sweep.js";
 import { summarize as s1summarize } from "../engine/btcopt/metrics.js";
@@ -659,7 +660,14 @@ async function resolveBtcOptSellStructureLive(params) {
   // Тот же закон, что у покупателя: структура СТРОИТСЯ по цене перпа из пробы, а не по более свежей
   // из тикера опциона, иначе выбор мог бы разойтись с тем, что реально прокотировано.
   const buildSnap = { ...snap, underlying: perpTk.index_price };
-  return { chain, snap, buildSnap, params: { ...(params ?? {}), sellCfg: params?.sellCfg ?? null }, leg };
+  // МНОЖИТЕЛЬ СПРЕДА В ЖИВОМ ТРАКТЕ РАВЕН ЕДИНИЦЕ, И ЭТО НЕ НАСТРОЙКА, А ГРАНИЦА ПРИМЕНИМОСТИ.
+  // `spreadScale` = 1.10 в SELLHEDGE_DEFAULTS это ПОПРАВКА НА МОДЕЛЬНЫЕ КОТИРОВКИ восстановленной
+  // записи: её bid/ask синтетические и занижают круг издержек на 6% против живого замера. Здесь
+  // bid/ask настоящие, биржевые, и та же поправка раздувала бы уже наблюдённый спред ещё на десятую
+  // часть, то есть завышала бы издержки входа на ровном месте. Офлайн-скрипты своё значение задают
+  // сами (`--spread-scale`), поэтому эталонные числа этой строкой не двигаются.
+  const liveSellCfg = { ...(params?.sellCfg ?? {}), spreadScale: 1 };
+  return { chain, snap, buildSnap, params: { ...(params ?? {}), sellCfg: liveSellCfg }, leg };
 }
 
 // Record the tick into the rings. The snapshot copy is taken BEFORE ivContext is attached, so history
@@ -817,6 +825,23 @@ function assembleDataset1() {
       fundingGapSec: ps.fundingGapSec ?? 0, // А6 R3: неоценённое время фандинга (кламп) - аддитивно
     },
     chain: bo.chain ? groupBtcOptChain(bo.chain, cycle?.underlying_price ?? bo.lastSnapshot?.underlying) : null,
+    // ЦЕПОЧКА СХЕМЫ ПРОДАВЦА. `stats` считает движок (`sellChainStats`), здесь только подача плюс
+    // две вещи, которых у чистого движка быть не может: причина последней неудачной попытки
+    // перевхода и время следующей. Молчащая цепочка, неделю не открывающая сделку, обязана быть
+    // отличима от работающей.
+    sellChain: eng.sellChain
+      ? {
+          on: !!eng.sellChain.on,
+          stopRequested: !!eng.sellChain.stopRequested,
+          armedAt: eng.sellChain.armedAt ?? null,
+          stoppedAt: eng.sellChain.stoppedAt ?? null,
+          trades: eng.sellChain.trades ?? [],
+          stats: s1engine.sellChainStats(eng),
+          uptime: s1engine.uptimeStats(eng),
+          last: bo.sellChainLast ?? null,
+          nextTryAt: eng.sellChain.on && !eng.structure ? sellChainNextTryAt : null,
+        }
+      : null,
     sweep: bo.sweepResult ?? null, // Phase 3b: the last runSweep result rides every dataset (re-render safe)
     fresh: bo.source
       ? bo.source.status()
@@ -846,6 +871,7 @@ function onBtcOptSnapshot(snap) {
     saveBotState(baseDir, BTCOPT_ID, bo.engine);
     push1();
     refreshBtcOptBand(snap.underlying); // may re-point the source for the NEXT tick
+    maybeOpenNextSell(); // цепочка схемы продавца: async, самогейтится, в тик не бросает
     flushBtcOptHistory(false);
     ensureBtcOptDvol(); // async, self-gated to the 5-min cadence, never throws into the tick
     maybeReconcileSettles(); // S0: async, self-gated (10 мин + pending-строки), never throws into the tick
@@ -1054,6 +1080,69 @@ async function openSellStructure(params) {
   }
 }
 
+// ── ЦЕПОЧКА СХЕМЫ ПРОДАВЦА ──────────────────────────────────────────────────────────────────────
+//
+// ЗАЧЕМ. Годовой результат схемы делают 16-17 сделок ПОДРЯД: правило эталона звучит «закрылась
+// сделка, в тот же день открывается следующая» (`hist-sellhedge.mjs`, функция `chain`). У живого
+// бота такого правила не было вовсе - `settleStructure` обнуляет структуру, и следующую не
+// открывал никто. Оператор должен был бы шестнадцать раз в год поймать момент вскоре после
+// экспирации, а схема живёт неделями и переживает перезагрузки.
+//
+// РЕШЕНИЕ О ПЕРЕВХОДЕ ЗДЕСЬ НЕ ПРИНИМАЕТСЯ: его принимает `shouldOpenNext` из sellhedge.js, то есть
+// та же функция, которой пользуется прогон записи. Здесь только СНАБЖЕНИЕ и защита от повторного
+// входа: `openSellStructure` асинхронна (ей нужен срез поверхности), а тики идут каждые 15 секунд.
+//
+// ТРОТТЛИНГ 30 СЕКУНД - не вкус, а цена запроса: ступень A это `book_summary` по всей валюте, и
+// бюджет запросов Deribit у проекта уже измерен как узкий (конкуренция сканера и бота 2 роняла
+// покрытие опроса с 99.7% до 81%). Отказ повторяется, потому что подходящей ноги может не быть
+// часами, а сдаваться схеме нельзя: пауза в цепочке это ровно та потеря, ради которой всё делается.
+let sellChainInFlight = false;
+let sellChainNextTryAt = 0;
+const SELL_CHAIN_RETRY_MS = 30000;
+
+function maybeOpenNextSell() {
+  const bo = state.btcOptions;
+  const chain = bo.engine?.sellChain;
+  if (!chain?.on) return;
+  if (
+    sellChainInFlight ||
+    !s1sellhedge.shouldOpenNext({
+      hasStructure: !!bo.engine?.structure,
+      chainOn: true,
+      stopRequested: !!chain.stopRequested,
+    })
+  ) {
+    // Цепочка остановлена оператором И сделка дожила до конца: гасим флаг, чтобы после перезапуска
+    // схема не воскресла сама. Остановка обязана быть окончательной, а не отложенной.
+    if (chain.stopRequested && !bo.engine?.structure) {
+      chain.on = false;
+      chain.stoppedAt = Date.now();
+      saveBotState(baseDir, BTCOPT_ID, bo.engine);
+      push1();
+    }
+    return;
+  }
+  const now = Date.now();
+  if (now < sellChainNextTryAt) return;
+  sellChainNextTryAt = now + SELL_CHAIN_RETRY_MS;
+  sellChainInFlight = true;
+  openSellStructure(chain.params ?? {})
+    .then((r) => {
+      // Причина отказа ХРАНИТСЯ и уезжает в UI: молчащая цепочка, которая неделю не может открыться,
+      // неотличима от работающей, а это ровно тот класс дефекта, который проект ловил раньше.
+      bo.sellChainLast = r?.error
+        ? { at: now, ok: false, reason: r.error }
+        : { at: now, ok: true, structureId: r?.structureId ?? null };
+      if (!r?.error) push1();
+    })
+    .catch((e) => {
+      bo.sellChainLast = { at: now, ok: false, reason: String(e?.message || e) };
+    })
+    .finally(() => {
+      sellChainInFlight = false;
+    });
+}
+
 function wireIpcStrategy1() {
   ipcMain.handle("s1:getState", async () => assembleDataset1());
   // Оператор закрыл тикет продавца, ничего не открыв. Это НЕ выводится из других вызовов, поэтому
@@ -1207,6 +1296,41 @@ function wireIpcStrategy1() {
     } catch (e) {
       return { error: `Deribit: ${String(e.message || e)}` };
     }
+  });
+
+  // ── ВКЛЮЧЕНИЕ И ОСТАНОВКА ЦЕПОЧКИ ────────────────────────────────────────────────────────────
+  // Один канал на оба действия, потому что это одно состояние с двумя значениями, а не две команды.
+  // ВКЛЮЧЕНИЕ заводит опрос сразу: цепочка без опроса это открытая позиция без хеджа.
+  // ОСТАНОВКА текущую сделку НЕ закрывает - она доживает до экспирации, а следующая не открывается;
+  // окончательно флаг гаснет в `maybeOpenNextSell`, когда структуры не останется. Отмена остановки
+  // возможна ровно до этого момента, и это не поблажка, а свойство схемы: досрочный выход выводит
+  // результат за пределы измеренного, поэтому «остановить» и «закрыть» обязаны быть разными
+  // кнопками с разной ценой.
+  ipcMain.handle("s1:setChain", async (_e, patch) => {
+    const bo = state.btcOptions;
+    const ch = bo.engine.sellChain;
+    if (!ch) return { error: "состояние цепочки не поднято" };
+    if (patch?.on === true) {
+      ch.on = true;
+      ch.stopRequested = false;
+      ch.armedAt = Date.now();
+      ch.stoppedAt = null;
+      ch.params = patch.params ?? { qty: null, execStyle: bo.settings?.execStyle ?? "limit" };
+      sellChainNextTryAt = 0; // включили - пробуем на ближайшем тике, а не через окно троттлинга
+      ensureBtcOptSource();
+    } else if (patch?.on === false) {
+      // Структуры нет - гасим сразу; есть - помечаем и ждём экспирации.
+      ch.stopRequested = true;
+      if (!bo.engine.structure) {
+        ch.on = false;
+        ch.stoppedAt = Date.now();
+      }
+    } else if (patch?.stopRequested === false) {
+      ch.stopRequested = false; // отмена остановки
+    }
+    saveBotState(baseDir, BTCOPT_ID, bo.engine);
+    push1();
+    return { ok: true, sellChain: { on: ch.on, stopRequested: ch.stopRequested } };
   });
 
   ipcMain.handle("s1:closeStructure", async () => {
@@ -2490,6 +2614,16 @@ app.whenReady().then(async () => {
   if (S1_AUTOSTART) {
     ensureBtcOptSource();
     console.log("[s1] S1_AUTOSTART=1: опрос заведён на буте без показа вкладки");
+  } else if (state.btcOptions.engine?.structure || state.btcOptions.engine?.sellChain?.on) {
+    // ОТКРЫТАЯ ПОЗИЦИЯ ИЛИ ВКЛЮЧЁННАЯ ЦЕПОЧКА ЗАВОДЯТ ОПРОС САМИ, без переменной окружения.
+    // Прежде это умел только флаг S1_AUTOSTART, то есть после перезагрузки машины уже открытая
+    // бумажная позиция оставалась БЕЗ ХЕДЖА до тех пор, пока человек не нажмёт кнопку LIVE:
+    // структура из состояния поднималась, а источник котировок нет. Для схемы продавца это не
+    // теория - она держит короткий колл неделями, и цена простоя измерена: каданс решения 24 часа
+    // роняет пятилетний результат с ×46.5 до ×16.2 при просадке 30.6% против 13.5%. Флаг остаётся
+    // для случая «завести опрос БЕЗ позиции» (прогоны на отдельной машине).
+    ensureBtcOptSource();
+    console.log("[s1] на буте найдена открытая структура или включённая цепочка: опрос заведён");
   }
   // S0: если приложение было закрыто в момент экспирации, pending settle-строки сверяются с
   // официальной delivery-ценой уже на буте (fire-and-forget; сам гейтится по pending/троттлингу).

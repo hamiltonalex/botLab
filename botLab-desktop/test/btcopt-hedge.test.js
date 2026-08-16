@@ -92,8 +92,8 @@ test("computeTriggers: delta-only fires with the excess and reasons list", () =>
   assert.deepEqual(t.reasons, ["delta"]);
 });
 
-test("expectedBenefit = |deltaExcess|·underlying·m", () => {
-  near(expectedBenefit({ deltaExcess: 0.002, underlying: 63000, m: 0.005 }), 0.63, 1e-9, "benefit");
+test("expectedBenefit = |deltaBtc|·underlying·m", () => {
+  near(expectedBenefit({ deltaBtc: 0.002, underlying: 63000, m: 0.005 }), 0.63, 1e-9, "benefit");
 });
 
 // The golden worked numbers (taker fee + half-spread) are MARKET-branch semantics.
@@ -128,10 +128,10 @@ test("estimateCost (limit): maker fee, no spread term, slippage survives as the 
   near(c.total, c.slippage, 1e-9, "total = slippage only");
 });
 
-test("estimateCost funding term is SIGNED: a short target receiving positive funding lowers total", () => {
-  // SHORT target −0.01 BTC, positive funding 2 bps/8h over the 1-period horizon:
-  // funding_horizon = −0.01·63000·0.0002 = −$0.126 — a benefit, mirroring pnl.accrueFunding where a
-  // short with positive funding8h RECEIVES. Math.abs(target) would have flipped it into a phantom cost.
+test("estimateCost: фандинг берётся с ПРИРАЩЕНИЯ заявки, карри всей позиции отдельной статьёй", () => {
+  // ЧТО ЗДЕСЬ ЗАКРЕПЛЕНО. Маргинальная цена перекладки это то, что заявка ДОБАВЛЯЕТ, а карри всей
+  // позиции платится независимо от решения переложиться. Прежде в total шёл targetQty, и полоса
+  // становилась плавающей: при ставке +5 б.п./8ч движок ждал троекратной полосы вместо своей.
   const c = estimateCost({
     hedgeQty: 0.002,
     targetQty: -0.01,
@@ -139,17 +139,33 @@ test("estimateCost funding term is SIGNED: a short target receiving positive fun
     liquidity: { halfSpread: 1 },
     cfg: mktCfg,
   });
-  near(c.funding_horizon, -0.126, 1e-9, "funding_horizon (received)");
-  near(c.total, 0.126 + 0.002 + 0 - 0.126, 1e-9, "total net of received funding");
-  // The mirror: a LONG target paying the same rate keeps it a genuine cost.
-  const l = estimateCost({
-    hedgeQty: 0.002,
+  near(c.funding_horizon, 0.002 * 63000 * 0.0002, 1e-9, "фандинг на приращении");
+  near(c.carry_horizon, -0.01 * 63000 * 0.0002, 1e-9, "карри целевой позиции виден отдельно");
+  near(c.total, c.fee + c.spread + c.slippage + c.funding_horizon, 1e-9, "карри в total НЕ входит");
+  // Знак сохранён: заявка, СНИМАЮЩАЯ лонг при положительной ставке, экономит карри.
+  const sell = estimateCost({
+    hedgeQty: -0.002,
     targetQty: 0.01,
     perp: { mark: 63000, funding8h: 0.0002, contractSize: 10 },
     liquidity: { halfSpread: 1 },
     cfg: mktCfg,
   });
-  near(l.funding_horizon, 0.126, 1e-9, "funding_horizon (paid)");
+  near(sell.funding_horizon, -0.002 * 63000 * 0.0002, 1e-9, "знак приращения сохранён");
+});
+
+test("decideHedge: отрицательные издержки не вырождают гейт (сравнение с max(0, total))", () => {
+  // При благоприятной ставке фандинга total может уйти в минус, и тогда `benefit > total·λ`
+  // выполнялось бы при ЛЮБОЙ выгоде. Здесь избыток дельты РОВНО ноль: заявки быть не должно.
+  const r = decideHedge({
+    optionDelta: -0.001, Qperp: 0.001, // ровно нейтрально: избытка нет
+    snapshot: { underlying: 63000, perp: { mark: 63000, funding8h: -0.01, contractSize: 10 } },
+    liquidity: { halfSpread: 1 },
+    cfg: { ...mktCfg, deadbandBtc: 0.001, deadbandRefQty: 0.01, lambda: 1.25, priceTriggerPct: 0,
+      rehedgeSec: 0, settlementBlackout: false, benefitMovePct: 0.5 },
+    nowMs: NOON, expiryMs: NOON + 86400000, createdAt: NOON - 1000,
+    lastHedgeAt: null, lastHedgeUnderlying: null, step: 10 / 63000, structureQty: 0.01,
+  });
+  assert.equal(r.decision, "SKIP", "нулевой избыток не может пройти гейт ни при какой ставке");
 });
 
 test("decideHedge HEDGE case — benefit clears cost·lambda", () => {

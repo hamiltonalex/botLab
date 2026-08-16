@@ -102,21 +102,44 @@ export function computeTriggers({
   return { deltaFired, priceFired, timeFired, reasons, deltaExcess, priceMovePct };
 }
 
-// Expected $ benefit of re-hedging: the delta we would neutralize (BTC beyond the deadband) times
-// the underlying times m (the price-move fraction the trigger is tuned to protect against).
-export function expectedBenefit({ deltaExcess, underlying, m }) {
-  return Math.abs(deltaExcess) * underlying * m;
+// Expected $ benefit of re-hedging: the delta we would neutralize times the underlying times m (the
+// price-move fraction the trigger is tuned to protect against).
+//
+// ВЕЛИЧИНА ОДНА И ТА ЖЕ С ИЗДЕРЖКАМИ, И ПРЕЖДЕ ЭТО БЫЛО НЕ ТАК. Выгода мерилась ИЗБЫТКОМ за полосой,
+// а издержки - ПОЛНЫМ остатком дельты, который заявка и снимает. Две разные величины в двух половинах
+// одного неравенства дают систематический перекос В СТОРОНУ ПРОПУСКА ровно на краю полосы: там
+// избыток стремится к нулю, а торгуемый объём равен всей полосе, поэтому выгода занижена в
+// (полоса + избыток)/избыток раз, то есть неограниченно. Полоса при этом перестаёт быть решающим
+// правилом и превращается в «полоса плюс сколько-то сверху», причём это «сколько-то» нигде не
+// названо. Теперь обе половины считаются на ФАКТИЧЕСКИ ТОРГУЕМОМ объёме: он и есть то, за что
+// платят комиссию и проскальзывание, и то, что реально снимает риск.
+export function expectedBenefit({ deltaBtc, underlying, m }) {
+  return Math.abs(deltaBtc) * underlying * m;
 }
 
 // Itemized $ cost of the hedge, execution-style aware (mirrors the fill semantics in engine.js):
 // market — fee is round-trip (2x taker) on the traded size and the half-spread is paid; limit
 // (post-only) — maker rate (Deribit BTC-perp 0.00%) and NO spread term (the fill models mid).
 // slippage stays in BOTH branches as a non-zero cost floor: a real resting order still carries
-// non-fill / adverse-selection risk, and a zero total would degenerate the λ filter. funding_horizon
-// is the expected funding carried on the *target* futures position over cfg.fundingHorizonSec
-// (normalized to the 8h funding period) — SIGNED: a long target (δ>0) pays positive funding (a
-// cost), a short target RECEIVES it (negative cost) — the cost-side view of pnl.accrueFunding's
-// −qty·… convention. total is the plain sum and may therefore be reduced by favorable funding.
+// non-fill / adverse-selection risk, and a zero total would degenerate the λ filter.
+//
+// ФАНДИНГ СЧИТАЕТСЯ НА ПРИРАЩЕНИЕ ЗАЯВКИ, А НЕ НА ВСЮ ЦЕЛЕВУЮ ПОЗИЦИЮ, И ЭТО БЫЛ ДЕФЕКТ. Прежде
+// сюда шёл `targetQty`, то есть карри ВСЕЙ позиции за восемь часов. Но карри платится независимо от
+// того, переложимся мы сейчас или нет: он не является издержкой РЕШЕНИЯ переложиться. Подстановка
+// его в маргинальную цену давала два наблюдаемых следствия, оба вредных:
+//   1. фиксированная полоса превращалась в ПЛАВАЮЩУЮ, зависящую от ставки фандинга. Замер при полосе
+//      0.03 и споте $100k: при нулевом фандинге движок перекладывался на 1.05 полосы, при +1 б.п.
+//      за 8 часов на 1.44, при +5 б.п. на 3.03 полосы. Полоса, разъезжающаяся втрое вслед за
+//      ставкой, это уже не то число, сеткой которого выбрана 0.03;
+//   2. при ОТРИЦАТЕЛЬНОМ фандинге слагаемое становилось отрицательным и могло утянуть весь `total`
+//      ниже нуля, а тогда гейт `benefit > total·λ` выполнялся при ЛЮБОЙ выгоде, включая нулевую.
+// Правильная маргинальная цена перекладки это комиссия, спред и проскальзывание на торгуемом
+// объёме плюс изменение карри, которое эта заявка вносит, то есть фандинг на ПРИРАЩЕНИИ. Знак
+// сохранён прежний (зеркало `pnl.accrueFunding`): заявка, наращивающая лонг при положительной
+// ставке, добавляет расход; уменьшающая его - экономит.
+//
+// `total` НЕ зажимается снизу здесь: отдельные статьи и их сумма остаются честной арифметикой, в том
+// числе отрицательной. Зажимает потребитель (`decideHedge`), и там же объяснено почему.
 export function estimateCost({ hedgeQty, targetQty, perp, liquidity, cfg }) {
   const limit = cfg.execStyle === "limit";
   const feeRate = limit ? cfg.makerFeeRate ?? 0 : cfg.takerFeeRate;
@@ -124,9 +147,12 @@ export function estimateCost({ hedgeQty, targetQty, perp, liquidity, cfg }) {
   const spread = limit ? 0 : Math.abs(hedgeQty) * liquidity.halfSpread;
   const slippage = Math.abs(hedgeQty) * perp.mark * cfg.slippageRate;
   const funding_horizon =
-    targetQty * perp.mark * perp.funding8h * (cfg.fundingHorizonSec / 28800);
+    hedgeQty * perp.mark * perp.funding8h * (cfg.fundingHorizonSec / 28800);
   const total = fee + spread + slippage + funding_horizon;
-  return { fee, spread, slippage, funding_horizon, total };
+  // `carry_horizon` - справочная статья: полный карри целевой позиции за горизонт. Он реален и его
+  // надо видеть, но он не должен решать, перекладываться ли СЕЙЧАС, поэтому в `total` не входит.
+  const carry_horizon = targetQty * perp.mark * perp.funding8h * (cfg.fundingHorizonSec / 28800);
+  return { fee, spread, slippage, funding_horizon, carry_horizon, total };
 }
 
 // The hedge decision for one evaluation cycle. Returns one of HEDGE / SKIP / BLACKOUT with the
@@ -203,9 +229,11 @@ export function decideHedge({
     return { decision: "SKIP", estimated_cost: null, estimated_benefit: 0, hedge_order: null, ...base };
   }
 
-  // (5) benefit vs itemized cost
+  // (5) benefit vs itemized cost. ОБЕ ПОЛОВИНЫ НА ОДНОЙ ВЕЛИЧИНЕ: на объёме, который заявка
+  // реально снимает (см. шапку expectedBenefit). Прежде выгода мерилась избытком за полосой, а
+  // издержки полным остатком, и на краю полосы это давало систематический пропуск.
   const estimated_benefit = expectedBenefit({
-    deltaExcess: delta_excess,
+    deltaBtc: hedgeQty,
     underlying: snapshot.underlying,
     m: benefitMoveFrac(cfg), // собственный knob, а не порог ценового триггера (см. benefitMoveFrac)
   });
@@ -217,8 +245,13 @@ export function decideHedge({
     cfg,
   });
 
-  // (6) trade only if the benefit clears cost·lambda
-  if (estimated_benefit > estimated_cost.total * cfg.lambda) {
+  // (6) trade only if the benefit clears cost·lambda.
+  // ИЗДЕРЖКИ ЗАЖИМАЮТСЯ СНИЗУ НУЛЁМ, И ЭТО НЕ ПЕРЕСТРАХОВКА. Фандинг в статьях СО ЗНАКОМ, поэтому
+  // при благоприятной ставке `total` может уйти в минус, а тогда `benefit > total·λ` выполняется при
+  // ЛЮБОЙ выгоде, включая нулевую: гейт вырождается и перестаёт быть гейтом ровно там, где рынок
+  // платит за позицию. Отрицательная цена перекладки не делает саму перекладку бесплатной, поэтому
+  // сравнение идёт с max(0, total). Сама статья в отчёте остаётся знаковой и видимой.
+  if (estimated_benefit > Math.max(0, estimated_cost.total) * cfg.lambda) {
     return {
       decision: "HEDGE",
       estimated_cost,
