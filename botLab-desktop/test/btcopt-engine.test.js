@@ -491,3 +491,56 @@ test("после движения цены дельта перпа считае�
   near(c2.perp_position.upl_usd - cyc.perp_position.upl_usd, cyc.current_futures_delta, 1e-9,
     "P&L на доллар движения спота равен заявленной дельте");
 });
+
+// ── ИЗМЕРЕННАЯ КОНФИГУРАЦИЯ СХЕМЫ ПРОДАВЦА ЗАМОРАЖИВАЕТСЯ ДВИЖКОМ, А НЕ ЗАДАЁТСЯ СНАРУЖИ
+// Пока эти шесть чисел выставлял офлайн-драйвер, сверка книг доказывала свойство скрипта: живой
+// профиль по умолчанию даёт полосу 0.1 BTC на контракт вместо 0.03, и это ×24.2 против ×46.5 на
+// пятилетней записи при просадке 20.1% против 13.5%.
+test("sell-call: движок сам замораживает полосу схемы, а не полосу тулбара", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0); // полдень: вне окна расчёта 08:00 UTC
+  const expiry = nowMs + 480 * 3600000; // 480 ч = внутри окна схемы 336-672 ч
+  const name = "BTC_USDC-1JAN26-100000-C";
+  const chain = [{ instrument_name: name, strike: 100000, expiration_timestamp: expiry,
+    option_type: "call", contract_size: 1, min_trade_amount: 0.01, tick_size: 0.5 }];
+  const snapshot = {
+    underlying: 100000, index: 100000,
+    perp: { mark: 100000, index: 100000, contractSize: 10, funding8h: 0.0001, bid: 99999, ask: 100001 },
+    legs: { [name]: { instrument: name, type: "call", strike: 100000, expiryMs: expiry,
+      bid: 2950, ask: 3050, mark: 3000, markIv: 45, delta: 0.45, vega: 120, theta: -5,
+      underlying: 100000, index: 100000, contractSize: 1, minTradeAmount: 0.01, markInUsd: true } },
+  };
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  // профиль СПЕЦИАЛЬНО оставлен дефолтным: полоса «нормальная», λ 1.25, оба триггера и блэкаут
+  assert.equal(st.settings.deadbandBtc, 0.001, "профиль по умолчанию не трогали");
+  assert.equal(st.settings.settlementBlackout, true);
+
+  const r = engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, chain, snapshot, nowMs);
+  assert.ok(!r.error, `структура не открылась: ${r.error}`);
+  const cfg = st.structure.engineCfg;
+  assert.equal(cfg.deadbandBtc, 0.03, "полоса схемы, а не тулбара");
+  assert.equal(cfg.deadbandRefQty, 1.0, "якорь на контракт");
+  assert.equal(cfg.lambda, 0, "фильтр выгоды выключен");
+  assert.equal(cfg.settlementBlackout, false, "у схемы нет выходных у хеджа");
+  assert.ok(cfg.priceTriggerPct >= 1e9 && cfg.rehedgeSec >= 1e9, "оба триггера недостижимы");
+  assert.equal(cfg.execStyle, "limit", "исполнение остаётся за тикетом");
+});
+
+test("sell-call: перевход не упирается в собственный блэкаут расчёта 08:00 UTC", () => {
+  // Экспирации Deribit наступают РОВНО в 08:00 UTC, то есть в центре окна блэкаута. При живом
+  // дефолте preTradeCheck запрещал бы открытие следующей сделки первые десять минут после расчёта.
+  const nowMs = Date.UTC(2026, 0, 1, 8, 0, 0); // ровно 08:00 UTC
+  const expiry = nowMs + 480 * 3600000;
+  const name = "BTC_USDC-1JAN26-100000-C";
+  const chain = [{ instrument_name: name, strike: 100000, expiration_timestamp: expiry,
+    option_type: "call", contract_size: 1, min_trade_amount: 0.01, tick_size: 0.5 }];
+  const snapshot = {
+    underlying: 100000, index: 100000,
+    perp: { mark: 100000, index: 100000, contractSize: 10, funding8h: 0.0001, bid: 99999, ask: 100001 },
+    legs: { [name]: { instrument: name, type: "call", strike: 100000, expiryMs: expiry,
+      bid: 2950, ask: 3050, mark: 3000, markIv: 45, delta: 0.45, vega: 120, theta: -5,
+      underlying: 100000, index: 100000, contractSize: 1, minTradeAmount: 0.01, markInUsd: true } },
+  };
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  const r = engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, chain, snapshot, nowMs);
+  assert.ok(!r.error, `перевход заблокирован собственным блэкаутом: ${r.error}`);
+});

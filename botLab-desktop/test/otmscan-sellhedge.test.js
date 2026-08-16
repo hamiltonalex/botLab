@@ -6,9 +6,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   SELLHEDGE_DEFAULTS, pickSellLeg, openSellTrade, halfSpreadUsd, wantHedge, shouldRehedge,
-  walkSellTrade, settleSellTrade, lotsByMargin, usdDeltaOfInversePerp,
+  walkSellTrade, settleSellTrade, lotsByMargin, usdDeltaOfInversePerp, sellhedgeEngineCfg, shouldOpenNext,
 } from "../src/engine/otmscan/sellhedge.js";
 import { markPerp } from "../src/engine/btcopt/pnl.js";
+import { effectiveDeadband } from "../src/engine/btcopt/hedge.js";
 import { near } from "./otmscan-helpers.mjs";
 
 const C = SELLHEDGE_DEFAULTS;
@@ -226,4 +227,53 @@ test("размер продавца НЕ равен размеру покупа�
   const byMargin = lotsByMargin({ imUsdPerContract: 9200, equityUsd: 500, cfg: C }).lots;
   const byPremium = Math.floor((500 * 0.20) / (2191 * 0.01)); // риск 20% депозита от премии
   assert.ok(byPremium > byMargin, `премия дала бы ${byPremium} лотов против ${byMargin} по залогу`);
+});
+
+// ── настройки движка и перевход
+// Обе группы существуют затем, чтобы измеренная конфигурация и правило цепочки жили в КОДЕ, а не
+// внутри офлайн-скрипта: пока они жили там, сверка книг доказывала свойство скрипта, а живой бот с
+// профилем по умолчанию давал ×24.2 вместо ×46.5 и одну сделку вместо семнадцати.
+
+test("настройки движка: полоса схемы якорится на КОНТРАКТ, а не на калибровочный размер", () => {
+  const c = sellhedgeEngineCfg(C);
+  assert.equal(c.deadbandBtc, C.bandBtc, "полоса берётся из правила схемы");
+  assert.equal(c.deadbandRefQty, 1.0, "якорь 1.0 = полоса задана на контракт");
+  // effectiveDeadband(полоса, размер, якорь) = полоса·размер/якорь. Позиция в q контрактов обязана
+  // получить ровно bandBtc·q, то есть то же число, каким мерил эталон.
+  for (const q of [0.01, 0.1, 1, 5]) {
+    near(effectiveDeadband({ deadbandBtc: c.deadbandBtc, structureQty: q, refQty: c.deadbandRefQty }),
+      C.bandBtc * q, 1e-15);
+  }
+});
+
+test("настройки движка: все три добавки решения выключены, у схемы одно правило перекладки", () => {
+  const c = sellhedgeEngineCfg(C);
+  assert.equal(c.lambda, 0, "гейт выгоды вырождается в benefit > 0");
+  assert.ok(c.priceTriggerPct >= 1e9, "триггер цены недостижим");
+  assert.ok(c.rehedgeSec >= 1e9, "триггер времени недостижим");
+  assert.equal(c.settlementBlackout, false, "у схемы нет выходных у хеджа");
+});
+
+test("настройки движка: полоса следует за перекрытием sellCfg, а не за константой", () => {
+  assert.equal(sellhedgeEngineCfg({ ...C, bandBtc: 0.08 }).deadbandBtc, 0.08);
+});
+
+test("перевход: открываем, только когда цепочка включена и структуры нет", () => {
+  const on = { chainOn: true, stopRequested: false };
+  assert.equal(shouldOpenNext({ ...on, hasStructure: false }), true, "плоско и цепочка идёт");
+  assert.equal(shouldOpenNext({ ...on, hasStructure: true }), false, "сделка уже открыта");
+  assert.equal(shouldOpenNext({ chainOn: false, hasStructure: false }), false, "одноразовый режим");
+});
+
+test("перевход: остановка оператора не закрывает сделку, но следующей не будет", () => {
+  const stop = { chainOn: true, stopRequested: true };
+  assert.equal(shouldOpenNext({ ...stop, hasStructure: true }), false, "текущая доживает до экспирации");
+  assert.equal(shouldOpenNext({ ...stop, hasStructure: false }), false, "и следующая не открывается");
+});
+
+test("перевход: спрашивается ДО расчёта, поэтому на тике экспирации не срабатывает", () => {
+  // На тике экспирации структура ещё открыта (settleStructure зовётся внутри evaluate ПОСЛЕ этого
+  // вопроса), значит новая сделка не может открыться той же меткой, что и расчёт старой. Ровно так
+  // же считает эталон: следующая сделка начинается с индекса endIdx + 1.
+  assert.equal(shouldOpenNext({ hasStructure: true, chainOn: true, stopRequested: false }), false);
 });

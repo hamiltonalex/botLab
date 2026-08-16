@@ -23,6 +23,7 @@ import { initMetrics, foldCycle, summarize } from "./metrics.js";
 import { structureMargin } from "./margin.js";
 import { computeScenarios } from "./stress.js";
 import { computeRegime } from "./regime.js";
+import { SELLHEDGE_DEFAULTS, sellhedgeEngineCfg } from "../otmscan/sellhedge.js";
 
 export const BOT_ID = "btc-options";
 export const SCHEMA_VERSION = 1;
@@ -414,8 +415,12 @@ export function evaluate(state, snapshot, nowMs) {
 // blackout at the open moment ("block"; PDF p.14 "invalid due to … settlement state" — skipped when the
 // user disabled the blackout), and the real Deribit IM vs paper equity ("warn" — user decision: surfaced
 // with real numbers, opening still allowed; consistent with 2c's over_deposit honesty).
-export function preTradeCheck(state, structure, metaByInstrument, snapshot, nowMs) {
-  const cfg = buildCfg(state.settings);
+// `cfgOverride` несёт настройки схемы, отличные от профиля (сегодня это только схема продавца, см.
+// `sellhedgeEngineCfg`). Проверка обязана судить по ТЕМ ЖЕ числам, по которым структура будет
+// хеджиться после открытия: иначе блэкаут запретил бы открытие в окне, в котором сама схема
+// блэкаута не имеет, и перевход после экспирации 08:00 UTC откладывался бы на десять минут.
+export function preTradeCheck(state, structure, metaByInstrument, snapshot, nowMs, cfgOverride = null) {
+  const cfg = { ...buildCfg(state.settings), ...(cfgOverride ?? {}) };
   const rejections = [...structureRejections(structure, metaByInstrument)];
   // Quote gate: every leg must have been priced by the snapshot the structure was built from — a
   // leg without a mark would open with entryMark null and silently DROP OUT of the net debit
@@ -481,10 +486,19 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   }
   if (built.error) return built;
 
+  // НАСТРОЙКИ СХЕМЫ ПРОДАВЦА приходят из её собственного модуля, а не из тулбара. Полоса, λ и
+  // триггеры бота 2 калиброваны под четырёхногую структуру, и на этой схеме их дефолты стоят
+  // половины результата (замер parity-sellhedge, 5 лет: ×24.2 против ×46.5). Разбор в шапке
+  // `sellhedgeEngineCfg`. Патч применяется ДО предторговой проверки, потому что от него зависит и
+  // она: блэкаут расчёта запрещает ОТКРЫТИЕ в окне 08:00 UTC, а экспирации Deribit наступают ровно
+  // в 08:00 UTC, то есть при живом дефолте перевход упирался бы в собственный блэкаут.
+  const sellEngineCfg =
+    built.kind === "sell-call" ? sellhedgeEngineCfg({ ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) }) : null;
+
   const metas = Array.isArray(chain) ? chain : chain?.instruments ?? [];
   const metaByInstrument = {};
   for (const l of built.legs) metaByInstrument[l.instrument] = metas.find((m) => m.instrument_name === l.instrument);
-  const rejections = preTradeCheck(state, built, metaByInstrument, snapshot, nowMs);
+  const rejections = preTradeCheck(state, built, metaByInstrument, snapshot, nowMs, sellEngineCfg);
   const blocks = rejections.filter((r) => r.severity === "block");
   if (blocks.length) return { error: blocks.map((r) => r.detail).join("; "), rejections };
 
@@ -495,7 +509,12 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   // debounce, so a confirm racing a just-toggled control could otherwise freeze a stale value —
   // the position must hedge by what the ticket showed, not by what the settings file caught up to.
   const actualParams = Object.fromEntries(Object.entries(built.params).filter(([, v]) => v != null));
-  built.engineCfg = { ...state.settings, ...actualParams };
+  // ПОРЯДОК СЛИЯНИЯ ЗНАЧИМ. Правила схемы продавца кладутся ПОСЛЕ параметров тикета и побеждают:
+  // полоса, λ, триггеры и блэкаут у этой схемы не настройки оператора, а часть измеренного правила,
+  // и собственного экрана у них нет. `execStyle` в патч НЕ входит специально: у него есть видимый
+  // контрол в тулбаре, и молча переставлять его значило бы врать в интерфейсе. Цена такого выбора
+  // названа числом: тейкерский хедж по 10 б.п. даёт ×1.16 против ×1.85 на четырёх годах.
+  built.engineCfg = { ...state.settings, ...actualParams, ...(sellEngineCfg ?? {}) };
   state.structure = built;
   state.lastHedgeAt = null; // reset the hedge clock to structure open
   state.lastHedgeUnderlying = snapshot.underlying ?? null;
