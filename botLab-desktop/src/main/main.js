@@ -830,6 +830,7 @@ function assembleDataset1() {
           stoppedAt: eng.sellChain.stoppedAt ?? null,
           trades: eng.sellChain.trades ?? [],
           stats: s1engine.sellChainStats(eng),
+          uptime: s1engine.uptimeStats(eng),
           last: bo.sellChainLast ?? null,
           nextTryAt: eng.sellChain.on && !eng.structure ? sellChainNextTryAt : null,
         }

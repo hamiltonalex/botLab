@@ -544,3 +544,74 @@ test("sell-call: перевход не упирается в собственн�
   const r = engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, chain, snapshot, nowMs);
   assert.ok(!r.error, `перевход заблокирован собственным блэкаутом: ${r.error}`);
 });
+
+// ── НАКОПИТЕЛЬ ЦЕПОЧКИ. Проверяется то, ради чего он заведён: итог сделки считается РАЗНОСТЬЮ тех
+// же четырёх счётчиков, из которых `attribute` складывает net_total, а доходность меряется на
+// ЗАЛОГ - в той же базе, в какой опубликован бектест («средняя +4.15% залога»).
+function sellFixture(nowMs) {
+  const expiry = nowMs + 480 * 3600000;
+  const name = "BTC_USDC-1JAN26-100000-C";
+  return {
+    expiry, name,
+    chain: [{ instrument_name: name, strike: 100000, expiration_timestamp: expiry,
+      option_type: "call", contract_size: 1, min_trade_amount: 0.01, tick_size: 0.5 }],
+    snapshot: {
+      underlying: 100000, index: 100000,
+      perp: { mark: 100000, index: 100000, contractSize: 10, funding8h: 0, bid: 99999, ask: 100001 },
+      legs: { [name]: { instrument: name, type: "call", strike: 100000, expiryMs: expiry,
+        bid: 2950, ask: 3050, mark: 3000, markIv: 45, delta: 0.45, vega: 120, theta: -5,
+        underlying: 100000, index: 100000, contractSize: 1, minTradeAmount: 0.01, markInUsd: true } },
+    },
+  };
+}
+
+test("цепочка: сделка дописывается в экспирацию и несёт доходность на залог", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = sellFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  assert.ok(engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, f.chain, f.snapshot, nowMs).ok);
+  assert.equal(st.sellChain.trades.length, 0, "до экспирации строки нет");
+  const im = st.structure.sizing.imUsedUsd;
+
+  // Экспирация ВНЕ денег: проданный колл гасится в ноль, продавец оставляет премию минус издержки.
+  engine.settleStructure(st, { ...f.snapshot, index: 90000, underlying: 90000 }, f.expiry + 1000);
+  assert.equal(st.sellChain.trades.length, 1, "строка появилась ровно одна");
+  const t = st.sellChain.trades[0];
+  assert.equal(t.reason, "expiry", "штатный выход");
+  assert.equal(t.instrument, f.name);
+  near(t.imUsd, im, 1e-9, "залог тот же, что показала структура");
+  near(t.retImPct, (t.pnlUsd / im) * 100, 1e-9, "доходность считается на ЗАЛОГ");
+  assert.ok(t.pnlUsd > 0, `колл истёк пустым, продавец в плюсе: ${t.pnlUsd}`);
+
+  const s = engine.sellChainStats(st);
+  assert.equal(s.n, 1);
+  assert.equal(s.wins, 1);
+  near(s.equityMult, 1 + t.retImPct / 100, 1e-12, "мультипликатор перемножает (1 + доходность залога)");
+  near(s.medianHoldD, 20, 0.01, "480 ч = 20 суток");
+});
+
+test("цепочка: досрочное закрытие помечается навсегда", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = sellFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, f.chain, f.snapshot, nowMs);
+  engine.closeStructure(st, f.snapshot, nowMs + 3600000);
+  assert.equal(st.sellChain.trades[0].reason, "manual", "выход вне схемы");
+  assert.equal(engine.sellChainStats(st).manual, 1, "сводка считает досрочные отдельно");
+});
+
+test("цепочка: покрытие опроса меряется за жизнь ОДНОЙ сделки", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = sellFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000, repriceSec: 15 } });
+  engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, f.chain, f.snapshot, nowMs);
+  for (let k = 1; k <= 4; k++) engine.ingest(st, f.snapshot, nowMs + k * 15000);
+  engine.ingest(st, f.snapshot, nowMs + 4 * 15000 + 3600000); // час без опроса
+  const u = engine.uptimeStats(st);
+  assert.equal(u.ticks, 5, "пять решений");
+  assert.equal(u.gaps.length, 1, "перерыв зафиксирован ровно один");
+  assert.ok(u.maxGapMs >= 3600000, "длина перерыва не потеряна");
+  // Слоты считаются ВКЛЮЧИТЕЛЬНО по обоим концам: без этого на коротких окнах выходят проценты выше ста.
+  assert.ok(u.coveragePct < 5, `покрытие честно низкое: ${u.coveragePct}`);
+  assert.ok(u.effectiveSec > 900, `эффективный каданс отражает простой: ${u.effectiveSec}`);
+});

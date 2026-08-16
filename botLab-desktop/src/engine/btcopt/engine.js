@@ -172,9 +172,59 @@ export function ingest(state, snapshot, nowMs) {
       }
     }
   }
+  // ── НЕПРЕРЫВНОСТЬ ОПРОСА. Считается ТОЛЬКО пока открыта проданная нога, и это самый дорогой из
+  // измеренных рисков схемы: каданс решения раз в сутки роняет пятилетний результат с роста залога
+  // в 46.5 раза до 16.2, а просадку поднимает с 13.5% до 30.6%. Ни одного поля покрытия у бота 2 не
+  // было, то есть оператор не мог отличить схему, которая хеджилась каждые 15 секунд, от схемы,
+  // которая проспала четыре часа. Накопитель O(1) плюс короткий список перерывов: держать все тики
+  // не нужно, а перерыв без метки времени нельзя ни объяснить, ни опровергнуть.
+  if (state.structure?.kind === "sell-call" && state.sellChain) {
+    const u = state.sellChain.uptime ?? (state.sellChain.uptime = { ticks: 0, firstAt: nowMs, lastAt: null, maxGapMs: 0, gaps: [] });
+    const prev = u.lastAt;
+    u.ticks += 1;
+    if (prev != null) {
+      const gap = nowMs - prev;
+      if (gap > u.maxGapMs) u.maxGapMs = gap;
+      // Перерывом считается пропуск, а не дрожание таймера: порог в пять номинальных интервалов это
+      // тот же критерий несвежести, каким источник помечает данные устаревшими.
+      const nominalMs = Math.max(1000, (cfg.repriceSec || 15) * 1000);
+      if (gap > nominalMs * 5) {
+        u.gaps.push({ at: prev, ms: gap, lost: Math.max(0, Math.round(gap / nominalMs) - 1) });
+        if (u.gaps.length > 50) u.gaps.shift(); // хвост важнее головы: свежие перерывы объяснимы
+      }
+    }
+    u.lastAt = nowMs;
+    u.nominalSec = cfg.repriceSec || 15;
+  }
   state.lastIngestAt = nowMs;
   state.lastUnderlying = snapshot.underlying;
   return state;
+}
+
+// uptimeStats(state) — покрытие опроса за жизнь ОТКРЫТОЙ сделки. Чистая.
+// ОЖИДАЕМЫЕ СЛОТЫ СЧИТАЮТСЯ ВКЛЮЧИТЕЛЬНО ПО ОБОИМ КОНЦАМ (span/шаг + 1), и это не придирка: без
+// единицы на коротких окнах выходят ложные проценты выше ста, на чём проект уже обжигался при
+// замере покрытия сканера.
+export function uptimeStats(state) {
+  const u = state.sellChain?.uptime;
+  if (!u || u.lastAt == null) return null;
+  const nominalMs = Math.max(1000, (u.nominalSec || 15) * 1000);
+  const spanMs = Math.max(0, u.lastAt - u.firstAt);
+  const expected = Math.floor(spanMs / nominalMs) + 1;
+  const lostSlots = u.gaps.reduce((s, g) => s + g.lost, 0);
+  return {
+    ticks: u.ticks,
+    expected,
+    coveragePct: expected > 0 ? Math.min(100, (u.ticks / expected) * 100) : null,
+    // Эффективный каданс это СРЕДНИЙ интервал между решениями: именно он ложится на измеренную
+    // таблицу 4ч/12ч/24ч. Номинал таймера сюда не годится - он врёт ровно на величину простоя.
+    effectiveSec: u.ticks > 1 ? spanMs / (u.ticks - 1) / 1000 : null,
+    nominalSec: u.nominalSec || 15,
+    maxGapMs: u.maxGapMs,
+    lostSlots,
+    gaps: u.gaps.slice(-10).reverse(),
+    spanMs,
+  };
 }
 
 // ── Evaluate: the full per-cycle computation → the §5 cycle-snapshot (drives the whole view).
@@ -518,7 +568,12 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   built.createdAt = nowMs;
   // Замер счётчиков ДО строки `open-cost`: издержки входа обязаны попасть в сделку, которая их
   // заплатила, а не раствориться между сделками цепочки.
-  if (built.kind === "sell-call") chainMarkOpen(state, nowMs);
+  if (built.kind === "sell-call") {
+    chainMarkOpen(state, nowMs);
+    // Покрытие меряется за жизнь КОНКРЕТНОЙ сделки: перерыв, случившийся в прошлой, к решениям
+    // хеджа этой отношения не имеет, а смешение двух окон дало бы среднее, не описывающее ни одно.
+    state.sellChain.uptime = { ticks: 0, firstAt: nowMs, lastAt: null, maxGapMs: 0, gaps: [], nominalSec: state.settings?.repriceSec ?? 15 };
+  }
   // Freeze the engine params at open (read-only while running). The ACTUAL open params (ticket
   // qty/offsets/execStyle) overlay the settings snapshot: the toolbar pushes settings through a
   // debounce, so a confirm racing a just-toggled control could otherwise freeze a stale value —

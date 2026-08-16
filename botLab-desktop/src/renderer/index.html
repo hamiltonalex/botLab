@@ -907,6 +907,69 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
 @media (prefers-reduced-motion:reduce){
   #scnJournalUpdated.tick .blip, #scnEvalStamp.tick .blip{ animation:none; }
   .dl .row .v .ratebar i{ transition:none; } }
+
+/* ══════════ СХЕМА ПРОДАВЦА · НЕПРЕРЫВНАЯ ЦЕПОЧКА ══════════
+   Пульт получает амбер-коронку зоны Ⅱ: карточка про деньги и результат, а не про гипотезу. */
+#optChainCard{ position:relative; overflow:hidden; }
+#optChainCard::before{ content:""; position:absolute; inset:0 0 auto 0; height:2px;
+  background:linear-gradient(90deg,transparent,var(--neu),var(--neu),transparent); opacity:.8; }
+/* .trade-empty живёт под .zone.idle, а пульту нужен свой показ - отсюда явная пара правил */
+#optChainEmpty{ display:flex; }
+#optChainEmpty[hidden], #optChainBody[hidden]{ display:none; }
+/* КАПКАН, УЖЕ СТОИВШИЙ ПРОЕКТУ ОДНОГО ДЕФЕКТА: `display` в правиле класса ПЕРЕБИВАЕТ атрибут
+   `hidden`, потому что у `hidden` приоритет обычного user-agent-правила. `.grid{display:grid}`
+   ровно так и делал: секция паспорта с `hidden` продолжала показываться в режиме «4 ноги», а
+   DOM-проверка по `.hidden` при этом честно отвечала «скрыто». Ловится только живым прогоном через
+   offsetParent (тот же капкан прежде находили у `.ctl{display:flex}` и `.ticket`). */
+#optConformSection[hidden]{ display:none; }
+
+.opt-chain{ display:grid; grid-template-columns:1fr 1.15fr .95fr; gap:14px; }
+.opt-chain .ch-next{ border-left:1px solid var(--line); padding-left:14px; }
+@media (max-width:1080px){
+  .opt-chain{ grid-template-columns:1fr; }
+  .opt-chain .ch-next{ border-left:0; padding-left:0; border-top:1px solid var(--line); padding-top:10px; } }
+
+.decision-token.pos{ color:var(--pos); }
+.decision-token.neg{ color:var(--neg-bri); }
+
+/* срок это не результат, поэтому кегль крупный, но не героический */
+.chain-clock{ font:700 clamp(20px,2.2vw,26px)/1 var(--f-mono); letter-spacing:-.4px; color:var(--txt); margin:2px 0 3px; }
+.chain-clock.dim{ color:var(--txt-faint); }
+
+/* ЛЕНТА: один примитив, две семантики (сделки цепочки и покрытие опроса).
+   Строго презентационная (aria-hidden) - доступное представление это таблица под ней. */
+.segstrip{ display:flex; align-items:stretch; gap:2px; height:26px; margin:8px 0 2px; }
+.segstrip .s{ flex:1 1 0; min-width:3px; border-radius:3px; position:relative; overflow:hidden;
+  background:var(--inset); box-shadow:inset 0 0 0 1px var(--line); }
+.segstrip .s .f{ position:absolute; inset:0 auto 0 0; width:0;
+  background:color-mix(in srgb,var(--accent) 30%,transparent); transition:width .4s cubic-bezier(.2,.7,.2,1); }
+.segstrip .s[data-st="win"]{ background:var(--pos-bg); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pos) 45%,transparent); }
+.segstrip .s[data-st="loss"]{ background:var(--neg-bg); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--neg) 45%,transparent); }
+.segstrip .s[data-st="live"]{ box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 60%,transparent); }
+.segstrip .s[data-st="future"]{ background:transparent; box-shadow:inset 0 0 0 1px var(--line-soft); }
+/* пометка ШТРИХОВКОЙ, а не цветом: «досрочный выход» не должен читаться как убыток */
+.segstrip .s[data-mark]::after{ content:""; position:absolute; inset:0;
+  background:repeating-linear-gradient(45deg,transparent 0 3px,color-mix(in srgb,var(--txt-faint) 45%,transparent) 3px 4px); }
+.segstrip.cov{ height:12px; gap:1px; }
+.segstrip.cov .s{ border-radius:2px; box-shadow:none; }
+.segstrip.cov .s[data-st="full"]{ background:color-mix(in srgb,var(--pos) 45%,transparent); }
+.segstrip.cov .s[data-st="part"]{ background:color-mix(in srgb,var(--neu) 55%,transparent); }
+.segstrip.cov .s[data-st="none"]{ background:color-mix(in srgb,var(--neg) 60%,transparent); }
+.segstrip.cov .s[data-st="future"]{ background:transparent; box-shadow:inset 0 0 0 1px var(--line-soft); }
+@media (prefers-reduced-motion:reduce){ .segstrip .s .f{ transition:none; } }
+
+.why-box.warn{ border-left-color:var(--neu); }
+.sec-head .tag.red{ color:var(--neg-bri); border-color:color-mix(in srgb,var(--neg) 40%,transparent); background:var(--neg-bg); }
+
+/* ПАСПОРТ СООТВЕТСТВИЯ: отклонение это ВЫБОР С ЦЕНОЙ, а не поломка, поэтому красного здесь нет
+   вовсе - он в этом интерфейсе занят под сломанное (сверка леджера). Девять красных строк подряд
+   перестают читать на третий день. */
+#optConformTable tr.ok td{ color:var(--txt-dim); }
+#optConformTable tr.dev td:first-child{ box-shadow:inset 2px 0 0 var(--neu); }
+#optConformTable td.price{ font-weight:600; color:var(--neu); }
+#optConformTable tr.ok td.price{ color:var(--txt-faint); font-weight:500; }
+#optConformTable td.was{ color:var(--txt-faint); }
+#optConformCard .paperbtn[disabled]{ opacity:.5; cursor:not-allowed; }
 </style>
 </head>
 <body>
@@ -1555,6 +1618,155 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
         <button class="goto" id="optTradeGoto">▶ Открыть структуру (Paper Trading)</button>
       </div>
 
+      <!-- ЦЕПОЧКА ЖИВЁТ В СВОЕЙ СЕТКЕ, А НЕ В `#optTradeGrid`, И ЭТО НЕ КОСМЕТИКА.
+           Правило `.zone.idle #optTradeGrid{display:none}` гасит сетку результата, пока нет цикла,
+           то есть на остановленном источнике и сразу после запуска приложения. Но включить схему
+           надо ИМЕННО ТОГДА: первого цикла ещё нет, а решение принимается уже. Найдено живым
+           прогоном e2e-chain; статическая проверка по атрибуту `hidden` этого не видит, потому что
+           элемент скрыт РОДИТЕЛЕМ. -->
+      <div class="opt-grid" id="optChainGrid">
+        <!-- ══ ⛓ СХЕМА ПРОДАВЦА · ЦЕПОЧКА (пульт) ══
+             Годовой результат схемы делают 16-17 сделок ПОДРЯД, поэтому объект, которым управляет
+             оператор, это цепочка, а одна сделка становится строкой внутри неё. Карточка стоит
+             ПЕРВОЙ и видна всегда: выключенное состояние это тоже ответ. -->
+        <div class="card span2" id="optChainCard" data-state="off" hidden>
+          <div class="sec-head">
+            <h2>⛓ Схема продавца · цепочка</h2>
+            <span class="tag amber" id="optChainConform">соответствие —</span>
+            <span class="cfg-pill" id="optChainUptimePill">опрос <b>—</b></span>
+            <span class="rule"></span>
+            <button id="optChainUndoBtn" class="paperbtn mini" hidden>↺ отменить остановку</button>
+            <button id="optChainStopBtn" class="paperbtn mini" hidden>⏻ остановить схему</button>
+            <span class="stamp"><span class="blip" aria-hidden="true"></span><span aria-live="polite" id="optChainStampTxt">схема выключена</span></span>
+          </div>
+
+          <div class="trade-empty" id="optChainEmpty" role="status">
+            <span>○ схема выключена: сделки открываются и закрываются вручную. Годовой результат
+              делают 16-17 сделок подряд, а живой бот после расчёта в экспирацию следующую не открывает.</span>
+            <button class="goto" id="optChainArmBtn" aria-expanded="false" aria-controls="optChainArmTicket">▶ Включить схему продавца</button>
+          </div>
+
+          <div class="opt-chain" id="optChainBody" hidden>
+            <div aria-live="polite" aria-atomic="true">
+              <div class="subhdr">Состояние схемы</div>
+              <div class="decision-token dim hollow" id="optChainToken"><span class="dot"></span>ВЫКЛ</div>
+              <div class="mono" id="optChainReason" style="font-size:12px;color:var(--txt-dim)">—</div>
+              <div class="subhdr" id="optChainClockLbl">До экспирации</div>
+              <div class="chain-clock" id="optChainClock">—</div>
+              <div class="stamp" id="optChainClockSub">—</div>
+            </div>
+
+            <div>
+              <div class="subhdr">Цепочка сделок</div>
+              <div class="segstrip" id="optChainStrip" aria-hidden="true"></div>
+              <p class="sr-only">Лента цепочки продублирована таблицей «Сделки цепочки» ниже.</p>
+              <div class="legend" style="margin-top:8px">
+                <div class="it"><span class="sw" style="background:var(--pos-bg);box-shadow:inset 0 0 0 1px var(--pos)"></span>в плюс</div>
+                <div class="it"><span class="sw" style="background:var(--neg-bg);box-shadow:inset 0 0 0 1px var(--neg)"></span>в минус</div>
+                <div class="it"><span class="sw" style="box-shadow:inset 0 0 0 1px var(--accent)"></span>идёт</div>
+                <div class="it"><span class="sw" style="box-shadow:inset 0 0 0 1px var(--line-soft)"></span>ожидается</div>
+              </div>
+              <div class="stamp" id="optChainStripCaption" style="margin-top:6px">—</div>
+            </div>
+
+            <div class="ch-next">
+              <div class="subhdr">Следующая сделка</div>
+              <div class="dl">
+                <div class="row"><span class="k">открытие</span><span class="v num" id="optChainNextWhen">—</span></div>
+                <div class="row"><span class="k">попытка</span><span class="v num" id="optChainNextTry">—</span></div>
+                <div class="row"><span class="k">последняя причина</span><span class="v" id="optChainNextWhy">—</span></div>
+              </div>
+              <div class="stamp" style="margin-top:8px">контракт выбирается заново в момент открытия правилом схемы: срок 336-672 ч, |дельта| у 0.45</div>
+              <div class="stamp" style="margin-top:10px;color:var(--txt-faint)">«остановить схему» не закрывает сделку: текущая доживёт до экспирации. Досрочный выход - красной кнопкой в шапке зоны.</div>
+            </div>
+          </div>
+
+          <div class="why-box warn" id="optChainWarn" hidden style="margin-top:12px"></div>
+
+          <!-- ТИКЕТ ВКЛЮЧЕНИЯ. Тот же паттерн, что у тикета открытия: не модалка, Escape закрывает,
+               кнопка неактивна при блокирующих причинах. Единственное, чего нет у одноразового
+               тикета и что обязано быть здесь, это строка про то, что схема делает БЕЗ оператора. -->
+          <div id="optChainArmTicket" class="ticket" role="group" aria-label="Подтверждение включения схемы продавца (Paper Trading)" hidden>
+            <div class="why-box" style="margin-bottom:10px">
+              <b>Что схема делает без вас.</b> После экспирации она рассчитывает сделку и открывает
+              следующую сама, без подтверждения. Так до тех пор, пока вы её не остановите.
+            </div>
+            <div class="trow"><span class="k">правило входа</span><span class="num">колл 336-672 ч · |дельта| у 0.45</span></div>
+            <div class="trow"><span class="k">размер</span><span class="num">от залога · не более 70% счёта</span></div>
+            <div class="trow"><span class="k">хедж</span><span class="num">перп · полоса 0.03 BTC на контракт · лимит</span></div>
+            <div class="trow"><span class="k">штатный выход</span><span class="num">экспирация · досрочных нет</span></div>
+            <div class="trow"><span class="k">убыток вверх</span><span class="num neg">не ограничен</span></div>
+            <div class="trow"><span class="k">депозит</span><span class="num" id="optChainTktDep">—</span></div>
+            <div class="trow"><span class="k">опрос заводится на буте</span><span class="num">да · иначе после перезагрузки позиция останется без хеджа</span></div>
+            <div class="trow"><span class="k">готовность данных</span><span class="num" id="optChainTktGate">—</span></div>
+            <div id="optChainTktErr" class="ticket-err" role="alert" hidden></div>
+            <div class="ticket-actions">
+              <button id="optChainTktConfirm" class="paperbtn open">Подтвердить · включить схему</button>
+              <button id="optChainTktCancel" class="paperbtn">Отмена</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══ ЦЕПОЧКА · ИТОГ. Главный ответ на вопрос «схема работает или нет». Каждое живое
+             число несёт рядом эталонное, чтобы сравнение было в одном поле зрения. ══ -->
+        <div class="card flush span2" id="optChainStatsCard" hidden>
+          <div class="sec-head" style="padding:16px 16px 0;margin-bottom:10px">
+            <h2>Цепочка · итог</h2>
+            <span class="tag" id="optChainStatsSpan">—</span>
+            <span class="rule"></span>
+            <span class="hint">доходность считается на ЗАЛОГ - та же база, в которой опубликован бектест</span>
+          </div>
+          <div class="hero-kpis" style="grid-template-columns:repeat(5,1fr);padding:0 16px" aria-live="polite">
+            <div class="kpi"><div class="lbl">Сделок в цепочке</div><div class="v num" id="optChainKpiN">—</div><div class="sub" id="optChainKpiNSub">—</div></div>
+            <div class="kpi"><div class="lbl">Залог вырос в</div><div class="v num" id="optChainKpiMult">—</div><div class="sub" id="optChainKpiMultSub">—</div></div>
+            <div class="kpi"><div class="lbl">Средняя сделка</div><div class="v num" id="optChainKpiAvg">—</div><div class="sub">эталон +4.15% залога</div></div>
+            <div class="kpi"><div class="lbl">Прибыльных</div><div class="v num" id="optChainKpiWin">—</div><div class="sub">эталон 78% на 84 сделках</div></div>
+            <div class="kpi"><div class="lbl">Просадка</div><div class="v num" id="optChainKpiDd">—</div><div class="sub">эталон макс 13.5%</div></div>
+          </div>
+          <div class="ledger-msg dim" id="optChainSample" style="padding:12px 16px 8px">—</div>
+          <div class="table-scroll" style="max-height:280px" tabindex="0" role="region" aria-label="Сделки цепочки, прокручиваемая таблица">
+            <table class="scan" id="optChainTradesTable">
+              <caption class="sr-only">Сделки цепочки: инструмент, срок, итог и пометки</caption>
+              <thead><tr>
+                <th scope="col">№</th><th class="lft" scope="col">Инструмент</th>
+                <th scope="col">Открыта</th><th scope="col">Закрыта</th>
+                <th scope="col">Лотов</th><th scope="col">Залог $</th>
+                <th scope="col">Итог $</th><th scope="col">Итог %</th>
+                <th class="lft" scope="col">Пометки</th>
+              </tr></thead>
+              <tbody id="optChainTradesBody"></tbody>
+            </table>
+            <div class="ledger-empty" id="optChainTradesEmpty">цепочка ещё не закрыла ни одной сделки: первая строка появится после экспирации</div>
+          </div>
+          <div class="ledger-foot"><span class="hint" id="optChainTradesFoot">—</span></div>
+        </div>
+
+        <!-- ══ НЕПРЕРЫВНОСТЬ ОПРОСА. Каданс решения хеджа стоит больше любой настройки: сутки без
+             опроса роняют измеренный результат с роста залога в 46.5 раза до 16.2, а просадку
+             поднимают с 13.5% до 30.6%. Поэтому это показатель ЗДОРОВЬЯ схемы, а не технический лог. ══ -->
+        <div class="card span2" id="optUptimeCard" hidden>
+          <div class="sec-head">
+            <h2>Непрерывность опроса</h2>
+            <span class="tag green" id="optUpTag">—</span>
+            <span class="rule"></span>
+            <span class="hint">каданс решения = то, чем измерена схема</span>
+          </div>
+          <div class="hero-kpis" style="grid-template-columns:repeat(3,1fr)" aria-live="polite">
+            <div class="kpi"><div class="lbl">Покрытие · жизнь сделки</div><div class="v num" id="optUpKpiCov">—</div><div class="sub" id="optUpKpiCovSub">решений получено из ожидаемых</div></div>
+            <div class="kpi"><div class="lbl">Эффективный каданс</div><div class="v num" id="optUpKpiCad">—</div><div class="sub" id="optUpKpiCadSub">средний интервал между решениями</div></div>
+            <div class="kpi"><div class="lbl">Самый длинный перерыв</div><div class="v num" id="optUpKpiGap">—</div><div class="sub" id="optUpKpiGapSub">—</div></div>
+          </div>
+          <div class="subhdr">Покрытие по времени жизни сделки</div>
+          <div class="segstrip cov" id="optUpStrip" aria-hidden="true"></div>
+          <div class="stamp" id="optUpStripCaption">—</div>
+          <div class="opt-verdict pass" id="optUpVerdict" style="margin-top:10px" aria-live="polite">—</div>
+          <div class="foot-src">
+            <span>слоты считаются включительно по обоим концам окна: без этого на коротких окнах выходят ложные проценты выше ста</span>
+            <span>сон машины останавливает опрос: на время цепочки держите машину не засыпающей</span>
+          </div>
+        </div>
+      </div>
+
       <div class="opt-grid" id="optTradeGrid">
         <!-- ── P&L-атрибуция (кокпит) ── -->
         <div class="card" id="optCockpit">
@@ -1823,6 +2035,38 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
           <button class="help-btn" data-help="opt-toolbar">?</button>
         </div>
       </nav>
+
+      <!-- ══ ПАСПОРТ СООТВЕТСТВИЯ ИЗМЕРЕННОЙ КОНФИГУРАЦИИ ══
+           Числа «×» это историческая оценка на 5 годах и 84 сделках, то есть гипотеза о будущем,
+           поэтому карточка живёт в СИНЕЙ зоне рядом с тулбаром, чьи значения она и судит.
+           Красного здесь нет вовсе: отклонение это выбор с ценой, а не поломка. -->
+      <section class="grid reveal" style="animation-delay:.06s" id="optConformSection" hidden>
+        <div class="card flush" id="optConformCard">
+          <div class="sec-head" style="padding:16px 16px 0;margin-bottom:10px">
+            <h2>Паспорт соответствия измеренной конфигурации</h2>
+            <span class="tag amber">замер: 5 лет · 84 сделки · это прошлое, не прогноз</span>
+            <span class="rule"></span>
+            <span class="hint" id="optConformHint">—</span>
+          </div>
+          <div style="padding:0 16px">
+            <div class="opt-verdict pass" id="optConformVerdict" aria-live="polite">—</div>
+          </div>
+          <table class="scan" id="optConformTable" style="margin-top:10px">
+            <caption class="sr-only">Построчное сравнение действующих правил схемы с измеренной конфигурацией</caption>
+            <thead><tr>
+              <th class="lft" scope="col">Параметр</th>
+              <th class="lft" scope="col">Сейчас</th>
+              <th class="lft" scope="col">Измерено</th>
+              <th class="lft" scope="col">Цена отклонения</th>
+            </tr></thead>
+            <tbody id="optConformBody"></tbody>
+          </table>
+          <div class="foot-src">
+            <span>таблица замера это последовательность накопленных возмущений, а не независимые вклады: построчные «×» НЕ складываются</span>
+            <span>полоса, λ, оба триггера и блэкаут для этой схемы приходят из её правила, а не из тулбара, и замораживаются при открытии структуры</span>
+          </div>
+        </div>
+      </section>
 
       <!-- ── HERO: Payoff (гипотеза) + превью/тикет ── -->
       <!-- ── Фаза 3b: IV-режим — сигнал входа (Зона Ⅰ, над конструктором) ── -->
@@ -4397,7 +4641,8 @@ document.addEventListener('click', (e)=>{
   // the updater popover closes on any outside click too — but NOT on the pill itself (that toggles it)
   if(UPD.pop && !UPD.pop.contains(e.target) && !e.target.closest('#verPill')) closeUpdaterPop();
 });
-document.addEventListener('keydown', (e)=>{ if(e.key==='Escape'){ closeHelp(); closeUpdaterPop(); closeTicket(true); closeOptTicket(true); } });
+document.addEventListener('keydown', (e)=>{ if(e.key==='Escape'){ closeHelp(); closeUpdaterPop(); closeTicket(true); closeOptTicket(true);
+  if(typeof closeOptChainTicket==='function' && $('optChainArmTicket') && !$('optChainArmTicket').hidden) closeOptChainTicket(); } });
 window.addEventListener('resize', ()=>{ closeHelp(); closeUpdaterPop(); });
 // прокрутка страницы закрывает поповер (позиция бы «уехала»); прокрутка ВНУТРИ поповера — нет
 window.addEventListener('scroll', (e)=>{
@@ -4819,8 +5064,294 @@ function renderOpt(){
     renderOptStress(cyc);
   }
   const c=optEngineCfg(); const em=$('optEngineMode'); if(em) em.textContent='реприс '+c.rep+'с · λ'+c.lam;
+  /* Цепочка рисуется ВНЕ ветки `if(cyc)`: её пустое состояние и история сделок обязаны быть видны
+     и тогда, когда цикла нет вовсе (источник остановлен, приложение только поднялось). */
+  renderOptChainCard(ds);
+  renderOptChainStats(ds);
+  renderOptUptime(ds);
+  renderOptConform(ds);
   renderOptStructPreview();
   renderOptCharts();
+}
+
+/* ══════════ ЦЕПОЧКА СХЕМЫ ПРОДАВЦА ══════════
+   Эталонные числа взяты из пятилетнего замера (84 сделки, полоса 0.03, мейкерский хедж) и стоят
+   рядом с живыми НАМЕРЕННО: вопрос «схема работает или нет» без второй половины сравнения не имеет
+   смысла, а держать её в голове оператор не обязан. */
+const CHAIN_REF = { mult: 46.5, dd: 13.5, win: 78, avg: 4.15, n: 84 };
+/* Цена отклонений: та же таблица, что в парной сверке за 5 лет. Складывать строки НЕЛЬЗЯ - это
+   последовательность накопленных возмущений, а не независимые вклады. */
+const CONF_PRICE = {
+  band: '×24.2 против ×46.5 · просадка 20.1% против 13.5%',
+  lambda: '×39.4 · просадка 18.3%',
+  trigger: '×39.9 · просадка 17.4%',
+  blackout: '×41.0 · просадка 17.7% · откладывает открытие следующей сделки',
+  cadence: 'при 4 ч ×26.5, при 12 ч ×22.3, при 24 ч ×16.2 (просадка до 30.6%)',
+  exec: 'тейкерский хедж 10 б.п. даёт ×1.16 против ×1.85 на четырёх годах',
+};
+const chEsc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const chDur = ms => { if(!Number.isFinite(ms)||ms<0) return '—';
+  const d=Math.floor(ms/86400000), h=Math.floor(ms%86400000/3600000), m=Math.floor(ms%3600000/60000);
+  return d>0 ? d+' сут '+String(h).padStart(2,'0')+' ч' : (h>0 ? h+' ч '+String(m).padStart(2,'0')+' мин' : m+' мин'); };
+const chSec = s => !Number.isFinite(s) ? '—' : (s<90 ? Math.round(s)+' с' : (s<5400 ? (s/60).toFixed(1)+' мин' : (s/3600).toFixed(1)+' ч'));
+const chDate = ms => Number.isFinite(ms) ? new Date(ms).toISOString().slice(0,16).replace('T',' ')+' UTC' : '—';
+
+/* Состояние цепочки одним словом. Восемь состояний, но зелёный ровно один («В СДЕЛКЕ») и красный
+   ровно один («СТОП»): экран обязан читаться за две секунды, а не расшифровываться. */
+function optChainState(ds){
+  const ch = ds.sellChain || null;
+  const st = ds.structure && ds.structure.kind==='sell-call' ? ds.structure : null;
+  if(!ch) return { key:'off', token:'ВЫКЛ', cls:'dim hollow' };
+  const now = Date.now();
+  if(st && Number.isFinite(st.expiryMs) && now >= st.expiryMs)
+    return { key:'settling', token:'РАСЧЁТ', cls:'neu', reason:'экспирация наступила · считается итог сделки' };
+  if(st && ch.stopRequested)
+    return { key:'stopping', token:'ОСТАНОВКА', cls:'neu hollow',
+      reason:'цепочка остановлена вами · сделка доживёт до экспирации, следующей не будет' };
+  if(st) return { key:'live', token:'В СДЕЛКЕ', cls:'pos', reason: st.legs && st.legs[0] ? st.legs[0].instrument : '' };
+  if(!ch.on) return { key:'off', token:'ВЫКЛ', cls:'dim hollow', reason:'схема выключена · сделки открываются вручную' };
+  const why = ch.last && !ch.last.ok ? ch.last.reason : null;
+  /* Нехватка залога это НАСТОЯЩАЯ остановка, а не ожидание: повторять попытку каждые полминуты
+     неделями и молчать значило бы обманывать оператора. */
+  if(why && /залог|депозит/i.test(why)) return { key:'halted', token:'СТОП', cls:'neg', reason: why };
+  return { key:'waiting', token:'ПОДБОР', cls:'accent hollow', reason: why || 'правило выбирает контракт' };
+}
+
+function renderOptChainCard(ds){
+  const card=$('optChainCard'); if(!card) return;
+  const ch = ds.sellChain || null;
+  const trades = ch && ch.trades ? ch.trades : [];
+  /* Карточка показывается, когда схема продавца в игре: выбран её режим, цепочка включена или в
+     истории уже есть её сделки. В режиме «4 ноги» на чистом профиле она не мозолит глаза. */
+  const show = optIsSell() || (ch && ch.on) || trades.length>0;
+  card.hidden = !show; if(!show) return;
+
+  const s = optChainState(ds);
+  card.dataset.state = s.key;
+  const tok=$('optChainToken');
+  if(tok){ tok.className='decision-token '+s.cls; tok.innerHTML='<span class="dot"></span>'+chEsc(s.token); }
+  const rs=$('optChainReason'); if(rs) rs.textContent = s.reason || '—';
+
+  const on = !!(ch && ch.on);
+  $('optChainEmpty').hidden = on || trades.length>0;
+  $('optChainBody').hidden = !(on || trades.length>0);
+  const stopBtn=$('optChainStopBtn'), undoBtn=$('optChainUndoBtn');
+  if(stopBtn) stopBtn.hidden = !on || !!(ch && ch.stopRequested);
+  if(undoBtn) undoBtn.hidden = !(on && ch && ch.stopRequested);
+  const stamp=$('optChainStampTxt');
+  if(stamp) stamp.textContent = !ch || !ch.on
+    ? (ch && ch.stoppedAt ? 'остановлена '+chDate(ch.stoppedAt) : 'схема выключена')
+    : 'схема включена '+chDate(ch.armedAt);
+
+  /* Часы: срок, а не результат. Секунды на четырнадцатидневном горизонте это шум, поэтому
+     округляем до часов и обновляем вместе с тиком. */
+  const st = ds.structure && ds.structure.kind==='sell-call' ? ds.structure : null;
+  const lbl=$('optChainClockLbl'), clk=$('optChainClock'), sub=$('optChainClockSub');
+  if(st && Number.isFinite(st.expiryMs)){
+    if(lbl) lbl.textContent='До экспирации';
+    if(clk){ clk.classList.remove('dim'); clk.textContent=chDur(st.expiryMs-Date.now()); }
+    if(sub) sub.textContent=chDate(st.expiryMs);
+  } else {
+    if(lbl) lbl.textContent = on ? 'Следующая проверка' : 'Схема выключена';
+    if(clk){ clk.classList.add('dim');
+      clk.textContent = on && ch.nextTryAt ? chDur(Math.max(0, ch.nextTryAt-Date.now())) : '—'; }
+    if(sub) sub.textContent = on ? 'правило пробует открыть сделку на каждом опросе' : '—';
+  }
+
+  /* Следующая сделка: показываем ПОПЫТКУ и ПРИЧИНУ, а не выдуманный контракт. Правило выбирает
+     ногу заново в момент открытия, и рисовать бронь значило бы обещать то, чего нет. */
+  const nw=$('optChainNextWhen'), ntry=$('optChainNextTry'), nwhy=$('optChainNextWhy');
+  if(nw) nw.textContent = st ? 'после экспирации ' + chDate(st.expiryMs) : (on ? 'как только правило найдёт ногу' : '—');
+  if(ntry) ntry.textContent = on && !st && ch.nextTryAt ? 'через '+chDur(Math.max(0,ch.nextTryAt-Date.now())) : '—';
+  if(nwhy) nwhy.textContent = ch && ch.last ? (ch.last.ok ? 'открылась '+chDate(ch.last.at) : ch.last.reason) : '—';
+
+  renderOptChainStrip(ds, trades, st);
+
+  /* Предупреждение о непрерывности постоянное, не всплывающее, и НИЧЕГО не блокирует: перерыв уже
+     в прошлом, а короткий колл без хеджа хуже колла с устаревшим хеджем. */
+  const up = ch && ch.uptime ? ch.uptime : null;
+  const warn=$('optChainWarn');
+  if(warn){
+    const bad = up && Number.isFinite(up.effectiveSec) && up.effectiveSec > 3600;
+    warn.hidden = !bad;
+    if(bad) warn.innerHTML = '<b>Каданс решения потерян.</b> Средний интервал между решениями '
+      + chEsc(chSec(up.effectiveSec)) + ', самый длинный перерыв ' + chEsc(chDur(up.maxGapMs))
+      + '. На таком кадансе измеренная схема даёт ×26.5 и хуже вместо ×46.5, а просадка растёт до 30.6%. '
+      + 'Перерыв уже в прошлом и изменить его нельзя; чтобы он не повторился, держите машину не засыпающей.';
+  }
+  const pill=$('optChainUptimePill');
+  if(pill) pill.innerHTML = 'опрос <b>' + (up && Number.isFinite(up.coveragePct) ? up.coveragePct.toFixed(1)+'%' : '—') + '</b>';
+}
+
+/* Лента: кирпич на сделку. Презентационная (aria-hidden) - истина в таблице ниже. */
+function renderOptChainStrip(ds, trades, st){
+  const strip=$('optChainStrip'); if(!strip) return;
+  const stats = ds.sellChain && ds.sellChain.stats ? ds.sellChain.stats : null;
+  const perYear = stats && Number.isFinite(stats.perYear) ? Math.round(stats.perYear) : 17;
+  const done = trades.length, live = st ? 1 : 0;
+  const total = Math.max(done+live, Math.min(40, perYear));
+  let html='';
+  for(let i=0;i<total;i++){
+    if(i<done){
+      const t=trades[i];
+      html += '<div class="s" data-st="'+(t.pnlUsd>0?'win':'loss')+'"'+(t.reason==='manual'?' data-mark="manual"':'')+'></div>';
+    } else if(i===done && st){
+      const span = st.expiryMs - st.createdAt, gone = Date.now() - st.createdAt;
+      const pct = span>0 ? Math.max(0, Math.min(100, gone/span*100)) : 0;
+      html += '<div class="s" data-st="live"><div class="f" style="width:'+pct.toFixed(1)+'%"></div></div>';
+    } else html += '<div class="s" data-st="future"></div>';
+  }
+  strip.innerHTML = html;
+  const cap=$('optChainStripCaption');
+  if(cap) cap.textContent = st
+    ? 'сделка '+(done+1)+' из ожидаемых '+total+' · прожито '
+      + (st.expiryMs>st.createdAt ? Math.round((Date.now()-st.createdAt)/(st.expiryMs-st.createdAt)*100) : 0) + '% срока текущей'
+    : 'закрыто сделок: '+done+' из ожидаемых '+total+' за год';
+}
+
+function renderOptChainStats(ds){
+  const card=$('optChainStatsCard'); if(!card) return;
+  const ch = ds.sellChain || null;
+  const trades = ch && ch.trades ? ch.trades : [];
+  card.hidden = !(trades.length>0);
+  if(!trades.length) return;
+  const s = ch.stats || {};
+  optSetNum('optChainKpiN', String(s.n ?? 0));
+  $('optChainKpiNSub').textContent = Number.isFinite(s.perYear)
+    ? 'около '+s.perYear.toFixed(0)+' в год при медиане удержания '+(s.medianHoldD||0).toFixed(1)+' сут' : '—';
+  optSetNum('optChainKpiMult', Number.isFinite(s.equityMult) ? '×'+s.equityMult.toFixed(2) : '—');
+  $('optChainKpiMultSub').textContent = 'итог '+optDollars(s.pnlUsd);
+  optSetNum('optChainKpiAvg', Number.isFinite(s.avgRetPct) ? optSigned(s.avgRetPct,2)+'%' : '—');
+  optSetNum('optChainKpiWin', Number.isFinite(s.winPct) ? s.wins+' из '+s.n+' · '+s.winPct.toFixed(0)+'%' : '—');
+  optSetNum('optChainKpiDd', Number.isFinite(s.maxDdPct) ? '−'+s.maxDdPct.toFixed(1)+'%' : '—');
+  $('optChainStatsSpan').textContent = s.firstAt ? 'с '+chDate(s.firstAt).slice(0,10)+' · '+s.n+' сделок' : '—';
+
+  /* Строка честности ПОСТОЯННАЯ, а не оговорка мелким шрифтом: на выборке в единицы сделок разброс
+     перекрывает разницу между схемами, и молчать об этом значило бы позволить прочитать шум как
+     подтверждение замера. */
+  $('optChainSample').textContent = s.n+' сделок против '+CHAIN_REF.n+' в замере. '
+    + (s.n < 20
+      ? 'На такой длине разброс перекрывает разницу между схемами: цифры выше описывают эту цепочку, а не подтверждают и не опровергают замер.'
+      : 'Выборка приблизилась к замеру, но пятилетний ориентир опирается на годы вдвое более высокой волатильности: планировать надо по последнему году.');
+
+  const body=$('optChainTradesBody'), empty=$('optChainTradesEmpty');
+  if(body){
+    body.innerHTML = trades.map((t,i)=>{
+      const marks=[]; if(t.reason==='manual') marks.push('досрочный выход');
+      const pos = t.pnlUsd>0;
+      return '<tr><td class="n">'+(i+1)+'</td>'
+        + '<td class="lft sym">'+chEsc(t.instrument)+'</td>'
+        + '<td class="n">'+chEsc(chDate(t.openedAt).slice(0,10))+'</td>'
+        + '<td class="n">'+chEsc(chDate(t.closedAt).slice(0,10))+'</td>'
+        + '<td class="n">'+(t.lots ?? '—')+'</td>'
+        + '<td class="n">'+(Number.isFinite(t.imUsd)?t.imUsd.toFixed(0):'—')+'</td>'
+        + '<td class="n '+(pos?'pos':'neg')+'">'+chEsc(optDollars(t.pnlUsd))+'</td>'
+        + '<td class="n '+(pos?'pos':'neg')+'">'+(Number.isFinite(t.retImPct)?optSigned(t.retImPct,2)+'%':'—')+'</td>'
+        + '<td class="lft faint">'+chEsc(marks.join(' · '))+'</td></tr>';
+    }).join('');
+    if(empty) empty.hidden = true;
+  }
+  const foot=$('optChainTradesFoot');
+  if(foot) foot.textContent = 'сделок '+s.n+(s.manual ? ' · из них досрочных '+s.manual
+    +' · итог цепочки содержит закрытия вне схемы и выходит за пределы измеренного' : ' · все закрыты в экспирацию');
+}
+
+function renderOptUptime(ds){
+  const card=$('optUptimeCard'); if(!card) return;
+  const up = ds.sellChain && ds.sellChain.uptime ? ds.sellChain.uptime : null;
+  card.hidden = !up; if(!up) return;
+  optSetNum('optUpKpiCov', Number.isFinite(up.coveragePct) ? up.coveragePct.toFixed(1)+'%' : '—');
+  $('optUpKpiCovSub').textContent = up.ticks+' решений из '+up.expected+' ожидаемых';
+  optSetNum('optUpKpiCad', chSec(up.effectiveSec));
+  $('optUpKpiCadSub').textContent = 'номинал таймера '+up.nominalSec+' с';
+  optSetNum('optUpKpiGap', up.maxGapMs>0 ? chDur(up.maxGapMs) : 'не было');
+  $('optUpKpiGapSub').textContent = up.lostSlots>0 ? 'потеряно решений: '+up.lostSlots : 'перерывов не зафиксировано';
+
+  /* Полоса покрытия: 48 кирпичей на жизнь сделки, кирпич красится по тому, попал ли в него перерыв. */
+  const strip=$('optUpStrip');
+  if(strip){
+    const N=48, start=Date.now()-up.spanMs, cell=Math.max(1, up.spanMs/N);
+    let html='';
+    for(let i=0;i<N;i++){
+      const a=start+i*cell, b=a+cell;
+      const hit=(up.gaps||[]).some(g=> g.at < b && (g.at+g.ms) > a);
+      html += '<div class="s" data-st="'+(hit?'none':'full')+'"></div>';
+    }
+    strip.innerHTML=html;
+    $('optUpStripCaption').textContent = 'окно '+chDur(up.spanMs)+' · кирпич '+chDur(cell);
+  }
+  const v=$('optUpVerdict');
+  if(v){
+    const eff=up.effectiveSec;
+    const bad = Number.isFinite(eff) && eff>3600;
+    v.className = 'opt-verdict '+(bad?'fail':'pass');
+    v.textContent = !Number.isFinite(eff) ? 'решений пока мало для оценки кадансa'
+      : bad ? 'эффективный каданс '+chSec(eff)+'. Ближайшая измеренная точка даёт ×26.5 и хуже вместо ×46.5'
+            : 'непрерывность в норме: измеренный результат сохраняется';
+  }
+  const tag=$('optUpTag');
+  if(tag){ const eff=up.effectiveSec;
+    const bad = Number.isFinite(eff) && eff>3600, warn = Number.isFinite(eff) && eff>up.nominalSec*10;
+    tag.className='tag '+(bad?'red':(warn?'amber':'green'));
+    tag.textContent = bad?'каданс потерян':(warn?'замедление':'в норме'); }
+}
+
+/* Паспорт: строка «сейчас» против строки «измерено» плюс ЦЕНА отклонения. Правила схемы (полоса,
+   λ, триггеры, блэкаут) движок теперь ставит сам, поэтому они обязаны сходиться всегда - и паспорт
+   существует затем, чтобы это было видно, а не принималось на веру. */
+function renderOptConform(ds){
+  const sec=$('optConformSection'); if(!sec) return;
+  sec.hidden = !optIsSell(); if(sec.hidden) return;
+  const sel = ds.selection || {};
+  const open = !!(ds.structure && ds.structure.kind==='sell-call');
+  const up = ds.sellChain && ds.sellChain.uptime ? ds.sellChain.uptime : null;
+  const band = Number.isFinite(sel.deadbandBtc) && Number.isFinite(sel.deadbandRefQty) && sel.deadbandRefQty>0
+    ? sel.deadbandBtc/sel.deadbandRefQty : null;
+  const rows=[];
+  const row=(name, now, want, ok, price)=> rows.push({ name, now, want, ok, price });
+
+  if(open){
+    row('Полоса хеджа', (band!=null?band.toFixed(3):'—')+' BTC на контракт', '0.030 BTC на контракт',
+      band!=null && Math.abs(band-0.03)<1e-6, CONF_PRICE.band);
+    row('Фильтр выгоды λ', String(sel.lambda ?? '—'), '0 (решает полоса)', Number(sel.lambda)===0, CONF_PRICE.lambda);
+    row('Триггеры цены и времени', (Number(sel.priceTriggerPct)>=1e9?'нет':sel.priceTriggerPct+'%')
+      + ' · ' + (Number(sel.rehedgeSec)>=1e9?'нет':sel.rehedgeSec+' с'), 'нет',
+      Number(sel.priceTriggerPct)>=1e9 && Number(sel.rehedgeSec)>=1e9, CONF_PRICE.trigger);
+    row('Блэкаут расчёта', sel.settlementBlackout===false?'выкл':'вкл', 'выкл',
+      sel.settlementBlackout===false, CONF_PRICE.blackout);
+    row('Исполнение хеджа', sel.execStyle==='limit'?'лимит (мейкер)':'рынок (тейкер)', 'лимит (мейкер)',
+      sel.execStyle==='limit', CONF_PRICE.exec);
+  } else {
+    row('Правила схемы', 'применятся при открытии', 'полоса 0.03 · λ 0 · триггеров нет · блэкаут выкл',
+      true, 'движок ставит их сам, из тулбара они не берутся');
+  }
+  row('Каданс решения', up && Number.isFinite(up.effectiveSec) ? chSec(up.effectiveSec) : 'нет замера',
+    'непрерывно', !up || !Number.isFinite(up.effectiveSec) || up.effectiveSec <= 3600, CONF_PRICE.cadence);
+  row('Срок и дельта ноги', '336-672 ч · 0.45', '336-672 ч · 0.45', true, 'задаётся правилом схемы');
+  row('Размер', 'от залога · не более 70% счёта', 'от залога · не более 70% счёта', true, 'задаётся правилом схемы');
+  const manual = ds.sellChain && ds.sellChain.stats ? (ds.sellChain.stats.manual||0) : 0;
+  row('Выход', manual?('экспирация · досрочных '+manual):'экспирация', 'экспирация', manual===0,
+    'досрочный выход отдаёт распад премии и платит второй круг издержек');
+
+  const body=$('optConformBody');
+  if(body) body.innerHTML = rows.map(r =>
+    '<tr class="'+(r.ok?'ok':'dev')+'">'
+    + '<td class="lft">'+chEsc(r.name)+'</td>'
+    + '<td class="lft n'+(r.ok?'':' was')+'">'+chEsc(r.now)+'</td>'
+    + '<td class="lft n">'+chEsc(r.want)+'</td>'
+    + '<td class="lft price">'+(r.ok?'✓ ':'')+chEsc(r.price)+'</td></tr>').join('');
+
+  const dev = rows.filter(r=>!r.ok).length;
+  const v=$('optConformVerdict');
+  if(v){ v.className='opt-verdict '+(dev?'fail':'pass');
+    v.textContent = dev===0
+      ? 'конфигурация совпадает с измеренной: ×46.5 за пять лет при просадке 13.5%'
+      : 'отклонений: '+dev+'. Цена каждого названа строкой; складывать их нельзя - это накопленные возмущения одной последовательности, а не независимые вклады.'; }
+  const tag=$('optChainConform');
+  if(tag){ tag.className='tag '+(dev?'amber':'green');
+    tag.textContent = dev ? 'соответствие '+(rows.length-dev)+' из '+rows.length : 'соответствие полное'; }
+  const hint=$('optConformHint');
+  if(hint) hint.textContent = open ? 'судится ЗАМОРОЖЕННАЯ конфигурация открытой сделки' : 'сделка не открыта: судится то, что будет применено';
 }
 
 /* — кокпит: реальный реализованный нетто с t0 (est=false) + разбивка + equity/маржа — */
@@ -5719,6 +6250,48 @@ async function confirmOptStructure(){ const err=$('optTicketErr');
      hard block держит кнопку заблокированной (успех закрыл тикет, там состояние кнопки не играет) */
   btn.disabled=false; if($('optLaunchTicket') && !$('optLaunchTicket').hidden) optTicketValidate({showErrors:false}); }
 
+/* ══ УПРАВЛЕНИЕ ЦЕПОЧКОЙ ══
+   ТРИ ДЕЙСТВИЯ, ТРИ РАЗНЫХ ПАТТЕРНА, и это не украшение:
+     включить  - тикет с контрактом схемы (обязуется на недели, но сразу ничего необратимого);
+     остановить - ОДИН клик плюс отмена, потому что эффект («не открыть следующую») наступает только
+                  в экспирацию, то есть настоящая отмена возможна днями, а диалог был бы шумом;
+     закрыть сейчас - два шага на красной кнопке: вот это необратимо в момент клика и выводит
+                  результат за пределы измеренного. */
+function openOptChainTicket(){
+  const t=$('optChainArmTicket'), b=$('optChainArmBtn'); if(!t) return;
+  const ds=LIVE_S1||{};
+  const dep=$('optChainTktDep');
+  if(dep) dep.textContent = ds.settings && Number.isFinite(ds.settings.paperEquityUsd)
+    ? optDollars(ds.settings.paperEquityUsd)+' · размер считает правило от залога' : '—';
+  const g=$('optChainTktGate'); const gate=optGateReady();
+  if(g){ g.textContent=gate.text; g.className='num '+(gate.ok?'gate-ok':(gate.block?'gate-bad':'gate-warn')); }
+  const cf=$('optChainTktConfirm'); if(cf) cf.disabled=!!gate.block;
+  const err=$('optChainTktErr'); if(err){ err.hidden=true; err.textContent=''; }
+  t.hidden=false; if(b) b.setAttribute('aria-expanded','true');
+  if(cf) cf.focus();
+}
+function closeOptChainTicket(){
+  const t=$('optChainArmTicket'), b=$('optChainArmBtn');
+  if(t) t.hidden=true; if(b){ b.setAttribute('aria-expanded','false'); b.focus(); }
+}
+async function chainSet(patch){
+  if(!window.s1 || !window.s1.setChain) return null;
+  try{ const r=await window.s1.setChain(patch);
+    const ds=await window.s1.getState(); if(ds) applyS1Dataset(ds);
+    return r;
+  }catch(e){ console.warn('s1 setChain', e); return { error:String(e && e.message || e) }; }
+}
+async function confirmOptChain(){
+  const cf=$('optChainTktConfirm'); if(cf) cf.disabled=true;
+  const r=await chainSet({ on:true, params:{ qty:null, execStyle:(optSel&&optSel.exec)||'limit' } });
+  if(r && r.error){ const err=$('optChainTktErr'); if(err){ err.hidden=false;
+      err.textContent='схема не включена: '+r.error+'. Настройки сохранены, повторите после устранения причины.'; }
+    if(cf) cf.disabled=false; return; }
+  closeOptChainTicket();
+  const z=$('optZoneTrade'); if(z && smoothOk()){ z.classList.remove('reveal','zone-flash'); void z.offsetWidth; z.classList.add('zone-flash'); }
+  if(cf) cf.disabled=false;
+}
+
 /* ── закрытие структуры: двухшаговое подтверждение (как удаление в журнале) → s1.closeStructure ── */
 let optCloseArmed=false, optCloseTimer=null;
 function disarmOptClose(){ const b=$('optCloseBtn'); optCloseArmed=false; if(optCloseTimer) clearTimeout(optCloseTimer); if(b && !b.hidden) b.textContent='✕ закрыть структуру'; }
@@ -5773,6 +6346,11 @@ function initOpt(){ if(!$('view-btc-options')) return;
       closeOptTicket(false);
       if(v==='sell-call'){ requestOptSellPreview(); }
       else { releaseOptSellProbe(); optSellPreviewCache=null; optSellPreviewErr=null; requestOptPreview(); }
+      /* Карточки цепочки и паспорт зависят от РЕЖИМА, а не только от датасета: без этих двух
+         вызовов они меняли бы вид лишь на следующем пуше, то есть после запуска опроса, и на
+         остановленном источнике оператор увидел бы схему продавца с карточками от «4 ног».
+         Найдено живым прогоном e2e-chain, статические проверки этого не видят. */
+      renderOptChainCard(LIVE_S1||{}); renderOptConform(LIVE_S1||{});
       renderOptStructPreview(); renderOptCharts(); }); })();
   wireOptSeg('optExecSel','exec', null, { setting:'execStyle' });
   wireOptSeg('optDeadbandSel','deadband', null, { setting:'deadbandPreset' });
@@ -5810,6 +6388,15 @@ function initOpt(){ if(!$('view-btc-options')) return;
   if($('optSweepRun')) $('optSweepRun').onclick=runOptSweep;
   if($('optSweepApply')) $('optSweepApply').onclick=armSweepApply;
   if($('optCloseBtn')) $('optCloseBtn').onclick=armOptClose;
+  /* Цепочка. Остановка и отмена остановки идут ОДНИМ кликом без подтверждения намеренно: обе
+     обратимы до самой экспирации, а лишний диалог там, где есть настоящая отмена, только приучает
+     нажимать «да» не читая - и тем обесценивает двухшаговое подтверждение на том, что необратимо. */
+  if($('optChainArmBtn')) $('optChainArmBtn').onclick=()=>{ const t=$('optChainArmTicket'); (t&&t.hidden)?openOptChainTicket():closeOptChainTicket(); };
+  if($('optChainTktCancel')) $('optChainTktCancel').onclick=closeOptChainTicket;
+  if($('optChainTktConfirm')) $('optChainTktConfirm').onclick=confirmOptChain;
+  if($('optChainArmTicket')) $('optChainArmTicket').addEventListener('keydown', e=>{ if(e.key==='Escape') closeOptChainTicket(); });
+  if($('optChainStopBtn')) $('optChainStopBtn').onclick=()=>chainSet({ on:false });
+  if($('optChainUndoBtn')) $('optChainUndoBtn').onclick=()=>chainSet({ stopRequested:false });
   if($('optTicketCancel')) $('optTicketCancel').onclick=()=>closeOptTicket(true);
   if($('optTicketQty')){ $('optTicketQty').addEventListener('input', ()=>optTicketValidate({showErrors:false}));
     $('optTicketQty').addEventListener('blur', ()=>optTicketValidate({showErrors:true})); }
