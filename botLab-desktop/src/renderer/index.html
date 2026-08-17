@@ -5172,12 +5172,16 @@ function renderOptChainCard(ds){
   const up = ch && ch.uptime ? ch.uptime : null;
   const warn=$('optChainWarn');
   if(warn){
-    const bad = up && Number.isFinite(up.effectiveSec) && up.effectiveSec > 3600;
-    warn.hidden = !bad;
-    if(bad) warn.innerHTML = '<b>Каданс решения потерян.</b> Средний интервал между решениями '
-      + chEsc(chSec(up.effectiveSec)) + ', самый длинный перерыв ' + chEsc(chDur(up.maxGapMs))
-      + '. На таком кадансе измеренная схема даёт ×26.5 и хуже вместо ×46.5, а просадка растёт до 30.6%. '
-      + 'Перерыв уже в прошлом и изменить его нельзя; чтобы он не повторился, держите машину не засыпающей.';
+    const eff = up ? up.effectiveSec : null, gapMs = up ? (up.maxGapMs||0) : 0;
+    const effBad = Number.isFinite(eff) && eff > 3600;
+    const gapBad = gapMs > 3600000;
+    warn.hidden = !(effBad || gapBad);
+    if(!warn.hidden) warn.innerHTML = (effBad
+        ? '<b>Каданс решения потерян.</b> Средний интервал между решениями ' + chEsc(chSec(eff))
+          + ', самый длинный перерыв ' + chEsc(chDur(gapMs))
+        : '<b>Перерыв опроса ' + chEsc(chDur(gapMs)) + '.</b> На его протяжении хедж жил без решений')
+      + '. Ближайшая измеренная точка: ' + chEsc(chGapPrice(effBad ? eff/3600 : gapMs/3600000))
+      + '. Перерыв уже в прошлом и изменить его нельзя; чтобы он не повторился, держите машину не засыпающей.';
   }
   const pill=$('optChainUptimePill');
   if(pill) pill.innerHTML = 'опрос <b>' + (up && Number.isFinite(up.coveragePct) ? up.coveragePct.toFixed(1)+'%' : '—') + '</b>';
@@ -5257,6 +5261,17 @@ function renderOptChainStats(ds){
     +' · итог цепочки содержит закрытия вне схемы и выходит за пределы измеренного' : ' · все закрыты в экспирацию');
 }
 
+/* Цена потерянного каданса по измеренной сетке (парная сверка 5 лет): 4 ч ×26.5 · 12 ч ×22.3 ·
+   24 ч ×16.2 против ×46.5 у штатного опроса. Перерыв это ЛОКАЛЬНАЯ потеря каданса: на его
+   протяжении хедж жил ровно с таким интервалом решений, поэтому порог обязан ключиться и на
+   maxGapMs, а не только на среднем (перерыв 4 ч у сделки, прожившей недели на кадансе 15 с,
+   среднее почти не двигает и предупреждение иначе не сработает никогда). */
+function chGapPrice(hours){
+  if(hours>=24) return 'каданс 24 ч: ×16.2 вместо ×46.5, просадка растёт до 30.6%';
+  if(hours>=12) return 'каданс 12 ч: ×22.3 вместо ×46.5';
+  return 'каданс 4 ч: ×26.5 вместо ×46.5';
+}
+
 function renderOptUptime(ds){
   const card=$('optUptimeCard'); if(!card) return;
   const up = ds.sellChain && ds.sellChain.uptime ? ds.sellChain.uptime : null;
@@ -5281,20 +5296,22 @@ function renderOptUptime(ds){
     strip.innerHTML=html;
     $('optUpStripCaption').textContent = 'окно '+chDur(up.spanMs)+' · кирпич '+chDur(cell);
   }
+  const eff=up.effectiveSec, gapMs=up.maxGapMs||0;
+  const effBad = Number.isFinite(eff) && eff>3600;
+  const gapBad = gapMs>3600000;
   const v=$('optUpVerdict');
   if(v){
-    const eff=up.effectiveSec;
-    const bad = Number.isFinite(eff) && eff>3600;
-    v.className = 'opt-verdict '+(bad?'fail':'pass');
+    v.className = 'opt-verdict '+((effBad||gapBad)?'fail':'pass');
     v.textContent = !Number.isFinite(eff) ? 'решений пока мало для оценки кадансa'
-      : bad ? 'эффективный каданс '+chSec(eff)+'. Ближайшая измеренная точка даёт ×26.5 и хуже вместо ×46.5'
-            : 'непрерывность в норме: измеренный результат сохраняется';
+      : effBad ? 'эффективный каданс '+chSec(eff)+'. Ближайшая измеренная точка: '+chGapPrice(eff/3600)
+      : gapBad ? 'перерыв '+chDur(gapMs)+': на его протяжении хедж жил без решений. Ближайшая измеренная точка: '+chGapPrice(gapMs/3600000)
+      : 'непрерывность в норме: измеренный результат сохраняется';
   }
   const tag=$('optUpTag');
-  if(tag){ const eff=up.effectiveSec;
-    const bad = Number.isFinite(eff) && eff>3600, warn = Number.isFinite(eff) && eff>up.nominalSec*10;
-    tag.className='tag '+(bad?'red':(warn?'amber':'green'));
-    tag.textContent = bad?'каданс потерян':(warn?'замедление':'в норме'); }
+  if(tag){
+    const warn = gapBad || (Number.isFinite(eff) && eff>up.nominalSec*10);
+    tag.className='tag '+(effBad?'red':(warn?'amber':'green'));
+    tag.textContent = effBad?'каданс потерян':(warn?'замедление':'в норме'); }
 }
 
 /* Паспорт: строка «сейчас» против строки «измерено» плюс ЦЕНА отклонения. Правила схемы (полоса,
