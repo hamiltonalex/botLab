@@ -294,10 +294,12 @@ export async function buildDeribitSnapshot({ legInstruments = [], primaryInstrum
 // never throws into the tick, and exposes status() for the connection cluster + assembleDataset1().fresh.
 // This is the seam a WebSocket source (Phase 3) drops behind — same {start,stop,refreshNow,setInstruments,status}.
 // ---------------------------------------------------------------------------
-export function createRestSource({ testnet = false, intervalMs = 3000, staleAfterSec = 15 } = {}) {
+export function createRestSource({ testnet = false, intervalMs = 3000, staleAfterSec = 15, fetchSnapshot = null } = {}) {
   let timer = null;
   let running = false;
   let onSnapshot = null;
+  let onError = null; // необязательный: хинт «нет ответа биржи» для причин перерыва опроса
+  const fetchImpl = fetchSnapshot ?? buildDeribitSnapshot; // инъекция только для тестов источника
   let legInstruments = [];
   let primaryInstruments = null; // 3b: the gate-relevant subset (open structure); null = all polled legs
   let lastTs = null;
@@ -313,16 +315,20 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
     if (inFlight) return;
     inFlight = true;
     try {
-      const snap = await buildDeribitSnapshot({ legInstruments, primaryInstruments, metaCache, testnet, nowMs: Date.now() });
+      const snap = await fetchImpl({ legInstruments, primaryInstruments, metaCache, testnet, nowMs: Date.now() });
       // Health bookkeeping judges PRIMARY failures only (perp + open-structure legs): a band leg
       // that failed to fetch stays visible in notes but must not flip the LIVE badge to warn.
+      // onError зовётся на КАЖДОЙ попытке (ошибка либо null на здоровой), а не только на смене
+      // состояния: вызывающему нужна метка ПЕРВОЙ ошибки серии, и держит её он сам.
       const primaryErrs = snap.primaryErrors ?? snap.errors;
       if (primaryErrs.length) {
         lastError = primaryErrs[0].message;
         errorStreak++;
+        if (onError) onError(lastError);
       } else {
         lastError = null;
         errorStreak = 0;
+        if (onError) onError(null);
       }
       // Dedup by exchange timestamp, MONOTONIC: equal ts shouldn't re-fire the render/save loop, and
       // an older-than-accepted ts (e.g. a refreshNow racing the interval) must never regress state.
@@ -336,6 +342,7 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
       errorStreak++;
       if (notes.length > 20) notes.shift();
       notes.push(lastError);
+      if (onError) onError(lastError);
     } finally {
       inFlight = false;
     }
@@ -356,6 +363,11 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
     },
     refreshNow() {
       if (running) tick();
+    },
+    // Аддитивно: сканер метод не зовёт. Колбэк получает строку ошибки на неудачной попытке и null
+    // на здоровой - из этого вызывающий строит метку начала серии ошибок для причин перерыва.
+    setOnError(fn) {
+      onError = typeof fn === "function" ? fn : null;
     },
     // S2 (OTM-сканер): живая смена каданса БЕЗ пересоздания источника — авто-деградация x2 при
     // errorStreak >= 3 обязана сохранять lastTs/metaCache/errorStreak (пересоздание обнуляло бы

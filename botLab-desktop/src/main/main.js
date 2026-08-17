@@ -57,6 +57,7 @@ const S1_SMOKE = process.env.S1_SMOKE === "1"; // bot-2 self-test: open→live t
 // работало» (включая рестарт авто-апдейтера), окно последнего сна приходит из powerMonitor.
 const APP_BOOT_MS = Date.now();
 let lastSleepWindow = null; // { start, end } последнего suspend..resume
+let sourceErrorFirstAt = null; // метка первой ошибки текущей серии отказов источника бота 2
 const SCN_SMOKE = process.env.SCN_SMOKE === "1"; // S2 self-test сканера: живой scanCycle через реальный scn-IPC
 const SCN_AUTOSTART = process.env.SCN_AUTOSTART === "1"; // обкатка: завести опрос сканера на буте, без показа вкладки
 const S1_AUTOSTART = process.env.S1_AUTOSTART === "1"; // прогон бота 2: завести опрос на буте, без показа вкладки
@@ -902,7 +903,7 @@ function onBtcOptSnapshot(snap) {
     bo.lastSnapshot = snap;
     recordBtcOptHistory(snap); // copies BEFORE ivContext is attached — history entries stay context-free
     snap.ivContext = { series: bo.ivHistory }; // → evaluate() computes cycle.iv_regime from this
-    s1engine.ingest(bo.engine, snap, Date.now(), { bootAt: APP_BOOT_MS, sleepWindow: lastSleepWindow });
+    s1engine.ingest(bo.engine, snap, Date.now(), { bootAt: APP_BOOT_MS, sleepWindow: lastSleepWindow, sourceErrorSince: sourceErrorFirstAt });
     const hadStructure = !!bo.engine.structure;
     // Перевход спрашивается ДО evaluate: таков контракт shouldOpenNext (sellhedge.js §8), и так же
     // поступает прогон записи. На тике экспирации структура ещё открыта и попытка не уходит;
@@ -933,6 +934,12 @@ function ensureBtcOptSource() {
       testnet: !!cfg.testnet,
       intervalMs: Math.max(1000, (cfg.repriceSec || 3) * 1000),
       staleAfterSec: Math.max(15, (cfg.repriceSec || 3) * 5),
+    });
+    // Хинт «нет ответа биржи» для причин перерыва: держится метка ПЕРВОЙ ошибки серии, здоровая
+    // попытка её сбрасывает. Ошибочные тики снимка не рождают, поэтому без этой метки перерыв от
+    // серии отказов биржи был бы неотличим от «причина не установлена».
+    bo.source.setOnError((msg) => {
+      sourceErrorFirstAt = msg ? (sourceErrorFirstAt ?? Date.now()) : null;
     });
   }
   // Point the source BEFORE start() — start() fires an immediate tick, so the very first fetch must

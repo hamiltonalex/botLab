@@ -159,3 +159,26 @@ test("S2 source API: errorStreak in status(); setIntervalMs updates cadence; fai
     global.fetch = real;
   }
 });
+
+test("createRestSource: onError отдаёт ошибку на неудачной попытке и null на выздоровлении", async () => {
+  // Инъекция выборки существует только для этого теста: сетевой tick иначе не проверяется.
+  let fail = true;
+  const src = createRestSource({
+    intervalMs: 600000,
+    fetchSnapshot: async () => fail
+      ? { ts: 1, legs: {}, errors: [{ message: "boom" }], primaryErrors: [{ message: "boom" }],
+          fresh: { gateOk: false, gateFailed: [], notes: [] } }
+      : { ts: 2, legs: {}, errors: [], primaryErrors: [],
+          fresh: { gateOk: true, gateFailed: [], notes: [] } },
+  });
+  const calls = [];
+  src.setOnError((m) => calls.push(m));
+  src.start(() => {});
+  await new Promise((r) => setTimeout(r, 20));
+  fail = false;
+  src.refreshNow(); // выздоровление
+  await new Promise((r) => setTimeout(r, 20));
+  src.stop();
+  assert.deepEqual(calls, ["boom", null], "каждая попытка зовёт колбэк: ошибка, затем здоровый null");
+  assert.equal(src.status().errorStreak, 0, "здоровая попытка сбросила серию");
+});
