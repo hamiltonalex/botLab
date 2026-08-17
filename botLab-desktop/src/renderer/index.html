@@ -4907,7 +4907,12 @@ function refreshOverview(){
   const faPnl = (acc && acc.count>0) ? acc.netPnl : null;
   // — BTC-опционы (bot 2) —
   const s1cyc = (LIVE_S1 && LIVE_S1.cycle) || null;
-  const s1Open = (LIVE_S1 && LIVE_S1.structure) ? 1 : 0, s1Run = s1Open>0;
+  const s1ch = (LIVE_S1 && LIVE_S1.sellChain) || null;
+  const s1Open = (LIVE_S1 && LIVE_S1.structure) ? 1 : 0;
+  /* «Запущен» это ОПРОС, а не открытая позиция: цепочка продавца законно живёт днями в подборе
+     ноги (окно 336-672 ч бывает пусто по сетке экспираций Deribit), и бот, решающий каждые
+     15 секунд, значился бы «НЕ ЗАПУЩЕН». Найдено первым днём прогона на mbp15. */
+  const s1Run = !!(LIVE_S1 && LIVE_S1.running) || s1Open>0;
   const s1Pnl = (s1cyc && s1cyc.pnl) ? s1cyc.pnl.net_total : null;
   // — агрегаты «Обзора» —
   const totalOpen = faOpen + s1Open;
@@ -4925,7 +4930,10 @@ function refreshOverview(){
       : (acc && acc.count>0 ? 'нет открытых позиций · закрытых: '+acc.count : '○ не запущен — нет открытых позиций'));
   // — карточка/точка btc-options —
   overviewCard('btc-options', s1Run, s1Pnl,
-    s1Run ? 'структура открыта · '+optDecisionWord(s1cyc&&s1cyc.decision)+' · P&L нетто <span class="'+clsSign(s1Pnl)+'">'+fmtUSDfull(s1Pnl)+'</span>'
+    s1Open ? 'структура открыта · '+optDecisionWord(s1cyc&&s1cyc.decision)+' · P&L нетто <span class="'+clsSign(s1Pnl)+'">'+fmtUSDfull(s1Pnl)+'</span>'
+      : (s1ch && s1ch.on) ? 'цепочка продавца · подбор ноги: '
+          +chEsc((s1ch.last && !s1ch.last.ok && s1ch.last.reason) ? s1ch.last.reason : 'правило выбирает контракт')
+      : s1Run ? 'опрос идёт · структура не открыта'
       : '○ структура не открыта — готов к запуску');
   // — карточка/точка otm-scanner: позиций и P&L нет (pnl=null) — в aggOpen/aggPnl не входит никогда,
   //   в aggReady входит как модуль (ui-spec §2.9); статус — состояние сигнала —

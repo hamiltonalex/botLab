@@ -112,6 +112,10 @@ try {
   const ds = await win.evaluate("JSON.stringify((LIVE_S1&&LIVE_S1.sellChain)||null)");
   const chain = JSON.parse(ds || "null");
   check("датасет несёт состояние цепочки", !!chain && chain.on === true, ds ? ds.slice(0, 120) : "нет");
+  // «Обзор»: включённая цепочка без структуры это ЗАПУЩЕННЫЙ бот, а не «НЕ ЗАПУЩЕН» (найдено
+  // первым днём прогона на mbp15: чип приравнивал запуск к открытой структуре).
+  const chip = (await textOf(win, "card-tag-btc-options")).trim();
+  check("обзор: чип бота 2 при включённой цепочке = ЗАПУЩЕН", chip === "ЗАПУЩЕН", chip);
   check("пульт: рабочий вид вместо пустого состояния", await visible(win, "optChainBody"));
   const token = (await textOf(win, "optChainToken")).trim();
   check("токен состояния осмыслен", ["ЗАПУСК", "ПОДБОР", "В СДЕЛКЕ", "СТОП", "РАСЧЁТ"].includes(token), token);
