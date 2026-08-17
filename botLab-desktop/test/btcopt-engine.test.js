@@ -658,6 +658,20 @@ test("цепочка: покрытие опроса меряется за жиз
   assert.ok(u.effectiveSec > 900, `эффективный каданс отражает простой: ${u.effectiveSec}`);
 });
 
+test("ensureSellChain: поднимает накопитель у старого персиста и не трогает живой", () => {
+  // Профиль июльской сборки: состояния цепочки нет вовсе (найдено развёртыванием на mbp15).
+  const st = engine.create({ nowMs: 0 });
+  delete st.sellChain;
+  const ch = engine.ensureSellChain(st);
+  assert.equal(ch.on, false);
+  assert.equal(ch.mode, "continuous");
+  assert.deepEqual(ch.trades, []);
+  ch.on = true;
+  ch.trades.push({ x: 1 });
+  assert.equal(engine.ensureSellChain(st), ch, "повторный вызов отдаёт тот же объект");
+  assert.equal(st.sellChain.on, true, "живое состояние не перезатирается");
+});
+
 // ── ПРИЧИНЫ ПЕРЕРЫВОВ ОПРОСА: чистый классификатор по хинтам вызывающего, словарь закрыт.
 test("classifyGapCause: сон точнее бута, бут точнее источника, без хинтов честный unknown", () => {
   const gap = { fromMs: 1000_000, toMs: 2000_000 };

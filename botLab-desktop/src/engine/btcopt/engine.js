@@ -134,9 +134,24 @@ export function create(params) {
     // `mode`: "continuous" | "once" (одна сделка, после расчёта перевхода нет); отсутствующее в
     // старом персисте поле читается как непрерывный режим. `sanityWaitingSince` - начало ожидания
     // санитарии (ни одна нога не прошла); переживает рестарт намеренно: перерыв в поиске ноги не
-    // должен обнуляться перезапуском приложения.
-    sellChain: { on: false, stopRequested: false, armedAt: null, stoppedAt: null, params: null, trades: [], mark: null, mode: "continuous", sanityWaitingSince: null },
+    // должен обнуляться перезапуском приложения. Форму задаёт ensureSellChain - одна на создание,
+    // миграцию на буте и все точки входа.
+    sellChain: ensureSellChain({}),
   };
+}
+
+// ensureSellChain(state) - поднимает накопитель цепочки у состояний, записанных ДО его появления.
+// Найдено живым развёртыванием на mbp15: профиль июльской сборки не содержит sellChain, и
+// s1:setChain отвечал «состояние цепочки не поднято», хотя открытие структуры такой же старый
+// профиль чинило молча. Точек входа несколько, форма обязана быть одна.
+export function ensureSellChain(state) {
+  if (!state.sellChain) {
+    state.sellChain = {
+      on: false, stopRequested: false, armedAt: null, stoppedAt: null, params: null,
+      trades: [], mark: null, mode: "continuous", sanityWaitingSince: null,
+    };
+  }
+  return state.sellChain;
 }
 
 // Окно ожидания санитарии (§1.8): begin ставится вызывающим при отказе «ни одна нога не прошла»,
@@ -553,7 +568,7 @@ export function preTradeCheck(state, structure, metaByInstrument, snapshot, nowM
 // the nearest live expiry itself (≤3d, skipping any already inside the pre-expiry blackout — opening into
 // delta decay is never right). Gated by preTradeCheck; "warn" rejections ride along in the OK response.
 export function openStructure(state, params, chain, snapshot, nowMs) {
-  if (!state.sellChain) state.sellChain = { on: false, stopRequested: false, armedAt: null, stoppedAt: null, params: null, trades: [], mark: null, mode: "continuous", sanityWaitingSince: null };
+  ensureSellChain(state);
   // One structure at a time: a second open would silently orphan the first (its MtM is realized only
   // via closeStructure) and leave the perp hedge sized for the discarded legs. The IPC resolve path is
   // async, so a double-click/retried invoke CAN land here twice — the guard, not the UI, is the invariant.

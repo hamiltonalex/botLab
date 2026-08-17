@@ -507,6 +507,9 @@ function loadOrInitBtcOptions() {
     st.schemaVersion = s1engine.SCHEMA_VERSION; // forward-migration guard (no-op at v1)
     saveBotState(baseDir, BTCOPT_ID, st);
   }
+  // Профили, записанные до появления цепочки, её накопителя не содержат: поднять на буте, иначе
+  // s1:setChain отказывал бы «состояние цепочки не поднято» (найдено развёртыванием на mbp15).
+  s1engine.ensureSellChain(st);
   // Mirror the healed values into the ENGINE's settings copy (next open freezes engineCfg from it).
   // The frozen engineCfg of an ALREADY-open structure is deliberately untouched (frozen-at-open law).
   if (healed && st.settings) st.settings = { ...st.settings, deadbandPreset: settings.deadbandPreset, deadbandBtc: settings.deadbandBtc };
@@ -1383,8 +1386,8 @@ function wireIpcStrategy1() {
   // кнопками с разной ценой.
   ipcMain.handle("s1:setChain", async (_e, patch) => {
     const bo = state.btcOptions;
-    const ch = bo.engine.sellChain;
-    if (!ch) return { error: "состояние цепочки не поднято" };
+    if (!bo.engine) return { error: "движок бота 2 не поднят" };
+    const ch = s1engine.ensureSellChain(bo.engine);
     if (patch?.on === true) {
       ch.on = true;
       ch.stopRequested = false;
