@@ -1057,11 +1057,15 @@ async function previewSellStructure(params) {
   }
 }
 
-async function openSellStructure(params) {
+async function openSellStructure(params, guard = null) {
   const bo = state.btcOptions;
   try {
     const res = await resolveBtcOptSellStructureLive(params);
     if (res.error) return { error: res.error };
+    // Снабжение асинхронно (срез поверхности плюс тикеры), и за это время оператор мог остановить
+    // цепочку. Остановка обязана быть окончательной: guard перепроверяется у точки фиксации, а не
+    // только при запуске попытки, иначе уже летящая попытка открыла бы сделку после остановки.
+    if (guard && !guard()) return { error: "остановлено оператором до открытия" };
     const r = s1engine.openStructure(
       bo.engine,
       { ...res.params, kind: "sell-call", qty: params?.qty ?? null, execStyle: params?.execStyle },
@@ -1132,7 +1136,7 @@ function maybeOpenNextSell() {
   if (now < sellChainNextTryAt) return;
   sellChainNextTryAt = now + SELL_CHAIN_RETRY_MS;
   sellChainInFlight = true;
-  openSellStructure(chain.params ?? {})
+  openSellStructure(chain.params ?? {}, () => !!chain.on && !chain.stopRequested)
     .then((r) => {
       // Причина отказа ХРАНИТСЯ и уезжает в UI: молчащая цепочка, которая неделю не может открыться,
       // неотличима от работающей, а это ровно тот класс дефекта, который проект ловил раньше.
