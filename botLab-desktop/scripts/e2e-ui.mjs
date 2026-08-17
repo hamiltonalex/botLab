@@ -231,6 +231,10 @@ try {
   const premBad = await win.evaluate("document.getElementById('scnThPremCap').getAttribute('aria-invalid')");
   const premSetting = await win.evaluate("window.scn.getState().then(d=>d.preset.premMaxPct)");
   check("редактор: У10=0 отклонён на blur и не применён", premBad === "true" && premSetting > 0, `aria-invalid=${premBad}, preset.premMaxPct=${premSetting}`);
+  // санитария схемы продавца: карточка существует и на чистом профиле честно скрыта (бот 2 ещё не
+  // делал ни одной проверки; появляется от пуша s1, не от тиков сканера)
+  const sanCard = await win.evaluate("(el=>el?({exists:true,hidden:el.hidden}):{exists:false})(document.getElementById('scnSanityCard'))");
+  check("санитария: карточка есть и скрыта без данных бота 2", sanCard.exists && sanCard.hidden === true, JSON.stringify(sanCard));
   await win.screenshot({ path: join(SHOTS, "06-scanner.png") });
 
   const fails = results.filter((r) => !r.ok);

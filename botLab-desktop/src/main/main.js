@@ -881,6 +881,7 @@ function assembleDataset1() {
           stats: s1engine.sellChainStats(eng),
           uptime: s1engine.uptimeStats(eng),
           last: bo.sellChainLast ?? null,
+          sanity: bo.sellSanityLast ?? null, // последняя проверка санитарии для #scnSanityCard
           nextTryAt: eng.sellChain.on && !eng.structure ? sellChainNextTryAt : null,
         }
       : null,

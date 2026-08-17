@@ -2487,6 +2487,28 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
           </div>
           <div class="ledger-foot"><span class="hint" id="scnJournalCount">—</span></div>
         </div>
+
+        <!-- ══ САНИТАРИЯ СХЕМЫ ПРОДАВЦА (§1.8): сканер не выбирает момент входа, но его семантика
+             качества котировки служит схеме. Карточка показывает ПОСЛЕДНЮЮ проверку, сделанную
+             ботом 2 при поиске очередной ноги; данные приходят пушем бота 2, НЕ тиками сканера
+             (гоча: сканер не тикает без показа вкладки, а открытие сделок от неё зависеть не должно). ══ -->
+        <div class="card span2" id="scnSanityCard" hidden>
+          <div class="sec-head">
+            <h2>Санитария схемы продавца</h2>
+            <span class="tag" id="scnSanityTag">—</span>
+            <span class="rule"></span>
+            <span class="stamp" id="scnSanityStamp">—</span>
+          </div>
+          <div class="dl" id="scnSanityRows">
+            <div class="row"><span class="k">инструмент</span><span class="v num sym" id="scnSanInstrument">—</span></div>
+            <div class="row"><span class="k">возраст котировки</span><span class="v" id="scnSanAge">—</span></div>
+            <div class="row"><span class="k">спред</span><span class="v" id="scnSanSpread">—</span></div>
+            <div class="row"><span class="k">глубина книги</span><span class="v" id="scnSanDepth">—</span></div>
+          </div>
+          <div class="foot-src">
+            <span>вето переключает контракт, а не останавливает цепочку; ни одна нога не прошла - схема ждёт с названной причиной</span>
+          </div>
+        </div>
       </div>
     </section><!-- /scnZoneSignal -->
 
@@ -5062,6 +5084,7 @@ function applyS1Dataset(ds){
   }
   if(ds.settings) hydrateOptToolbar(ds.settings);
   renderOpt();
+  renderScnSanityCard(ds); /* карточка сканера живёт от пуша бота 2, не от тиков сканера */
   if(typeof refreshOverview==='function') refreshOverview();
 }
 
@@ -5360,6 +5383,29 @@ function renderOptUptimeGaps(up){
   body.innerHTML = gaps.map(g=>'<tr><td class="lft">'+chEsc(chDate(g.at))
     +'</td><td class="n">'+chEsc(chDur(g.ms))
     +'</td><td class="lft">'+chEsc(CAUSE_LABEL[g.cause]||'причина не установлена')+'</td></tr>').join('');
+}
+
+/* Санитария схемы продавца на вкладке сканера: последняя проверка бота 2. Обновляется пушем s1
+   (applyS1Dataset), поэтому живёт независимо от тиков сканера и его вкладки. */
+function renderScnSanityCard(ds){
+  const card=$('scnSanityCard'); if(!card) return;
+  const s = ds && ds.sellChain ? ds.sellChain.sanity : null;
+  card.hidden = !s; if(!s) return;
+  $('scnSanInstrument').textContent = s.instrument || '—';
+  const chk = (s.checks||[]).find(c=>c.instrument===s.instrument) || (s.checks||[])[(s.checks||[]).length-1] || null;
+  const byKey = k => chk ? (chk.rows||[]).find(r=>r.key===k) : null;
+  const put = (id, r) => { const el=$(id); if(!el) return;
+    el.textContent = r ? r.note : 'ось выключена';
+    el.className = 'v' + (r ? (r.state==='fail' ? ' neg' : r.state==='unknown' ? ' dim' : '') : ' dim'); };
+  put('scnSanAge', byKey('age')); put('scnSanSpread', byKey('spread')); put('scnSanDepth', byKey('depth'));
+  const tag=$('scnSanityTag');
+  if(tag){
+    tag.className = 'tag ' + (s.verdict==='pass' ? 'green' : 'amber');
+    tag.textContent = s.verdict==='pass' ? 'в норме'
+      : s.verdict==='degraded' ? 'ухудшенная санитария' : 'вето · схема ждёт';
+  }
+  const stamp=$('scnSanityStamp');
+  if(stamp) stamp.textContent = 'проверено '+chDate(s.at)+' · кандидатов '+((s.checks||[]).length);
 }
 
 /* Паспорт: строка «сейчас» против строки «измерено» плюс ЦЕНА отклонения. Правила схемы (полоса,
