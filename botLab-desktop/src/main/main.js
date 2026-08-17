@@ -779,6 +779,8 @@ async function maybeReconcileSettles() {
     const plans = s1planSettleAdjustments(eng.ledger, byDate);
     for (const p of plans) {
       eng.realizedOptionsUsd = (eng.realizedOptionsUsd || 0) + p.adjustUsd;
+      // Поправка обязана доехать до строки СВОЕЙ сделки цепочки и не попасть в окно следующей.
+      s1engine.chainApplySettleAdjust(eng, p.srcSeq, p.adjustUsd);
       s1appendLedger(eng, {
         t: Date.now(),
         type: "settle-adjust",

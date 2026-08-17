@@ -600,6 +600,43 @@ test("цепочка: досрочное закрытие помечается �
   assert.equal(engine.sellChainStats(st).manual, 1, "сводка считает досрочные отдельно");
 });
 
+test("цепочка: поправка delivery-сверки доезжает до своей сделки и не задевает следующую", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = sellFixture(nowMs);
+  // Гонка из аудита: цепочка переоткрывается через ~30 секунд, а поправка delivery приходит
+  // минутами позже, когда замер СЛЕДУЮЩЕЙ сделки уже снят. Контрольный прогон без поправки
+  // доказывает, что окно следующей сделки её не несёт.
+  const run = (withAdjust) => {
+    const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+    assert.ok(engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, f.chain, f.snapshot, nowMs).ok);
+    engine.settleStructure(st, { ...f.snapshot, index: 90000, underlying: 90000 }, f.expiry + 1000);
+    const settleSeq = st.ledger.findLast((r) => r.type === "settle-options").seq;
+    const now2 = f.expiry + 60000;
+    const f2 = sellFixture(now2);
+    assert.ok(engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, f2.chain, f2.snapshot, now2).ok);
+    if (withAdjust) {
+      st.realizedOptionsUsd += 50; // так книжит вызывающий (maybeReconcileSettles)
+      assert.equal(engine.chainApplySettleAdjust(st, settleSeq, 50), true);
+    }
+    engine.settleStructure(st, { ...f2.snapshot, index: 90000, underlying: 90000 }, f2.expiry + 1000);
+    return st;
+  };
+  const a = run(true), b = run(false);
+  const t1 = a.sellChain.trades[0], t1b = b.sellChain.trades[0];
+  assert.equal(t1b.preliminary, true, "до поправки итог помечен предварительным");
+  near(t1.pnlUsd, t1b.pnlUsd + 50, 1e-9, "поправка легла в свою сделку");
+  near(t1.retImPct, (t1.pnlUsd / t1.imUsd) * 100, 1e-9, "доходность пересчитана на залог");
+  assert.equal(t1.preliminary, false, "пометка предварительного итога снята");
+  near(t1.adjustUsd, 50, 1e-12, "величина поправки сохранена в строке");
+  near(a.sellChain.trades[1].pnlUsd, b.sellChain.trades[1].pnlUsd, 1e-9, "окно следующей сделки чужую поправку не несёт");
+
+  // Поправка без адресата (строки, записанные до появления settleSeq) цепочку не трогает и не роняет.
+  const c = run(false);
+  const before = c.sellChain.trades.map((t) => t.pnlUsd);
+  assert.equal(engine.chainApplySettleAdjust(c, 999999, 10), false);
+  assert.deepEqual(c.sellChain.trades.map((t) => t.pnlUsd), before);
+});
+
 test("цепочка: покрытие опроса меряется за жизнь ОДНОЙ сделки", () => {
   const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
   const f = sellFixture(nowMs);

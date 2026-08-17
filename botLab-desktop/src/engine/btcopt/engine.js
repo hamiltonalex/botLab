@@ -655,7 +655,7 @@ function chainMarkOpen(state, nowMs) {
 // Дописать закрытую сделку. `reason` различает штатный выход и досрочный: схема измерена ТОЛЬКО с
 // выходом в экспирацию, и сделка, закрытая руками, обязана нести это на себе постоянно, иначе итог
 // цепочки молча смешает измеренное с неизмеренным.
-function chainAppendTrade(state, nowMs, reason) {
+function chainAppendTrade(state, nowMs, reason, settleSeq = null) {
   const st = state.structure;
   const m = state.sellChain?.mark;
   if (!st || st.kind !== "sell-call" || !m) return;
@@ -664,6 +664,11 @@ function chainAppendTrade(state, nowMs, reason) {
   const leg = st.legs?.[0] ?? {};
   const im = st.sizing?.imUsedUsd ?? null;
   state.sellChain.trades.push({
+    // Ссылка на строку `settle-options` своего расчёта: по ней поправка delivery-сверки находит
+    // СВОЮ сделку (chainApplySettleAdjust). До прихода поправки итог предварительный: расчёт идёт
+    // по индексу-прокси, а официальная delivery-цена публикуется позже.
+    settleSeq,
+    preliminary: reason === "expiry",
     instrument: leg.instrument ?? null,
     openedAt: st.createdAt ?? m.at,
     closedAt: nowMs,
@@ -683,6 +688,25 @@ function chainAppendTrade(state, nowMs, reason) {
     reason, // "expiry" | "manual"
   });
   state.sellChain.mark = null;
+}
+
+// ── Поправка delivery-сверки доезжает до СВОЕЙ сделки цепочки. Без этого прокси-итог сделки N
+// оставался бы в строке навсегда, а поправка попадала бы в окно накопителей СЛЕДУЮЩЕЙ сделки
+// (перевход идёт через ~30 секунд, delivery публикуется и сверяется минутами позже) либо, при
+// плоском состоянии, ни в одну. Вызывающий обязан звать это В ТОМ ЖЕ месте, где книжит
+// realizedOptionsUsd += adjustUsd: замер открытой сделки сдвигается на ту же величину, иначе
+// чужая поправка попала бы в её окно. Строки, записанные до появления settleSeq, поправку в
+// цепочку не принимают (некуда адресовать), глобальный учёт от этого не страдает.
+export function chainApplySettleAdjust(state, srcSeq, adjustUsd) {
+  const t = state.sellChain?.trades?.find((x) => x.settleSeq != null && x.settleSeq === srcSeq);
+  if (t) {
+    t.pnlUsd = (t.pnlUsd || 0) + adjustUsd;
+    if (Number.isFinite(t.imUsd) && t.imUsd > 0) t.retImPct = (t.pnlUsd / t.imUsd) * 100;
+    t.adjustUsd = (t.adjustUsd || 0) + adjustUsd;
+    t.preliminary = false;
+  }
+  if (state.sellChain?.mark) state.sellChain.mark.opt += adjustUsd;
+  return !!t;
 }
 
 // sellChainStats(state) - сводка цепочки. Чистая, считается из уже записанных сделок, нигде не
@@ -807,7 +831,8 @@ export function settleStructure(state, snapshot, nowMs) {
   });
 
   state.lastRunMetrics = snapshotRunMetrics(state, nowMs);
-  chainAppendTrade(state, nowMs, "expiry"); // ШТАТНЫЙ выход схемы, единственный измеренный
+  const settleSeq = state.ledger[state.ledger.length - 1]?.seq ?? null;
+  chainAppendTrade(state, nowMs, "expiry", settleSeq); // ШТАТНЫЙ выход схемы, единственный измеренный
   state.structure = null;
   state.lastHedgeAt = null;
   state.lastHedgeUnderlying = null;
