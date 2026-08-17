@@ -29,6 +29,7 @@ import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
 import { buildStructure as s1buildStructure, buildSellStructure as s1buildSellStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry } from "../engine/btcopt/structure.js";
 import { rankSellLegs as s1rankSellLegs, SELLHEDGE_DEFAULTS } from "../engine/otmscan/sellhedge.js";
+import { buildS1TickRecord } from "../engine/btcopt/record.js";
 import { SELL_SANITY_DEFAULTS } from "../engine/otmscan/sanity.js";
 import * as s1sellhedge from "../engine/otmscan/sellhedge.js";
 import { payoffCurve as s1payoffCurve } from "../engine/btcopt/payoff.js";
@@ -921,6 +922,20 @@ function onBtcOptSnapshot(snap) {
     saveBotState(baseDir, BTCOPT_ID, bo.engine);
     push1();
     refreshBtcOptBand(snap.underlying); // may re-point the source for the NEXT tick
+    // Запись тика: сырые котировки всех опрашиваемых инструментов плюс решение хеджа. Той же
+    // механикой store, что запись сканера (суточные файлы, append, рваный хвост переживает
+    // читатель). Ошибка записи тик не роняет: рынок важнее архива.
+    try {
+      const why = bo.sellChainLast && bo.sellChainLast.ok === false
+        ? String(bo.sellChainLast.reason || "").slice(0, 80) : null;
+      const row = buildS1TickRecord({
+        snap, cycle: bo.snapshot,
+        chain: bo.engine?.sellChain ? { on: !!bo.engine.sellChain.on, why } : null,
+      });
+      if (row) appendScanRecords(baseDir, "s1tick", new Date(snap.ts).toISOString().slice(0, 10), [row]);
+    } catch (e) {
+      console.warn("[s1] tick-record:", String(e?.message || e));
+    }
     flushBtcOptHistory(false);
     ensureBtcOptDvol(); // async, self-gated to the 5-min cadence, never throws into the tick
     maybeReconcileSettles(); // S0: async, self-gated (10 мин + pending-строки), never throws into the tick
