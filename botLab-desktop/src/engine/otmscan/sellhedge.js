@@ -67,19 +67,25 @@ export const SELLHEDGE_DEFAULTS = Object.freeze({
 // нога без них не оценивается, и подставлять оценку вместо наблюдения здесь нельзя.
 //   rows - строки поверхности одного снимка (любой итерируемый);
 //   поля строки: h часов до экспирации, s тип "C"/"P", m марк, d дельта, b/a бид/аск, iv, vg вега.
-export function pickSellLeg(rows, cfg = SELLHEDGE_DEFAULTS) {
-  let best = null;
-  let bd = Infinity;
+// rankSellLegs - те же фильтры, но до `limit` кандидатов в порядке близости дельты. Нужен
+// санитарии (дизайн §1.8: вето переключает контракт, а не останавливает цепочку), поэтому
+// вызывающему требуется не один победитель, а очередь запасных В ДОПУСКЕ по дельте.
+// Сортировка стабильна (ES2019), при равном расстоянии порядок строк сохраняется - тот же выбор,
+// что делал старый цикл со строгим `<`.
+export function rankSellLegs(rows, cfg = SELLHEDGE_DEFAULTS, limit = 1) {
+  const out = [];
   for (const r of rows ?? []) {
     if (!fin(r?.h) || r.h < cfg.expiryMinH || r.h > cfg.expiryMaxH || r.s !== "C") continue;
     if (!(r.m > 0) || !fin(r.d) || !fin(r.b) || !fin(r.a) || !fin(r.iv) || !fin(r.vg)) continue;
     const dd = Math.abs(Math.abs(r.d) - cfg.deltaTarget);
-    if (dd < bd) {
-      bd = dd;
-      best = r;
-    }
+    if (dd <= cfg.deltaTol) out.push({ r, dd });
   }
-  return best && bd <= cfg.deltaTol ? best : null;
+  out.sort((x, y) => x.dd - y.dd);
+  return out.slice(0, Math.max(1, limit | 0)).map((x) => x.r);
+}
+
+export function pickSellLeg(rows, cfg = SELLHEDGE_DEFAULTS) {
+  return rankSellLegs(rows, cfg, 1)[0] ?? null;
 }
 
 // ── 2. Вход. `costs` приходит от computeTradeCosts (единый источник издержек проекта), `imUsd` от
@@ -239,10 +245,22 @@ export function sellhedgeEngineCfg(cfg = SELLHEDGE_DEFAULTS) {
 // же тика; следующая сделка открывается СЛЕДУЮЩИМ тиком. Ровно так считает и эталон: `i = endIdx + 1`.
 // Спросить после `evaluate` значило бы открыть новую сделку в ту же метку, что и расчёт старой.
 //   hasStructure  - есть ли открытая структура ПРЯМО СЕЙЧАС (до evaluate этого тика);
-//   chainOn       - включён ли непрерывный режим (одноразовая сделка это chainOn = false);
-//   stopRequested - оператор остановил цепочку: текущая сделка доживает, следующей не будет.
-export function shouldOpenNext({ hasStructure, chainOn, stopRequested } = {}) {
+//   chainOn       - включён ли режим цепочки;
+//   stopRequested - оператор остановил цепочку: текущая сделка доживает, следующей не будет;
+//   mode          - "continuous" (по умолчанию) либо "once": одна сделка, после её расчёта
+//                   перевхода нет. Отсутствующее поле читается как непрерывный режим, поэтому
+//                   старые вызывающие (прогон записи) правок не требуют;
+//   tradesCount   - сколько сделок цепочка уже закрыла (нужен только режиму "once").
+export function shouldOpenNext({ hasStructure, chainOn, stopRequested, mode, tradesCount } = {}) {
+  if (mode === "once" && Number(tradesCount) > 0) return false;
   return chainOn === true && stopRequested !== true && hasStructure !== true;
+}
+
+// shouldOpenDegraded - истекло ли окно ожидания санитарии (§1.8: не прошла ни одна нога - схема
+// ждёт с показанной причиной; ожидание дольше окна - открывается лучшая доступная с постоянной
+// пометкой «ухудшенная санитария»). Чистая: обе метки приходят от вызывающего.
+export function shouldOpenDegraded({ sanityWaitingSince, nowMs, windowMs } = {}) {
+  return fin(sanityWaitingSince) && fin(nowMs) && fin(windowMs) && nowMs - sanityWaitingSince >= windowMs;
 }
 
 // ── ДОЛЛАРОВАЯ ДЕЛЬТА ОБРАТНОГО ПЕРПА. Функция существует, чтобы S4 не унаследовала чужую

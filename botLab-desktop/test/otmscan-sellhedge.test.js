@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import {
   SELLHEDGE_DEFAULTS, pickSellLeg, openSellTrade, halfSpreadUsd, wantHedge, shouldRehedge,
   walkSellTrade, settleSellTrade, lotsByMargin, usdDeltaOfInversePerp, sellhedgeEngineCfg, shouldOpenNext,
+  rankSellLegs, shouldOpenDegraded,
 } from "../src/engine/otmscan/sellhedge.js";
 import { markPerp } from "../src/engine/btcopt/pnl.js";
 import { effectiveDeadband } from "../src/engine/btcopt/hedge.js";
@@ -276,4 +277,35 @@ test("перевход: спрашивается ДО расчёта, поэто
   // вопроса), значит новая сделка не может открыться той же меткой, что и расчёт старой. Ровно так
   // же считает эталон: следующая сделка начинается с индекса endIdx + 1.
   assert.equal(shouldOpenNext({ hasStructure: true, chainOn: true, stopRequested: false }), false);
+});
+
+test("перевход: режим «одна сделка» не переоткрывает после первой закрытой", () => {
+  const on = { chainOn: true, stopRequested: false, hasStructure: false, mode: "once" };
+  assert.equal(shouldOpenNext({ ...on, tradesCount: 0 }), true, "первая сделка открывается");
+  assert.equal(shouldOpenNext({ ...on, tradesCount: 1 }), false, "вторая уже нет");
+  // Отсутствующее поле mode читается как непрерывный режим: старые вызывающие правок не требуют.
+  assert.equal(shouldOpenNext({ chainOn: true, stopRequested: false, hasStructure: false, tradesCount: 5 }), true);
+});
+
+// ── ранжирование кандидатов для санитарии
+test("кандидаты: rankSellLegs отдаёт очередь в порядке близости дельты и режет по допуску", () => {
+  const rows = [row({ n: "far", d: 0.36 }), row({ n: "hit", d: 0.47 }), row({ n: "mid", d: 0.53 }),
+    row({ n: "out", d: 0.70 })]; // 0.70 вне допуска 0.45±0.10, остальные внутри
+  const ranked = rankSellLegs(rows, C, 3);
+  assert.deepEqual(ranked.map((r) => r.n), ["hit", "mid", "far"]);
+  assert.equal(rankSellLegs(rows, C, 10).length, 3, "вне допуска в очередь не попадает");
+});
+
+test("кандидаты: pickSellLeg остался топ-1 ранжирования - поведение прежнее", () => {
+  const rows = [row({ n: "far", d: 0.30 }), row({ n: "hit", d: 0.47 })];
+  assert.equal(pickSellLeg(rows, C).n, rankSellLegs(rows, C, 1)[0].n);
+  assert.equal(pickSellLeg([row({ d: 0.70 })], C), null, "лучший вне допуска по-прежнему null");
+});
+
+test("ожидание санитарии: окно истекает ровно на границе", () => {
+  const t0 = 1_000_000;
+  const win = 4 * 3600000;
+  assert.equal(shouldOpenDegraded({ sanityWaitingSince: t0, nowMs: t0 + win - 1, windowMs: win }), false);
+  assert.equal(shouldOpenDegraded({ sanityWaitingSince: t0, nowMs: t0 + win, windowMs: win }), true);
+  assert.equal(shouldOpenDegraded({ sanityWaitingSince: null, nowMs: t0, windowMs: win }), false, "без начала ожидания не деградируем");
 });
