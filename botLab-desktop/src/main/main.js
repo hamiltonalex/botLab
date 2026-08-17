@@ -28,7 +28,8 @@ import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState,
 import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
 import { buildStructure as s1buildStructure, buildSellStructure as s1buildSellStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry } from "../engine/btcopt/structure.js";
-import { pickSellLeg as s1pickSellLeg, SELLHEDGE_DEFAULTS } from "../engine/otmscan/sellhedge.js";
+import { rankSellLegs as s1rankSellLegs, SELLHEDGE_DEFAULTS } from "../engine/otmscan/sellhedge.js";
+import { SELL_SANITY_DEFAULTS } from "../engine/otmscan/sanity.js";
 import * as s1sellhedge from "../engine/otmscan/sellhedge.js";
 import { payoffCurve as s1payoffCurve } from "../engine/btcopt/payoff.js";
 import { runSweep as s1runSweep } from "../engine/btcopt/sweep.js";
@@ -560,7 +561,7 @@ function pointBtcOptSource() {
   // экспирация не дальше трёх суток), поэтому его надо добавить в опрос отдельно. В primary он НЕ
   // входит никогда: пропавшая котировка кандидата не имеет права ронять гейт греков открытой
   // структуры, ровно как и вспомогательные ноги полосы.
-  const sellProbe = bo.sellCandidate?.instrument ? [bo.sellCandidate.instrument] : [];
+  const sellProbe = bo.sellCandidate?.instruments ?? [];
   const union = [...new Set([...structLegs, ...(bo.band?.instruments ?? []), ...sellProbe])];
   bo.source.setInstruments(union, structLegs);
 }
@@ -642,24 +643,44 @@ async function resolveBtcOptSellStructureLive(params) {
   const chain = await ensureBtcOptChain();
   const rows = await ensureBtcOptSellSurface(Date.now());
   if (!rows?.length) return { error: "не удалось получить срез поверхности Deribit" };
-  const leg = s1pickSellLeg(rows, cfg);
-  if (!leg) {
+  // Ступень A отдаёт ОЧЕРЕДЬ кандидатов, а не одного победителя: вето санитарии внутри движка
+  // переключает ногу (§1.8), и запасным нужны настоящие тикеры, взятые одним батчем.
+  const sanityCfg = { ...SELL_SANITY_DEFAULTS, ...(params?.sanityCfg ?? {}) };
+  const cands = s1rankSellLegs(rows, cfg, sanityCfg.maxCandidates);
+  if (!cands.length) {
     return { error: `нет колла в окне ${cfg.expiryMinH}-${cfg.expiryMaxH} ч с |дельтой| у ${cfg.deltaTarget} (срез поверхности)` };
   }
   const perpTk = await deribit.getTicker(deribit.PERP_INSTRUMENT, { testnet: !!bo.settings.testnet });
-  // Ступень B: настоящий тикер ОДНОЙ ноги. Кандидат запоминается и попадает в опрос следующих тиков,
-  // иначе открытая структура осталась бы без котировок до ближайшего пересчёта полосы.
+  // Ступень B: настоящие тикеры кандидатов одним вызовом. Кандидаты запоминаются и попадают в опрос
+  // следующих тиков, иначе открытая структура осталась бы без котировок до пересчёта полосы.
+  const legNames = cands.map((c) => c.n);
   const snap = await deribit.buildDeribitSnapshot({
-    legInstruments: [leg.n], testnet: !!bo.settings.testnet, nowMs: Date.now(),
+    legInstruments: legNames, testnet: !!bo.settings.testnet, nowMs: Date.now(),
   });
-  if (!snap.perp || !snap.legs[leg.n]) {
-    return { error: `Deribit не отдал котировку ${leg.n}, повторите` };
+  const quoted = legNames.filter((n) => snap.legs[n]);
+  if (!snap.perp || !quoted.length) {
+    return { error: `Deribit не отдал котировку ${legNames[0]}, повторите` };
   }
-  bo.sellCandidate = { instrument: leg.n, pickedAt: Date.now() };
+  // Книги кандидатов для оси глубины санитарии. Выборка НЕ префильтруется по возрасту или спреду:
+  // это дублировало бы sanity.js вторым местом. Цена названа явно: до maxCandidates запросов книги
+  // за заход, и только пока цепочка ищет ногу, не во время удержания позиции. Ошибка книги заход
+  // не глушит: глубина уйдёт в честный unknown внутри санитарии, а не в молчаливый провал.
+  const books = {};
+  await Promise.all(quoted.map(async (n) => {
+    try {
+      const ob = await deribit.getOrderBook(n, { depth: 5, testnet: !!bo.settings.testnet });
+      books[n] = { bidDepthUsd: scnBookDepthUsd(ob?.bids), askDepthUsd: scnBookDepthUsd(ob?.asks), tsMs: Date.now() };
+    } catch {}
+  }));
+  bo.sellCandidate = { instruments: quoted, pickedAt: Date.now() };
   pointBtcOptSource();
   // Тот же закон, что у покупателя: структура СТРОИТСЯ по цене перпа из пробы, а не по более свежей
   // из тикера опциона, иначе выбор мог бы разойтись с тем, что реально прокотировано.
-  const buildSnap = { ...snap, underlying: perpTk.index_price };
+  // legs копируются, чтобы книга не мутировала снимок показа: buildSnap собственность сборки.
+  const buildSnap = { ...snap, underlying: perpTk.index_price, legs: { ...snap.legs } };
+  for (const n of Object.keys(books)) {
+    if (buildSnap.legs[n]) buildSnap.legs[n] = { ...buildSnap.legs[n], book: books[n] };
+  }
   // МНОЖИТЕЛЬ СПРЕДА В ЖИВОМ ТРАКТЕ РАВЕН ЕДИНИЦЕ, И ЭТО НЕ НАСТРОЙКА, А ГРАНИЦА ПРИМЕНИМОСТИ.
   // `spreadScale` = 1.10 в SELLHEDGE_DEFAULTS это ПОПРАВКА НА МОДЕЛЬНЫЕ КОТИРОВКИ восстановленной
   // записи: её bid/ask синтетические и занижают круг издержек на 6% против живого замера. Здесь
@@ -667,7 +688,20 @@ async function resolveBtcOptSellStructureLive(params) {
   // часть, то есть завышала бы издержки входа на ровном месте. Офлайн-скрипты своё значение задают
   // сами (`--spread-scale`), поэтому эталонные числа этой строкой не двигаются.
   const liveSellCfg = { ...(params?.sellCfg ?? {}), spreadScale: 1 };
-  return { chain, snap, buildSnap, params: { ...(params ?? {}), sellCfg: liveSellCfg }, leg };
+  return { chain, snap, buildSnap, params: { ...(params ?? {}), sellCfg: liveSellCfg }, legs: cands };
+}
+
+// Последняя проверка санитарии для карточки сканера (#scnSanityCard): фиксируется и на успехе, и
+// на отказе, потому что карточке нужна картина последнего захода, а не только победитель.
+function captureSellSanity(built) {
+  const checks = built?.sanityChecks;
+  if (!checks?.length) return;
+  state.btcOptions.sellSanityLast = {
+    at: Date.now(),
+    instrument: built?.pickedLeg?.name ?? checks[checks.length - 1]?.instrument ?? null,
+    verdict: built?.error ? "none-passed" : built?.sanity === "degraded" ? "degraded" : "pass",
+    checks,
+  };
 }
 
 // Record the tick into the rings. The snapshot copy is taken BEFORE ivContext is attached, so history
@@ -1017,7 +1051,15 @@ async function previewSellStructure(params) {
     const res = await resolveBtcOptSellStructureLive(params);
     if (res.error) return { error: res.error };
     const equityUsd = s1engine.account(bo.engine, res.snap).equity;
-    const built = s1buildSellStructure({ ...res.params, qty: params?.qty ?? null, equityUsd }, res.chain, res.buildSnap, Date.now());
+    // Превью обязано видеть ногу тем же правилом, что и исполнитель, включая окно деградации
+    // санитарии: иначе после истечения окна превью говорило бы «нельзя», а цепочка открывала бы.
+    const allowDegraded = s1sellhedge.shouldOpenDegraded({
+      sanityWaitingSince: bo.engine?.sellChain?.sanityWaitingSince ?? null,
+      nowMs: Date.now(),
+      windowMs: (res.params?.sanityCfg?.waitWindowH ?? SELL_SANITY_DEFAULTS.waitWindowH) * 3600000,
+    });
+    const built = s1buildSellStructure({ ...res.params, qty: params?.qty ?? null, equityUsd, allowDegraded }, res.chain, res.buildSnap, Date.now());
+    captureSellSanity(built);
     if (built.error) return { error: built.error, sizing: built.sizing ?? null };
     const metaByInstrument = {};
     for (const l of built.legs) metaByInstrument[l.instrument] = res.chain.instruments.find((m) => m.instrument_name === l.instrument);
@@ -1074,6 +1116,7 @@ async function openSellStructure(params, guard = null) {
       { ...res.params, kind: "sell-call", qty: params?.qty ?? null, execStyle: params?.execStyle },
       res.chain, res.buildSnap, Date.now(),
     );
+    captureSellSanity(r.structure ?? r);
     if (r.error) return { error: r.error, rejections: r.rejections ?? [] };
     bo.lastSnapshot = res.snap;
     bo.snapshot = s1engine.evaluate(bo.engine, res.snap, Date.now());
