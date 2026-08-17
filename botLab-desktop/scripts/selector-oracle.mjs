@@ -343,14 +343,23 @@ async function run() {
   // "every feature ships its Help entry" now that HELP is split into namespaces (§16.2).
   const help = await win.webContents.executeJavaScript(`(() => {
     const keys = Object.keys(HELP);
-    const btns = [...document.querySelectorAll('.help-btn[data-help]')].map(b => b.dataset.help);
+    // data-help-alt: РЕЖИМНАЯ кнопка. Рендер подменяет её data-help по режиму (продажа колла меняет
+    // opt-legs на opt-legs-sell), поэтому статический DOM обязан объявить альтернативы явно, иначе
+    // динамический ключ выглядел бы сиротой, а сирота осталась бы незамеченной.
+    const altsOf = (b) => (b.dataset.helpAlt || '').split(' ').filter(Boolean);
+    const btns = [...document.querySelectorAll('.help-btn[data-help]')].flatMap(b => [b.dataset.help, ...altsOf(b)]);
     const btnSet = new Set(btns);
     const missingEntry = [...new Set(btns)].filter(k => !HELP[k]);   // (a) button with no HELP entry
     const orphanEntry  = keys.filter(k => !btnSet.has(k));           // (b) HELP entry with no button
     const openFailures = [];                                          // (c) popover must open VISIBLE
     for (const k of keys) {
-      const btn = document.querySelector('.help-btn[data-help="'+k+'"]');
-      if (!btn) continue;                                             // already flagged by orphanEntry
+      let btn = document.querySelector('.help-btn[data-help="'+k+'"]');
+      let restore = null;
+      if (!btn) {                                                     // alt-ключ: открыть той же кнопкой
+        btn = [...document.querySelectorAll('.help-btn[data-help-alt]')].find(b => altsOf(b).includes(k));
+        if (!btn) continue;                                           // already flagged by orphanEntry
+        restore = btn.dataset.help; btn.dataset.help = k;
+      }
       openHelp(btn);
       const pop = document.querySelector('.help-pop');
       if (!pop) { openFailures.push(k+':no-pop'); continue; }
