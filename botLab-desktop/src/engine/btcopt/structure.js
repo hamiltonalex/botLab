@@ -6,7 +6,8 @@
 
 import { legMargin } from "./margin.js";
 import { computeTradeCosts } from "../otmscan/economics.js";
-import { SELLHEDGE_DEFAULTS, pickSellLeg, lotsByMargin, halfSpreadUsd, openSellTrade } from "../otmscan/sellhedge.js";
+import { SELLHEDGE_DEFAULTS, rankSellLegs, lotsByMargin, halfSpreadUsd, openSellTrade } from "../otmscan/sellhedge.js";
+import { SELL_SANITY_DEFAULTS, evaluateInstrumentSanity, summarizeSanityFailure } from "../otmscan/sanity.js";
 
 // Accept a raw chain array OR a { instruments:[...] } envelope (get_instruments result shape).
 const asMetas = (chain) => (Array.isArray(chain) ? chain : chain?.instruments ?? []);
@@ -132,6 +133,11 @@ export function sellRowsFromSnapshot(chain, snapshot, nowMs) {
       a: g.ask,
       iv: g.markIv,
       vg: g.vega,
+      // Поля санитарии (sanity.js): метка тикера и глубина книги. Правило выбора ноги их не
+      // читает; у строк записи их нет вовсе, и там санитария вырождается настройкой.
+      ts: g.ts ?? null,
+      bidDepthUsd: g.book?.bidDepthUsd ?? null,
+      askDepthUsd: g.book?.askDepthUsd ?? null,
     });
   }
   return rows;
@@ -146,8 +152,37 @@ export function buildSellStructure(params, chain, snapshot, nowMs) {
   const underlying = snapshot?.underlying;
   if (!Number.isFinite(underlying)) return { error: "Нет цены базового актива в снапшоте" };
   const cfg = { ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) };
-  const leg = pickSellLeg(sellRowsFromSnapshot(chain, snapshot, nowMs), cfg);
-  if (!leg) return { error: `Нет колла в окне ${cfg.expiryMinH}-${cfg.expiryMaxH} ч с |дельтой| у ${cfg.deltaTarget}` };
+
+  // САНИТАРИЯ (§1.8 дизайна): вето переключает контракт, а не останавливает цепочку. Кандидаты
+  // идут в порядке близости дельты; не прошла нога - берётся следующая в допуске; не прошла ни
+  // одна - отказ с кодом, по которому вызывающий заводит окно ожидания; ожидание дольше окна -
+  // вызывающий передаёт allowDegraded, и открывается лучшая по дельте с ПОСТОЯННОЙ пометкой
+  // «ухудшенная санитария» на структуре и сделке цепочки. Санитария живёт здесь, а не в main.js,
+  // чтобы прогон записи исполнял ту же функцию и вторая реализация не появилась.
+  const sanityCfg = { ...SELL_SANITY_DEFAULTS, ...(params?.sanityCfg ?? {}) };
+  const cands = rankSellLegs(sellRowsFromSnapshot(chain, snapshot, nowMs), cfg, sanityCfg.maxCandidates);
+  if (!cands.length) {
+    return { error: `Нет колла в окне ${cfg.expiryMinH}-${cfg.expiryMaxH} ч с |дельтой| у ${cfg.deltaTarget}`, code: "no-leg" };
+  }
+  const checks = [];
+  let leg = null;
+  for (const r of cands) {
+    const s = evaluateInstrumentSanity(r, sanityCfg, nowMs);
+    checks.push(s);
+    if (s.verdict === "pass") { leg = r; break; }
+  }
+  let sanityMark = "ok";
+  if (!leg) {
+    if (!params?.allowDegraded) {
+      return {
+        error: `Санитария: ни одна из ${cands.length} ног в допуске дельты не прошла (${summarizeSanityFailure(checks)})`,
+        code: "sanity-none-passed",
+        sanityChecks: checks,
+      };
+    }
+    leg = cands[0];
+    sanityMark = "degraded";
+  }
 
   const meta = asMetas(chain).find((m) => m.instrument_name === leg.n);
   const g = snapshot.legs[leg.n];
@@ -218,6 +253,8 @@ export function buildSellStructure(params, chain, snapshot, nowMs) {
     pickedLeg: { name: leg.n, strike: leg.k, expiryMs: leg.e, mark: leg.m, delta: leg.d, ivPct: leg.iv, bid: leg.b, ask: leg.a, vega: leg.vg, hoursToExpiry: leg.h },
     costs,
     sizing,
+    sanity: sanityMark,
+    sanityChecks: checks,
   };
 }
 

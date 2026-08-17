@@ -23,7 +23,8 @@ import { initMetrics, foldCycle, summarize } from "./metrics.js";
 import { structureMargin } from "./margin.js";
 import { computeScenarios } from "./stress.js";
 import { computeRegime } from "./regime.js";
-import { SELLHEDGE_DEFAULTS, sellhedgeEngineCfg } from "../otmscan/sellhedge.js";
+import { SELLHEDGE_DEFAULTS, sellhedgeEngineCfg, shouldOpenDegraded } from "../otmscan/sellhedge.js";
+import { SELL_SANITY_DEFAULTS } from "../otmscan/sanity.js";
 
 export const BOT_ID = "btc-options";
 export const SCHEMA_VERSION = 1;
@@ -130,8 +131,22 @@ export function create(params) {
     // семнадцати сделок работает или нет» ответить было нечем. Леджер накопительный, то есть данные
     // были, но их никто не считал. `trades` пишется на КАЖДУЮ проданную ногу, открытую цепочкой или
     // руками: разделять их значило бы прятать от оператора часть его же истории.
-    sellChain: { on: false, stopRequested: false, armedAt: null, stoppedAt: null, params: null, trades: [], mark: null },
+    // `mode`: "continuous" | "once" (одна сделка, после расчёта перевхода нет); отсутствующее в
+    // старом персисте поле читается как непрерывный режим. `sanityWaitingSince` - начало ожидания
+    // санитарии (ни одна нога не прошла); переживает рестарт намеренно: перерыв в поиске ноги не
+    // должен обнуляться перезапуском приложения.
+    sellChain: { on: false, stopRequested: false, armedAt: null, stoppedAt: null, params: null, trades: [], mark: null, mode: "continuous", sanityWaitingSince: null },
   };
+}
+
+// Окно ожидания санитарии (§1.8): begin ставится вызывающим при отказе «ни одна нога не прошла»,
+// clear - при любом успешном открытии продавца. Отдельными функциями, потому что отказ виден
+// вызывающему (openStructure возвращает ошибку), а состояние живёт в движке и персистится.
+export function sellChainSanityWaitBegin(state, nowMs) {
+  if (state.sellChain && state.sellChain.sanityWaitingSince == null) state.sellChain.sanityWaitingSince = nowMs;
+}
+export function sellChainSanityWaitClear(state) {
+  if (state.sellChain) state.sellChain.sanityWaitingSince = null;
 }
 
 // Reconciliation/risk monitor only (never drives hedging): Deribit's account delta_total ≈
@@ -521,7 +536,7 @@ export function preTradeCheck(state, structure, metaByInstrument, snapshot, nowM
 // the nearest live expiry itself (≤3d, skipping any already inside the pre-expiry blackout — opening into
 // delta decay is never right). Gated by preTradeCheck; "warn" rejections ride along in the OK response.
 export function openStructure(state, params, chain, snapshot, nowMs) {
-  if (!state.sellChain) state.sellChain = { on: false, stopRequested: false, armedAt: null, stoppedAt: null, params: null, trades: [], mark: null };
+  if (!state.sellChain) state.sellChain = { on: false, stopRequested: false, armedAt: null, stoppedAt: null, params: null, trades: [], mark: null, mode: "continuous", sanityWaitingSince: null };
   // One structure at a time: a second open would silently orphan the first (its MtM is realized only
   // via closeStructure) and leave the perp hedge sized for the discarded legs. The IPC resolve path is
   // async, so a double-click/retried invoke CAN land here twice — the guard, not the UI, is the invariant.
@@ -533,8 +548,16 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   // путь открытия означал бы второй набор предторговых проверок.
   let built;
   if (params?.kind === "sell-call") {
+    // Окно ожидания санитарии: если ни одна нога не проходит дольше окна, открывается лучшая
+    // доступная с постоянной пометкой «ухудшенная санитария» (§1.8: пометить лучше, чем
+    // заблокировать - разрыв цепочки это единственная измеренно дорогая потеря).
+    const allowDegraded = params.allowDegraded ?? shouldOpenDegraded({
+      sanityWaitingSince: state.sellChain?.sanityWaitingSince ?? null,
+      nowMs,
+      windowMs: (params?.sanityCfg?.waitWindowH ?? SELL_SANITY_DEFAULTS.waitWindowH) * 3600000,
+    });
     built = buildSellStructure(
-      { ...params, equityUsd: params.equityUsd ?? account(state, snapshot).equity },
+      { ...params, allowDegraded, equityUsd: params.equityUsd ?? account(state, snapshot).equity },
       chain, snapshot, nowMs,
     );
   } else {
@@ -546,7 +569,11 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
     }
     built = buildStructure(params, chain, snapshot);
   }
-  if (built.error) return built;
+  if (built.error) {
+    if (built.code === "sanity-none-passed") sellChainSanityWaitBegin(state, nowMs);
+    return built;
+  }
+  if (built.kind === "sell-call") sellChainSanityWaitClear(state);
 
   // НАСТРОЙКИ СХЕМЫ ПРОДАВЦА приходят из её собственного модуля, а не из тулбара. Полоса, λ и
   // триггеры бота 2 калиброваны под четырёхногую структуру, и на этой схеме их дефолты стоят
@@ -686,6 +713,9 @@ function chainAppendTrade(state, nowMs, reason, settleSeq = null) {
     fundingUsd: now.fund - m.fund,
     feesUsd: now.fees - m.fees,
     reason, // "expiry" | "manual"
+    // Пометка «ухудшенная санитария» ПОСТОЯННА: сделка, открытая на непрошедшей проверке, обязана
+    // нести это рядом со своим итогом, иначе итог цепочки молча смешает измеренное с неизмеренным.
+    sanity: st.sanity ?? "ok",
   });
   state.sellChain.mark = null;
 }

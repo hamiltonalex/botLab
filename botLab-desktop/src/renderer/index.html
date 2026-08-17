@@ -5248,6 +5248,7 @@ function renderOptChainStats(ds){
   if(body){
     body.innerHTML = trades.map((t,i)=>{
       const marks=[]; if(t.reason==='manual') marks.push('досрочный выход');
+      if(t.sanity==='degraded') marks.push('ухудшенная санитария');
       if(t.preliminary) marks.push('итог предварительный');
       const pos = t.pnlUsd>0;
       return '<tr><td class="n">'+(i+1)+'</td>'

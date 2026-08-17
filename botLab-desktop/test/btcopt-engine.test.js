@@ -492,6 +492,11 @@ test("после движения цены дельта перпа считае�
     "P&L на доллар движения спота равен заявленной дельте");
 });
 
+// Санитария в юнит-тестах вырождена НАСТРОЙКОЙ, как в прогоне записи: фикстуры, как и запись, не
+// несут ни метки тикера, ни книги, и гейт-дефолты наложили бы честное вето (unknown) на первый же
+// кандидат. Тесты санитарии живут отдельно и включают оси явно.
+const SANITY_OFF = { ageMode: "off", spreadMode: "off", depthMode: "off" };
+
 // ── ИЗМЕРЕННАЯ КОНФИГУРАЦИЯ СХЕМЫ ПРОДАВЦА ЗАМОРАЖИВАЕТСЯ ДВИЖКОМ, А НЕ ЗАДАЁТСЯ СНАРУЖИ
 // Пока эти шесть чисел выставлял офлайн-драйвер, сверка книг доказывала свойство скрипта: живой
 // профиль по умолчанию даёт полосу 0.1 BTC на контракт вместо 0.03, и это ×24.2 против ×46.5 на
@@ -514,7 +519,7 @@ test("sell-call: движок сам замораживает полосу сх�
   assert.equal(st.settings.deadbandBtc, 0.001, "профиль по умолчанию не трогали");
   assert.equal(st.settings.settlementBlackout, true);
 
-  const r = engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, chain, snapshot, nowMs);
+  const r = engine.openStructure(st, { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF }, chain, snapshot, nowMs);
   assert.ok(!r.error, `структура не открылась: ${r.error}`);
   const cfg = st.structure.engineCfg;
   assert.equal(cfg.deadbandBtc, 0.03, "полоса схемы, а не тулбара");
@@ -541,7 +546,7 @@ test("sell-call: перевход не упирается в собственн�
       underlying: 100000, index: 100000, contractSize: 1, minTradeAmount: 0.01, markInUsd: true } },
   };
   const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
-  const r = engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, chain, snapshot, nowMs);
+  const r = engine.openStructure(st, { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF }, chain, snapshot, nowMs);
   assert.ok(!r.error, `перевход заблокирован собственным блэкаутом: ${r.error}`);
 });
 
@@ -569,7 +574,7 @@ test("цепочка: сделка дописывается в экспирац�
   const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
   const f = sellFixture(nowMs);
   const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
-  assert.ok(engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, f.chain, f.snapshot, nowMs).ok);
+  assert.ok(engine.openStructure(st, { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF }, f.chain, f.snapshot, nowMs).ok);
   assert.equal(st.sellChain.trades.length, 0, "до экспирации строки нет");
   const im = st.structure.sizing.imUsedUsd;
 
@@ -594,7 +599,7 @@ test("цепочка: досрочное закрытие помечается �
   const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
   const f = sellFixture(nowMs);
   const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
-  engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, f.chain, f.snapshot, nowMs);
+  engine.openStructure(st, { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF }, f.chain, f.snapshot, nowMs);
   engine.closeStructure(st, f.snapshot, nowMs + 3600000);
   assert.equal(st.sellChain.trades[0].reason, "manual", "выход вне схемы");
   assert.equal(engine.sellChainStats(st).manual, 1, "сводка считает досрочные отдельно");
@@ -608,12 +613,12 @@ test("цепочка: поправка delivery-сверки доезжает д
   // доказывает, что окно следующей сделки её не несёт.
   const run = (withAdjust) => {
     const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
-    assert.ok(engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, f.chain, f.snapshot, nowMs).ok);
+    assert.ok(engine.openStructure(st, { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF }, f.chain, f.snapshot, nowMs).ok);
     engine.settleStructure(st, { ...f.snapshot, index: 90000, underlying: 90000 }, f.expiry + 1000);
     const settleSeq = st.ledger.findLast((r) => r.type === "settle-options").seq;
     const now2 = f.expiry + 60000;
     const f2 = sellFixture(now2);
-    assert.ok(engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, f2.chain, f2.snapshot, now2).ok);
+    assert.ok(engine.openStructure(st, { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF }, f2.chain, f2.snapshot, now2).ok);
     if (withAdjust) {
       st.realizedOptionsUsd += 50; // так книжит вызывающий (maybeReconcileSettles)
       assert.equal(engine.chainApplySettleAdjust(st, settleSeq, 50), true);
@@ -641,7 +646,7 @@ test("цепочка: покрытие опроса меряется за жиз
   const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
   const f = sellFixture(nowMs);
   const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000, repriceSec: 15 } });
-  engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, f.chain, f.snapshot, nowMs);
+  engine.openStructure(st, { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF }, f.chain, f.snapshot, nowMs);
   for (let k = 1; k <= 4; k++) engine.ingest(st, f.snapshot, nowMs + k * 15000);
   engine.ingest(st, f.snapshot, nowMs + 4 * 15000 + 3600000); // час без опроса
   const u = engine.uptimeStats(st);
@@ -651,4 +656,69 @@ test("цепочка: покрытие опроса меряется за жиз
   // Слоты считаются ВКЛЮЧИТЕЛЬНО по обоим концам: без этого на коротких окнах выходят проценты выше ста.
   assert.ok(u.coveragePct < 5, `покрытие честно низкое: ${u.coveragePct}`);
   assert.ok(u.effectiveSec > 900, `эффективный каданс отражает простой: ${u.effectiveSec}`);
+});
+
+// ── САНИТАРИЯ В ЖИВОМ ОТКРЫТИИ (§1.8): вето переключает контракт, полный отказ заводит окно
+// ожидания, после окна открывается лучшая по дельте с постоянной пометкой «ухудшенная санитария».
+function sanityFixture(nowMs) {
+  const expiry = nowMs + 480 * 3600000;
+  const A = "BTC_USDC-T-100000-C", B = "BTC_USDC-T-104000-C";
+  const meta = (name, strike) => ({ instrument_name: name, strike, expiration_timestamp: expiry,
+    option_type: "call", contract_size: 1, min_trade_amount: 0.01, tick_size: 0.5 });
+  const mkLeg = (name, strike, delta, over = {}) => [name, { instrument: name, type: "call", strike,
+    expiryMs: expiry, bid: 2950, ask: 3050, mark: 3000, markIv: 45, delta, vega: 120, theta: -5,
+    underlying: 100000, index: 100000, contractSize: 1, minTradeAmount: 0.01, markInUsd: true,
+    ts: nowMs - 5000, book: { bidDepthUsd: 20000, askDepthUsd: 20000 }, ...over }];
+  return {
+    expiry, A, B,
+    chain: [meta(A, 100000), meta(B, 104000)],
+    snapshot: {
+      underlying: 100000, index: 100000,
+      perp: { mark: 100000, index: 100000, contractSize: 10, funding8h: 0, bid: 99999, ask: 100001 },
+      legs: Object.fromEntries([
+        mkLeg(A, 100000, 0.47, { bid: 2400, ask: 3600 }), // ближе к цели, но спред 40% премии
+        mkLeg(B, 104000, 0.40), // дальше от цели, зато торгуема
+      ]),
+    },
+  };
+}
+
+test("санитария: вето переключает ногу на следующую в допуске, а не блокирует открытие", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = sanityFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  const r = engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, f.chain, f.snapshot, nowMs);
+  assert.ok(r.ok, `не открылась: ${r.error}`);
+  assert.equal(st.structure.legs[0].instrument, f.B, "выбрана вторая по дельте, первую завалил спред");
+  assert.equal(st.structure.sanity, "ok");
+  assert.equal(st.structure.sanityChecks.length, 2, "проверены обе: A с вето, B с pass");
+  assert.equal(st.sellChain.sanityWaitingSince, null);
+});
+
+test("санитария: полный отказ заводит окно ожидания, после окна открытие с постоянной пометкой", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = sanityFixture(nowMs);
+  f.snapshot.legs[f.B].bid = 2400; f.snapshot.legs[f.B].ask = 3600; // теперь спред валит обе
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  const open = (t) => engine.openStructure(st, { kind: "sell-call", execStyle: "limit" }, f.chain, f.snapshot, t);
+
+  const r = open(nowMs);
+  assert.equal(r.code, "sanity-none-passed");
+  assert.match(r.error, /Санитария: ни одна из 2/);
+  assert.match(r.error, /спред/);
+  assert.equal(st.sellChain.sanityWaitingSince, nowMs, "окно ожидания завелось");
+
+  const r2 = open(nowMs + 3600000); // внутри окна 4 ч
+  assert.equal(r2.code, "sanity-none-passed");
+  assert.equal(st.sellChain.sanityWaitingSince, nowMs, "начало ожидания не сдвигается повторами");
+
+  const late = nowMs + 4 * 3600000; // окно истекло ровно
+  const r3 = open(late);
+  assert.ok(r3.ok, `после окна обязана открыться: ${r3.error}`);
+  assert.equal(st.structure.sanity, "degraded", "пометка на структуре");
+  assert.equal(st.structure.legs[0].instrument, f.A, "лучшая по дельте, невзирая на санитарию");
+  assert.equal(st.sellChain.sanityWaitingSince, null, "успех сбрасывает окно");
+
+  engine.settleStructure(st, { ...f.snapshot, index: 90000, underlying: 90000 }, f.expiry + 1000);
+  assert.equal(st.sellChain.trades[0].sanity, "degraded", "пометка доезжает до сделки цепочки");
 });
