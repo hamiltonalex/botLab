@@ -170,6 +170,14 @@ const sellCfg = {
   lot: LOT,
   execModel: "maker-mid",
 };
+// САНИТАРИЯ ВЫРОЖДЕНА НАСТРОЙКОЙ, НЕ ВЕТКОЙ. Она существует для боевого снабжения (возраст живого
+// тикера, спред, глубина книги двухступенчатого вызова биржи), а не для качества модельных
+// котировок записи: у строк записи нет ни метки тикера, ни книги, и включённые оси наложили бы
+// честное вето (unknown) на первый же кандидат. Включать её здесь означало бы гейтить выбор ноги
+// мерой, которой при снятии книги 84/84 не существовало. При всех осях off evaluateInstrumentSanity
+// возвращает пустые rows и pass первому кандидату, а первый кандидат rankSellLegs это ровно выбор
+// старого pickSellLeg - санитария на записи не может изменить книгу, а не «случайно не меняет».
+const sanityCfg = { ageMode: "off", spreadMode: "off", depthMode: "off" };
 
 // ── СБОРКА СНИМКА ИЗ ЗАПИСИ: ровно тот контракт, что отдаёт `buildDeribitSnapshot`.
 // Цена ОТКРЫТОЙ ноги всегда идёт через лестницу `priceAt` (как у эталона), даже когда строка в
@@ -266,7 +274,7 @@ for (let i = 0; i < N; i++) {
     const res = s1engine.openStructure(
       st,
       { kind: "sell-call", qty: DROP === "size-off" ? LOT : QTY_FIXED, execStyle: "limit",
-        sellCfg: DROP === "pick-off" ? { ...sellCfg, deltaTarget: 0.30 } : sellCfg },
+        sellCfg: DROP === "pick-off" ? { ...sellCfg, deltaTarget: 0.30 } : sellCfg, sanityCfg },
       snapshot.chain, snapshot, ts,
     );
     if (res.error) {
