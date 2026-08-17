@@ -170,7 +170,23 @@ function exchangeDeltaTotal(structure, snapshot, Qperp) {
 // funding-arb) и оставляет строку funding-gap в леджере (нулевые суммы, только видимость - закон
 // §7 «деградация видима»). Сам кламп НЕ меняется: оценивать многочасовой разрыв текущей
 // мгновенной ставкой было бы неверно, отказ от оценки - правильная механика.
-export function ingest(state, snapshot, nowMs) {
+// classifyGapCause({ fromMs, toMs, hints }) - причина перерыва опроса по хинтам вызывающего.
+// PURE: движок только сравнивает переданные метки, ни одна причина не выдумывается - не покрыл ни
+// один хинт, значит "unknown" («причина не установлена»). Порядок проверки = точность сигнала:
+// сон (точное окно suspend..resume; внутри окна возможны тики тёмных пробуждений macOS, см. аудит
+// А6 C2b, поэтому это ОКНО с объявления о засыпании, а не длительность сна), затем рестарт
+// приложения (метка бута внутри перерыва), затем ошибки источника. Код "tab-hidden" зарезервирован
+// словарём дизайна, но у бота 2 недостижим: источник живёт таймером главного процесса.
+export function classifyGapCause({ fromMs, toMs, hints = {} } = {}) {
+  const h = hints ?? {};
+  if (h.sleepWindow && Number.isFinite(h.sleepWindow.start) && Number.isFinite(h.sleepWindow.end)
+    && fromMs <= h.sleepWindow.end && h.sleepWindow.start <= toMs) return "sleep";
+  if (Number.isFinite(h.bootAt) && fromMs < h.bootAt && h.bootAt <= toMs) return "app-down";
+  if (Number.isFinite(h.sourceErrorSince) && h.sourceErrorSince <= toMs) return "no-response";
+  return "unknown";
+}
+
+export function ingest(state, snapshot, nowMs, hints = {}) {
   const cfg = buildCfg(state.settings);
   if (state.perpState.qty !== 0 && snapshot.perp && Number.isFinite(snapshot.perp.funding8h)) {
     const last = state.lastIngestAt ?? nowMs;
@@ -204,7 +220,8 @@ export function ingest(state, snapshot, nowMs) {
       // тот же критерий несвежести, каким источник помечает данные устаревшими.
       const nominalMs = Math.max(1000, (cfg.repriceSec || 15) * 1000);
       if (gap > nominalMs * 5) {
-        u.gaps.push({ at: prev, ms: gap, lost: Math.max(0, Math.round(gap / nominalMs) - 1) });
+        u.gaps.push({ at: prev, ms: gap, lost: Math.max(0, Math.round(gap / nominalMs) - 1),
+          cause: classifyGapCause({ fromMs: prev, toMs: nowMs, hints }) });
         if (u.gaps.length > 50) u.gaps.shift(); // хвост важнее головы: свежие перерывы объяснимы
       }
     }

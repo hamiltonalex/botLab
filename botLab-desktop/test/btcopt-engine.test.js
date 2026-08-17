@@ -658,6 +658,33 @@ test("цепочка: покрытие опроса меряется за жиз
   assert.ok(u.effectiveSec > 900, `эффективный каданс отражает простой: ${u.effectiveSec}`);
 });
 
+// ── ПРИЧИНЫ ПЕРЕРЫВОВ ОПРОСА: чистый классификатор по хинтам вызывающего, словарь закрыт.
+test("classifyGapCause: сон точнее бута, бут точнее источника, без хинтов честный unknown", () => {
+  const gap = { fromMs: 1000_000, toMs: 2000_000 };
+  assert.equal(engine.classifyGapCause({ ...gap, hints: { sleepWindow: { start: 1200_000, end: 1800_000 } } }), "sleep");
+  assert.equal(engine.classifyGapCause({ ...gap, hints: { sleepWindow: { start: 1500_000, end: 2500_000 }, bootAt: 1600_000 } }),
+    "sleep", "окно сна пересекает перерыв - сон побеждает бут");
+  assert.equal(engine.classifyGapCause({ ...gap, hints: { bootAt: 1500_000 } }), "app-down");
+  assert.equal(engine.classifyGapCause({ ...gap, hints: { bootAt: 999_000 } }), "unknown", "бут до перерыва не объясняет его");
+  assert.equal(engine.classifyGapCause({ ...gap, hints: { sourceErrorSince: 1100_000 } }), "no-response");
+  assert.equal(engine.classifyGapCause({ ...gap, hints: {} }), "unknown");
+  assert.equal(engine.classifyGapCause({ ...gap, hints: { sleepWindow: { start: 2100_000, end: 2500_000 } } }),
+    "unknown", "сон после перерыва его не объясняет");
+});
+
+test("ingest: перерыв опроса несёт причину из хинтов", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = sellFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000, repriceSec: 15 } });
+  engine.openStructure(st, { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF }, f.chain, f.snapshot, nowMs);
+  engine.ingest(st, f.snapshot, nowMs);
+  const later = nowMs + 3600000; // час без опроса
+  engine.ingest(st, f.snapshot, later, { sleepWindow: { start: nowMs + 60000, end: later - 60000 } });
+  const u = engine.uptimeStats(st);
+  assert.equal(u.gaps.length, 1);
+  assert.equal(u.gaps[0].cause, "sleep");
+});
+
 // ── САНИТАРИЯ В ЖИВОМ ОТКРЫТИИ (§1.8): вето переключает контракт, полный отказ заводит окно
 // ожидания, после окна открывается лучшая по дельте с постоянной пометкой «ухудшенная санитария».
 function sanityFixture(nowMs) {

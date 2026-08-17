@@ -53,6 +53,10 @@ import { initUpdater, disposeUpdater } from "./updater.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const S1_SMOKE = process.env.S1_SMOKE === "1"; // bot-2 self-test: open→live ticks→close through the real s1 IPC
+// Хинты причин перерыва опроса (classifyGapCause): метка бута процесса ловит «приложение не
+// работало» (включая рестарт авто-апдейтера), окно последнего сна приходит из powerMonitor.
+const APP_BOOT_MS = Date.now();
+let lastSleepWindow = null; // { start, end } последнего suspend..resume
 const SCN_SMOKE = process.env.SCN_SMOKE === "1"; // S2 self-test сканера: живой scanCycle через реальный scn-IPC
 const SCN_AUTOSTART = process.env.SCN_AUTOSTART === "1"; // обкатка: завести опрос сканера на буте, без показа вкладки
 const S1_AUTOSTART = process.env.S1_AUTOSTART === "1"; // прогон бота 2: завести опрос на буте, без показа вкладки
@@ -898,7 +902,7 @@ function onBtcOptSnapshot(snap) {
     bo.lastSnapshot = snap;
     recordBtcOptHistory(snap); // copies BEFORE ivContext is attached — history entries stay context-free
     snap.ivContext = { series: bo.ivHistory }; // → evaluate() computes cycle.iv_regime from this
-    s1engine.ingest(bo.engine, snap, Date.now());
+    s1engine.ingest(bo.engine, snap, Date.now(), { bootAt: APP_BOOT_MS, sleepWindow: lastSleepWindow });
     const hadStructure = !!bo.engine.structure;
     // Перевход спрашивается ДО evaluate: таков контракт shouldOpenNext (sellhedge.js §8), и так же
     // поступает прогон записи. На тике экспирации структура ещё открыта и попытка не уходит;
@@ -2896,6 +2900,7 @@ app.whenReady().then(async () => {
   });
   powerMonitor.on("resume", () => {
     const gapMin = suspendedAt ? Math.round((Date.now() - suspendedAt) / 60000) : null;
+    if (suspendedAt) lastSleepWindow = { start: suspendedAt, end: Date.now() }; // хинт причины «сон машины»
     suspendedAt = null;
     console.log(
       `[main] полное пробуждение${gapMin != null ? `, окно с объявления о засыпании ~${gapMin} мин (часть его машина могла работать в тёмных пробуждениях)` : ""}` +

@@ -1759,10 +1759,18 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
           <div class="subhdr">Покрытие по времени жизни сделки</div>
           <div class="segstrip cov" id="optUpStrip" aria-hidden="true"></div>
           <div class="stamp" id="optUpStripCaption">—</div>
+          <div class="subhdr" style="margin-top:14px">Перерывы опроса</div>
+          <div class="table-scroll" style="max-height:160px" tabindex="0" role="region" aria-label="Перерывы опроса, таблица">
+            <table class="scan" id="optUpGapsTable">
+              <thead><tr><th class="lft">Начало</th><th>Длительность</th><th class="lft">Причина</th></tr></thead>
+              <tbody id="optUpGapsBody"></tbody>
+            </table>
+            <div class="ledger-empty" id="optUpGapsEmpty">перерывов не зафиксировано</div>
+          </div>
           <div class="opt-verdict pass" id="optUpVerdict" style="margin-top:10px" aria-live="polite">—</div>
           <div class="foot-src">
             <span>слоты считаются включительно по обоим концам окна: без этого на коротких окнах выходят ложные проценты выше ста</span>
-            <span>сон машины останавливает опрос: на время цепочки держите машину не засыпающей</span>
+            <span>сон машины останавливает опрос: на время цепочки держите машину не засыпающей; «приложение не работало» включает и рестарт при обновлении</span>
           </div>
         </div>
       </div>
@@ -5303,6 +5311,7 @@ function renderOptUptime(ds){
     strip.innerHTML=html;
     $('optUpStripCaption').textContent = 'окно '+chDur(up.spanMs)+' · кирпич '+chDur(cell);
   }
+  renderOptUptimeGaps(up);
   const eff=up.effectiveSec, gapMs=up.maxGapMs||0;
   const effBad = Number.isFinite(eff) && eff>3600;
   const gapBad = gapMs>3600000;
@@ -5319,6 +5328,21 @@ function renderOptUptime(ds){
     const warn = gapBad || (Number.isFinite(eff) && eff>up.nominalSec*10);
     tag.className='tag '+(effBad?'red':(warn?'amber':'green'));
     tag.textContent = effBad?'каданс потерян':(warn?'замедление':'в норме'); }
+}
+
+/* Словарь причин перерыва живёт В РЕНДЕРЕРЕ: движок эмитит стабильный код (classifyGapCause),
+   интерфейс переводит. Список закрыт дизайном, причины не выдумываются: неизвестный код честно
+   печатается как «причина не установлена». */
+const CAUSE_LABEL = { sleep:'сон машины', 'app-down':'приложение не работало',
+  'no-response':'нет ответа биржи', 'tab-hidden':'вкладка не показывалась' };
+function renderOptUptimeGaps(up){
+  const body=$('optUpGapsBody'), empty=$('optUpGapsEmpty'); if(!body) return;
+  const gaps = (up && up.gaps) || [];
+  if(empty) empty.hidden = gaps.length>0;
+  /* uptimeStats уже отдаёт свежие перерывы первыми - порядок не трогаем */
+  body.innerHTML = gaps.map(g=>'<tr><td class="lft">'+chEsc(chDate(g.at))
+    +'</td><td class="n">'+chEsc(chDur(g.ms))
+    +'</td><td class="lft">'+chEsc(CAUSE_LABEL[g.cause]||'причина не установлена')+'</td></tr>').join('');
 }
 
 /* Паспорт: строка «сейчас» против строки «измерено» плюс ЦЕНА отклонения. Правила схемы (полоса,
