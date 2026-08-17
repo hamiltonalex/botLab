@@ -133,6 +133,17 @@ try {
     hadStructure ? after.stopRequested === true : after.on === false,
     hadStructure ? "сделка открыта: помечена остановка, доживает до экспирации" : "сделки не было: цепочка выключена сразу");
 
+  // ── 7. Режим «одна сделка» принимается IPC и доезжает до датасета.
+  const onceR = await win.evaluate(`window.s1.setChain({on:true, params:{qty:null, execStyle:'limit', mode:'once'}})`);
+  check("IPC принял режим одной сделки", !!(onceR && onceR.ok), JSON.stringify(onceR));
+  await sleep(500);
+  await win.evaluate(`window.s1.getState().then(d=>applyS1Dataset(d))`);
+  await sleep(400);
+  const onceDs = JSON.parse(await win.evaluate("JSON.stringify((LIVE_S1&&LIVE_S1.sellChain)||null)") || "null");
+  check("датасет несёт режим одной сделки", !!onceDs && onceDs.mode === "once", JSON.stringify(onceDs && onceDs.mode));
+  await win.evaluate(`window.s1.setChain({on:false})`);
+  await sleep(400);
+
   await win.evaluate(`document.getElementById('optZoneTrade').scrollIntoView()`);
   await sleep(300);
   const shot = join(tmpdir(), "chain-ui.png");

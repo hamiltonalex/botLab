@@ -1695,6 +1695,7 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
             <div class="trow"><span class="k">размер</span><span class="num">от залога · не более 70% счёта</span></div>
             <div class="trow"><span class="k">хедж</span><span class="num">перп · полоса 0.03 BTC на контракт · лимит</span></div>
             <div class="trow"><span class="k">штатный выход</span><span class="num">экспирация · досрочных нет</span></div>
+            <div class="trow"><span class="k">режим</span><span class="num" id="optChainTktMode">—</span></div>
             <div class="trow"><span class="k">убыток вверх</span><span class="num neg">не ограничен</span></div>
             <div class="trow"><span class="k">депозит</span><span class="num" id="optChainTktDep">—</span></div>
             <div class="trow"><span class="k">опрос заводится на буте</span><span class="num">да · иначе после перезагрузки позиция останется без хеджа</span></div>
@@ -1961,6 +1962,16 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
           <div class="seg" id="optModeSel" role="group" aria-label="Схема">
             <button data-v="straddle"  aria-pressed="true">4 ноги</button>
             <button data-v="sell-call" aria-pressed="false">продажа колла</button>
+          </div>
+        </div>
+        <!-- Режим цепочки: непрерывно (дефолт замера: 16-17 сделок в год подряд) либо одна сделка -
+             для сверки книг, первого показа и отладки без ожидания недель. Читается в момент
+             подтверждения тикета, а не пушится настройкой: это разовое решение при включении. -->
+        <div class="ctl" id="optChainModeCtl" hidden>
+          <label>Цепочка</label>
+          <div class="seg" id="optChainSel" role="group" aria-label="Режим цепочки">
+            <button data-v="continuous" aria-pressed="true">непрерывно</button>
+            <button data-v="once" aria-pressed="false">одна сделка</button>
           </div>
         </div>
         <div class="ctl" id="optExpiryCtl">
@@ -4978,7 +4989,7 @@ let optDeltaRing = [], optLastStructId = null;     // локальное окн�
 let optChainLoaded = false, optHydrated = false;
 const optSel = { expiry:null, wing:10, qty:0.01, deadband:'normal', priceTrig:0.5,
                  lambda:1.25, reprice:15, exec:'limit', blackout:'on',
-                 mode:'straddle', sellQty:null }; /* mode: straddle | sell-call; sellQty null = размер по залогу */
+                 mode:'straddle', sellQty:null, chainMode:'continuous' }; /* mode: straddle | sell-call; sellQty null = размер по залогу */
 /* Гипотеза схемы продавца держится ОТДЕЛЬНО от покупательской: у них разные поля, и общий кэш
    заставил бы каждую ветку проверять, чей ответ там лежит. */
 let optSellPreviewCache = null, optSellPreviewErr = null, optSellBusy = false;
@@ -5123,7 +5134,11 @@ function optChainState(ds){
     return { key:'stopping', token:'ОСТАНОВКА', cls:'neu hollow',
       reason:'цепочка остановлена вами · сделка доживёт до экспирации, следующей не будет' };
   if(st) return { key:'live', token:'В СДЕЛКЕ', cls:'pos', reason: st.legs && st.legs[0] ? st.legs[0].instrument : '' };
-  if(!ch.on) return { key:'off', token:'ВЫКЛ', cls:'dim hollow', reason:'схема выключена · сделки открываются вручную' };
+  if(!ch.on) return { key:'off', token:'ВЫКЛ', cls:'dim hollow',
+    /* Одноразовое завершение это не проблема, а объявленный заранее исход, поэтому off, а не
+       halted: красный занят настоящими остановками. Причина остаётся видимой. */
+    reason: (ch.last && ch.last.ok && ch.last.reason) ? ch.last.reason+' · включить заново'
+      : 'схема выключена · сделки открываются вручную' };
   const why = ch.last && !ch.last.ok ? ch.last.reason : null;
   /* Нехватка залога это НАСТОЯЩАЯ остановка, а не ожидание: повторять попытку каждые полминуты
      неделями и молчать значило бы обманывать оператора. */
@@ -5177,7 +5192,9 @@ function renderOptChainCard(ds){
   const nw=$('optChainNextWhen'), ntry=$('optChainNextTry'), nwhy=$('optChainNextWhy');
   if(nw) nw.textContent = st ? 'после экспирации ' + chDate(st.expiryMs) : (on ? 'как только правило найдёт ногу' : '—');
   if(ntry) ntry.textContent = on && !st && ch.nextTryAt ? 'через '+chDur(Math.max(0,ch.nextTryAt-Date.now())) : '—';
-  if(nwhy) nwhy.textContent = ch && ch.last ? (ch.last.ok ? 'открылась '+chDate(ch.last.at) : ch.last.reason) : '—';
+  if(nwhy) nwhy.textContent = ch && ch.last
+    ? (ch.last.ok && !ch.last.reason ? 'открылась '+chDate(ch.last.at) : (ch.last.reason || '—'))
+    : '—';
 
   renderOptChainStrip(ds, trades, st);
 
@@ -6098,6 +6115,7 @@ function optApplyModeRows(){
   /* Тулбарные крутилки покупателя в режиме продавца не просто лишние: срок и страйк выбирает
      правило, и оставленный на экране выбор экспирации обещал бы влияние, которого нет. */
   for(const id of ['optExpiryCtl','optWingCtl','optQtyCtl']) show(id, !sell);
+  show('optChainModeCtl', sell); /* режим цепочки существует только у схемы продавца */
   const auto=$('optAutoBtn'); if(auto) auto.hidden = sell; /* у схемы продавца «неавто» варианта нет */
   const sweep=$('optSweep'); if(sweep) sweep.hidden = sell; /* свип перебирает крылья и дедбэнд, к схеме не относится */
   const openHint=$('optOpenHint');
@@ -6318,6 +6336,10 @@ function openOptChainTicket(){
   const dep=$('optChainTktDep');
   if(dep) dep.textContent = ds.settings && Number.isFinite(ds.settings.paperEquityUsd)
     ? optDollars(ds.settings.paperEquityUsd)+' · размер считает правило от залога' : '—';
+  const md=$('optChainTktMode');
+  if(md) md.textContent = (optSel.chainMode==='once')
+    ? 'одна сделка · после расчёта схема остановится сама'
+    : 'непрерывно · до остановки';
   const g=$('optChainTktGate'); const gate=optGateReady();
   if(g){ g.textContent=gate.text; g.className='num '+(gate.ok?'gate-ok':(gate.block?'gate-bad':'gate-warn')); }
   const cf=$('optChainTktConfirm'); if(cf) cf.disabled=!!gate.block;
@@ -6338,7 +6360,8 @@ async function chainSet(patch){
 }
 async function confirmOptChain(){
   const cf=$('optChainTktConfirm'); if(cf) cf.disabled=true;
-  const r=await chainSet({ on:true, params:{ qty:null, execStyle:(optSel&&optSel.exec)||'limit' } });
+  const r=await chainSet({ on:true, params:{ qty:null, execStyle:(optSel&&optSel.exec)||'limit',
+    mode:(optSel&&optSel.chainMode)||'continuous' } });
   if(r && r.error){ const err=$('optChainTktErr'); if(err){ err.hidden=false;
       err.textContent='схема не включена: '+r.error+'. Настройки сохранены, повторите после устранения причины.'; }
     if(cf) cf.disabled=false; return; }
@@ -6408,6 +6431,7 @@ function initOpt(){ if(!$('view-btc-options')) return;
       renderOptChainCard(LIVE_S1||{}); renderOptConform(LIVE_S1||{});
       renderOptStructPreview(); renderOptCharts(); }); })();
   wireOptSeg('optExecSel','exec', null, { setting:'execStyle' });
+  wireOptSeg('optChainSel','chainMode'); /* не настройка движка: читается тикетом включения */
   wireOptSeg('optDeadbandSel','deadband', null, { setting:'deadbandPreset' });
   wireOptSeg('optPriceTrigSel','priceTrig', v=>parseFloat(v), { setting:'priceTriggerPct', settingCast:v=>parseFloat(v) });
   wireOptSeg('optRepriceSel','reprice', v=>parseInt(v,10), { setting:'repriceSec', settingCast:v=>parseInt(v,10) });

@@ -874,6 +874,7 @@ function assembleDataset1() {
       ? {
           on: !!eng.sellChain.on,
           stopRequested: !!eng.sellChain.stopRequested,
+          mode: eng.sellChain.mode ?? "continuous",
           armedAt: eng.sellChain.armedAt ?? null,
           stoppedAt: eng.sellChain.stoppedAt ?? null,
           trades: eng.sellChain.trades ?? [],
@@ -1177,13 +1178,19 @@ function maybeOpenNextSell() {
       hasStructure: !!bo.engine?.structure,
       chainOn: true,
       stopRequested: !!chain.stopRequested,
+      mode: chain.mode,
+      tradesCount: chain.trades?.length ?? 0,
     })
   ) {
-    // Цепочка остановлена оператором И сделка дожила до конца: гасим флаг, чтобы после перезапуска
-    // схема не воскресла сама. Остановка обязана быть окончательной, а не отложенной.
-    if (chain.stopRequested && !bo.engine?.structure) {
+    // Цепочка завершилась: остановлена оператором И сделка дожила до конца, ЛИБО режим «одна
+    // сделка» закрыл свою единственную. Флаг гасится, чтобы после перезапуска схема не воскресла;
+    // причина завершения остаётся видимой - молчащая цепочка неотличима от работающей.
+    const doneByStop = chain.stopRequested && !bo.engine?.structure;
+    const doneOnce = chain.mode === "once" && !bo.engine?.structure && (chain.trades?.length ?? 0) > 0;
+    if (doneByStop || doneOnce) {
       chain.on = false;
       chain.stoppedAt = Date.now();
+      if (doneOnce) bo.sellChainLast = { at: Date.now(), ok: true, reason: "одна сделка: цепочка завершена" };
       saveBotState(baseDir, BTCOPT_ID, bo.engine);
       push1();
     }
@@ -1383,6 +1390,9 @@ function wireIpcStrategy1() {
       ch.armedAt = Date.now();
       ch.stoppedAt = null;
       ch.params = patch.params ?? { qty: null, execStyle: bo.settings?.execStyle ?? "limit" };
+      // Режим цепочки решается в момент включения: «одна сделка» нужна сверке книг и первому
+      // показу без ожидания недель. Всё, кроме явного "once", читается как непрерывный режим.
+      ch.mode = patch.params?.mode === "once" ? "once" : "continuous";
       sellChainNextTryAt = 0; // включили - пробуем на ближайшем тике, а не через окно троттлинга
       ensureBtcOptSource();
     } else if (patch?.on === false) {
