@@ -1021,7 +1021,11 @@ async function previewSellStructure(params) {
     const checkSnap = bo.lastSnapshot
       ? { ...res.snap, legs: { ...(bo.lastSnapshot.legs || {}), ...res.snap.legs } }
       : res.snap;
-    const rejections = s1engine.preTradeCheck(bo.engine, built, metaByInstrument, checkSnap, Date.now());
+    // Превью судит по ТОЙ ЖЕ замороженной конфигурации схемы, что и исполнитель (openStructure
+    // кладёт её в preTradeCheck как cfgOverride). Без неё превью в окне блэкаута 08:00 UTC
+    // отвечало бы «открытие запрещено», хотя цепочка и открытие в это же окно проходят.
+    const sellEngineCfg = s1sellhedge.sellhedgeEngineCfg({ ...s1sellhedge.SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) });
+    const rejections = s1engine.preTradeCheck(bo.engine, built, metaByInstrument, checkSnap, Date.now(), sellEngineCfg);
     const payoff = s1payoffCurve(built, { min: res.snap.underlying * 0.75, max: res.snap.underlying * 1.25, n: 96 });
     const unit = (built.legs[0]?.qtyAbs ?? 0) * (built.legs[0]?.contractSize ?? 1);
     const premiumCreditUsd = -built.entryDebitUsd; // дебет отрицателен у продавца: это полученный кредит
