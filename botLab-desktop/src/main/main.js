@@ -866,6 +866,10 @@ function onBtcOptSnapshot(snap) {
     snap.ivContext = { series: bo.ivHistory }; // → evaluate() computes cycle.iv_regime from this
     s1engine.ingest(bo.engine, snap, Date.now());
     const hadStructure = !!bo.engine.structure;
+    // Перевход спрашивается ДО evaluate: таков контракт shouldOpenNext (sellhedge.js §8), и так же
+    // поступает прогон записи. На тике экспирации структура ещё открыта и попытка не уходит;
+    // следующая сделка открывается следующим тиком, а не той же меткой, что расчёт старой.
+    maybeOpenNextSell(); // async, самогейтится, в тик не бросает
     bo.snapshot = s1engine.evaluate(bo.engine, snap, Date.now());
     // Expiry settlement inside evaluate() may have flattened the book — re-point the source so the
     // now-dead legs stop being the gate-relevant primary (band-only polling, like after a close).
@@ -873,7 +877,6 @@ function onBtcOptSnapshot(snap) {
     saveBotState(baseDir, BTCOPT_ID, bo.engine);
     push1();
     refreshBtcOptBand(snap.underlying); // may re-point the source for the NEXT tick
-    maybeOpenNextSell(); // цепочка схемы продавца: async, самогейтится, в тик не бросает
     flushBtcOptHistory(false);
     ensureBtcOptDvol(); // async, self-gated to the 5-min cadence, never throws into the tick
     maybeReconcileSettles(); // S0: async, self-gated (10 мин + pending-строки), never throws into the tick
