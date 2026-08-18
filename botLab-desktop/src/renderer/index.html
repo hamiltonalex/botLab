@@ -3449,7 +3449,7 @@ function renderHlPanel(){
 
 function renderStrategy(){
   const prof=activeProfile();
-  const tag = state.strat==='one' ? 'GMX carry' : t('fa.hero.cfgPill',{cfg:state.cfg});
+  const tag = state.strat==='one' ? t('fa.strat.tagOne') : t('fa.hero.cfgPill',{cfg:state.cfg});
   $('stratTag').textContent=tag; $('spreadTag').textContent=tag; $('inspTag').textContent=tag;
 
   if(state.strat==='one'){
