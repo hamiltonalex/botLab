@@ -7,9 +7,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-// Потолок после Ф1 (шапка+обзор+funding-arb в словарях; бот 2 и сканер ещё по-русски).
-// Ф2 (бот 2) и Ф3 (сканер) обязаны его существенно опустить.
-const CEILING = 1648;
+// Потолок после Ф2 (шапка+обзор+funding-arb+бот 2 в словарях; сканер ещё по-русски).
+// Ф3 (сканер) обязана его существенно опустить.
+const CEILING = 1156;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(HERE, "..", "src", "renderer", "index.html"), "utf8");
