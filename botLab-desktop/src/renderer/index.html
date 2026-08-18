@@ -2387,6 +2387,50 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
           </div>
         </div>
 
+        <!-- ── Режим ПРОДАЖИ (П1 анализа 2026-08-18): нога, санитария очереди, размер от залога.
+             Правила НЕ дублируются: цикл собирает evaluateSellScan тем же buildSellStructure,
+             которым бот 2 открывает структуру, - карточка лишь показывает его выдачу. ── -->
+        <div class="card span2" id="scnSellCard" hidden>
+          <div class="sec-head">
+            <h2>Продажа · нога схемы</h2>
+            <span class="tag amber" id="scnSellZoneTag" hidden>RV выше IV · худшая зона продавца</span>
+            <span class="rule"></span>
+            <span class="hint">правила ноги, санитарии и размера - те же вызовы, что у бота 2</span>
+          </div>
+          <div class="two-col" style="margin:0 16px 12px">
+            <div>
+              <div class="subhdr">Нога</div>
+              <div class="dl">
+                <div class="row"><span class="k">инструмент</span><span class="v num sym" id="scnSellInstr">—</span></div>
+                <div class="row"><span class="k">|дельта| <small>окно 0.35-0.55 · цель 0.45</small></span><span class="v num" id="scnSellDelta">—</span></div>
+                <div class="row"><span class="k">экспирация <small>окно 336-672 ч</small></span><span class="v num" id="scnSellExp">—</span></div>
+                <div class="row"><span class="k">страйк</span><span class="v num" id="scnSellStrike">—</span></div>
+                <div class="row"><span class="k">премия · марк</span><span class="v num" id="scnSellPrem">—</span></div>
+                <div class="row"><span class="k">bid / ask</span><span class="v num" id="scnSellBidAsk">—</span></div>
+                <div class="row"><span class="k">IV ноги против RV7d <small>информация · не гейт</small></span><span class="v num" id="scnSellIvRv">—</span></div>
+              </div>
+            </div>
+            <div>
+              <div class="subhdr">Санитария очереди <span class="faint">(вето переключает контракт)</span></div>
+              <div class="dl" id="scnSellSanityRows"></div>
+              <div class="subhdr" style="margin-top:10px">Размер от залога</div>
+              <div class="dl">
+                <div class="row"><span class="k">лотов при счёте</span><span class="v num" id="scnSellLots">—</span></div>
+                <div class="row"><span class="k">залог за лот</span><span class="v num" id="scnSellImLot">—</span></div>
+                <div class="row"><span class="k">задействовано</span><span class="v num" id="scnSellImUsed">—</span></div>
+                <div class="row"><span class="k">минимальный депозит</span><span class="v num" id="scnSellMinCap">—</span></div>
+                <div class="row"><span class="k">издержки входа</span><span class="v num" id="scnSellEntryCost">—</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="hint" style="margin:0 16px 14px">
+            <b>Сигнал = нога, которую открыл бы бот 2 в эту же метку</b> (одна функция на проект).
+            Сканер не торгует и момент входа не выбирает: на пяти годах непрерывная цепочка
+            обыгрывает любой входной гейт, а метка «RV выше IV» - предупреждение о худшем
+            историческом режиме продавца, не запрет.
+          </div>
+        </div>
+
         <!-- ── Чеклист условий (сердце модуля) ── -->
         <div class="card flush" id="scnChecklistCard">
           <div class="sec-head" style="padding:16px 16px 0;margin-bottom:10px">
@@ -2523,7 +2567,14 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
       </div>
 
       <!-- ── Тулбар: пресет, режим, флаг события (sticky) ── -->
-      <nav class="toolbar reveal" id="scnToolbar" aria-label="Пресет, режим агрегации и флаг события">
+      <nav class="toolbar reveal" id="scnToolbar" aria-label="Стратегия, пресет, режим агрегации и флаг события">
+        <div class="ctl">
+          <label>Стратегия</label>
+          <div class="seg" id="scnStratSel" role="group" aria-label="Направление сканера: покупка по чеклисту или продажа схемы">
+            <button data-v="buy" aria-pressed="true">покупка</button>
+            <button data-v="sell" aria-pressed="false">продажа</button>
+          </div>
+        </div>
         <div class="ctl">
           <label id="scnPresetLbl">Пресет</label>
           <div class="assetsel" id="scnPresetSel" role="group" aria-labelledby="scnPresetLbl">
@@ -6578,7 +6629,7 @@ const SCN_COND_LABELS = {
   depth_min:'глубина книги', theta_cap:'тета ≤ лимита', cost_gate:'издержки ≤ лимита' };
 const SCN_PRESET_LABELS = { 'dmitri-v1':'Дмитрий v1', 'dmitri-v2':'Дмитрий v2.0',
   'delta-v1':'Дельта v1', 'measure-v1':'Измерительный v1', 'measure-far-v1':'Измерительный дальний v1',
-  calibrated:'Калиброванный', custom:'Калиброванный*' };
+  calibrated:'Калиброванный', custom:'Калиброванный*', 'sell-v1':'Продажа v1' };
 function scnPresetLabel(id){ return SCN_PRESET_LABELS[id] || (LIVE_SCN && LIVE_SCN.preset && LIVE_SCN.preset.id===id && LIVE_SCN.preset.label) || id || '—'; }
 
 /* — мелкие форматтеры домена — */
@@ -6591,7 +6642,7 @@ const scnUtcTs = ms => new Date(ms).toISOString().replace('T',' ').slice(5,19); 
 const scnExpLbl = ms => { const d=new Date(ms);
   return d.getUTCDate()+['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getUTCMonth()]; };
 const scnUsd = v => Number.isFinite(v) ? (v<0?'−$':'$')+Math.abs(v).toLocaleString('en-US',{maximumFractionDigits:2}) : '—';
-const scnSideWord = s => s==='call' ? 'CALL' : (s==='put' ? 'PUT' : '—');
+const scnSideWord = s => s==='call' ? 'CALL' : (s==='put' ? 'PUT' : (s==='sell-call' ? 'SELL CALL' : '—'));
 function scnSetHtml(id, html, cls){ const el=$(id); if(!el) return;
   if(el.innerHTML!==html && smoothOk()){ el.classList.remove('opt-tick'); void el.offsetWidth; el.classList.add('opt-tick'); }
   el.innerHTML=html; if(cls!=null) el.className=cls; }
@@ -6651,13 +6702,24 @@ function renderScn(){
   hydrateScnToolbar(ds);
   hydrateScnEditor(ds);
   const zone=$('scnZoneSignal'); if(zone) zone.classList.toggle('idle', !cyc);
+  // Режим ПРОДАЖИ: свой цикл (kind sell) кормит сигнал-токен и карточку ноги; покупательские
+  // карточки (чеклист/кандидаты с экономикой) прячутся - их данных в этом цикле честно нет.
+  const sellMode = !!(cyc && cyc.kind==='sell');
+  const sellCard=$('scnSellCard'); if(sellCard) sellCard.hidden=!sellMode;
+  for(const id of ['scnChecklistCard','scnCandCard']){ const el=$(id); if(el) el.hidden=sellMode; }
   if(cyc){
-    renderScnSignal(ds, cyc);
-    renderScnChecklist(ds, cyc);
-    renderScnCandidates(ds, cyc);
-    renderScnEconomics(ds, cyc);
-    renderScnJournal(ds, cyc);
-    renderScnTelemetry(cyc);
+    if(sellMode){
+      renderScnSellSignal(ds, cyc);
+      renderScnSellCard(ds, cyc);
+      renderScnJournal(ds, cyc);
+    } else {
+      renderScnSignal(ds, cyc);
+      renderScnChecklist(ds, cyc);
+      renderScnCandidates(ds, cyc);
+      renderScnEconomics(ds, cyc);
+      renderScnJournal(ds, cyc);
+      renderScnTelemetry(cyc);
+    }
     if(cyc.ts!==scnLastCycleTs){ scnLastCycleTs=cyc.ts; scnBlip('scnEvalStamp'); }
     const st=$('scnEvalStampTxt'); if(st) st.textContent='оценка '+new Date(cyc.ts).toISOString().slice(11,19)+' UTC';
   }
@@ -6738,6 +6800,99 @@ function scnBlockWord(r){
   return r==='min_lot_exceeds_risk' ? 'мин. лот превышает риск-бюджет'
        : r==='min_lot_exceeds_depth' ? 'мин. лот превышает кэп глубины'
        : (r||'нет данных для размера');
+}
+
+/* ── режим ПРОДАЖИ: сигнал-токен из sell-цикла (та же машина состояний, те же dom-узлы) ── */
+function renderScnSellSignal(ds, cyc){
+  const lc=cyc.lifecycle||{}, bo=lc.blackout||{}, sig=cyc.signal, leg=cyc.leg;
+  let tok='ОЖИДАНИЕ', cls='decision-token dim hollow', reason=cyc.reason||'ожидание данных';
+  let bar=null;
+  if(lc.phase==='active' && sig){
+    tok='СИГНАЛ · ПРОДАЖА'; cls='decision-token accent';
+    const left=lc.ttl?lc.ttl.leftSec:null;
+    reason='TTL '+scnMMSS(left)+' · SELL CALL '+sig.instrument+(bo.active?' · блэкаут':'');
+    bar={mode:'armed', lbl:'TTL', val:scnMMSS(left), frac:(Number.isFinite(left)&&sig.ttlSec)?left/sig.ttlSec:0};
+  } else if(bo.active){
+    tok='БЛЭКАУТ'; cls='decision-token neu';
+    const leftS = bo.untilTs ? Math.max(0,(bo.untilTs-Date.now())/1000) : null;
+    reason=(bo.reason==='pre-expiry'?'преэкспирация':'окно расчёта 08:00 UTC')+' · новые сигналы не создаются'+(leftS!=null?' · ещё '+scnMMSS(leftS):'');
+    bar={mode:'wait', lbl:'до '+(bo.untilTs?scnUtcHM(bo.untilTs)+' UTC':'—'), val:leftS!=null?scnMMSS(leftS):'—', frac:1};
+  } else if(lc.phase==='forming'){
+    tok='ФОРМИРУЕТСЯ'; cls='decision-token accent hollow';
+    const d=lc.dwell||{};
+    reason='тик '+(d.count||0)+' из '+(d.need||'—')+' · дожим ноги';
+    bar={mode:'armed', lbl:'дожим', val:(d.count||0)+' / '+(d.need||'—'), frac:d.need?(d.count||0)/d.need:0};
+  } else if(lc.cooldown && lc.cooldown.active){
+    tok='КУЛДАУН'; cls='decision-token neu';
+    const until=lc.cooldown.untilTs;
+    reason=(scnEndNote?scnEndNote+' · ':'')+'новые не создаются до '+(until?scnUtcHM(until)+' UTC':'—');
+    const leftS=until?Math.max(0,(until-Date.now())/1000):null;
+    bar={mode:'wait', lbl:'кулдаун', val:leftS!=null?scnMMSS(leftS):'—', frac:1};
+  } else {
+    const fresh=ds.fresh||{};
+    if(fresh.stale) reason='источник устарел · оценка приостановлена';
+    else if(scnEndNote) reason=scnEndNote;
+    else reason=cyc.reason||'нога не найдена';
+  }
+  const tokEl=$('scnSignalToken');
+  if(tokEl && (tokEl.className!==cls || tokEl.textContent.trim()!==tok))
+    optCrossfade(tokEl, '<span class="dot"></span>'+tok, cls);
+  const rEl=$('scnSignalReason'); if(rEl){ rEl.textContent=reason; rEl.className='mono '+(lc.phase==='active'?'':'dim'); }
+  const barEl=$('scnSignalBar');
+  if(barEl){
+    barEl.hidden = !bar;
+    if(bar){
+      barEl.className='opt-bar '+bar.mode;
+      $('scnSignalBarLbl').textContent=bar.lbl; $('scnSignalBarVal').textContent=bar.val;
+      $('scnSignalBarFill').style.transform='scaleX('+Math.max(0,Math.min(1,bar.frac))+')';
+    }
+  }
+  scnSetHtml('scnSigInstrument', (sig?sig.instrument:(leg?leg.instrument:null)) || '—');
+  $('scnSigSide').innerHTML = (sig||leg) ? '<span class="chip side">SELL CALL</span>' : '—';
+  let qtyTxt='—';
+  if(sig) qtyTxt=scnNum(sig.qtySuggested,2)+' контр. ('+sig.lots+' лот.)';
+  else if(cyc.sizing) qtyTxt = cyc.sizing.lots>=1
+    ? scnNum(cyc.sizing.qtySuggested,2)+' контр.'
+    : (Number.isFinite(cyc.sizing.minCapitalUsd) ? 'нужно от $'+Math.round(cyc.sizing.minCapitalUsd) : 'счёт мал');
+  scnSetHtml('scnSigQty', qtyTxt);
+  scnSetHtml('scnSigTtl', sig ? scnUtcHM(sig.ts+sig.ttlSec*1000)+' UTC' : '—');
+  scnSetHtml('scnSigEvent','—');
+  const evTag=$('scnSigEventTag'); if(evTag) evTag.hidden=true;
+  const pp=$('scnSigPreset'); if(pp) pp.innerHTML='пресет <b>'+scnPresetLabel('sell-v1')+'</b>';
+}
+
+/* ── режим ПРОДАЖИ: карточка ноги, санитарии очереди и размера от залога ── */
+function renderScnSellCard(ds, cyc){
+  const leg=cyc.leg, s=cyc.sizing, ir=cyc.ivRv||{};
+  scnSetHtml('scnSellInstr', leg?leg.instrument:'—');
+  scnSetHtml('scnSellDelta', leg&&Number.isFinite(leg.delta)?scnNum(Math.abs(leg.delta),3):'—');
+  scnSetHtml('scnSellExp', leg?(scnExpLbl(leg.expiryMs)+' · '+scnNum((leg.hoursToExpiry||0)/24,1)+' сут'):'—');
+  scnSetHtml('scnSellStrike', leg?String(leg.strike):'—');
+  scnSetHtml('scnSellPrem', leg&&Number.isFinite(leg.markUsd)
+    ? scnUsd(leg.markUsd)+' <span class="faint">('+scnNum(leg.premPctSpot,2)+'% спота)</span>' : '—');
+  scnSetHtml('scnSellBidAsk', leg&&Number.isFinite(leg.bidUsd)&&Number.isFinite(leg.askUsd)
+    ? scnUsd(leg.bidUsd)+' / '+scnUsd(leg.askUsd)+' <span class="faint">спред '+scnNum(leg.spreadPctPrem,1)+'% премии</span>' : '—');
+  scnSetHtml('scnSellIvRv', Number.isFinite(ir.ivPct)
+    ? scnNum(ir.ivPct,1)+'% <span class="faint">против RV7d '+scnNum(ir.rv7dPct,1)+'% · '
+      +(Number.isFinite(ir.spreadPts)?((ir.spreadPts>=0?'+':'')+scnNum(ir.spreadPts,1)+' п.п.'):'н/д')+'</span>' : '—');
+  const zoneTag=$('scnSellZoneTag'); if(zoneTag) zoneTag.hidden = ir.sellerZone!=='worst';
+  const box=$('scnSellSanityRows');
+  if(box){
+    const checks=(cyc.sanity&&cyc.sanity.checks)||[];
+    box.innerHTML = checks.length ? checks.map(c=>{
+      const bad=(c.rows||[]).find(r=>r.state!=='pass');
+      const cls=c.verdict==='pass'?'vrd pos':(c.verdict==='fail'?'vrd dim':'vrd neu');
+      const word=c.verdict==='pass'?'● прошла':(c.verdict==='fail'?'○ вето':'◌ н/д');
+      return '<div class="row"><span class="k num">'+(c.instrument||'—')+'</span>'
+        +'<span class="v"><span class="'+cls+'">'+word+'</span> <span class="faint">'+(bad?bad.note:'все проверки прошли')+'</span></span></div>';
+    }).join('') : '<div class="row"><span class="k">очередь</span><span class="v faint">нет кандидатов в окне</span></div>';
+  }
+  scnSetHtml('scnSellLots', s ? (s.lots>=1 ? s.lots+' лот. · '+scnNum(s.qtySuggested,2)+' контр.' : '0 · счёт мал') : '—');
+  scnSetHtml('scnSellImLot', s&&Number.isFinite(s.imLotUsd)?scnUsd(s.imLotUsd):'—');
+  scnSetHtml('scnSellImUsed', s&&Number.isFinite(s.imUsedUsd)
+    ? scnUsd(s.imUsedUsd)+' <span class="faint">потолок '+Math.round((s.deployPct||0)*100)+'% счёта $'+Math.round(s.equityUsd||0)+'</span>' : '—');
+  scnSetHtml('scnSellMinCap', s&&Number.isFinite(s.minCapitalUsd)?scnUsd(s.minCapitalUsd):'—');
+  scnSetHtml('scnSellEntryCost', Number.isFinite(cyc.entryCostUsd)?scnUsd(cyc.entryCostUsd)+' <span class="faint">на лот</span>':'—');
 }
 
 /* ── чеклист: 14 строк tri-state в двух группах ── */
@@ -6987,6 +7142,7 @@ function hydrateScnToolbar(ds){
     b.textContent = (SCN_PRESET_LABELS[v]||v) + (dirty && v===baseId ? ' *' : '');
     b.classList.toggle('reco', !!(ds.event&&ds.event.flagged) && v==='dmitri-v2');
   });
+  scnSegPress('scnStratSel', ds.scanMode==='sell'?'sell':'buy');
   scnSegPress('scnModeSel', preset.mode==='score'?'score':'AND');
   const mb=$('scnModeSel') && $('scnModeSel').querySelector('button[data-v="score"]');
   if(mb) mb.textContent='скоринг ≥'+(preset.scoreMin!=null?preset.scoreMin:10);
@@ -7222,6 +7378,17 @@ function initScn(){
     catch(e){ console.warn('scn setPreset', e); } });
   const msel=$('scnModeSel');
   if(msel) msel.querySelectorAll('button').forEach(b=> b.onclick=()=> scnPushPresetPatch({ mode:b.dataset.v }));
+  // Стратегия сканера: покупка (чеклист У1-У14) | продажа (нога схемы). Ключ scanMode идёт
+  // штатным setSettings; невалидное значение main отклоняет с причиной, а не коерцит.
+  const ssel=$('scnStratSel');
+  if(ssel) ssel.querySelectorAll('button').forEach(b=> b.onclick=async ()=>{
+    if(!window.scn) return;
+    scnSegPress('scnStratSel', b.dataset.v);
+    try{ const r=await window.scn.setSettings({ scanMode: b.dataset.v });
+      if(r && !r.error) applyScnDataset(r);
+      if(r && r.errors && r.errors.length) console.warn('scn scanMode', r.errors);
+    }catch(e){ console.warn('scn scanMode', e); }
+  });
   // событие ≤48ч
   const sendEvent=async ()=>{
     if(!window.scn) return;
