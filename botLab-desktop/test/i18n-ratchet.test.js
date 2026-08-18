@@ -7,9 +7,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-// Потолок после Ф2 (шапка+обзор+funding-arb+бот 2 в словарях; сканер ещё по-русски).
-// Ф3 (сканер) обязана его существенно опустить.
-const CEILING = 1156;
+// Потолок после Ф3 (все три вкладки в словарях). Остаток - почти целиком русские
+// fallback-значения ВНУТРИ размеченных data-i18n элементов (остаются в разметке намеренно)
+// плюс единичные данные-литералы; заметно ниже он опустится только если убирать fallback-тексты.
+const CEILING = 827;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(HERE, "..", "src", "renderer", "index.html"), "utf8");

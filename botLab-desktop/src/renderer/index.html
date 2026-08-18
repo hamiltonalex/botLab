@@ -2350,52 +2350,52 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
     <section id="scnZoneSignal" class="zone zone-trade reveal" style="animation-delay:.03s"
              aria-labelledby="scnZoneSignalHead" tabindex="-1">
       <div class="zone-head">
-        <span class="zn" id="scnZoneSignalHead">Ⅱ · Сигнал OTM · живая оценка</span>
-        <span class="tag">наблюдение · без ордеров</span>
+        <span class="zn" id="scnZoneSignalHead" data-i18n="scn.zs.title">Ⅱ · Сигнал OTM · живая оценка</span>
+        <span class="tag" data-i18n="scn.zs.tag">наблюдение · без ордеров</span>
         <span class="rule"></span>
-        <span class="hint">сканер ничего не торгует — только сигналит</span>
+        <span class="hint" data-i18n="scn.zs.hint">сканер ничего не торгует — только сигналит</span>
       </div>
 
       <div class="trade-empty" id="scnScanEmpty" role="status">
-        <span>○ сканер запускается — загрузка цепочки Deribit и первичных данных. Чеклист оживёт после первого опроса.</span>
+        <span data-i18n="scn.zs.empty">○ сканер запускается — загрузка цепочки Deribit и первичных данных. Чеклист оживёт после первого опроса.</span>
       </div>
 
       <div class="opt-grid" id="scnEvalGrid">
         <!-- ── Сигнал · состояние ── -->
         <div class="card" id="scnSignalCard">
           <div class="sec-head">
-            <h2>Сигнал · состояние</h2>
+            <h2 data-i18n="scn.sig.title">Сигнал · состояние</h2>
             <button class="help-btn" data-help="opt-scan-signal">?</button>
-            <span class="cfg-pill" id="scnSigPreset">пресет <b>—</b></span>
-            <span class="tag amber" id="scnSigEventTag" hidden>событие ≤48ч</span>
+            <span class="cfg-pill" id="scnSigPreset"><span data-i18n="scn.sig.presetWord">пресет</span> <b>—</b></span>
+            <span class="tag amber" id="scnSigEventTag" hidden data-i18n="scn.sig.eventTag">событие ≤48ч</span>
             <span class="rule"></span>
-            <span class="stamp" id="scnEvalStamp"><span class="blip" aria-hidden="true"></span><span id="scnEvalStampTxt">оценка —</span></span>
+            <span class="stamp" id="scnEvalStamp"><span class="blip" aria-hidden="true"></span><span id="scnEvalStampTxt" data-i18n="scn.sig.stamp0">оценка —</span></span>
           </div>
           <div class="opt-decision" style="border-left:0;padding-left:0" aria-live="assertive" aria-atomic="true">
-            <div class="decision-token dim" id="scnSignalToken"><span class="dot"></span>ОЖИДАНИЕ</div>
-            <div class="mono dim" id="scnSignalReason">счёт — · ожидание данных</div>
+            <div class="decision-token dim" id="scnSignalToken"><span class="dot"></span><span data-i18n="scn.sig.tokenIdle">ОЖИДАНИЕ</span></div>
+            <div class="mono dim" id="scnSignalReason" data-i18n="scn.sig.reason0">счёт — · ожидание данных</div>
           </div>
           <div class="opt-bar armed" id="scnSignalBar" hidden>
             <div class="lbl"><span id="scnSignalBarLbl">—</span><span class="num" id="scnSignalBarVal">—</span></div>
             <div class="track"><div class="fill" id="scnSignalBarFill"></div></div>
           </div>
           <div class="dl" id="scnSignalRows">
-            <div class="row"><span class="k">инструмент</span><span class="v num sym" id="scnSigInstrument">—</span></div>
-            <div class="row"><span class="k">сторона <small>задана У4</small></span><span class="v" id="scnSigSide">—</span></div>
-            <div class="row"><span class="k">размер · подсказка <small>не ордер</small></span><span class="v num" id="scnSigQty">—</span></div>
-            <div class="row"><span class="k">TTL до</span><span class="v num" id="scnSigTtl">—</span></div>
-            <div class="row"><span class="k">событие</span><span class="v num" id="scnSigEvent">—</span></div>
+            <div class="row"><span class="k" data-i18n="scn.sig.rowInstr">инструмент</span><span class="v num sym" id="scnSigInstrument">—</span></div>
+            <div class="row"><span class="k"><span data-i18n="scn.sig.rowSide">сторона</span> <small data-i18n="scn.sig.rowSideSm">задана У4</small></span><span class="v" id="scnSigSide">—</span></div>
+            <div class="row"><span class="k"><span data-i18n="scn.sig.rowQty">размер · подсказка</span> <small data-i18n="scn.sig.rowQtySm">не ордер</small></span><span class="v num" id="scnSigQty">—</span></div>
+            <div class="row"><span class="k" data-i18n="scn.sig.rowTtl">TTL до</span><span class="v num" id="scnSigTtl">—</span></div>
+            <div class="row"><span class="k" data-i18n="scn.sig.rowEvent">событие</span><span class="v num" id="scnSigEvent">—</span></div>
           </div>
           <!-- Кнопки передачи в бот 2 НЕТ намеренно: нарисованная неактивная кнопка это обещание,
                которое однажды исполнят именно потому, что оно нарисовано, а по замеру исполнять его
                не надо (перебор входных правил не дал ни одной выжившей клетки). -->
           <div class="hint" id="scnHandoffNote" style="margin-top:14px">
-            <b>Сканер не выбирает момент входа для схемы продавца.</b> Перебор входных правил на
+            <b data-i18n="scn.handoffB">Сканер не выбирает момент входа для схемы продавца.</b> <span data-i18n="scn.handoff">Перебор входных правил на
             истории (201 клетка входа, 630 конфигураций выхода, фильтры по разрыву IV-RV, скосу и
             моментуму) не дал ни одной выжившей клетки, а плацебо-контроль оказывался сильнее
             сигнала. Ценность измерена у непрерывности цепочки, а не у выбора момента, а любой
             входной гейт умеет только откладывать открытие. Схема продавца получает от сканера
-            одно: санитарию конкретного инструмента.
+            одно: санитарию конкретного инструмента.</span>
           </div>
         </div>
 
@@ -2404,64 +2404,64 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
              которым бот 2 открывает структуру, - карточка лишь показывает его выдачу. ── -->
         <div class="card span2" id="scnSellCard" hidden>
           <div class="sec-head">
-            <h2>Продажа · нога схемы</h2>
-            <span class="tag amber" id="scnSellZoneTag" hidden>RV выше IV · худшая зона продавца</span>
+            <h2 data-i18n="scn.sell.title">Продажа · нога схемы</h2>
+            <span class="tag amber" id="scnSellZoneTag" hidden data-i18n="scn.sell.zoneTag">RV выше IV · худшая зона продавца</span>
             <span class="rule"></span>
-            <span class="hint">правила ноги, санитарии и размера - те же вызовы, что у бота 2</span>
+            <span class="hint" data-i18n="scn.sell.hint">правила ноги, санитарии и размера - те же вызовы, что у бота 2</span>
           </div>
           <div class="two-col" style="margin:0 16px 12px">
             <div>
-              <div class="subhdr">Нога</div>
+              <div class="subhdr" data-i18n="scn.sell.legHdr">Нога</div>
               <div class="dl">
-                <div class="row"><span class="k">инструмент</span><span class="v num sym" id="scnSellInstr">—</span></div>
-                <div class="row"><span class="k">|дельта| <small>окно 0.35-0.55 · цель 0.45</small></span><span class="v num" id="scnSellDelta">—</span></div>
-                <div class="row"><span class="k">экспирация <small>окно 336-672 ч</small></span><span class="v num" id="scnSellExp">—</span></div>
-                <div class="row"><span class="k">страйк</span><span class="v num" id="scnSellStrike">—</span></div>
-                <div class="row"><span class="k">премия · марк</span><span class="v num" id="scnSellPrem">—</span></div>
+                <div class="row"><span class="k" data-i18n="scn.sig.rowInstr">инструмент</span><span class="v num sym" id="scnSellInstr">—</span></div>
+                <div class="row"><span class="k"><span data-i18n="scn.sell.rowDelta">|дельта|</span> <small data-i18n="scn.sell.rowDeltaSm">окно 0.35-0.55 · цель 0.45</small></span><span class="v num" id="scnSellDelta">—</span></div>
+                <div class="row"><span class="k"><span data-i18n="opt.tk.expiry">экспирация</span> <small data-i18n="scn.sell.rowExpSm">окно 336-672 ч</small></span><span class="v num" id="scnSellExp">—</span></div>
+                <div class="row"><span class="k" data-i18n="scn.sell.rowStrike">страйк</span><span class="v num" id="scnSellStrike">—</span></div>
+                <div class="row"><span class="k" data-i18n="scn.sell.rowPrem">премия · марк</span><span class="v num" id="scnSellPrem">—</span></div>
                 <div class="row"><span class="k">bid / ask</span><span class="v num" id="scnSellBidAsk">—</span></div>
-                <div class="row"><span class="k">IV ноги против RV7d <small>информация · не гейт</small></span><span class="v num" id="scnSellIvRv">—</span></div>
+                <div class="row"><span class="k"><span data-i18n="scn.sell.rowIvRv">IV ноги против RV7d</span> <small data-i18n="scn.sell.rowIvRvSm">информация · не гейт</small></span><span class="v num" id="scnSellIvRv">—</span></div>
               </div>
             </div>
             <div>
-              <div class="subhdr">Санитария очереди <span class="faint">(вето переключает контракт)</span></div>
+              <div class="subhdr"><span data-i18n="scn.sell.sanHdr">Санитария очереди</span> <span class="faint" data-i18n="scn.sell.sanHdrSm">(вето переключает контракт)</span></div>
               <div class="dl" id="scnSellSanityRows"></div>
-              <div class="subhdr" style="margin-top:10px">Размер от залога</div>
+              <div class="subhdr" style="margin-top:10px" data-i18n="scn.sell.sizeHdr">Размер от залога</div>
               <div class="dl">
-                <div class="row"><span class="k">лотов при счёте</span><span class="v num" id="scnSellLots">—</span></div>
-                <div class="row"><span class="k">залог за лот</span><span class="v num" id="scnSellImLot">—</span></div>
-                <div class="row"><span class="k">задействовано</span><span class="v num" id="scnSellImUsed">—</span></div>
-                <div class="row"><span class="k">минимальный депозит</span><span class="v num" id="scnSellMinCap">—</span></div>
-                <div class="row"><span class="k">издержки входа</span><span class="v num" id="scnSellEntryCost">—</span></div>
+                <div class="row"><span class="k" data-i18n="scn.sell.rowLots">лотов при счёте</span><span class="v num" id="scnSellLots">—</span></div>
+                <div class="row"><span class="k" data-i18n="scn.sell.rowImLot">залог за лот</span><span class="v num" id="scnSellImLot">—</span></div>
+                <div class="row"><span class="k" data-i18n="scn.sell.rowImUsed">задействовано</span><span class="v num" id="scnSellImUsed">—</span></div>
+                <div class="row"><span class="k" data-i18n="scn.sell.rowMinCap">минимальный депозит</span><span class="v num" id="scnSellMinCap">—</span></div>
+                <div class="row"><span class="k" data-i18n="opt.tk.sellCost">издержки входа</span><span class="v num" id="scnSellEntryCost">—</span></div>
               </div>
             </div>
           </div>
           <div class="hint" style="margin:0 16px 14px">
-            <b>Сигнал = нога, которую открыл бы бот 2 в эту же метку</b> (одна функция на проект).
+            <b data-i18n="scn.sell.footB">Сигнал = нога, которую открыл бы бот 2 в эту же метку</b> <span data-i18n="scn.sell.foot">(одна функция на проект).
             Сканер не торгует и момент входа не выбирает: на пяти годах непрерывная цепочка
             обыгрывает любой входной гейт, а метка «RV выше IV» - предупреждение о худшем
-            историческом режиме продавца, не запрет.
+            историческом режиме продавца, не запрет.</span>
           </div>
         </div>
 
         <!-- ── Чеклист условий (сердце модуля) ── -->
         <div class="card flush" id="scnChecklistCard">
           <div class="sec-head" style="padding:16px 16px 0;margin-bottom:10px">
-            <h2>Чеклист условий</h2>
+            <h2 data-i18n="scn.cl.title">Чеклист условий</h2>
             <button class="help-btn" data-help="opt-scan-checklist">?</button>
-            <span class="tag" id="scnModeTag">строгий И</span>
-            <span class="cfg-pill" id="scnScorePill" aria-live="polite">счёт <b>—</b></span>
-            <span class="rule"></span><span class="hint">unknown блокирует в строгом режиме</span>
+            <span class="tag" id="scnModeTag" data-i18n="scn.cl.mode0">строгий И</span>
+            <span class="cfg-pill" id="scnScorePill" aria-live="polite"><span data-i18n="scn.cl.scoreWord">счёт</span> <b>—</b></span>
+            <span class="rule"></span><span class="hint" data-i18n="scn.cl.hint">unknown блокирует в строгом режиме</span>
           </div>
           <div class="table-scroll" style="max-height:420px">
             <table class="scan" id="scnChecklistTable">
-              <caption class="sr-only">Чеклист условий входа: значение, порог, вердикт и возраст данных</caption>
+              <caption class="sr-only" data-i18n="scn.cl.caption">Чеклист условий входа: значение, порог, вердикт и возраст данных</caption>
               <thead><tr>
-                <th scope="col">№</th><th class="lft" scope="col">Условие</th>
-                <th class="lft" scope="col">Значение</th><th scope="col">Порог</th>
-                <th scope="col">Вердикт</th><th scope="col">Возраст</th>
+                <th scope="col">№</th><th class="lft" scope="col" data-i18n="scn.cl.thCond">Условие</th>
+                <th class="lft" scope="col" data-i18n="scn.cl.thValue">Значение</th><th scope="col" data-i18n="scn.cl.thThr">Порог</th>
+                <th scope="col" data-i18n="scn.cl.thVerdict">Вердикт</th><th scope="col" data-i18n="scn.cl.thAge">Возраст</th>
               </tr></thead>
               <tbody id="scnChecklistBody">
-                <tr><td class="lft faint" colspan="6">загрузка цепочки Deribit…</td></tr>
+                <tr><td class="lft faint" colspan="6" data-i18n="opt.r.legsLoading">загрузка цепочки Deribit…</td></tr>
               </tbody>
             </table>
           </div>
@@ -2470,47 +2470,47 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
         <!-- ── Кандидаты в окне отбора + экономика лучшего (А5) ── -->
         <div class="card flush span2" id="scnCandCard">
           <div class="sec-head" style="padding:16px 16px 0;margin-bottom:8px">
-            <h2>Кандидаты</h2>
+            <h2 data-i18n="scn.cand.title">Кандидаты</h2>
             <button class="help-btn" data-help="opt-scan-cand">?</button>
-            <span class="tag" id="scnCandWindowTag">окно —</span>
+            <span class="tag" id="scnCandWindowTag" data-i18n="scn.cand.winTag0">окно —</span>
             <span class="rule"></span>
-            <span class="hint">лучший кандидат подсвечен · сторона задана У4</span>
+            <span class="hint" data-i18n="scn.cand.hint">лучший кандидат подсвечен · сторона задана У4</span>
           </div>
           <div class="table-scroll" style="max-height:240px">
             <table class="scan" id="scnCandTable">
-              <caption class="sr-only">Кандидаты в окне отбора: параметры инструмента и вердикты условий</caption>
+              <caption class="sr-only" data-i18n="scn.cand.caption">Кандидаты в окне отбора: параметры инструмента и вердикты условий</caption>
               <thead><tr>
-                <th class="lft" scope="col">Инструмент</th><th class="lft" scope="col">Тип</th>
-                <th scope="col">Страйк</th><th scope="col">σ-дист</th><th scope="col">Эксп.</th>
-                <th scope="col">Премия %</th><th scope="col">Спред %</th><th scope="col">Глубина $</th>
-                <th scope="col">Тета %/сут</th><th scope="col">IV</th><th scope="col">У9–14</th>
+                <th class="lft" scope="col" data-i18n="fa.pos.thInstr">Инструмент</th><th class="lft" scope="col" data-i18n="scn.cand.thType">Тип</th>
+                <th scope="col" data-i18n="opt.legs.thStrike">Страйк</th><th scope="col" data-i18n="scn.cand.thSig">σ-дист</th><th scope="col" data-i18n="scn.cand.thExp">Эксп.</th>
+                <th scope="col" data-i18n="scn.cand.thPrem">Премия %</th><th scope="col" data-i18n="scn.cand.thSpread">Спред %</th><th scope="col" data-i18n="scn.cand.thDepth">Глубина $</th>
+                <th scope="col" data-i18n="scn.cand.thTheta">Тета %/сут</th><th scope="col">IV</th><th scope="col" data-i18n="scn.cand.thU914">У9–14</th>
               </tr></thead>
               <tbody id="scnCandBody">
-                <tr><td class="lft faint" colspan="11" id="scnCandEmpty">загрузка цепочки Deribit…</td></tr>
+                <tr><td class="lft faint" colspan="11" id="scnCandEmpty" data-i18n="opt.r.legsLoading">загрузка цепочки Deribit…</td></tr>
               </tbody>
             </table>
           </div>
           <!-- А5-аддендум: экономика сделки лучшего кандидата — факты гейта и модельная аналитика -->
           <div class="two-col" style="margin:12px 16px 16px">
             <div>
-              <div class="subhdr">Экономика сделки · лучший кандидат <span class="faint">(факты · гейт У14)</span></div>
+              <div class="subhdr"><span data-i18n="scn.econ.hdr">Экономика сделки · лучший кандидат</span> <span class="faint" data-i18n="scn.econ.hdrSm">(факты · гейт У14)</span></div>
               <div class="dl" id="scnEconRows">
-                <div class="row"><span class="k">издержки туда-обратно <small>комиссии + спред</small></span><span class="v num" id="scnEcRt">—</span></div>
-                <div class="row"><span class="k">безубыток по марку <small>рост премии</small></span><span class="v num" id="scnEcBe">—</span></div>
-                <div class="row"><span class="k">минимальный депозит <small>для риск-дисциплины</small></span><span class="v num" id="scnEcMinCap">—</span></div>
-                <div class="row"><span class="k">фактический риск <small>после лот-округления</small></span><span class="v num" id="scnEcRisk">—</span></div>
-                <div class="row"><span class="k">размер · кэп глубины <small>≤ доли книги</small></span><span class="v num" id="scnEcDepth">—</span></div>
+                <div class="row"><span class="k"><span data-i18n="scn.econ.rowRt">издержки туда-обратно</span> <small data-i18n="scn.econ.rowRtSm">комиссии + спред</small></span><span class="v num" id="scnEcRt">—</span></div>
+                <div class="row"><span class="k"><span data-i18n="scn.econ.rowBe">безубыток по марку</span> <small data-i18n="scn.econ.rowBeSm">рост премии</small></span><span class="v num" id="scnEcBe">—</span></div>
+                <div class="row"><span class="k"><span data-i18n="scn.sell.rowMinCap">минимальный депозит</span> <small data-i18n="scn.econ.rowMinCapSm">для риск-дисциплины</small></span><span class="v num" id="scnEcMinCap">—</span></div>
+                <div class="row"><span class="k"><span data-i18n="scn.econ.rowRisk">фактический риск</span> <small data-i18n="scn.econ.rowRiskSm">после лот-округления</small></span><span class="v num" id="scnEcRisk">—</span></div>
+                <div class="row"><span class="k"><span data-i18n="scn.econ.rowDepth">размер · кэп глубины</span> <small data-i18n="scn.econ.rowDepthSm">≤ доли книги</small></span><span class="v num" id="scnEcDepth">—</span></div>
               </div>
             </div>
             <div>
-              <div class="subhdr">Модельная аналитика <span class="faint">(оценка · не гейт)</span></div>
+              <div class="subhdr"><span data-i18n="scn.econ.modelHdr">Модельная аналитика</span> <span class="faint" data-i18n="scn.econ.modelHdrSm">(оценка · не гейт)</span></div>
               <div class="dl" id="scnEconModelRows">
-                <div class="row"><span class="k">P(ITM) <small>N(d2) · логнормальное допущение</small></span><span class="v num" id="scnEcPitm">—</span></div>
-                <div class="row"><span class="k">окупается при движении <small>дельта-оценка</small></span><span class="v num" id="scnEcBeSigma">—</span></div>
-                <div class="row"><span class="k">сценарий 24ч · ±0.5σ <small>греки − издержки</small></span><span class="v num" id="scnEcScn05">—</span></div>
-                <div class="row"><span class="k">сценарий 24ч · ±1σ <small>греки − издержки</small></span><span class="v num" id="scnEcScn10">—</span></div>
+                <div class="row"><span class="k">P(ITM) <small data-i18n="scn.econ.rowPitmSm">N(d2) · логнормальное допущение</small></span><span class="v num" id="scnEcPitm">—</span></div>
+                <div class="row"><span class="k"><span data-i18n="scn.econ.rowBeSig">окупается при движении</span> <small data-i18n="scn.econ.rowBeSigSm">дельта-оценка</small></span><span class="v num" id="scnEcBeSigma">—</span></div>
+                <div class="row"><span class="k"><span data-i18n="scn.econ.rowScn05">сценарий 24ч · ±0.5σ</span> <small data-i18n="scn.econ.rowScnSm">греки − издержки</small></span><span class="v num" id="scnEcScn05">—</span></div>
+                <div class="row"><span class="k"><span data-i18n="scn.econ.rowScn10">сценарий 24ч · ±1σ</span> <small data-i18n="scn.econ.rowScnSm">греки − издержки</small></span><span class="v num" id="scnEcScn10">—</span></div>
               </div>
-              <div class="hint" id="scnEconNote" style="margin-top:6px">модель никогда не решает вход — решает чеклист</div>
+              <div class="hint" id="scnEconNote" style="margin-top:6px" data-i18n="scn.econ.note">модель никогда не решает вход — решает чеклист</div>
             </div>
           </div>
         </div>
@@ -2518,7 +2518,7 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
         <!-- ── Журнал сигналов ── -->
         <div class="card flush span2" id="scnJournalCard">
           <div class="sec-head" style="padding:16px 16px 0;margin-bottom:8px">
-            <h2>Журнал сигналов</h2>
+            <h2 data-i18n="scn.j.title">Журнал сигналов</h2>
             <button class="help-btn" data-help="opt-scan-journal">?</button>
             <span class="rule"></span>
             <span class="stamp" id="scnJournalUpdated"><span class="blip" aria-hidden="true"></span><span id="scnJournalUpdatedTxt" aria-live="polite" role="status">—</span></span>
@@ -2528,18 +2528,18 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
           </div>
           <div id="scnJournalMsg" class="ledger-msg" role="status" hidden></div>
           <div class="table-scroll" id="scnJournalScroll" style="max-height:300px" tabindex="0" role="region"
-               aria-label="Журнал сигналов, прокручиваемая таблица">
+               aria-label="Журнал сигналов, прокручиваемая таблица" data-i18n-aria="scn.j.scrollAria">
             <table class="raw" id="scnJournalTable">
-              <caption class="sr-only">Журнал сигналов сканера</caption>
+              <caption class="sr-only" data-i18n="scn.j.caption">Журнал сигналов сканера</caption>
               <thead><tr>
-                <th class="lft" scope="col">Время UTC</th><th class="lft" scope="col">Исход</th>
-                <th scope="col">Сторона</th><th class="lft" scope="col">Инструмент</th>
-                <th scope="col">Счёт</th><th class="lft" scope="col">Пресет</th>
-                <th scope="col">Соб.</th><th scope="col">TTL</th>
+                <th class="lft" scope="col" data-i18n="ledger.thTime">Время UTC</th><th class="lft" scope="col" data-i18n="scn.j.thOutcome">Исход</th>
+                <th scope="col" data-i18n="opt.legs.thSide">Сторона</th><th class="lft" scope="col" data-i18n="fa.pos.thInstr">Инструмент</th>
+                <th scope="col" data-i18n="scn.j.thScore">Счёт</th><th class="lft" scope="col" data-i18n="scn.j.thPreset">Пресет</th>
+                <th scope="col" data-i18n="scn.j.thEvent">Соб.</th><th scope="col">TTL</th>
               </tr></thead>
               <tbody id="scnJournalBody"></tbody>
             </table>
-            <div class="ledger-empty" id="scnJournalEmpty">сигналов ещё не было — журнал заполнится после первого события СИГНАЛ</div>
+            <div class="ledger-empty" id="scnJournalEmpty" data-i18n="scn.j.empty">сигналов ещё не было — журнал заполнится после первого события СИГНАЛ</div>
           </div>
           <div class="ledger-foot"><span class="hint" id="scnJournalCount">—</span></div>
         </div>
@@ -2550,19 +2550,19 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
              (гоча: сканер не тикает без показа вкладки, а открытие сделок от неё зависеть не должно). ══ -->
         <div class="card span2" id="scnSanityCard" hidden>
           <div class="sec-head">
-            <h2>Санитария схемы продавца</h2>
+            <h2 data-i18n="scn.san.title">Санитария схемы продавца</h2>
             <span class="tag" id="scnSanityTag">—</span>
             <span class="rule"></span>
             <span class="stamp" id="scnSanityStamp">—</span>
           </div>
           <div class="dl" id="scnSanityRows">
-            <div class="row"><span class="k">инструмент</span><span class="v num sym" id="scnSanInstrument">—</span></div>
-            <div class="row"><span class="k">возраст котировки</span><span class="v" id="scnSanAge">—</span></div>
-            <div class="row"><span class="k">спред</span><span class="v" id="scnSanSpread">—</span></div>
-            <div class="row"><span class="k">глубина книги</span><span class="v" id="scnSanDepth">—</span></div>
+            <div class="row"><span class="k" data-i18n="scn.sig.rowInstr">инструмент</span><span class="v num sym" id="scnSanInstrument">—</span></div>
+            <div class="row"><span class="k" data-i18n="scn.san.rowAge">возраст котировки</span><span class="v" id="scnSanAge">—</span></div>
+            <div class="row"><span class="k" data-i18n="opt.cost.rowSpread">спред</span><span class="v" id="scnSanSpread">—</span></div>
+            <div class="row"><span class="k" data-i18n="scn.san.rowDepth">глубина книги</span><span class="v" id="scnSanDepth">—</span></div>
           </div>
           <div class="foot-src">
-            <span>вето переключает контракт, а не останавливает цепочку; ни одна нога не прошла - схема ждёт с названной причиной</span>
+            <span data-i18n="scn.san.foot">вето переключает контракт, а не останавливает цепочку; ни одна нога не прошла - схема ждёт с названной причиной</span>
           </div>
         </div>
       </div>
@@ -2572,61 +2572,61 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
     <section id="scnZoneTune" class="zone zone-analysis reveal" style="animation-delay:.08s"
              aria-labelledby="scnZoneTuneHead">
       <div class="zone-head">
-        <span class="zn" id="scnZoneTuneHead">Ⅰ · Настройка и качество</span>
-        <span class="tag">пороги · пресеты · телеметрия</span>
+        <span class="zn" id="scnZoneTuneHead" data-i18n="scn.zt.title">Ⅰ · Настройка и качество</span>
+        <span class="tag" data-i18n="scn.zt.tag">пороги · пресеты · телеметрия</span>
         <span class="rule"></span>
-        <span class="hint">применяется сразу · сигнал помнит пресет рождения</span>
+        <span class="hint" data-i18n="scn.zt.hint">применяется сразу · сигнал помнит пресет рождения</span>
       </div>
 
       <!-- ── Тулбар: пресет, режим, флаг события (sticky) ── -->
-      <nav class="toolbar reveal" id="scnToolbar" aria-label="Стратегия, пресет, режим агрегации и флаг события">
+      <nav class="toolbar reveal" id="scnToolbar" aria-label="Стратегия, пресет, режим агрегации и флаг события" data-i18n-aria="scn.tb.aria">
         <div class="ctl">
-          <label>Стратегия</label>
-          <div class="seg" id="scnStratSel" role="group" aria-label="Направление сканера: покупка по чеклисту или продажа схемы">
-            <button data-v="buy" aria-pressed="true">покупка</button>
-            <button data-v="sell" aria-pressed="false">продажа</button>
+          <label data-i18n="fa.tb.strat">Стратегия</label>
+          <div class="seg" id="scnStratSel" role="group" aria-label="Направление сканера: покупка по чеклисту или продажа схемы" data-i18n-aria="scn.tb.stratAria">
+            <button data-v="buy" aria-pressed="true" data-i18n="scn.tb.buy">покупка</button>
+            <button data-v="sell" aria-pressed="false" data-i18n="scn.tb.sell">продажа</button>
           </div>
         </div>
         <div class="ctl">
-          <label id="scnPresetLbl">Пресет</label>
+          <label id="scnPresetLbl" data-i18n="scn.tb.preset">Пресет</label>
           <div class="assetsel" id="scnPresetSel" role="group" aria-labelledby="scnPresetLbl">
-            <button type="button" data-v="dmitri-v1" aria-pressed="true">Дмитрий v1</button>
-            <button type="button" data-v="dmitri-v2" aria-pressed="false">Дмитрий v2.0</button>
-            <button type="button" data-v="delta-v1" aria-pressed="false">Дельта v1</button>
-            <button type="button" data-v="measure-v1" aria-pressed="false">Измерительный v1</button>
-            <button type="button" data-v="measure-far-v1" aria-pressed="false">Измерительный дальний</button>
-            <button type="button" data-v="calibrated" aria-pressed="false">Калиброванный</button>
+            <button type="button" data-v="dmitri-v1" aria-pressed="true" data-i18n="scn.preset.dmitriV1">Дмитрий v1</button>
+            <button type="button" data-v="dmitri-v2" aria-pressed="false" data-i18n="scn.preset.dmitriV2">Дмитрий v2.0</button>
+            <button type="button" data-v="delta-v1" aria-pressed="false" data-i18n="scn.preset.deltaV1">Дельта v1</button>
+            <button type="button" data-v="measure-v1" aria-pressed="false" data-i18n="scn.preset.measureV1">Измерительный v1</button>
+            <button type="button" data-v="measure-far-v1" aria-pressed="false" data-i18n="scn.preset.measureFar">Измерительный дальний</button>
+            <button type="button" data-v="calibrated" aria-pressed="false" data-i18n="scn.preset.calibrated">Калиброванный</button>
           </div>
         </div>
         <div class="ctl">
-          <label>Режим</label>
-          <div class="seg" id="scnModeSel" role="group" aria-label="Режим агрегации условий">
-            <button data-v="AND" aria-pressed="true">строгий И</button>
-            <button data-v="score" aria-pressed="false">скоринг ≥10</button>
+          <label data-i18n="scn.tb.mode">Режим</label>
+          <div class="seg" id="scnModeSel" role="group" aria-label="Режим агрегации условий" data-i18n-aria="scn.tb.modeAria">
+            <button data-v="AND" aria-pressed="true" data-i18n="scn.cl.mode0">строгий И</button>
+            <button data-v="score" aria-pressed="false" data-i18n="scn.tb.score10">скоринг ≥10</button>
           </div>
         </div>
         <div class="ctl">
-          <label>Событие ≤48ч</label>
-          <div class="seg" id="scnEventSel" role="group" aria-label="Флаг макро-события">
-            <button data-v="off" aria-pressed="true">выкл</button>
-            <button data-v="on" aria-pressed="false">вкл</button>
+          <label data-i18n="scn.sig.eventTag">Событие ≤48ч</label>
+          <div class="seg" id="scnEventSel" role="group" aria-label="Флаг макро-события" data-i18n-aria="scn.tb.eventAria">
+            <button data-v="off" aria-pressed="true" data-i18n="opt.tb.off">выкл</button>
+            <button data-v="on" aria-pressed="false" data-i18n="opt.tb.on">вкл</button>
           </div>
         </div>
         <div class="ctl">
-          <label for="scnEventNote">пометка</label>
+          <label for="scnEventNote" data-i18n="scn.tb.note">пометка</label>
           <input id="scnEventNote" class="num" type="text" maxlength="24" placeholder="CPI · FOMC…" disabled
                  style="width:110px;font:600 12.5px var(--f-mono);color:var(--txt);background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;padding:6px 9px">
         </div>
         <div class="ctl">
-          <label>горизонт</label>
-          <div class="seg" id="scnEventHorizonSel" role="group" aria-label="Горизонт события">
-            <button data-v="24" class="num" aria-pressed="false" disabled>24ч</button>
-            <button data-v="48" class="num" aria-pressed="true" disabled>48ч</button>
+          <label data-i18n="scn.tb.horizon">горизонт</label>
+          <div class="seg" id="scnEventHorizonSel" role="group" aria-label="Горизонт события" data-i18n-aria="scn.tb.horizonAria">
+            <button data-v="24" class="num" aria-pressed="false" disabled data-i18n="scn.tb.h24">24ч</button>
+            <button data-v="48" class="num" aria-pressed="true" disabled data-i18n="scn.tb.h48">48ч</button>
           </div>
         </div>
         <div class="ctl" style="justify-content:center;margin-left:auto">
           <label aria-hidden="true">&nbsp;</label>
-          <button id="scnRecalcBtn" class="recalc-btn" title="Внеочередной опрос Deribit и немедленная переоценка чеклиста">⟳ Оценить сейчас</button>
+          <button id="scnRecalcBtn" class="recalc-btn" title="Внеочередной опрос Deribit и немедленная переоценка чеклиста" data-i18n-title="scn.tb.recalcTitle" data-i18n="scn.tb.recalc">⟳ Оценить сейчас</button>
         </div>
         <div class="ctl" style="justify-content:center">
           <label aria-hidden="true">&nbsp;</label>
@@ -2639,86 +2639,86 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
           <!-- ── Пороги пресета (редактор) ── -->
           <div class="card" id="scnPresetCard">
             <div class="sec-head">
-              <h2>Пороги пресета</h2>
+              <h2 data-i18n="scn.th.title">Пороги пресета</h2>
               <button class="help-btn" data-help="opt-scan-presets">?</button>
-              <span class="tag amber" id="scnPresetTag" hidden>не сохранён</span>
+              <span class="tag amber" id="scnPresetTag" hidden data-i18n="scn.th.unsaved">не сохранён</span>
               <span class="rule"></span>
-              <span class="hint">blur-проверка · неверное не применяется</span>
+              <span class="hint" data-i18n="scn.th.hint">blur-проверка · неверное не применяется</span>
             </div>
-            <div class="subhdr">По активу</div>
+            <div class="subhdr" data-i18n="scn.th.assetHdr">По активу</div>
             <div class="dl">
-              <div class="row"><span class="k">У2 · режим недооценки IV</span><span class="v">
-                <div class="seg" id="scnThUvModeSel" role="group" aria-label="Режим фильтра недооценки IV">
+              <div class="row"><span class="k" data-i18n="scn.th.u2mode">У2 · режим недооценки IV</span><span class="v">
+                <div class="seg" id="scnThUvModeSel" role="group" aria-label="Режим фильтра недооценки IV" data-i18n-aria="scn.th.u2modeAria">
                   <button data-v="rvMargin" aria-pressed="false">RV−ΔIV</button>
                   <button data-v="baselineRatio" aria-pressed="false">k×base</button>
-                  <button data-v="both" aria-pressed="false">оба</button>
+                  <button data-v="both" aria-pressed="false" data-i18n="scn.th.both">оба</button>
                 </div></span></div>
-              <div class="row"><span class="k">У2 · мин. спред RV−IV <small>п.п.</small></span><span class="v"><input id="scnThUvVal" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У2 · кэп IV к базе DVOL <small>×</small></span><span class="v"><input id="scnThUvK" type="number" step="0.05" inputmode="decimal" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У3 · подтверждение RV3d</span><span class="v">
-                <div class="seg" id="scnThRv3dSel" role="group" aria-label="Подтверждение коротким RV"><button data-v="on" aria-pressed="false">вкл</button><button data-v="off" aria-pressed="false">выкл</button></div></span></div>
-              <div class="row"><span class="k">У4 · порог импульса <small>σ</small></span><span class="v"><input id="scnThImpulse" type="number" step="0.1" inputmode="decimal" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У5 · фильтр тренда EMA20</span><span class="v">
-                <div class="seg" id="scnThEmaSel" role="group" aria-label="Фильтр тренда"><button data-v="on" aria-pressed="false">вкл</button><button data-v="off" aria-pressed="false">выкл</button></div></span></div>
-              <div class="row"><span class="k">У6 · мин. дисконт fwd-IV <small>п.п. · в выходные всегда выкл</small></span><span class="v"><input id="scnThFwd" type="number" step="0.1" inputmode="decimal" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У6 · far-экспирация от <small>дней</small></span><span class="v"><input id="scnThFwdFar" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У7 · режим skew</span><span class="v">
-                <div class="seg" id="scnThSkewModeSel" role="group" aria-label="Режим skew"><button data-v="off" aria-pressed="false">выкл</button><button data-v="info" aria-pressed="false">инфо</button><button data-v="gate" aria-pressed="false">гейт</button></div></span></div>
-              <div class="row"><span class="k">У7 · порог skew <small>п.п.</small></span><span class="v"><input id="scnThSkewVal" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У8 · дисбаланс стакана <small>по стакану перпа</small></span><span class="v">
-                <div class="seg" id="scnThBookSel" role="group" aria-label="Дисбаланс стакана"><button data-v="off" aria-pressed="false">выкл</button><button data-v="on" aria-pressed="false">вкл</button></div></span></div>
-              <div class="row"><span class="k">У8 · порог дисбаланса <small>×</small></span><span class="v"><input id="scnThBookVal" type="number" step="0.1" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u2val">У2 · мин. спред RV−IV</span> <small data-i18n="scn.th.pp">п.п.</small></span><span class="v"><input id="scnThUvVal" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u2k">У2 · кэп IV к базе DVOL</span> <small>×</small></span><span class="v"><input id="scnThUvK" type="number" step="0.05" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k" data-i18n="scn.th.u3">У3 · подтверждение RV3d</span><span class="v">
+                <div class="seg" id="scnThRv3dSel" role="group" aria-label="Подтверждение коротким RV" data-i18n-aria="scn.th.u3Aria"><button data-v="on" aria-pressed="false" data-i18n="opt.tb.on">вкл</button><button data-v="off" aria-pressed="false" data-i18n="opt.tb.off">выкл</button></div></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u4">У4 · порог импульса</span> <small>σ</small></span><span class="v"><input id="scnThImpulse" type="number" step="0.1" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k" data-i18n="scn.th.u5">У5 · фильтр тренда EMA20</span><span class="v">
+                <div class="seg" id="scnThEmaSel" role="group" aria-label="Фильтр тренда" data-i18n-aria="scn.th.u5Aria"><button data-v="on" aria-pressed="false" data-i18n="opt.tb.on">вкл</button><button data-v="off" aria-pressed="false" data-i18n="opt.tb.off">выкл</button></div></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u6">У6 · мин. дисконт fwd-IV</span> <small data-i18n="scn.th.u6Sm">п.п. · в выходные всегда выкл</small></span><span class="v"><input id="scnThFwd" type="number" step="0.1" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u6far">У6 · far-экспирация от</span> <small data-i18n="scn.th.days">дней</small></span><span class="v"><input id="scnThFwdFar" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k" data-i18n="scn.th.u7mode">У7 · режим skew</span><span class="v">
+                <div class="seg" id="scnThSkewModeSel" role="group" aria-label="Режим skew" data-i18n-aria="scn.th.u7modeAria"><button data-v="off" aria-pressed="false" data-i18n="opt.tb.off">выкл</button><button data-v="info" aria-pressed="false" data-i18n="scn.th.info">инфо</button><button data-v="gate" aria-pressed="false" data-i18n="scn.th.gate">гейт</button></div></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u7val">У7 · порог skew</span> <small data-i18n="scn.th.pp">п.п.</small></span><span class="v"><input id="scnThSkewVal" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u8">У8 · дисбаланс стакана</span> <small data-i18n="scn.th.u8Sm">по стакану перпа</small></span><span class="v">
+                <div class="seg" id="scnThBookSel" role="group" aria-label="Дисбаланс стакана" data-i18n-aria="scn.th.u8Aria"><button data-v="off" aria-pressed="false" data-i18n="opt.tb.off">выкл</button><button data-v="on" aria-pressed="false" data-i18n="opt.tb.on">вкл</button></div></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u8val">У8 · порог дисбаланса</span> <small>×</small></span><span class="v"><input id="scnThBookVal" type="number" step="0.1" inputmode="decimal" aria-invalid="false"></span></div>
             </div>
-            <div class="subhdr">По инструменту</div>
+            <div class="subhdr" data-i18n="scn.th.instrHdr">По инструменту</div>
             <div class="dl">
-              <div class="row"><span class="k">У9 · чем меряется страйк</span><span class="v"><div class="seg" id="scnThStrikeModeSel" role="group" aria-label="Режим отбора страйка"><button data-v="sigma" aria-pressed="false">σ-окно</button><button data-v="delta" aria-pressed="false">дельта</button></div></span></div>
-              <div class="row"><span class="k">У9 · окно дельты <small>мин · макс</small></span><span class="v"><input id="scnThDeltaMin" type="number" step="0.01" inputmode="decimal" aria-invalid="false"><input id="scnThDeltaMax" type="number" step="0.01" inputmode="decimal" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У9 · σ-окно страйка <small>в режиме дельты — сито снабжения</small></span><span class="v"><input id="scnThSigMin" type="number" step="0.01" inputmode="decimal" aria-invalid="false"><input id="scnThSigMax" type="number" step="0.01" inputmode="decimal" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">окно экспираций <small>часов · мин · макс</small></span><span class="v"><input id="scnThExpMinH" type="number" step="1" inputmode="numeric" aria-invalid="false"><input id="scnThExpMaxH" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У10 · макс. премия <small>% спота</small></span><span class="v"><input id="scnThPremCap" type="number" step="0.05" inputmode="decimal" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У11 · макс. спред <small>% премии</small></span><span class="v"><input id="scnThSpreadCap" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У12 · режим глубины</span><span class="v">
-                <div class="seg" id="scnThDepthModeSel" role="group" aria-label="Режим глубины книги"><button data-v="usd" aria-pressed="false">$</button><button data-v="xPremium" aria-pressed="false">×премии</button></div></span></div>
-              <div class="row"><span class="k">У12 · мин. глубина <small>$ · не откалибровано</small></span><span class="v"><input id="scnThDepthMin" type="number" step="100" inputmode="numeric" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У12 · глубина к премии <small>×</small></span><span class="v"><input id="scnThDepthX" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У13 · макс. тета <small>%/сут</small></span><span class="v"><input id="scnThThetaCap" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">У14 · макс. издержки <small>% премии · ядро</small></span><span class="v"><input id="scnThCostCap" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">размер · кэп глубины <small>% книги</small></span><span class="v"><input id="scnThQtyDepth" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">модель исполнения <small>вход</small></span><span class="v">
-                <div class="seg" id="scnThExecSel" role="group" aria-label="Модель исполнения"><button data-v="maker-mid" aria-pressed="false">мейкер-mid</button><button data-v="taker-cross" aria-pressed="false">тейкер-кросс</button></div></span></div>
+              <div class="row"><span class="k" data-i18n="scn.th.u9mode">У9 · чем меряется страйк</span><span class="v"><div class="seg" id="scnThStrikeModeSel" role="group" aria-label="Режим отбора страйка" data-i18n-aria="scn.th.u9modeAria"><button data-v="sigma" aria-pressed="false" data-i18n="scn.th.sigWin">σ-окно</button><button data-v="delta" aria-pressed="false" data-i18n="scn.th.delta">дельта</button></div></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u9delta">У9 · окно дельты</span> <small data-i18n="scn.th.minMax">мин · макс</small></span><span class="v"><input id="scnThDeltaMin" type="number" step="0.01" inputmode="decimal" aria-invalid="false"><input id="scnThDeltaMax" type="number" step="0.01" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u9sig">У9 · σ-окно страйка</span> <small data-i18n="scn.th.u9sigSm">в режиме дельты — сито снабжения</small></span><span class="v"><input id="scnThSigMin" type="number" step="0.01" inputmode="decimal" aria-invalid="false"><input id="scnThSigMax" type="number" step="0.01" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.expWin">окно экспираций</span> <small data-i18n="scn.th.expWinSm">часов · мин · макс</small></span><span class="v"><input id="scnThExpMinH" type="number" step="1" inputmode="numeric" aria-invalid="false"><input id="scnThExpMaxH" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u10">У10 · макс. премия</span> <small data-i18n="scn.th.pctSpot">% спота</small></span><span class="v"><input id="scnThPremCap" type="number" step="0.05" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u11">У11 · макс. спред</span> <small data-i18n="scn.th.pctPrem">% премии</small></span><span class="v"><input id="scnThSpreadCap" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k" data-i18n="scn.th.u12mode">У12 · режим глубины</span><span class="v">
+                <div class="seg" id="scnThDepthModeSel" role="group" aria-label="Режим глубины книги" data-i18n-aria="scn.th.u12modeAria"><button data-v="usd" aria-pressed="false">$</button><button data-v="xPremium" aria-pressed="false" data-i18n="scn.th.xPrem">×премии</button></div></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u12min">У12 · мин. глубина</span> <small data-i18n="scn.th.u12minSm">$ · не откалибровано</small></span><span class="v"><input id="scnThDepthMin" type="number" step="100" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u12x">У12 · глубина к премии</span> <small>×</small></span><span class="v"><input id="scnThDepthX" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u13">У13 · макс. тета</span> <small data-i18n="scn.th.pctDay">%/сут</small></span><span class="v"><input id="scnThThetaCap" type="number" step="0.5" inputmode="decimal" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.u14">У14 · макс. издержки</span> <small data-i18n="scn.th.u14Sm">% премии · ядро</small></span><span class="v"><input id="scnThCostCap" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.econ.rowDepth">размер · кэп глубины</span> <small data-i18n="scn.th.pctBook">% книги</small></span><span class="v"><input id="scnThQtyDepth" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.exec">модель исполнения</span> <small data-i18n="scn.th.execSm">вход</small></span><span class="v">
+                <div class="seg" id="scnThExecSel" role="group" aria-label="Модель исполнения" data-i18n-aria="scn.th.execAria"><button data-v="maker-mid" aria-pressed="false" data-i18n="scn.th.makerMid">мейкер-mid</button><button data-v="taker-cross" aria-pressed="false" data-i18n="scn.th.takerCross">тейкер-кросс</button></div></span></div>
             </div>
-            <div class="subhdr">Механика сигнала</div>
+            <div class="subhdr" data-i18n="scn.th.mechHdr">Механика сигнала</div>
             <div class="dl">
-              <div class="row"><span class="k">dwell · дожим <small>тиков подряд</small></span><span class="v"><input id="scnThDwell" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">TTL сигнала <small>мин</small></span><span class="v"><input id="scnThTtl" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">кулдаун <small>мин</small></span><span class="v"><input id="scnThCooldown" type="number" step="5" inputmode="numeric" aria-invalid="false"></span></div>
-              <div class="row"><span class="k">скоринг N <small>ядро У1+У10+У14 обязательно всегда</small></span><span class="v"><input id="scnThScoreN" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.dwell">dwell · дожим</span> <small data-i18n="scn.th.dwellSm">тиков подряд</small></span><span class="v"><input id="scnThDwell" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.ttl">TTL сигнала</span> <small data-i18n="scn.th.min">мин</small></span><span class="v"><input id="scnThTtl" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.cooldown">кулдаун</span> <small data-i18n="scn.th.min">мин</small></span><span class="v"><input id="scnThCooldown" type="number" step="5" inputmode="numeric" aria-invalid="false"></span></div>
+              <div class="row"><span class="k"><span data-i18n="scn.th.scoreN">скоринг N</span> <small data-i18n="scn.th.scoreNSm">ядро У1+У10+У14 обязательно всегда</small></span><span class="v"><input id="scnThScoreN" type="number" step="1" inputmode="numeric" aria-invalid="false"></span></div>
             </div>
             <div id="scnPresetErr" class="ticket-err" role="alert" hidden></div>
             <div class="launch-row">
-              <button id="scnPresetSave" class="paperbtn mini">сохранить в «Калиброванный»</button>
-              <button id="scnPresetReset" class="paperbtn mini">сброс к базе</button>
-              <span class="hint">механика (dwell · TTL · кулдаун) применяется как настройка, вне пресета</span>
+              <button id="scnPresetSave" class="paperbtn mini" data-i18n="scn.th.save">сохранить в «Калиброванный»</button>
+              <button id="scnPresetReset" class="paperbtn mini" data-i18n="scn.th.reset">сброс к базе</button>
+              <span class="hint" data-i18n="scn.th.mechHint">механика (dwell · TTL · кулдаун) применяется как настройка, вне пресета</span>
             </div>
           </div>
 
           <!-- ── Панель честности · pass-rate ── -->
           <div class="card" id="scnTelemetryCard">
             <div class="sec-head">
-              <h2>Панель честности · pass-rate</h2>
+              <h2 data-i18n="scn.tel.title">Панель честности · pass-rate</h2>
               <button class="help-btn" data-help="opt-scan-telemetry">?</button>
-              <div class="seg" id="scnTelemetryWinSel" role="group" aria-label="Окно телеметрии">
-                <button data-v="session" aria-pressed="true">сессия</button>
-                <button data-v="h24" aria-pressed="false">24ч</button>
+              <div class="seg" id="scnTelemetryWinSel" role="group" aria-label="Окно телеметрии" data-i18n-aria="scn.tel.winAria">
+                <button data-v="session" aria-pressed="true" data-i18n="scn.tel.session">сессия</button>
+                <button data-v="h24" aria-pressed="false" data-i18n="scn.tb.h24">24ч</button>
               </div>
               <span class="rule"></span>
-              <span class="hint" id="scnTelemetryEvals">оценок —</span>
+              <span class="hint" id="scnTelemetryEvals" data-i18n="scn.tel.evals0">оценок —</span>
               <div class="lexport" style="margin-left:10px">
                 <button id="scnTelemetryExportCsv" class="paperbtn mini">CSV</button>
               </div>
             </div>
             <div class="dl" id="scnTelemetryRows">
-              <div class="row"><span class="k faint">телеметрия копится с запуска сканера</span><span class="v num">—</span></div>
+              <div class="row"><span class="k faint" data-i18n="scn.tel.accum">телеметрия копится с запуска сканера</span><span class="v num">—</span></div>
             </div>
           </div>
         </div>
@@ -2729,47 +2729,47 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
           <!-- ── Качество данных ── -->
           <div class="card" id="scnHealthCard">
             <div class="sec-head">
-              <h2>Качество данных Deribit</h2>
+              <h2 data-i18n="scn.ht.title">Качество данных Deribit</h2>
               <button class="help-btn" data-help="opt-scan-health">?</button>
               <span class="tag green">public API · read-only</span>
               <span class="tag amber" id="scnTestnetTag" hidden>TESTNET</span>
               <span class="rule"></span>
               <span class="stamp">
-                <button class="live" id="scnLiveBtn" title="Внеочередной опрос Deribit (опрос идёт автоматически по кадансу сканера)">
-                  <span class="led"></span><span id="scnLiveTxt">НЕТ ДАННЫХ</span><span aria-hidden="true" style="opacity:.55">⟳</span>
+                <button class="live" id="scnLiveBtn" title="Внеочередной опрос Deribit (опрос идёт автоматически по кадансу сканера)" data-i18n-title="scn.ht.liveTitle">
+                  <span class="led"></span><span id="scnLiveTxt" data-i18n="chrome.live.nodata">НЕТ ДАННЫХ</span><span aria-hidden="true" style="opacity:.55">⟳</span>
                 </button>
               </span>
             </div>
             <div class="dl" aria-live="polite">
-              <div class="row"><span class="k"><span class="ic" style="background:var(--price)"></span>тикеры <small>перп + опционы</small></span><span class="v num" id="scnHtTickers">—</span></div>
-              <div class="row"><span class="k"><span class="ic" style="background:var(--pos)"></span>свечи · RV</span><span class="v num" id="scnHtCandles">—</span></div>
+              <div class="row"><span class="k"><span class="ic" style="background:var(--price)"></span><span data-i18n="scn.ht.rowTickers">тикеры</span> <small data-i18n="scn.ht.rowTickersSm">перп + опционы</small></span><span class="v num" id="scnHtTickers">—</span></div>
+              <div class="row"><span class="k"><span class="ic" style="background:var(--pos)"></span><span data-i18n="scn.ht.rowCandles">свечи · RV</span></span><span class="v num" id="scnHtCandles">—</span></div>
               <div class="row"><span class="k"><span class="ic" style="background:var(--accent)"></span>DVOL</span><span class="v num" id="scnHtDvol">—</span></div>
-              <div class="row"><span class="k"><span class="ic" style="background:var(--neu)"></span>книга <small>стакан финалиста</small></span><span class="v num" id="scnHtBook">—</span></div>
-              <div class="row"><span class="k"><span class="ic" style="background:var(--slate)"></span>цепочка опционов</span><span class="v num" id="scnHtChain">—</span></div>
-              <div class="row"><span class="k">блэкаут</span><span class="v num" id="scnHtBlackout">—</span></div>
+              <div class="row"><span class="k"><span class="ic" style="background:var(--neu)"></span><span data-i18n="scn.ht.rowBook">книга</span> <small data-i18n="scn.ht.rowBookSm">стакан финалиста</small></span><span class="v num" id="scnHtBook">—</span></div>
+              <div class="row"><span class="k"><span class="ic" style="background:var(--slate)"></span><span data-i18n="scn.ht.rowChain">цепочка опционов</span></span><span class="v num" id="scnHtChain">—</span></div>
+              <div class="row"><span class="k" data-i18n="scn.ht.rowBlackout">блэкаут</span><span class="v num" id="scnHtBlackout">—</span></div>
               <div class="row"><span class="k">RTT</span><span class="v num" id="scnHtRtt">—</span></div>
             </div>
-            <div id="scnConnStamp" class="foot-src" style="margin-top:10px" aria-live="polite">источник не запущен — сканирование начнётся при первом показе вкладки</div>
+            <div id="scnConnStamp" class="foot-src" style="margin-top:10px" aria-live="polite" data-i18n="scn.ht.connStamp0">источник не запущен — сканирование начнётся при первом показе вкладки</div>
           </div>
 
           <!-- ── RV против IV (базис ядра) ── -->
           <div class="card" id="scnVolCard">
             <div class="sec-head">
-              <h2>RV против IV</h2>
+              <h2 data-i18n="scn.vol.title">RV против IV</h2>
               <button class="help-btn" data-help="opt-scan-vol">?</button>
-              <span class="tag" id="scnVolTag">история сессии</span>
+              <span class="tag" id="scnVolTag" data-i18n="scn.vol.tag0">история сессии</span>
               <span class="rule"></span>
-              <span class="hint">заливка — зона недооценки (ядро У1)</span>
+              <span class="hint" data-i18n="scn.vol.hint">заливка — зона недооценки (ядро У1)</span>
             </div>
             <div class="chart-box">
-              <canvas id="scnVolCanvas" class="legs-canvas" aria-label="Реализованная волатильность RV7d против подразумеваемой IV во времени"></canvas>
+              <canvas id="scnVolCanvas" class="legs-canvas" aria-label="Реализованная волатильность RV7d против подразумеваемой IV во времени" data-i18n-aria="scn.vol.canvasAria"></canvas>
               <div class="chart-tip" id="scnVolTip"></div>
             </div>
             <div class="legend">
               <div class="it"><span class="sw line" style="background:var(--price)"></span>RV7d</div>
               <div class="it"><span class="sw line" style="background:var(--accent)"></span>ATM IV</div>
-              <div class="it"><span class="sw" style="background:color-mix(in srgb, var(--pos) 14%, transparent)"></span>зона недооценки</div>
-              <div class="it"><span class="sw" style="background:var(--accent)"></span>сигнал</div>
+              <div class="it"><span class="sw" style="background:color-mix(in srgb, var(--pos) 14%, transparent)"></span><span data-i18n="scn.vol.legZone">зона недооценки</span></div>
+              <div class="it"><span class="sw" style="background:var(--accent)"></span><span data-i18n="home.scn.sigWord">сигнал</span></div>
             </div>
           </div>
         </div>
@@ -2778,17 +2778,17 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
 
     <!-- ═══════════ FOOTER · риски и допущения ═══════════ -->
     <footer class="footer reveal" style="animation-delay:.16s">
-      <h3>Риски, допущения и ограничения модели</h3>
+      <h3 data-i18n="fa.foot.title">Риски, допущения и ограничения модели</h3>
       <div class="disc">
-        <div class="d"><span class="i r">P</span><span><b>Режим PAPER (наблюдение).</b> Сканер читает публичные данные Deribit и не отправляет ордеров — даже бумажных. Сигнал — это информация, а не сделка.</span></div>
-        <div class="d"><span class="i a">U</span><span><b>Unknown — не провал.</b> ◌ н/д означает, что данных нет или они протухли; в строгом режиме такой чеклист блокирует сигнал: лучше промолчать, чем сигналить на мусоре.</span></div>
-        <div class="d"><span class="i a">B</span><span><b>Блэкаут-окна.</b> В окно расчёта Deribit (08:00 UTC) и перед экспирацией новые сигналы не создаются — цены и ликвидность ненадёжны; активный сигнал доживает свой TTL.</span></div>
-        <div class="d"><span class="i b">S</span><span><b>Сигнал — снимок.</b> Оценка живая и меняется с параметрами; рождённый сигнал запоминает пресет, счёт и значения условий на момент рождения и не переоценивается задним числом.</span></div>
-        <div class="d"><span class="i b">T</span><span><b>Панель честности.</b> Pass-rate показывает, как часто реально проходит каждое условие; порог, который не срабатывает никогда, — повод для калибровки, а не для гордости.</span></div>
-        <div class="d"><span class="i a">D</span><span><b>Пороги — гипотеза Дмитрия.</b> Пресеты v1/v2.0 отражают чеклист заказчика; «Калиброванный» — слот для правок после обкатки. Сканер не советует, он проверяет заданное.</span></div>
+        <div class="d"><span class="i r">P</span><span><b data-i18n="scn.foot.d1b">Режим PAPER (наблюдение).</b> <span data-i18n="scn.foot.d1">Сканер читает публичные данные Deribit и не отправляет ордеров — даже бумажных. Сигнал — это информация, а не сделка.</span></span></div>
+        <div class="d"><span class="i a">U</span><span><b data-i18n="scn.foot.d2b">Unknown — не провал.</b> <span data-i18n="scn.foot.d2">◌ н/д означает, что данных нет или они протухли; в строгом режиме такой чеклист блокирует сигнал: лучше промолчать, чем сигналить на мусоре.</span></span></div>
+        <div class="d"><span class="i a">B</span><span><b data-i18n="scn.foot.d3b">Блэкаут-окна.</b> <span data-i18n="scn.foot.d3">В окно расчёта Deribit (08:00 UTC) и перед экспирацией новые сигналы не создаются — цены и ликвидность ненадёжны; активный сигнал доживает свой TTL.</span></span></div>
+        <div class="d"><span class="i b">S</span><span><b data-i18n="scn.foot.d4b">Сигнал — снимок.</b> <span data-i18n="scn.foot.d4">Оценка живая и меняется с параметрами; рождённый сигнал запоминает пресет, счёт и значения условий на момент рождения и не переоценивается задним числом.</span></span></div>
+        <div class="d"><span class="i b">T</span><span><b data-i18n="scn.foot.d5b">Панель честности.</b> <span data-i18n="scn.foot.d5">Pass-rate показывает, как часто реально проходит каждое условие; порог, который не срабатывает никогда, — повод для калибровки, а не для гордости.</span></span></div>
+        <div class="d"><span class="i a">D</span><span><b data-i18n="scn.foot.d6b">Пороги — гипотеза Дмитрия.</b> <span data-i18n="scn.foot.d6">Пресеты v1/v2.0 отражают чеклист заказчика; «Калиброванный» — слот для правок после обкатки. Сканер не советует, он проверяет заданное.</span></span></div>
       </div>
       <div class="foot-src">
-        <span>Источники: Deribit public API (tickers, book, candles, DVOL, instruments) · без ключей, только чтение · v1: только BTC</span>
+        <span data-i18n="scn.foot.src">Источники: Deribit public API (tickers, book, candles, DVOL, instruments) · без ключей, только чтение · v1: только BTC</span>
       </div>
     </footer>
 
@@ -3980,7 +3980,7 @@ const LEDGER = { posId:null, sig:null, order:'desc', types:new Set(), limit:LEDG
   view:null, viewAccrual:null, fetching:null, fetchPromise:null, expandedSeq:null, keepScroll:false, delTimer:null, msgTimer:null };
 const ledgerEsc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ledgerDur = sec => !Number.isFinite(sec) ? '—' : sec>=5400 ? t('fa.unit.hoursN',{h:(sec/3600).toFixed(1)}) : sec>=90 ? t('fa.unit.minN',{n:Math.round(sec/60)}) : t('fa.unit.secN',{n:Math.round(sec)});
-const ledgerRuDay = key => new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(key+'T00:00:00Z'));
+const ledgerRuDay = key => new Intl.DateTimeFormat(i18nLocale()==='en'?'en-GB':'ru-RU',{day:'numeric',month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(key+'T00:00:00Z'));
 const ledgerPx = v => Number.isFinite(v) ? '$'+v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
 
 function ledgerMsg(text, cls, ttlMs){
@@ -4026,15 +4026,15 @@ function ledgerRowsHtml(view){
       prevDay=day;
       const dn=view.dayNets ? view.dayNets[day] : null;
       out.push('<tr class="lday"><td colspan="7">— '+ledgerRuDay(day)+' —'+
-        (Number.isFinite(dn) ? ' <span class="dim">· за день:</span> <span class="num '+clsSign(dn)+'">'+(dn>0?'+':'')+fmtLedgerUSD(dn)+'</span>' : '')+'</td></tr>');
+        (Number.isFinite(dn) ? ' <span class="dim">'+t('ledger.perDay')+'</span> <span class="num '+clsSign(dn)+'">'+(dn>0?'+':'')+fmtLedgerUSD(dn)+'</span>' : '')+'</td></tr>');
     }
     const gap = e.type==='gap_unpriced';
     const src = e.source==='history' ? '<span class="lsrc faint" title="'+ledgerSrcLbl('history')+'">'+t('ledger.srcHistShort')+'</span>'
               : e.source==='skipped' ? '<span class="lsrc faint" title="'+ledgerSrcLbl('skipped')+'">'+t('ledger.srcSkipShort')+'</span>' : '';
-    const agg = e.meta && e.meta.aggregated ? ' <span class="mock-flag" title="funding и borrow за этот тик объединены — позиция открыта до раздельного учёта">агрегировано</span>' : '';
+    const agg = e.meta && e.meta.aggregated ? ' <span class="mock-flag" title="'+t('ledger.aggTitle')+'">'+t('ledger.aggWord')+'</span>' : '';
     const ts = new Date(e.t).toISOString().slice(5,19).replace('T',' ');
     out.push('<tr'+(gap?' class="lgap"':'')+' data-seq="'+e.seq+'">'+
-      '<td><button class="lexp" aria-expanded="false" aria-controls="ledgerDet-'+e.seq+'" aria-label="Детали операции">˅</button></td>'+
+      '<td><button class="lexp" aria-expanded="false" aria-controls="ledgerDet-'+e.seq+'" aria-label="'+t('ledger.expandAria')+'">˅</button></td>'+
       '<td class="lft ts">'+ts+src+'</td>'+
       '<td class="lft"><span class="chip lchip-t '+(LEDGER_CHIP_CLS[e.type]||'t-adj')+'">'+ledgerTypeLbl(e.type)+'</span>'+agg+'</td>'+
       '<td class="num'+(e.income>0?' pos':'')+'">'+(gap?'—':(e.income>0?fmtLedgerUSD(e.income):''))+'</td>'+
@@ -4143,7 +4143,7 @@ function renderLedger(p, opts){
       LEDGER.sig=sig; LEDGER.posId=p.id; LEDGER.view=null;
       $('ledgerBody').innerHTML='';
       const e=$('ledgerEmpty'); e.hidden=false;
-      e.textContent='журнал недоступен: нет моста fa (файловый режим) — запустите приложение (npm start)';
+      e.textContent=t('ledger.noBridgeFile');
       $('ledgerMore').hidden=true; $('ledgerCount').textContent='—'; ledgerSetRecon(null);
     }
     return Promise.resolve();
@@ -4163,12 +4163,12 @@ function renderLedger(p, opts){
   if(passiveGrowth && deep){
     const btn=$('ledgerFreshBtn');
     btn.hidden=false;
-    btn.textContent='⟳ обновить журнал (+'+(p.accrualCount-LEDGER.viewAccrual)+' тик.)';
+    btn.textContent=t('ledger.freshBtnN',{n:(p.accrualCount-LEDGER.viewAccrual)});
     return Promise.resolve();
   }
   if(posChanged){
     $('ledgerBody').innerHTML='';
-    const e=$('ledgerEmpty'); e.hidden=false; e.textContent='журнал загружается…';
+    const e=$('ledgerEmpty'); e.hidden=false; e.textContent=t('ledger.loading');
   }
   LEDGER.fetching=sig;
   LEDGER.fetchPromise = window.fa.getLedger({ id:p.id, offset:0, limit:LEDGER.limit, order:LEDGER.order, types:[...LEDGER.types] })
@@ -4178,7 +4178,7 @@ function renderLedger(p, opts){
       if(!cur || cur.id!==p.id || !view) return;            // выбор сменился, пока ждали
       if(view.error){
         const e=$('ledgerEmpty'); e.hidden=false;
-        e.textContent='не удалось загрузить журнал: '+view.error;
+        e.textContent=t('ledger.loadErr',{e:view.error});
         $('ledgerBody').innerHTML=''; ledgerSetRecon(null);
         return;
       }
@@ -4458,75 +4458,15 @@ const HELP_BTC_OPTIONS = {
 // HELP_OTM_SCANNER = панели «OTM-сканера» (S3a), неймспейс `opt-scan-*` — никогда не пересекается
 // с ключами оболочки, funding-arb и бота 2. Оракул держит строгую биекцию кнопка ⇄ текст.
 const HELP_OTM_SCANNER = {
-  'opt-scan-signal': { t:'Сигнал · состояния и жизненный цикл', b:
-    '<p>Сканер наблюдает и сигналит — не торгует. Состояния: <b>ОЖИДАНИЕ</b> — условия не сошлись; '+
-    '<b>ФОРМИРУЕТСЯ</b> — сошлись, идёт дожим (dwell) несколько тиков подряд; <b>СИГНАЛ</b> — вход найден, '+
-    'тикает TTL; <b>КУЛДАУН</b> — пауза после сигнала; <b>БЛЭКАУТ</b> — окно расчёта или преэкспирация.</p><ul>'+
-    '<li><b>Сигнал — снимок:</b> он запоминает пресет, счёт и значения условий на момент рождения (в журнале — навсегда).</li>'+
-    '<li><b>Исходы:</b> ИСТЁК — TTL вышел; ОТМЕНЁН — условия распались раньше (ядро — мгновеннее прочих). Оба запускают кулдаун по инструменту и стороне.</li>'+
-    '<li><b>Размер</b> — справочная подсказка из риск-бюджета суб-счёта, не ордер. Исполнения из сканера нет: схема продавца живёт в модуле «BTC-опционы», а сканер отдаёт ей только санитарию инструмента.</li></ul>' },
-  'opt-scan-checklist': { t:'Чеклист условий · tri-state вердикты', b:
-    '<p>14 условий в двух группах: по активу (У1–У8) и по инструменту-кандидату (У9–У14, считаются по '+
-    'лучшему кандидату). Каждая строка: живое значение, порог пресета, вердикт, возраст данных.</p><ul>'+
-    '<li><span class="fx">● да</span> — условие выполнено; <span class="fx">○ нет</span> — не выполнено '+
-    '(это не убыток — просто входа нет); <span class="fx">◌ н/д</span> — данных нет или протухли.</li>'+
-    '<li><b>Строгий И:</b> сигнал только когда все применимые «да» и ни одного «н/д». <b>Скоринг:</b> '+
-    'счёт ≥ N, при этом ядро <span class="fx">У1+У10+У14</span> обязательно всегда; «н/д» в счёт не идёт.</li>'+
-    '<li>«· выкл» — условие отключено пресетом; «· инфо» — показывается, но не гейтит и в счёт не входит (У7 и У8 в пресете «Дельта v1»).</li>'+
-    '<li>У4 задаёт сторону сигнала (CALL/PUT) по направлению импульса; У6 в выходные всегда выкл.</li>'+
-    '<li>У8 меряет дисбаланс по стакану БЕССРОЧНОГО фьючерса, а не по книге опциона: книги опционов берутся '+
-    'только финалистам (не более двух за тик), и распределения по такой выборке не построить.</li></ul>' },
-  'opt-scan-cand': { t:'Кандидаты в окне отбора · экономика сделки', b:
-    '<p>Инструменты в окне отбора страйков и окне экспираций пресета (до 8 строк): дистанция в σ, '+
-    'премия в % спота, спред в % премии, глубина книги, тета в %/сут, IV.</p><ul>'+
-    '<li><b>Чем меряется страйк</b> задаёт пресет. Режим «σ-окно» гейтит по дистанции в сигмах. Режим «дельта» '+
-    '(пресет «Дельта v1») гейтит по |дельте| живых греков, а σ-окно в нём работает только СИТОМ снабжения — '+
-    'решает, кого мы вообще опрашиваем тикером, потому что дельта приходит вместе с тикером, а набор собирается раньше.</li>'+
-    '<li>Колонка <b>У9–14</b> — сколько инструментных гейт-условий кандидат проходит; провалившиеся номера в скобках.</li>'+
-    '<li><b>Лучший</b> подсвечен строкой и чипом — именно его берёт сигнал; группа «по инструменту» в чеклисте считается по нему.</li>'+
-    '<li><b>Экономика сделки</b> (факты): издержки туда-обратно и безубыток — гейт У14; минимальный депозит и кэп глубины — граница риск-дисциплины. '+
-    '<b>Модельная аналитика</b> (P(ITM), сценарии) — подписанная оценка, вход она не решает никогда.</li>'+
-    '<li>Сторона задана У4: кандидаты отбираются только на стороне сигнала.</li></ul>' },
-  'opt-scan-journal': { t:'Журнал сигналов · экспорт', b:
-    '<p>История всех сигналов сессии и прошлых запусков: время рождения, исход, сторона, инструмент, '+
-    'счёт на момент рождения, пресет, пометка события, TTL.</p><ul>'+
-    '<li>Исходы: <b>АКТИВЕН</b> (не больше одного), <b>ИСТЁК</b>, <b>ОТМЕНЁН</b> (причина — во всплывающей подсказке строки).</li>'+
-    '<li>Пресет со звёздочкой — сигнал рождён на несохранённых порогах.</li>'+
-    '<li><b>CSV</b> — всегда полный экспорт журнала, независимо от прокрутки; JSON с полным снимком условий активного сигнала доступен там же в main-экспорте.</li></ul>' },
-  'opt-scan-toolbar': { t:'Пресет, режим агрегации, флаг события', b:
-    '<p>Параметры применяются к оценке немедленно — сканер ничего не держит, замораживать нечего; '+
-    'помнит параметры только рождённый сигнал.</p><ul>'+
-    '<li><b>Пресет</b> — набор порогов всех условий: «Дмитрий v1», «Дмитрий v2.0», «Калиброванный» (пользовательский слот).</li>'+
-    '<li><b>Режим</b> — «строгий И» либо «скоринг ≥N» (N — в порогах; ядро У1+У10+У14 обязательно всегда).</li>'+
-    '<li><b>Событие ≤48ч</b> — ручной флаг (CPI, FOMC…): подсвечивает рекомендуемый пресет пунктиром, попадает в журнал; сам пресет не переключает.</li>'+
-    '<li><b>⟳ Оценить сейчас</b> — внеочередной опрос и пересчёт чеклиста.</li></ul>' },
-  'opt-scan-presets': { t:'Пороги пресета · редактор', b:
-    '<p>Числовые пороги всех 14 условий и механика сигнала (dwell, TTL, кулдаун, N скоринга). '+
-    'Проверка на уходе с поля: неверное значение не применяется и не «исправляется» молча — '+
-    'поле подсвечивается, причина пишется текстом.</p><ul>'+
-    '<li>Любая правка порогов переводит пресет в «не сохранён» (в тулбаре — звёздочка); оценка сразу живёт на новых валидных значениях.</li>'+
-    '<li><b>«сохранить в „Калиброванный"»</b> — записывает текущие пороги в пользовательский слот; <b>«сброс к базе»</b> — возвращает выбранный пресет.</li>'+
-    '<li>Сигнал, рождённый на несохранённых порогах, помечается в журнале звёздочкой.</li>'+
-    '<li>Механика (dwell · TTL · кулдаун) — настройка сканера вне пресета: применяется сразу и не участвует в «не сохранён».</li></ul>' },
-  'opt-scan-telemetry': { t:'Панель честности · pass-rate', b:
-    '<p>Как часто каждое условие реально проходило — за сессию или за 24 часа, на счётчике оценок. '+
-    'Это зеркало порогов, а не рынка.</p><ul>'+
-    '<li><b>0% · «никогда не проходит»</b> — главный вывод панели: порог не срабатывает вообще и, возможно, требует калибровки.</li>'+
-    '<li><b>100% · «всегда»</b> — условие ничего не фильтрует.</li>'+
-    '<li>Проценты считаются по фактическим оценкам условия; выключенные пресетом условия не оцениваются вовсе.</li>'+
-    '<li><b>CSV</b> — экспорт таблицы pass-rate (сессия + суточные вёдра) для отчёта обкатки.</li></ul>' },
-  'opt-scan-health': { t:'Качество данных · свежесть и блэкаут', b:
-    '<p>Свежесть каждого источника Deribit: тикеры, свечи (для RV), DVOL, книга, цепочка опционов. '+
-    'Протухший источник переводит зависящие от него условия в «◌ н/д».</p><ul>'+
-    '<li><b>LIVE</b> — всё свежее; <b>ПРЕДУПР.</b> — часть источников деградировала; <b>УСТАРЕЛО</b> — оценка приостановлена. Клик по индикатору — внеочередной опрос.</li>'+
-    '<li><b>Блэкаут</b> — окно расчёта 08:00 UTC и преэкспирация: новые сигналы не создаются, дожим заморожен.</li>'+
-    '<li><b>RTT</b> — задержка последнего опроса; <b>TESTNET</b> — данные тестовой сети, не боевой; «каданс x2» — авто-деградация после серии ошибок, уходит сама.</li></ul>' },
-  'opt-scan-vol': { t:'RV против IV · базис ядра', b:
-    '<p>Две линии с запуска сканера: реализованная волатильность RV7d и подразумеваемая ATM IV '+
-    '(DVOL-прокси при дырке в ATM-паре). Заливка там, где RV выше IV, — «зона недооценки»: рынок двигается сильнее, '+
-    'чем оценены опционы, — базис условий <span class="fx">У1</span> и <span class="fx">У2</span>.</p><ul>'+
-    '<li>Точки на линии — моменты рождения сигналов: видно, в какой фазе спреда сканер сигналит.</li>'+
-    '<li>История сессионная: копится с запуска сканера, не переживает перезапуск приложения.</li></ul>' },
+  'opt-scan-signal': { tk:'help.opt-scan-signal.t', bk:'help.opt-scan-signal.b' },
+  'opt-scan-checklist': { tk:'help.opt-scan-checklist.t', bk:'help.opt-scan-checklist.b' },
+  'opt-scan-cand': { tk:'help.opt-scan-cand.t', bk:'help.opt-scan-cand.b' },
+  'opt-scan-journal': { tk:'help.opt-scan-journal.t', bk:'help.opt-scan-journal.b' },
+  'opt-scan-toolbar': { tk:'help.opt-scan-toolbar.t', bk:'help.opt-scan-toolbar.b' },
+  'opt-scan-presets': { tk:'help.opt-scan-presets.t', bk:'help.opt-scan-presets.b' },
+  'opt-scan-telemetry': { tk:'help.opt-scan-telemetry.t', bk:'help.opt-scan-telemetry.b' },
+  'opt-scan-health': { tk:'help.opt-scan-health.t', bk:'help.opt-scan-health.b' },
+  'opt-scan-vol': { tk:'help.opt-scan-vol.t', bk:'help.opt-scan-vol.b' },
 };
 const HELP = { ...HELP_CORE, ...HELP_FUNDING_ARB, ...HELP_BTC_OPTIONS, ...HELP_OTM_SCANNER };
 
@@ -5278,17 +5218,17 @@ function renderScnSanityCard(ds){
   const chk = (s.checks||[]).find(c=>c.instrument===s.instrument) || (s.checks||[])[(s.checks||[]).length-1] || null;
   const byKey = k => chk ? (chk.rows||[]).find(r=>r.key===k) : null;
   const put = (id, r) => { const el=$(id); if(!el) return;
-    el.textContent = r ? r.note : 'ось выключена';
+    el.textContent = r ? r.note : t('scn.r.axisOff');
     el.className = 'v' + (r ? (r.state==='fail' ? ' neg' : r.state==='unknown' ? ' dim' : '') : ' dim'); };
   put('scnSanAge', byKey('age')); put('scnSanSpread', byKey('spread')); put('scnSanDepth', byKey('depth'));
   const tag=$('scnSanityTag');
   if(tag){
     tag.className = 'tag ' + (s.verdict==='pass' ? 'green' : 'amber');
-    tag.textContent = s.verdict==='pass' ? 'в норме'
-      : s.verdict==='degraded' ? 'ухудшенная санитария' : 'вето · схема ждёт';
+    tag.textContent = s.verdict==='pass' ? t('opt.r.upTagOk')
+      : s.verdict==='degraded' ? t('opt.r.markDegraded') : t('scn.r.vetoWaits');
   }
   const stamp=$('scnSanityStamp');
-  if(stamp) stamp.textContent = 'проверено '+chDate(s.at)+' · кандидатов '+((s.checks||[]).length);
+  if(stamp) stamp.textContent = t('scn.r.checkedAt',{d:chDate(s.at),n:((s.checks||[]).length)});
 }
 
 /* Паспорт: строка «сейчас» против строки «измерено» плюс ЦЕНА отклонения. Правила схемы (полоса,
@@ -5328,7 +5268,7 @@ function renderOptConform(ds){
      оператор обязан видеть его как разницу, а не обнаружить потом в расхождении P&L. */
   row(t('opt.conf.rFlat'), t('opt.conf.rFlatNow'), t('opt.conf.rFlatWant'), false,
     t('opt.conf.rFlatPrice'));
-  row(t('opt.conf.rTenor'), '336-672 ч · 0.45', '336-672 ч · 0.45', true, t('opt.conf.byRule'));
+  row(t('opt.conf.rTenor'), t('opt.conf.tenorVal'), t('opt.conf.tenorVal'), true, t('opt.conf.byRule'));
   row(t('opt.chain.tktSize'), t('opt.chain.tktSizeV'), t('opt.chain.tktSizeV'), true, t('opt.conf.byRule'));
   const manual = ds.sellChain && ds.sellChain.stats ? (ds.sellChain.stats.manual||0) : 0;
   row(t('opt.conf.rExit'), manual?t('opt.conf.rExitManual',{n:manual}):t('opt.conf.expiryWord'), t('opt.conf.expiryWord'), manual===0,
@@ -5624,7 +5564,7 @@ function renderOptSweep(ds){
   const body=$('optSweepBody'); if(!body) return;
   if(optSweepBusy) return; // в полёте не перерисовываем под руками — прежние результаты остаются
   const sw=ds&&ds.sweep, cap=$('optSweepCaption'), stamp=$('optSweepStamp'), apply=$('optSweepApply');
-  if(!sw){ body.innerHTML='<tr><td class="lft faint" colspan="10">свип ещё не запускался — нажмите «запустить свип»</td></tr>';
+  if(!sw){ body.innerHTML='<tr><td class="lft faint" colspan="10">'+t('opt.sweep.emptyRow')+'</td></tr>';
     if(apply) apply.disabled=true; return; }
   if(stamp) stamp.textContent=t('opt.r.swStamp',{v:optClock(sw.ranAt)});
   if(!sw.combos || !sw.combos.length){
@@ -5642,7 +5582,7 @@ function renderOptSweep(ds){
     }
     body.innerHTML='<tr><td class="lft faint" colspan="10">'+why+'</td></tr>';
     if(cap){ cap.textContent=t('opt.r.swGoalShort',{obj:(OPT_SWEEP_OBJ[sw.objective]||sw.objective),n:(sw.seriesLen||0)})
-      +((sw.excluded&&sw.excluded.length)?(' · исключено '+sw.excluded.length):''); }
+      +((sw.excluded&&sw.excluded.length)?t('opt.r.swExcl',{n:sw.excluded.length}):''); }
     if(apply) apply.disabled=true; return; }
   const bi=Number.isInteger(sw.best)?sw.best:0;
   if(cap) cap.textContent=t('opt.r.swGoalFull',{obj:(OPT_SWEEP_OBJ[sw.objective]||sw.objective),n:sw.seriesLen,
@@ -5650,7 +5590,7 @@ function renderOptSweep(ds){
   body.innerHTML=sw.combos.map((c,i)=>{
     const mOk=c.marginOk!==false;
     return '<tr'+(i===bi?' class="me"':'')+'>'+
-      '<td class="lft num">'+(i+1)+(i===bi?' <span class="chip B">лучший</span>':'')+'</td>'+
+      '<td class="lft num">'+(i+1)+(i===bi?' <span class="chip B">'+t('scn.r.bestChip')+'</span>':'')+'</td>'+
       '<td class="n">±'+c.wingPct+'%</td><td class="n">±'+(c.deadbandBtc||0).toFixed(4)+'</td>'+
       '<td class="n">'+c.priceTriggerPct.toFixed(1)+'%</td><td class="n">'+c.lambda+'</td>'+
       '<td class="n '+clsSign(c.sharpe)+'">'+c.sharpe.toFixed(2)+'</td>'+
@@ -6302,7 +6242,7 @@ async function confirmOptChain(){
 let optCloseArmed=false, optCloseTimer=null;
 function disarmOptClose(){ const b=$('optCloseBtn'); optCloseArmed=false; if(optCloseTimer) clearTimeout(optCloseTimer); if(b && !b.hidden) b.textContent=t('opt.zt.closeBtn'); }
 function armOptClose(){ const b=$('optCloseBtn'); if(!b) return;
-  if(!optCloseArmed){ optCloseArmed=true; b.textContent='✕ подтвердить закрытие?'; if(optCloseTimer) clearTimeout(optCloseTimer); optCloseTimer=setTimeout(disarmOptClose,3500); return; }
+  if(!optCloseArmed){ optCloseArmed=true; b.textContent=t('opt.r.closeConfirm'); if(optCloseTimer) clearTimeout(optCloseTimer); optCloseTimer=setTimeout(disarmOptClose,3500); return; }
   disarmOptClose(); closeOptStructure(); }
 async function closeOptStructure(){ if(!window.s1) return; const b=$('optCloseBtn'); if(b) b.disabled=true;
   try{ const r=await window.s1.closeStructure();
@@ -6318,9 +6258,9 @@ async function optLedgerExport(format, btn){
   if(!window.s1 || typeof window.s1.exportLedger!=='function'){ optLedgerMsg(t('opt.r.expNoBridge'),'err'); return; }
   const label=btn.textContent; btn.disabled=true; btn.textContent=label+'…';
   try{ const r=await window.s1.exportLedger({ format });
-    if(r && r.ok) optLedgerMsg('✓ сохранено: '+r.filePath+' ('+(r.count||0).toLocaleString('en-US')+' операций)','ok',6000);
-    else if(r && r.canceled) optLedgerMsg('сохранение отменено','dim',3000);
-    else optLedgerMsg('не сохранено: '+((r&&r.error)||'неизвестная ошибка'),'err');
+    if(r && r.ok) optLedgerMsg(t('ledger.msgSaved',{path:r.filePath,n:(r.count||0).toLocaleString('en-US')}),'ok',6000);
+    else if(r && r.canceled) optLedgerMsg(t('ledger.msgCanceled'),'dim',3000);
+    else optLedgerMsg(t('ledger.msgNotSaved',{e:((r&&r.error)||t('ledger.errUnknown'))}),'err');
   }catch(e){ optLedgerMsg(t('ledger.msgNotSaved',{e:t('fa.err.ipc')+String(e&&e.message||e).slice(0,60)}),'err'); }
   btn.disabled=false; btn.textContent=label; }
 
@@ -6445,21 +6385,23 @@ let scnTelemetryWin = 'session';        // окно панели честнос�
 
 // Подписи строк чеклиста (реестр CONDITION_META движка; вердикты/значения/пороги — из dataset)
 const SCN_COND_LABELS = {
-  rv7d_gt_iv:'RV7d выше IV', iv_discount:'запас недооценки IV', rv3d_gt_iv:'RV3d выше IV · доп.',
-  sigma_impulse:'σ-импульс 24ч · сторона', ema_trend:'тренд EMA20 · совпадение',
-  forward_iv:'forward-IV · дисконт', skew:'skew · подтверждение стороны', book_imbalance:'дисбаланс стакана',
-  strike_sigma:'страйк в окне отбора', premium_cap:'премия ≤ лимита', spread_cap:'спред ≤ лимита',
-  depth_min:'глубина книги', theta_cap:'тета ≤ лимита', cost_gate:'издержки ≤ лимита' };
-const SCN_PRESET_LABELS = { 'dmitri-v1':'Дмитрий v1', 'dmitri-v2':'Дмитрий v2.0',
-  'delta-v1':'Дельта v1', 'measure-v1':'Измерительный v1', 'measure-far-v1':'Измерительный дальний v1',
-  calibrated:'Калиброванный', custom:'Калиброванный*', 'sell-v1':'Продажа v1' };
+  get rv7d_gt_iv(){return t('scn.cond.rv7d');}, get iv_discount(){return t('scn.cond.ivDisc');}, get rv3d_gt_iv(){return t('scn.cond.rv3d');},
+  get sigma_impulse(){return t('scn.cond.impulse');}, get ema_trend(){return t('scn.cond.ema');},
+  get forward_iv(){return t('scn.cond.fwdIv');}, get skew(){return t('scn.cond.skew');}, get book_imbalance(){return t('scn.cond.book');},
+  get strike_sigma(){return t('scn.cond.strike');}, get premium_cap(){return t('scn.cond.prem');}, get spread_cap(){return t('scn.cond.spread');},
+  get depth_min(){return t('scn.cond.depth');}, get theta_cap(){return t('scn.cond.theta');}, get cost_gate(){return t('scn.cond.cost');} };
+const SCN_PRESET_LABELS = { get 'dmitri-v1'(){return t('scn.preset.dmitriV1');}, get 'dmitri-v2'(){return t('scn.preset.dmitriV2');},
+  get 'delta-v1'(){return t('scn.preset.deltaV1');}, get 'measure-v1'(){return t('scn.preset.measureV1');}, get 'measure-far-v1'(){return t('scn.preset.measureFarV1');},
+  get calibrated(){return t('scn.preset.calibrated');}, get custom(){return t('scn.preset.custom');}, get 'sell-v1'(){return t('scn.preset.sellV1');} };
+// Р3: в en-локали подписи условий нумеруются C1..C14; машинные ключи «У…» в данных не меняются
+const scnIdx = idx => i18nLocale()==='en' ? String(idx==null?'':idx).replace(/У/g,'C') : (idx==null?'':idx);
 function scnPresetLabel(id){ return SCN_PRESET_LABELS[id] || (LIVE_SCN && LIVE_SCN.preset && LIVE_SCN.preset.id===id && LIVE_SCN.preset.label) || id || '—'; }
 
 /* — мелкие форматтеры домена — */
 function scnMMSS(sec){ if(!Number.isFinite(sec)) return '—'; const m=Math.floor(sec/60), s=Math.max(0,Math.round(sec%60)); return m+':'+String(s).padStart(2,'0'); }
 function scnSignals24h(journal){ const t=Date.now()-86400000; return (journal||[]).filter(e=>e.event==='signal' && e.ts>=t).length; }
 const scnNum = (v,dp)=> Number.isFinite(v) ? String(+v.toFixed(dp==null?2:dp)) : '—';
-const scnAge = s => s==null ? '—' : (s<90 ? Math.round(s)+'с' : Math.round(s/60)+'м');
+const scnAge = s => s==null ? '—' : (s<90 ? Math.round(s)+t('scn.r.sShort') : Math.round(s/60)+t('opt.r.minShort'));
 const scnUtcHM = ms => { const d=new Date(ms); return String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0'); };
 const scnUtcTs = ms => new Date(ms).toISOString().replace('T',' ').slice(5,19); // MM-DD HH:MM:SS
 const scnExpLbl = ms => { const d=new Date(ms);
@@ -6508,7 +6450,7 @@ function applyScnDataset(ds){
     } else if(!cyc.signal && scnLastSignalId){
       // сигнал кончился: последняя строка журнала по этому id даёт исход и причину
       const end=[...(cyc.journal||[])].reverse().find(e=>e.id===scnLastSignalId && e.event!=='signal');
-      scnEndNote = end ? (end.event==='expired' ? 'сигнал истёк · '+(end.reason||'TTL вышел') : 'отменён · '+(end.reason||'условия распались')) : null;
+      scnEndNote = end ? (end.event==='expired' ? t('scn.r.endExpired',{r:(end.reason||'TTL вышел')}) : t('scn.r.endInvalid',{r:(end.reason||'условия распались')})) : null;
       scnLastSignalId = null;
     }
     if(cyc.lifecycle && (cyc.lifecycle.phase==='forming' || cyc.lifecycle.phase==='active')) scnEndNote=null;
@@ -6544,7 +6486,7 @@ function renderScn(){
       renderScnTelemetry(cyc);
     }
     if(cyc.ts!==scnLastCycleTs){ scnLastCycleTs=cyc.ts; scnBlip('scnEvalStamp'); }
-    const st=$('scnEvalStampTxt'); if(st) st.textContent='оценка '+new Date(cyc.ts).toISOString().slice(11,19)+' UTC';
+    const st=$('scnEvalStampTxt'); if(st) st.textContent=t('scn.r.evalStamp',{v:new Date(cyc.ts).toISOString().slice(11,19)});
   }
   renderScnCharts();
 }
@@ -6555,43 +6497,43 @@ function renderScnSignal(ds, cyc){
   const failedTxt = (cyc.reasons && cyc.reasons.failed || []).slice(0,3).join(', ');
   const unknownIdx = (cyc.reasons && cyc.reasons.unknown || []);
   const scoreTxt = Number.isFinite(sc.passed) ? sc.passed+'/'+sc.applicable : '—';
-  let tok='ОЖИДАНИЕ', cls='decision-token dim hollow', reason='счёт '+scoreTxt+' · ожидание данных';
+  let tok=t('scn.sig.tokenIdle'), cls='decision-token dim hollow', reason=t('scn.r.rWait',{s:scoreTxt});
   let bar=null; // {mode:'armed'|'wait', lbl, val, frac}
   if(lc.phase==='active' && sig){
-    tok='СИГНАЛ'; cls='decision-token accent';
+    tok=t('scn.r.tokSignal'); cls='decision-token accent';
     const left=lc.ttl?lc.ttl.leftSec:null;
-    reason='TTL '+scnMMSS(left)+' · '+scnSideWord(sig.direction)+' '+sig.instrument+(bo.active?' · блэкаут':'');
+    reason='TTL '+scnMMSS(left)+' · '+scnSideWord(sig.direction)+' '+sig.instrument+(bo.active?t('scn.r.boSfx'):'');
     bar={mode:'armed', lbl:'TTL', val:scnMMSS(left), frac:(Number.isFinite(left)&&sig.ttlSec)?left/sig.ttlSec:0};
   } else if(bo.active){
-    tok='БЛЭКАУТ'; cls='decision-token neu';
+    tok=t('scn.r.tokBlackout'); cls='decision-token neu';
     const leftS = bo.untilTs ? Math.max(0,(bo.untilTs-Date.now())/1000) : null;
-    reason=(bo.reason==='pre-expiry'?'преэкспирация':'окно расчёта 08:00 UTC')+' — новые сигналы не создаются'+(leftS!=null?' · ещё '+scnMMSS(leftS):'');
-    bar={mode:'wait', lbl:'до '+(bo.untilTs?scnUtcHM(bo.untilTs)+' UTC':'—'), val:leftS!=null?scnMMSS(leftS):'—', frac:1};
+    reason=(bo.reason==='pre-expiry'?t('scn.r.preExp'):t('scn.r.settleWindow'))+t('scn.r.noNewDash')+(leftS!=null?t('scn.r.stillLeft',{v:scnMMSS(leftS)}):'');
+    bar={mode:'wait', lbl:t('scn.r.until',{v:(bo.untilTs?scnUtcHM(bo.untilTs)+' UTC':'—')}), val:leftS!=null?scnMMSS(leftS):'—', frac:1};
   } else if(lc.phase==='forming'){
-    tok='ФОРМИРУЕТСЯ'; cls='decision-token accent hollow';
+    tok=t('scn.r.tokForming'); cls='decision-token accent hollow';
     const d=lc.dwell||{};
-    reason='тик '+(d.count||0)+' из '+(d.need||'—')+' · дожим условий';
-    bar={mode:'armed', lbl:'дожим', val:(d.count||0)+' / '+(d.need||'—'), frac:d.need?(d.count||0)/d.need:0};
+    reason=t('scn.r.rForming',{c:(d.count||0),n:(d.need||'—')});
+    bar={mode:'armed', lbl:t('scn.r.dwellWord'), val:(d.count||0)+' / '+(d.need||'—'), frac:d.need?(d.count||0)/d.need:0};
   } else if(lc.cooldown && lc.cooldown.active){
-    tok='КУЛДАУН'; cls='decision-token neu';
+    tok=t('scn.r.tokCooldown'); cls='decision-token neu';
     const until=lc.cooldown.untilTs;
-    reason=(scnEndNote?scnEndNote+' · ':'')+'новые не создаются до '+(until?scnUtcHM(until)+' UTC':'—');
+    reason=(scnEndNote?scnEndNote+' · ':'')+t('scn.r.rCooldown',{v:(until?scnUtcHM(until)+' UTC':'—')});
     const leftS=until?Math.max(0,(until-Date.now())/1000):null;
-    bar={mode:'wait', lbl:'кулдаун', val:leftS!=null?scnMMSS(leftS):'—', frac:1};
+    bar={mode:'wait', lbl:t('scn.th.cooldown'), val:leftS!=null?scnMMSS(leftS):'—', frac:1};
   } else {
     const fresh=ds.fresh||{};
-    if(fresh.stale) reason='источник устарел · оценка приостановлена';
-    else if(scnEndNote) reason=scnEndNote+' · счёт '+scoreTxt;
+    if(fresh.stale) reason=t('scn.r.staleEval');
+    else if(scnEndNote) reason=scnEndNote+t('scn.r.scoreSfx',{s:scoreTxt});
     else if(cyc.reasons && cyc.reasons.blocked && cyc.reasons.blocked.length)
-      reason='счёт '+scoreTxt+' · размер: '+scnBlockWord(cyc.reasons.blocked[0]);
-    else if(unknownIdx.length) reason='данные неполны · н/д '+unknownIdx.length+' ('+unknownIdx.slice(0,3).join(', ')+')';
-    else if(failedTxt) reason='счёт '+scoreTxt+' · мешают '+failedTxt;
-    else reason='счёт '+scoreTxt+' · условия не сошлись';
+      reason=t('scn.r.rSizeBlocked',{s:scoreTxt,b:scnBlockWord(cyc.reasons.blocked[0])});
+    else if(unknownIdx.length) reason=t('scn.r.rIncomplete',{n:unknownIdx.length,list:unknownIdx.slice(0,3).map(scnIdx).join(', ')});
+    else if(failedTxt) reason=t('scn.r.rBlockedBy',{s:scoreTxt,list:failedTxt});
+    else reason=t('scn.r.rNotMet',{s:scoreTxt});
   }
   const tokEl=$('scnSignalToken');
   if(tokEl && (tokEl.className!==cls || tokEl.textContent.trim()!==tok))
     optCrossfade(tokEl, '<span class="dot"></span>'+tok, cls);
-  const rEl=$('scnSignalReason'); if(rEl){ rEl.textContent=reason; rEl.className='mono '+(tok==='СИГНАЛ'?'':'dim'); }
+  const rEl=$('scnSignalReason'); if(rEl){ rEl.textContent=reason; rEl.className='mono '+(tok===t('scn.r.tokSignal')?'':'dim'); }
   const barEl=$('scnSignalBar');
   if(barEl){
     barEl.hidden = !bar;
@@ -6609,53 +6551,53 @@ function renderScnSignal(ds, cyc){
   $('scnSigSide').innerHTML = (sig || showBest)
     ? '<span class="chip side">'+scnSideWord(sig?sig.direction:cyc.side)+'</span>' : '—';
   let qtyTxt='—';
-  if(sig) qtyTxt=scnNum(sig.qtySuggested,2)+' контр.';
-  else if(showBest && sizing) qtyTxt = sizing.ok ? scnNum(sizing.qtySuggested,2)+' контр.' : scnBlockWord(sizing.blockReason);
+  if(sig) qtyTxt=scnNum(sig.qtySuggested,2)+t('scn.r.contrShort');
+  else if(showBest && sizing) qtyTxt = sizing.ok ? scnNum(sizing.qtySuggested,2)+t('scn.r.contrShort') : scnBlockWord(sizing.blockReason);
   scnSetHtml('scnSigQty', qtyTxt);
   scnSetHtml('scnSigTtl', sig ? scnUtcHM(sig.ts+sig.ttlSec*1000)+' UTC' : '—');
   const ev=ds.event||{};
-  scnSetHtml('scnSigEvent', sig ? (sig.eventNote||'—') : (ev.flagged ? (ev.note||'событие') : '—'));
+  scnSetHtml('scnSigEvent', sig ? (sig.eventNote||'—') : (ev.flagged ? (ev.note||t('scn.sig.rowEvent')) : '—'));
   const evTag=$('scnSigEventTag');
-  if(evTag){ evTag.hidden=!ev.flagged; if(ev.flagged) evTag.textContent='событие ≤48ч'+(ev.note?' · '+ev.note:''); }
-  const pp=$('scnSigPreset'); if(pp) pp.innerHTML='пресет <b>'+scnPresetLabel(ds.presetId)+'</b>';
+  if(evTag){ evTag.hidden=!ev.flagged; if(ev.flagged) evTag.textContent=t('scn.sig.eventTag')+(ev.note?' · '+ev.note:''); }
+  const pp=$('scnSigPreset'); if(pp) pp.innerHTML=t('scn.sig.presetWord')+' <b>'+scnPresetLabel(ds.presetId)+'</b>';
 }
 function scnBlockWord(r){
-  return r==='min_lot_exceeds_risk' ? 'мин. лот превышает риск-бюджет'
-       : r==='min_lot_exceeds_depth' ? 'мин. лот превышает кэп глубины'
-       : (r||'нет данных для размера');
+  return r==='min_lot_exceeds_risk' ? t('scn.r.blkRisk')
+       : r==='min_lot_exceeds_depth' ? t('scn.r.blkDepth')
+       : (r||t('scn.r.blkNoData'));
 }
 
 /* ── режим ПРОДАЖИ: сигнал-токен из sell-цикла (та же машина состояний, те же dom-узлы) ── */
 function renderScnSellSignal(ds, cyc){
   const lc=cyc.lifecycle||{}, bo=lc.blackout||{}, sig=cyc.signal, leg=cyc.leg;
-  let tok='ОЖИДАНИЕ', cls='decision-token dim hollow', reason=cyc.reason||'ожидание данных';
+  let tok=t('scn.sig.tokenIdle'), cls='decision-token dim hollow', reason=cyc.reason||t('scn.r.waitData');
   let bar=null;
   if(lc.phase==='active' && sig){
-    tok='СИГНАЛ · ПРОДАЖА'; cls='decision-token accent';
+    tok=t('scn.r.tokSignalSell'); cls='decision-token accent';
     const left=lc.ttl?lc.ttl.leftSec:null;
-    reason='TTL '+scnMMSS(left)+' · SELL CALL '+sig.instrument+(bo.active?' · блэкаут':'');
+    reason='TTL '+scnMMSS(left)+' · SELL CALL '+sig.instrument+(bo.active?t('scn.r.boSfx'):'');
     bar={mode:'armed', lbl:'TTL', val:scnMMSS(left), frac:(Number.isFinite(left)&&sig.ttlSec)?left/sig.ttlSec:0};
   } else if(bo.active){
-    tok='БЛЭКАУТ'; cls='decision-token neu';
+    tok=t('scn.r.tokBlackout'); cls='decision-token neu';
     const leftS = bo.untilTs ? Math.max(0,(bo.untilTs-Date.now())/1000) : null;
-    reason=(bo.reason==='pre-expiry'?'преэкспирация':'окно расчёта 08:00 UTC')+' · новые сигналы не создаются'+(leftS!=null?' · ещё '+scnMMSS(leftS):'');
-    bar={mode:'wait', lbl:'до '+(bo.untilTs?scnUtcHM(bo.untilTs)+' UTC':'—'), val:leftS!=null?scnMMSS(leftS):'—', frac:1};
+    reason=(bo.reason==='pre-expiry'?t('scn.r.preExp'):t('scn.r.settleWindow'))+t('scn.r.noNewDot')+(leftS!=null?t('scn.r.stillLeft',{v:scnMMSS(leftS)}):'');
+    bar={mode:'wait', lbl:t('scn.r.until',{v:(bo.untilTs?scnUtcHM(bo.untilTs)+' UTC':'—')}), val:leftS!=null?scnMMSS(leftS):'—', frac:1};
   } else if(lc.phase==='forming'){
-    tok='ФОРМИРУЕТСЯ'; cls='decision-token accent hollow';
+    tok=t('scn.r.tokForming'); cls='decision-token accent hollow';
     const d=lc.dwell||{};
-    reason='тик '+(d.count||0)+' из '+(d.need||'—')+' · дожим ноги';
-    bar={mode:'armed', lbl:'дожим', val:(d.count||0)+' / '+(d.need||'—'), frac:d.need?(d.count||0)/d.need:0};
+    reason=t('scn.r.rFormingLeg',{c:(d.count||0),n:(d.need||'—')});
+    bar={mode:'armed', lbl:t('scn.r.dwellWord'), val:(d.count||0)+' / '+(d.need||'—'), frac:d.need?(d.count||0)/d.need:0};
   } else if(lc.cooldown && lc.cooldown.active){
-    tok='КУЛДАУН'; cls='decision-token neu';
+    tok=t('scn.r.tokCooldown'); cls='decision-token neu';
     const until=lc.cooldown.untilTs;
-    reason=(scnEndNote?scnEndNote+' · ':'')+'новые не создаются до '+(until?scnUtcHM(until)+' UTC':'—');
+    reason=(scnEndNote?scnEndNote+' · ':'')+t('scn.r.rCooldown',{v:(until?scnUtcHM(until)+' UTC':'—')});
     const leftS=until?Math.max(0,(until-Date.now())/1000):null;
-    bar={mode:'wait', lbl:'кулдаун', val:leftS!=null?scnMMSS(leftS):'—', frac:1};
+    bar={mode:'wait', lbl:t('scn.th.cooldown'), val:leftS!=null?scnMMSS(leftS):'—', frac:1};
   } else {
     const fresh=ds.fresh||{};
-    if(fresh.stale) reason='источник устарел · оценка приостановлена';
+    if(fresh.stale) reason=t('scn.r.staleEval');
     else if(scnEndNote) reason=scnEndNote;
-    else reason=cyc.reason||'нога не найдена';
+    else reason=cyc.reason||t('scn.r.legNotFound');
   }
   const tokEl=$('scnSignalToken');
   if(tokEl && (tokEl.className!==cls || tokEl.textContent.trim()!==tok))
@@ -6673,15 +6615,15 @@ function renderScnSellSignal(ds, cyc){
   scnSetHtml('scnSigInstrument', (sig?sig.instrument:(leg?leg.instrument:null)) || '—');
   $('scnSigSide').innerHTML = (sig||leg) ? '<span class="chip side">SELL CALL</span>' : '—';
   let qtyTxt='—';
-  if(sig) qtyTxt=scnNum(sig.qtySuggested,2)+' контр. ('+sig.lots+' лот.)';
+  if(sig) qtyTxt=scnNum(sig.qtySuggested,2)+t('scn.r.contrShort')+t('scn.r.lotsParen',{n:sig.lots});
   else if(cyc.sizing) qtyTxt = cyc.sizing.lots>=1
-    ? scnNum(cyc.sizing.qtySuggested,2)+' контр.'
-    : (Number.isFinite(cyc.sizing.minCapitalUsd) ? 'нужно от $'+Math.round(cyc.sizing.minCapitalUsd) : 'счёт мал');
+    ? scnNum(cyc.sizing.qtySuggested,2)+t('scn.r.contrShort')
+    : (Number.isFinite(cyc.sizing.minCapitalUsd) ? t('scn.r.needFrom',{n:Math.round(cyc.sizing.minCapitalUsd)}) : t('scn.r.accSmall'));
   scnSetHtml('scnSigQty', qtyTxt);
   scnSetHtml('scnSigTtl', sig ? scnUtcHM(sig.ts+sig.ttlSec*1000)+' UTC' : '—');
   scnSetHtml('scnSigEvent','—');
   const evTag=$('scnSigEventTag'); if(evTag) evTag.hidden=true;
-  const pp=$('scnSigPreset'); if(pp) pp.innerHTML='пресет <b>'+scnPresetLabel('sell-v1')+'</b>';
+  const pp=$('scnSigPreset'); if(pp) pp.innerHTML=t('scn.sig.presetWord')+' <b>'+scnPresetLabel('sell-v1')+'</b>';
 }
 
 /* ── режим ПРОДАЖИ: карточка ноги, санитарии очереди и размера от залога ── */
@@ -6689,15 +6631,15 @@ function renderScnSellCard(ds, cyc){
   const leg=cyc.leg, s=cyc.sizing, ir=cyc.ivRv||{};
   scnSetHtml('scnSellInstr', leg?leg.instrument:'—');
   scnSetHtml('scnSellDelta', leg&&Number.isFinite(leg.delta)?scnNum(Math.abs(leg.delta),3):'—');
-  scnSetHtml('scnSellExp', leg?(scnExpLbl(leg.expiryMs)+' · '+scnNum((leg.hoursToExpiry||0)/24,1)+' сут'):'—');
+  scnSetHtml('scnSellExp', leg?(scnExpLbl(leg.expiryMs)+' · '+scnNum((leg.hoursToExpiry||0)/24,1)+t('scn.r.daysSfx')):'—');
   scnSetHtml('scnSellStrike', leg?String(leg.strike):'—');
   scnSetHtml('scnSellPrem', leg&&Number.isFinite(leg.markUsd)
-    ? scnUsd(leg.markUsd)+' <span class="faint">('+scnNum(leg.premPctSpot,2)+'% спота)</span>' : '—');
+    ? scnUsd(leg.markUsd)+' <span class="faint">('+scnNum(leg.premPctSpot,2)+t('scn.r.pctSpotSfx')+')</span>' : '—');
   scnSetHtml('scnSellBidAsk', leg&&Number.isFinite(leg.bidUsd)&&Number.isFinite(leg.askUsd)
-    ? scnUsd(leg.bidUsd)+' / '+scnUsd(leg.askUsd)+' <span class="faint">спред '+scnNum(leg.spreadPctPrem,1)+'% премии</span>' : '—');
+    ? scnUsd(leg.bidUsd)+' / '+scnUsd(leg.askUsd)+' <span class="faint">'+t('opt.cost.rowSpread')+' '+scnNum(leg.spreadPctPrem,1)+t('scn.r.pctPremSfx')+'</span>' : '—');
   scnSetHtml('scnSellIvRv', Number.isFinite(ir.ivPct)
-    ? scnNum(ir.ivPct,1)+'% <span class="faint">против RV7d '+scnNum(ir.rv7dPct,1)+'% · '
-      +(Number.isFinite(ir.spreadPts)?((ir.spreadPts>=0?'+':'')+scnNum(ir.spreadPts,1)+' п.п.'):'н/д')+'</span>' : '—');
+    ? scnNum(ir.ivPct,1)+'% <span class="faint">'+t('scn.r.vsRv7d')+' '+scnNum(ir.rv7dPct,1)+'% · '
+      +(Number.isFinite(ir.spreadPts)?((ir.spreadPts>=0?'+':'')+scnNum(ir.spreadPts,1)+' '+t('scn.th.pp')):t('scn.r.na'))+'</span>' : '—');
   const zoneTag=$('scnSellZoneTag'); if(zoneTag) zoneTag.hidden = ir.sellerZone!=='worst';
   const box=$('scnSellSanityRows');
   if(box){
@@ -6705,26 +6647,26 @@ function renderScnSellCard(ds, cyc){
     box.innerHTML = checks.length ? checks.map(c=>{
       const bad=(c.rows||[]).find(r=>r.state!=='pass');
       const cls=c.verdict==='pass'?'vrd pos':(c.verdict==='fail'?'vrd dim':'vrd neu');
-      const word=c.verdict==='pass'?'● прошла':(c.verdict==='fail'?'○ вето':'◌ н/д');
+      const word=c.verdict==='pass'?t('scn.r.qPassed'):(c.verdict==='fail'?t('scn.r.qVeto'):t('scn.r.vNa'));
       return '<div class="row"><span class="k num">'+(c.instrument||'—')+'</span>'
-        +'<span class="v"><span class="'+cls+'">'+word+'</span> <span class="faint">'+(bad?bad.note:'все проверки прошли')+'</span></span></div>';
-    }).join('') : '<div class="row"><span class="k">очередь</span><span class="v faint">нет кандидатов в окне</span></div>';
+        +'<span class="v"><span class="'+cls+'">'+word+'</span> <span class="faint">'+(bad?bad.note:t('scn.r.allPassed'))+'</span></span></div>';
+    }).join('') : '<div class="row"><span class="k">'+t('scn.r.queueWord')+'</span><span class="v faint">'+t('scn.r.noCandWin')+'</span></div>';
   }
-  scnSetHtml('scnSellLots', s ? (s.lots>=1 ? s.lots+' лот. · '+scnNum(s.qtySuggested,2)+' контр.' : '0 · счёт мал') : '—');
+  scnSetHtml('scnSellLots', s ? (s.lots>=1 ? t('scn.r.lotsContr',{l:s.lots,q:scnNum(s.qtySuggested,2)}) : '0 · '+t('scn.r.accSmall')) : '—');
   scnSetHtml('scnSellImLot', s&&Number.isFinite(s.imLotUsd)?scnUsd(s.imLotUsd):'—');
   scnSetHtml('scnSellImUsed', s&&Number.isFinite(s.imUsedUsd)
-    ? scnUsd(s.imUsedUsd)+' <span class="faint">потолок '+Math.round((s.deployPct||0)*100)+'% счёта $'+Math.round(s.equityUsd||0)+'</span>' : '—');
+    ? scnUsd(s.imUsedUsd)+' <span class="faint">'+t('scn.r.deployCeil',{p:Math.round((s.deployPct||0)*100),e:Math.round(s.equityUsd||0)})+'</span>' : '—');
   scnSetHtml('scnSellMinCap', s&&Number.isFinite(s.minCapitalUsd)?scnUsd(s.minCapitalUsd):'—');
-  scnSetHtml('scnSellEntryCost', Number.isFinite(cyc.entryCostUsd)?scnUsd(cyc.entryCostUsd)+' <span class="faint">на лот</span>':'—');
+  scnSetHtml('scnSellEntryCost', Number.isFinite(cyc.entryCostUsd)?scnUsd(cyc.entryCostUsd)+' <span class="faint">'+t('scn.r.perLot')+'</span>':'—');
 }
 
 /* ── чеклист: 14 строк tri-state в двух группах ── */
 function scnVerdictCell(r){
-  if(r.state==='off')  return { txt:'· выкл', cls:'vrd faint' };
-  if(r.mode==='info')  return { txt:'· инфо', cls:'vrd faint' };
-  if(r.state==='pass') return { txt:'● да',  cls:'vrd pos' };
-  if(r.state==='fail') return { txt:'○ нет', cls:'vrd dim' };
-  return { txt:'◌ н/д', cls:'vrd neu' };
+    if(r.state==='off')  return { txt:t('scn.r.vOff'), cls:'vrd faint' };
+  if(r.mode==='info')  return { txt:t('scn.r.vInfo'), cls:'vrd faint' };
+  if(r.state==='pass') return { txt:t('scn.r.vYes'),  cls:'vrd pos' };
+  if(r.state==='fail') return { txt:t('scn.r.vNo'), cls:'vrd dim' };
+  return { txt:t('scn.r.vNa'), cls:'vrd neu' };
 }
 function scnThresholdText(r){
   if(r.state==='off') return '—';
@@ -6732,36 +6674,36 @@ function scnThresholdText(r){
   switch(r.key){
     case 'rv7d_gt_iv': return 'RV > IV';
     case 'rv3d_gt_iv': return 'RV3d > IV';
-    case 'iv_discount': return r.unit==='ratio' ? '≤ '+n(r.threshold)+'×' : '≥ '+n(r.threshold)+' п.п.';
+    case 'iv_discount': return r.unit==='ratio' ? '≤ '+n(r.threshold)+'×' : '≥ '+n(r.threshold)+' '+t('scn.th.pp');
     case 'sigma_impulse': return '≥ '+n(r.threshold)+'σ';
-    case 'ema_trend': return 'совпадение со стороной';
-    case 'forward_iv': return '≥ '+n(r.threshold)+' п.п.';
-    case 'skew': return r.threshold==null ? '—' : (r.op==='<='?'≤ ':'≥ ')+n(r.threshold)+' п.п.';
+    case 'ema_trend': return t('scn.r.thEma');
+    case 'forward_iv': return '≥ '+n(r.threshold)+' '+t('scn.th.pp');
+    case 'skew': return r.threshold==null ? '—' : (r.op==='<='?'≤ ':'≥ ')+n(r.threshold)+' '+t('scn.th.pp');
     case 'book_imbalance': return r.threshold==null ? '—' : '≥ '+n(r.threshold)+'×';
     case 'strike_sigma': return r.threshold==null ? '—' : n(r.threshold)+'–'+n(r.thresholdHi)+'σ';
-    case 'premium_cap': return r.threshold==null ? '—' : '≤ '+n(r.threshold)+'% спота';
-    case 'spread_cap': return r.threshold==null ? '—' : '≤ '+n(r.threshold)+'% премии';
+    case 'premium_cap': return r.threshold==null ? '—' : '≤ '+n(r.threshold)+t('scn.r.pctSpotSfx');
+    case 'spread_cap': return r.threshold==null ? '—' : '≤ '+n(r.threshold)+t('scn.r.pctPremSfx');
     case 'depth_min': return r.threshold==null ? '—' : '≥ $'+Math.round(r.threshold).toLocaleString('en-US');
-    case 'theta_cap': return r.threshold==null ? '—' : '≤ '+n(r.threshold)+'%/сут';
-    case 'cost_gate': return r.threshold==null ? '—' : '≤ '+n(r.threshold)+'% премии';
+    case 'theta_cap': return r.threshold==null ? '—' : '≤ '+n(r.threshold)+t('scn.th.pctDay');
+    case 'cost_gate': return r.threshold==null ? '—' : '≤ '+n(r.threshold)+t('scn.r.pctPremSfx');
     default: return r.threshold==null ? '—' : n(r.threshold);
   }
 }
 function renderScnChecklist(ds, cyc){
   const rows=cyc.conditions||[], sc=cyc.score||{}, preset=ds.preset||{};
   const mt=$('scnModeTag');
-  if(mt) mt.textContent = preset.mode==='score' ? 'скоринг ≥'+(sc.need!=null?sc.need:preset.scoreMin)+' · ядро У1+У10+У14' : 'строгий И';
+  if(mt) mt.textContent = preset.mode==='score' ? t('scn.r.modeScore',{n:(sc.need!=null?sc.need:preset.scoreMin)}) : t('scn.cl.mode0');
   const pill=$('scnScorePill');
-  if(pill) pill.innerHTML='счёт <b>'+(Number.isFinite(sc.passed)?sc.passed+'/'+sc.applicable:'—')+'</b>'+(sc.unknown?' · н/д '+sc.unknown:'');
+  if(pill) pill.innerHTML=t('scn.cl.scoreWord')+' <b>'+(Number.isFinite(sc.passed)?sc.passed+'/'+sc.applicable:'—')+'</b>'+(sc.unknown?t('scn.r.naN',{n:sc.unknown}):'');
   const body=$('scnChecklistBody'); if(!body) return;
-  const bestNote = cyc.best ? 'лучший: '+cyc.best.instrument : 'нет кандидатов';
+  const bestNote = cyc.best ? t('scn.r.bestNote',{i:cyc.best.instrument}) : t('scn.r.noCand');
   const tr = r => {
     const v=scnVerdictCell(r);
     const valTxt = (r.mode==='info' && r.state==='unknown') ? '—' : (r.note || scnNum(r.value));
     const ageCls = r.state==='unknown' ? 'n neu' : 'n';
     const ageTxt = scnAge(r.staleSec) + (r.state==='unknown' && r.staleSec!=null ? ' ⚠' : '');
     return '<tr id="scnCond-'+r.key+'"><td class="n">'+r.idx+'</td>'+
-      '<td class="lft">'+(SCN_COND_LABELS[r.key]||r.key)+(r.core?' <span class="chip side">ядро</span>':'')+'</td>'+
+      '<td class="lft">'+(SCN_COND_LABELS[r.key]||r.key)+(r.core?' <span class="chip side">'+t('scn.r.coreChip')+'</span>':'')+'</td>'+
       '<td class="lft n">'+valTxt+'</td>'+
       '<td class="n">'+scnThresholdText(r)+'</td>'+
       '<td class="'+v.cls+'">'+v.txt+'</td>'+
@@ -6769,8 +6711,8 @@ function renderScnChecklist(ds, cyc){
   };
   const asset=rows.filter(r=>r.group==='asset'), instr=rows.filter(r=>r.group==='instrument');
   body.innerHTML =
-    '<tr class="grp"><td colspan="6" class="lft">По активу · BTC</td></tr>'+asset.map(tr).join('')+
-    '<tr class="grp"><td colspan="6" class="lft">По инструменту · <span id="scnBestNote" class="num">'+bestNote+'</span></td></tr>'+instr.map(tr).join('');
+    '<tr class="grp"><td colspan="6" class="lft">'+t('scn.r.grpAsset')+'</td></tr>'+asset.map(tr).join('')+
+    '<tr class="grp"><td colspan="6" class="lft">'+t('scn.r.grpInstr')+' <span id="scnBestNote" class="num">'+bestNote+'</span></td></tr>'+instr.map(tr).join('');
 }
 
 /* ── кандидаты в σ-окне ── */
@@ -6779,26 +6721,26 @@ function renderScnCandidates(ds, cyc){
   const preset=ds.preset||{};
   const tag=$('scnCandWindowTag');
   if(tag){
-    let t = scnNum(preset.sigmaMin)+'–'+scnNum(preset.sigmaMax)+'σ · эксп. '+scnNum(preset.expiryMinH,0)+'–'+scnNum(preset.expiryMaxH,0)+'ч';
+    let wt = t('scn.r.winTag',{a:scnNum(preset.sigmaMin),b:scnNum(preset.sigmaMax),c:scnNum(preset.expiryMinH,0),d:scnNum(preset.expiryMaxH,0)});
     const skipped=(cyc.skippedExpiries||[]).length;
-    if(skipped){ t+=' · пропущено эксп.: '+skipped; tag.title='σ-IV снабжается только near/far экспирациям (§4.1); пропущенные: '+(cyc.skippedExpiries||[]).map(e=>scnExpLbl(e)).join(', '); }
+    if(skipped){ wt+=t('scn.r.skippedExp',{n:skipped}); tag.title=t('scn.r.skippedTitle',{list:(cyc.skippedExpiries||[]).map(e=>scnExpLbl(e)).join(', ')}); }
     else tag.title='';
-    tag.textContent=t;
+    tag.textContent=wt;
   }
   const cands=cyc.candidates||[];
   if(!cands.length){
-    body.innerHTML='<tr><td class="lft faint" colspan="11" id="scnCandEmpty">в σ-окне нет инструментов — рынок далеко от условий пресета</td></tr>';
+    body.innerHTML='<tr><td class="lft faint" colspan="11" id="scnCandEmpty">'+t('scn.r.candEmpty')+'</td></tr>';
     return;
   }
   body.innerHTML = cands.map(c=>{
     const p=c.passes||{};
     let pTxt=(p.passed!=null?p.passed:'—')+'/'+(p.of!=null?p.of:'—'), pCls='n pos', pTitle='';
-    if(p.unknownIdx && p.unknownIdx.length){ pCls='n neu'; pTxt+=' ◌'; pTitle='н/д: '+p.unknownIdx.join(', '); }
+    if(p.unknownIdx && p.unknownIdx.length){ pCls='n neu'; pTxt+=' ◌'; pTitle=t('scn.r.naList',{list:p.unknownIdx.map(scnIdx).join(', ')}); }
     else if(p.failedIdx && p.failedIdx.length){ pCls='n dim';
       if(p.failedIdx.length<=2) pTxt+=' ('+p.failedIdx.join(', ')+')';
-      pTitle='не проходят: '+p.failedIdx.join(', '); }
+      pTitle=t('scn.r.failList',{list:p.failedIdx.map(scnIdx).join(', ')}); }
     return '<tr'+(c.best?' class="me"':'')+'>'+
-      '<td class="lft sym">'+c.instrument+(c.best?' <span class="chip side">лучший</span>':'')+'</td>'+
+      '<td class="lft sym">'+c.instrument+(c.best?' <span class="chip side">'+t('scn.r.bestChip')+'</span>':'')+'</td>'+
       '<td class="lft">'+scnSideWord(c.optionType)+'</td>'+
       '<td class="n">'+(Number.isFinite(c.strike)?c.strike.toLocaleString('en-US'):'—')+'</td>'+
       '<td class="n">'+scnNum(c.sigmaDist)+'σ</td>'+
@@ -6821,19 +6763,19 @@ function renderScnEconomics(ds, cyc){
       .forEach(id=>set(id,'—'));
     return;
   }
-  set('scnEcRt', Number.isFinite(e.roundTripCostPct) ? scnNum(e.roundTripCostPct,1)+'% премии'+(e.feeCapped?' · кэп 12.5%':'') : '—',
-    Number.isFinite(e.feeEntryPct) ? 'комиссии '+scnNum(e.feeEntryPct+e.feeExitPct,1)+'% + спред '+scnNum((e.spreadEntryPct||0)+(e.spreadExitPct||0),1)+'% · '+(e.execModel==='taker-cross'?'тейкер-кросс':'мейкер-mid') : '');
-  set('scnEcBe', Number.isFinite(e.breakEvenMarkPct) ? '+'+scnNum(e.breakEvenMarkPct,1)+'% к марку' : '—');
-  set('scnEcMinCap', Number.isFinite(e.minCapitalUsd) ? scnUsd(e.minCapitalUsd)+(Number.isFinite(e.comfortCapitalUsd)?' · комфорт '+scnUsd(e.comfortCapitalUsd):'') : '—',
-    'минимальный депозит, при котором мин. лот не ломает риск-дисциплину; комфорт = × максимум одновременных позиций');
-  set('scnEcRisk', Number.isFinite(e.riskActualPct) ? scnNum(e.riskActualPct,1)+'% суб-счёта' : '—');
+  set('scnEcRt', Number.isFinite(e.roundTripCostPct) ? scnNum(e.roundTripCostPct,1)+t('scn.r.pctPremSfx')+(e.feeCapped?t('scn.r.feeCap'):'') : '—',
+    Number.isFinite(e.feeEntryPct) ? t('scn.r.rtTitle',{a:scnNum(e.feeEntryPct+e.feeExitPct,1),b:scnNum((e.spreadEntryPct||0)+(e.spreadExitPct||0),1),exec:(e.execModel==='taker-cross'?t('scn.th.takerCross'):t('scn.th.makerMid'))}) : '');
+  set('scnEcBe', Number.isFinite(e.breakEvenMarkPct) ? t('scn.r.beMark',{n:scnNum(e.breakEvenMarkPct,1)}) : '—');
+  set('scnEcMinCap', Number.isFinite(e.minCapitalUsd) ? scnUsd(e.minCapitalUsd)+(Number.isFinite(e.comfortCapitalUsd)?t('scn.r.comfort',{v:scnUsd(e.comfortCapitalUsd)}):'') : '—',
+    t('scn.r.minCapTitle'));
+  set('scnEcRisk', Number.isFinite(e.riskActualPct) ? scnNum(e.riskActualPct,1)+t('scn.r.pctSubAcc') : '—');
   set('scnEcDepth', s && Number.isFinite(s.qtyMaxDepth)
-    ? '≤ '+scnNum(s.qtyMaxDepth,2)+' контр.'+(s.depthCapped?' · размер урезан':'')
-    : '—', 'кэп размера долей видимой глубины стороны входа (А5)');
+    ? '≤ '+scnNum(s.qtyMaxDepth,2)+t('scn.r.contrShort')+(s.depthCapped?t('scn.r.sizeCut'):'')
+    : '—', t('scn.r.depthTitle'));
   // — модель (подписана в подсказках; вход не решает) —
   const pitm=scnPItm(cyc.spotUsd, b.strike, b.ivPct, b.tYears, b.optionType);
   set('scnEcPitm', pitm!=null ? scnNum(pitm*100,1)+'%' : '—');
-  set('scnEcBeSigma', Number.isFinite(e.breakEvenMoveSigma) ? '≈ '+scnNum(e.breakEvenMoveSigma,2)+'σ дневных' : '—');
+  set('scnEcBeSigma', Number.isFinite(e.breakEvenMoveSigma) ? t('scn.r.beSigma',{n:scnNum(e.breakEvenMoveSigma,2)}) : '—');
   const qty = s && s.ok ? s.qtySuggested : null;
   const scn = k => {
     if(qty==null || !Number.isFinite(v.sigma1dPct) || !Number.isFinite(b.markUsd)) return '—';
@@ -6847,8 +6789,8 @@ function renderScnEconomics(ds, cyc){
     const f=x=>(x>=0?'+$':'−$')+Math.abs(x).toLocaleString('en-US',{maximumFractionDigits:2});
     return f(fav)+' · '+f(adv);
   };
-  set('scnEcScn05', scn(0.5), 'движение ±0.5σ за 24ч · дельта-приближение минус тета и издержки · на рекомендованный размер');
-  set('scnEcScn10', scn(1.0), 'движение ±1σ за 24ч · дельта-приближение минус тета и издержки · на рекомендованный размер');
+  set('scnEcScn05', scn(0.5), t('scn.r.scnTitle',{s:'0.5'}));
+  set('scnEcScn10', scn(1.0), t('scn.r.scnTitle',{s:'1'}));
 }
 
 /* ── журнал сигналов: одна строка на сигнал (последнее событие побеждает; рождение — из id) ── */
@@ -6859,16 +6801,16 @@ function renderScnJournal(ds, cyc){
   const rows=[...byId.values()].sort((a,b)=>b.ts-a.ts);
   const n=(cyc.journal||[]).length;
   if(n!==scnLastJournalN){ if(scnLastJournalN>=0) scnBlip('scnJournalUpdated'); scnLastJournalN=n;
-    const jt=$('scnJournalUpdatedTxt'); if(jt) jt.textContent='записей: '+rows.length; }
+    const jt=$('scnJournalUpdatedTxt'); if(jt) jt.textContent=t('scn.r.recsN',{n:rows.length}); }
   if(empty) empty.hidden=rows.length>0;
-  const cnt=$('scnJournalCount'); if(cnt) cnt.textContent='сигналов: '+rows.length+' · кольцо 200 переходов · CSV всегда полный';
+  const cnt=$('scnJournalCount'); if(cnt) cnt.textContent=t('scn.r.jCount',{n:rows.length});
   body.innerHTML=rows.map(e=>{
     const bornTs=Number(String(e.id||'').split('-')[1])||e.ts;
     const active = cyc.signal && cyc.signal.id===e.id;
-    const out = active ? {w:'АКТИВЕН',c:'pos',t:''}
-      : e.event==='expired' ? {w:'ИСТЁК',c:'dim',t:e.reason||''}
-      : e.event==='invalidated' ? {w:'ОТМЕНЁН',c:'dim',t:e.reason||''}
-      : {w:'СИГНАЛ',c:'dim',t:'рождение (исход в строке того же id)'};
+    const out = active ? {w:t('scn.r.oActive'),c:'pos',t:''}
+      : e.event==='expired' ? {w:t('scn.r.oExpired'),c:'dim',t:e.reason||''}
+      : e.event==='invalidated' ? {w:t('scn.r.oInvalid'),c:'dim',t:e.reason||''}
+      : {w:t('scn.r.oSignal'),c:'dim',t:t('scn.r.oBirth')};
     const preset=scnPresetLabel(e.presetId);
     return '<tr><td class="lft ts">'+scnUtcTs(bornTs)+'</td>'+
       '<td class="lft '+out.c+'" '+(out.t?'title="'+out.t.replace(/"/g,'&quot;')+'"':'')+'>'+out.w+'</td>'+
@@ -6877,7 +6819,7 @@ function renderScnJournal(ds, cyc){
       '<td>'+(e.score||'—')+'</td>'+
       '<td class="lft">'+preset+'</td>'+
       '<td>'+(e.eventNote||'—')+'</td>'+
-      '<td>'+(Number.isFinite(e.ttlSec)?Math.round(e.ttlSec/60)+'м':'—')+'</td></tr>';
+      '<td>'+(Number.isFinite(e.ttlSec)?Math.round(e.ttlSec/60)+t('opt.r.minShort'):'—')+'</td></tr>';
   }).join('');
 }
 
@@ -6889,22 +6831,22 @@ function renderScnTelemetry(cyc){
   let maxEvals=0;
   const rows=conds.map(r=>{
     const c=t[r.key];
-    const label='<span class="k">'+r.idx+' · '+(SCN_COND_LABELS[r.key]||r.key)+'</span>';
+    const label='<span class="k">'+scnIdx(r.idx)+' · '+(SCN_COND_LABELS[r.key]||r.key)+'</span>';
     if(!c || !c.evals){
-      const word = r.state==='off' ? '· выкл' : 'нет оценок';
+      const word = r.state==='off' ? t('scn.r.vOff') : t('scn.r.noEvals');
       return '<div class="row">'+label+'<span class="v num faint">'+word+'</span></div>';
     }
     maxEvals=Math.max(maxEvals,c.evals);
     const rate=c.pass/c.evals*100;
     let extra='', vCls='num';
-    if(rate===0){ extra=' <span class="neu">◌ никогда не проходит</span>'; }
-    else if(rate===100){ extra=' <span class="faint">всегда</span>'; }
+    if(rate===0){ extra=' <span class="neu">'+t('scn.r.neverPass')+'</span>'; }
+    else if(rate===100){ extra=' <span class="faint">'+t('scn.r.always')+'</span>'; }
     return '<div class="row">'+label+'<span class="v '+vCls+'">'+
       '<span class="ratebar" aria-hidden="true"><i style="transform:scaleX('+(rate/100)+')"></i></span>'+
       scnNum(rate,1)+'%'+extra+'</span></div>';
   });
   box.innerHTML=rows.join('');
-  const ev=$('scnTelemetryEvals'); if(ev) ev.textContent='оценок '+maxEvals.toLocaleString('en-US');
+  const ev=$('scnTelemetryEvals'); if(ev) ev.textContent=t('scn.r.evalsN',{n:maxEvals.toLocaleString('en-US')});
 }
 
 /* ── качество данных: LED, источники, блэкаут, RTT, стамп с бюджетом ── */
@@ -6912,19 +6854,19 @@ function updateScnFreshness(ds, cyc){
   const btn=$('scnLiveBtn'), led=btn&&btn.querySelector('.led'), txt=$('scnLiveTxt'), stamp=$('scnConnStamp');
   const fresh=ds.fresh||{}, h=cyc&&cyc.health;
   let word, col;
-  if(!ds.running){ word='НЕТ ДАННЫХ'; col='var(--led-idle)'; }
-  else if(!cyc){ word='ЗАГРУЗКА…'; col='var(--neu)'; }
-  else if(fresh.stale){ word='УСТАРЕЛО'; col='var(--neg)'; }
-  else if(ds.degraded || (h && (h.anomaly || h.spotUntrusted || h.usDiffWarn || Object.values(h.stale||{}).some(Boolean)))){ word='ПРЕДУПР.'; col='var(--neu)'; }
+  if(!ds.running){ word=t('chrome.live.nodata'); col='var(--led-idle)'; }
+  else if(!cyc){ word=t('chrome.live.loading'); col='var(--neu)'; }
+  else if(fresh.stale){ word=t('chrome.live.stale'); col='var(--neg)'; }
+  else if(ds.degraded || (h && (h.anomaly || h.spotUntrusted || h.usDiffWarn || Object.values(h.stale||{}).some(Boolean)))){ word=t('chrome.live.warn'); col='var(--neu)'; }
   else if(fresh.ok){ word='LIVE'; col='var(--pos)'; }
-  else { word='ПРЕДУПР.'; col='var(--neu)'; }
+  else { word=t('chrome.live.warn'); col='var(--neu)'; }
   if(txt) txt.textContent=word;
   if(led) led.style.background=col;
   if(btn) btn.classList.toggle('fresh', word==='LIVE');
   const tn=$('scnTestnetTag'); if(tn) tn.hidden=!(ds.settings&&ds.settings.testnet);
   const srcRow=(id, ageSec, stale, extra)=>{ const el=$(id); if(!el) return;
     el.innerHTML = ageSec==null && !extra ? '—'
-      : (extra||scnAge(ageSec)+' · '+(stale?'<span class="neg">УСТАРЕЛО</span>':'LIVE'));
+      : (extra||scnAge(ageSec)+' · '+(stale?'<span class="neg">'+t('chrome.live.stale')+'</span>':'LIVE'));
   };
   if(h){
     const ages=h.ages||{}, st=h.stale||{};
@@ -6933,24 +6875,24 @@ function updateScnFreshness(ds, cyc){
     srcRow('scnHtDvol', ages.dvolSec, st.dvol);
     const bookRow=(cyc.conditions||[]).find(r=>r.key==='depth_min');
     srcRow('scnHtBook', bookRow?bookRow.staleSec:null, bookRow&&bookRow.state==='unknown'&&bookRow.staleSec!=null,
-      (!cyc.best)?'<span class="faint">нет финалиста</span>':null);
+      (!cyc.best)?'<span class="faint">'+t('scn.r.noBest')+'</span>':null);
     srcRow('scnHtChain', ages.chainSec, st.chain);
     const bo=h.blackout||{};
     const boEl=$('scnHtBlackout');
     if(boEl) boEl.innerHTML = bo.active
-      ? '<span class="neu">'+(bo.reason==='pre-expiry'?'преэкспирация':'расчёт 08:00 UTC')+(bo.untilTs?' · ещё '+scnMMSS(Math.max(0,(bo.untilTs-Date.now())/1000)):'')+'</span>'
-      : '<span class="faint">нет</span>';
+      ? '<span class="neu">'+(bo.reason==='pre-expiry'?t('scn.r.preExp'):t('scn.r.settle0800'))+(bo.untilTs?t('scn.r.stillLeft',{v:scnMMSS(Math.max(0,(bo.untilTs-Date.now())/1000))}):'')+'</span>'
+      : '<span class="faint">'+t('scn.r.no')+'</span>';
   }
-  const rtt=$('scnHtRtt'); if(rtt) rtt.textContent=Number.isFinite(fresh.rttMs)?Math.round(fresh.rttMs)+' мс':'—';
+  const rtt=$('scnHtRtt'); if(rtt) rtt.textContent=Number.isFinite(fresh.rttMs)?Math.round(fresh.rttMs)+t('scn.r.ms'):'—';
   if(stamp){
-    if(!ds.running){ stamp.textContent = cyc ? 'источник остановлен — данные заморожены' : 'источник не запущен — сканирование начнётся при первом показе вкладки'; stamp.title=''; }
+    if(!ds.running){ stamp.textContent = cyc ? t('scn.r.srcStopped') : t('scn.ht.connStamp0'); stamp.title=''; }
     else if(fresh.atIso){
       const iso=fresh.atIso.replace('T',' ').slice(0,19)+' UTC';
-      const age=(fresh.ageSec==null)?'—':scnAge(fresh.ageSec)+' назад';
-      const get=(ds.budget&&Number.isFinite(ds.budget.lastTickGets))?' · GET '+ds.budget.lastTickGets+'/тик':'';
-      stamp.innerHTML='данные Deribit по состоянию на '+iso+' · '+age+get+(ds.degraded?' · <b class="neu">каданс x2</b>':'');
-      stamp.title='ошибок подряд: '+(fresh.errorStreak||0)+(Number.isFinite(fresh.usDiffMs)?' · часы биржи '+fresh.usDiffMs.toFixed(0)+'мс':'');
-    } else stamp.textContent='ожидание первого тика…';
+      const age=(fresh.ageSec==null)?'—':scnAge(fresh.ageSec)+t('scn.r.agoSfx');
+      const get=(ds.budget&&Number.isFinite(ds.budget.lastTickGets))?t('scn.r.getPerTick',{n:ds.budget.lastTickGets}):'';
+      stamp.innerHTML=t('opt.r.dataAsOf')+' '+iso+' · '+age+get+(ds.degraded?' · <b class="neu">'+t('scn.r.cadX2')+'</b>':'');
+      stamp.title=t('scn.r.errStreak',{n:(fresh.errorStreak||0)})+(Number.isFinite(fresh.usDiffMs)?t('scn.r.exchClock',{n:fresh.usDiffMs.toFixed(0)}):'');
+    } else stamp.textContent=t('scn.r.firstTick');
   }
 }
 
@@ -6968,7 +6910,7 @@ function hydrateScnToolbar(ds){
   scnSegPress('scnStratSel', ds.scanMode==='sell'?'sell':'buy');
   scnSegPress('scnModeSel', preset.mode==='score'?'score':'AND');
   const mb=$('scnModeSel') && $('scnModeSel').querySelector('button[data-v="score"]');
-  if(mb) mb.textContent='скоринг ≥'+(preset.scoreMin!=null?preset.scoreMin:10);
+  if(mb) mb.textContent=t('scn.r.scoringGe',{n:(preset.scoreMin!=null?preset.scoreMin:10)});
   const ev=ds.event||{};
   scnSegPress('scnEventSel', ev.flagged?'on':'off');
   const note=$('scnEventNote');
@@ -6981,27 +6923,27 @@ function hydrateScnToolbar(ds){
 // guardrail-диапазоны редактора (структурные правила слоя S3, прецедент λ-инпута) — это НЕ пороги
 // стратегии: пороги живут в SCAN_PRESETS/настройках и приходят из dataset
 const SCN_TH_FIELDS = {
-  scnThUvVal:{k:'dIvPts',min:0,max:50,name:'У2 спред RV−IV'},
-  scnThUvK:{k:'kBaseline',min:0.1,max:2,name:'У2 кэп к базе'},
-  scnThImpulse:{k:'impulseMin',min:0,max:10,name:'У4 импульс'},
-  scnThFwd:{k:'fivMinPts',min:0,max:20,name:'У6 дисконт fwd-IV'},
-  scnThFwdFar:{k:'fivFarMinDays',min:1,max:90,int:true,name:'У6 far-экспирация'},
-  scnThSkewVal:{k:'skewMinPts',min:0,max:30,name:'У7 порог skew'},
-  scnThBookVal:{k:'imbalanceMin',min:0.1,max:20,name:'У8 порог дисбаланса'},
-  scnThSigMin:{k:'sigmaMin',min:0.01,max:6,name:'σ-окно мин'},
-  scnThSigMax:{k:'sigmaMax',min:0.01,max:6,name:'σ-окно макс'},
-  scnThDeltaMin:{k:'deltaMin',min:0.01,max:0.99,name:'окно дельты мин'},
-  scnThDeltaMax:{k:'deltaMax',min:0.01,max:0.99,name:'окно дельты макс'},
-  scnThExpMinH:{k:'expiryMinH',min:1,max:2000,int:true,name:'окно экспираций мин'},
-  scnThExpMaxH:{k:'expiryMaxH',min:1,max:2000,int:true,name:'окно экспираций макс'},
-  scnThPremCap:{k:'premMaxPct',min:0.01,max:10,name:'У10 премия'},
-  scnThSpreadCap:{k:'spreadMaxPctPrem',min:0.1,max:100,name:'У11 спред'},
-  scnThDepthMin:{k:'depthMinUsd',min:0,max:10000000,int:true,name:'У12 глубина'},
-  scnThDepthX:{k:'depthXPrem',min:0.1,max:100,name:'У12 кратность премии'},
-  scnThThetaCap:{k:'thetaMaxPctDay',min:0.1,max:100,name:'У13 тета'},
-  scnThCostCap:{k:'costMaxPctPrem',min:1,max:100,name:'У14 издержки'},
-  scnThQtyDepth:{k:'maxQtyDepthPct',min:1,max:100,name:'кэп глубины'},
-  scnThScoreN:{k:'scoreMin',min:1,max:14,int:true,name:'скоринг N'},
+  scnThUvVal:{k:'dIvPts',min:0,max:50,nameK:'scn.fld.u2val'},
+  scnThUvK:{k:'kBaseline',min:0.1,max:2,nameK:'scn.fld.u2k'},
+  scnThImpulse:{k:'impulseMin',min:0,max:10,nameK:'scn.fld.u4'},
+  scnThFwd:{k:'fivMinPts',min:0,max:20,nameK:'scn.fld.u6'},
+  scnThFwdFar:{k:'fivFarMinDays',min:1,max:90,int:true,nameK:'scn.fld.u6far'},
+  scnThSkewVal:{k:'skewMinPts',min:0,max:30,nameK:'scn.fld.u7'},
+  scnThBookVal:{k:'imbalanceMin',min:0.1,max:20,nameK:'scn.fld.u8'},
+  scnThSigMin:{k:'sigmaMin',min:0.01,max:6,nameK:'scn.fld.sigMin'},
+  scnThSigMax:{k:'sigmaMax',min:0.01,max:6,nameK:'scn.fld.sigMax'},
+  scnThDeltaMin:{k:'deltaMin',min:0.01,max:0.99,nameK:'scn.fld.dMin'},
+  scnThDeltaMax:{k:'deltaMax',min:0.01,max:0.99,nameK:'scn.fld.dMax'},
+  scnThExpMinH:{k:'expiryMinH',min:1,max:2000,int:true,nameK:'scn.fld.expMin'},
+  scnThExpMaxH:{k:'expiryMaxH',min:1,max:2000,int:true,nameK:'scn.fld.expMax'},
+  scnThPremCap:{k:'premMaxPct',min:0.01,max:10,nameK:'scn.fld.u10'},
+  scnThSpreadCap:{k:'spreadMaxPctPrem',min:0.1,max:100,nameK:'scn.fld.u11'},
+  scnThDepthMin:{k:'depthMinUsd',min:0,max:10000000,int:true,nameK:'scn.fld.u12'},
+  scnThDepthX:{k:'depthXPrem',min:0.1,max:100,nameK:'scn.fld.u12x'},
+  scnThThetaCap:{k:'thetaMaxPctDay',min:0.1,max:100,nameK:'scn.fld.u13'},
+  scnThCostCap:{k:'costMaxPctPrem',min:1,max:100,nameK:'scn.fld.u14'},
+  scnThQtyDepth:{k:'maxQtyDepthPct',min:1,max:100,nameK:'scn.fld.qtyDepth'},
+  scnThScoreN:{k:'scoreMin',min:1,max:14,int:true,nameK:'scn.fld.scoreN'},
 };
 const SCN_TH_SEGS = {
   scnThUvModeSel:{k:'ivFilterMode'}, scnThRv3dSel:{k:'rv3dConfirm',boolMap:true}, scnThEmaSel:{k:'trendOn',boolMap:true},
@@ -7009,9 +6951,9 @@ const SCN_TH_SEGS = {
 };
 // механика — настройки вне пресета (валидация зеркалит RANGES presets.js; сервер проверяет ещё раз)
 const SCN_SET_FIELDS = {
-  scnThDwell:{k:'dwellTicks',min:1,max:20,int:true,name:'dwell'},
-  scnThTtl:{k:'ttlSec',min:1,max:120,int:true,mul:60,name:'TTL (мин)'},
-  scnThCooldown:{k:'cooldownSec',min:0,max:1440,int:true,mul:60,name:'кулдаун (мин)'},
+  scnThDwell:{k:'dwellTicks',min:1,max:20,int:true,nameK:'scn.fld.dwell'},
+  scnThTtl:{k:'ttlSec',min:1,max:120,int:true,mul:60,nameK:'scn.fld.ttl'},
+  scnThCooldown:{k:'cooldownSec',min:0,max:1440,int:true,mul:60,nameK:'scn.fld.cooldown'},
 };
 function scnEditorErr(msg){ const el=$('scnPresetErr'); if(!el) return;
   if(!msg){ el.hidden=true; el.textContent=''; return; }
@@ -7034,7 +6976,7 @@ function hydrateScnEditor(ds){
   scnSegPress('scnThStrikeModeSel', p.strikeMode || 'sigma');
   scnSegPress('scnThExecSel', p.execModel);
   const tag=$('scnPresetTag');
-  if(tag){ tag.hidden=!dirty; if(dirty) tag.textContent='не сохранён · база: '+scnPresetLabel(p.baseId||'dmitri-v1'); }
+  if(tag){ tag.hidden=!dirty; if(dirty) tag.textContent=t('scn.r.unsavedBase',{v:scnPresetLabel(p.baseId||'dmitri-v1')}); }
   const rst=$('scnPresetReset'); if(rst) rst.disabled=!dirty;
 }
 async function scnPushPresetPatch(patch){
@@ -7081,13 +7023,13 @@ function scnWireEditorInput(id, f, isSetting){
     const raw=el.value.trim();
     const v=Number(raw);
     let bad=null;
-    if(raw==='' || !Number.isFinite(v)) bad=f.name+': нужно число';
-    else if(v<f.min || v>f.max) bad=f.name+': значение вне диапазона '+f.min+'…'+f.max;
-    else if(f.int && !Number.isInteger(v)) bad=f.name+': нужно целое число';
+    if(raw==='' || !Number.isFinite(v)) bad=t(f.nameK)+t('scn.r.vNum');
+    else if(v<f.min || v>f.max) bad=t(f.nameK)+t('scn.r.vRange',{a:f.min,b:f.max});
+    else if(f.int && !Number.isInteger(v)) bad=t(f.nameK)+t('scn.r.vInt');
     // перекрёстные правила пар (мин не выше макс) — по живому значению соседнего поля
     const pair={ scnThSigMin:['scnThSigMax',1], scnThSigMax:['scnThSigMin',-1], scnThExpMinH:['scnThExpMaxH',1], scnThExpMaxH:['scnThExpMinH',-1], scnThDeltaMin:['scnThDeltaMax',1], scnThDeltaMax:['scnThDeltaMin',-1] }[id];
     if(!bad && pair){ const other=Number(($(pair[0])||{}).value);
-      if(Number.isFinite(other) && (pair[1]>0 ? v>other : v<other)) bad=f.name+': мин не может быть больше макс'; }
+      if(Number.isFinite(other) && (pair[1]>0 ? v>other : v<other)) bad=t(f.nameK)+t('scn.r.vMinMax'); }
     if(bad){ el.setAttribute('aria-invalid','true'); scnEditorErr(bad); return; }
     el.setAttribute('aria-invalid','false'); scnEditorErr(null);
     if(isSetting){
@@ -7113,7 +7055,7 @@ function scnWireEditorSeg(id, cfg){
 /* ── канвас RV против IV (канвас-кит; цвета только через C в момент draw) ── */
 function drawScnVol(cv, ring, tipEl){
   const pts=ring.filter(p=>Number.isFinite(p.rv)&&Number.isFinite(p.iv));
-  if(pts.length<2){ drawEmpty(cv, tipEl, 'история RV и IV копится с запуска сканера — линии появятся после нескольких оценок'); return; }
+  if(pts.length<2){ drawEmpty(cv, tipEl, t('scn.r.volEmpty')); return; }
   const { ctx, w, h } = setupCanvas(cv);
   const padL=46, padR=12, padT=12, padB=20;
   const t0=pts[0].t, t1=pts[pts.length-1].t||t0+1;
@@ -7152,11 +7094,11 @@ function drawScnVol(cv, ring, tipEl){
     pts.forEach((p,i)=>{ const d=Math.abs(X(p.t)-mx); if(d<dBest){ dBest=d; best=i; } });
     const p=pts[best], spread=p.rv-p.iv;
     return { x:X(p.t), y:Y(p.rv), html:
-      '<div class="r"><span class="k">время</span><span>'+scnUtcHM(p.t)+' UTC</span></div>'+
+      '<div class="r"><span class="k">'+t('opt.r.tipTime')+'</span><span>'+scnUtcHM(p.t)+' UTC</span></div>'+
       '<div class="r"><span class="k">RV7d</span><span>'+scnNum(p.rv,1)+'%</span></div>'+
       '<div class="r"><span class="k">IV</span><span>'+scnNum(p.iv,1)+'%</span></div>'+
-      '<div class="r"><span class="k">спред</span><span class="'+clsSign(spread)+'">'+(spread>0?'+':'')+scnNum(spread,1)+' п.п.</span></div>'+
-      '<div class="r"><span class="k">У1</span><span>'+(spread>0?'да':'нет')+(p.sig?' · сигнал':'')+'</span></div>' };
+      '<div class="r"><span class="k">'+t('opt.cost.rowSpread')+'</span><span class="'+clsSign(spread)+'">'+(spread>0?'+':'')+scnNum(spread,1)+' '+t('scn.th.pp')+'</span></div>'+
+      '<div class="r"><span class="k">'+scnIdx('У1')+'</span><span>'+(spread>0?t('opt.r.yes'):t('scn.r.noWord'))+(p.sig?' · '+t('home.scn.sigWord'):'')+'</span></div>' };
   });
 }
 function renderScnCharts(){
@@ -7175,18 +7117,18 @@ async function scnOnShow(){
   catch(e){ console.warn('scn start', e); }
 }
 
-function scnJournalNote(t, cls, ms){ const el=$('scnJournalMsg'); if(!el) return;
-  el.textContent=t; el.className='ledger-msg '+(cls||''); el.hidden=false;
+function scnJournalNote(msg, cls, ms){ const el=$('scnJournalMsg'); if(!el) return;
+  el.textContent=msg; el.className='ledger-msg '+(cls||''); el.hidden=false;
   if(ms) setTimeout(()=>{ el.hidden=true; }, ms); }
 async function scnExport(kind, btn){
-  if(!window.scn){ scnJournalNote('экспорт недоступен: нет моста scn','err'); return; }
+  if(!window.scn){ scnJournalNote(t('scn.r.expNoBridge'),'err'); return; }
   const label=btn.textContent; btn.disabled=true; btn.textContent=label+'…';
   try{
     const r = kind==='telemetry' ? await window.scn.exportTelemetry({format:'csv'}) : await window.scn.exportSignals({format:'csv'});
-    if(r && r.ok) scnJournalNote('✓ сохранено: '+r.filePath+' ('+(r.count||0)+' строк)','ok',6000);
-    else if(r && r.canceled) scnJournalNote('сохранение отменено','dim',3000);
-    else scnJournalNote('не сохранено: '+((r&&r.error)||'неизвестная ошибка'),'err');
-  }catch(e){ scnJournalNote('не сохранено: ошибка IPC '+String(e&&e.message||e).slice(0,60),'err'); }
+    if(r && r.ok) scnJournalNote(t('scn.r.savedRows',{path:r.filePath,n:(r.count||0)}),'ok',6000);
+    else if(r && r.canceled) scnJournalNote(t('ledger.msgCanceled'),'dim',3000);
+    else scnJournalNote(t('ledger.msgNotSaved',{e:((r&&r.error)||t('ledger.errUnknown'))}),'err');
+  }catch(e){ scnJournalNote(t('ledger.msgNotSaved',{e:t('fa.err.ipc')+String(e&&e.message||e).slice(0,60)}),'err'); }
   btn.disabled=false; btn.textContent=label;
 }
 
@@ -7229,10 +7171,10 @@ function initScn(){
   // «⟳ Оценить сейчас» + LED-кнопка
   const recalc=$('scnRecalcBtn');
   if(recalc) recalc.onclick=async ()=>{
-    const t=recalc.textContent; recalc.disabled=true; recalc.textContent='ОЦЕНКА…';
+    const prevTxt=recalc.textContent; recalc.disabled=true; recalc.textContent=t('scn.r.evalBusy');
     try{ if(window.scn){ const r=await window.scn.refreshNow(); if(r && !r.error) applyScnDataset(r); } }
     catch(e){ console.warn('scn refreshNow', e); }
-    recalc.disabled=false; recalc.textContent=t; };
+    recalc.disabled=false; recalc.textContent=prevTxt; };
   const live=$('scnLiveBtn');
   if(live) live.onclick=async ()=>{
     if(!window.scn) return;
@@ -7317,6 +7259,8 @@ function setLocale(l){
   if(typeof renderVerpill==='function') renderVerpill();
   // Ф2: перерисовать вид бота 2 из последнего датасета (все его писатели уже ходят через t())
   if(typeof applyS1Dataset==='function' && typeof LIVE_S1!=='undefined' && LIVE_S1) applyS1Dataset(LIVE_S1);
+  // Ф3: перерисовать вкладку сканера
+  if(typeof applyScnDataset==='function' && typeof LIVE_SCN!=='undefined' && LIVE_SCN) applyScnDataset(LIVE_SCN);
   if(window.ui && window.ui.setLocale) Promise.resolve(window.ui.setLocale(l)).catch(e=>console.warn('ui.setLocale', e));
   repaintCharts();            // подписи канвасов уже из словаря (fa); остальные вкладки — в следующих фазах
 }
