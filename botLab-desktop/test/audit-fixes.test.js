@@ -200,5 +200,8 @@ test("hero is hypothesis-only; realized P&L lives in the trade zone (two-zone re
     "hero never reads positions (chameleon removed)"
   );
   assert.ok(html.includes('id="zoneTrade"') && html.includes('id="zoneAnalysis"'), "two zones exist");
-  assert.ok(html.includes("Оценка P&L за окно · история (гипотеза)"), "hero label is the invariant hypothesis text");
+  // после локализации инвариантный текст героя живёт в словаре: ключ в renderHero + значение в ru.js
+  assert.ok(hero[1].includes("t('fa.hero.lbl')"), "hero label comes from the dictionary key");
+  const ruDict = readFileSync(new URL("../src/renderer/locales/ru.js", import.meta.url), "utf8");
+  assert.ok(ruDict.includes("Оценка P&L за окно · история (гипотеза)"), "hero label is the invariant hypothesis text (ru dictionary)");
 });

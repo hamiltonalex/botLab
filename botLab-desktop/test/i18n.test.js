@@ -47,6 +47,8 @@ function referencedKeys() {
   for (const m of html.matchAll(/\bt\(\s*'([^']+)'/g)) {
     if (/^[a-z]+(\.[A-Za-z0-9]+)+$/.test(m[1])) keys.add(m[1]);
   }
+  // реестры справок ссылаются на словарь строками tk:'help.…' / bk:'help.…'
+  for (const m of html.matchAll(/[tb]k:'(help\.[A-Za-z0-9.]+)'/g)) keys.add(m[1]);
   return keys;
 }
 
