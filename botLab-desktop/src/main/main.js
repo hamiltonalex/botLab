@@ -92,6 +92,7 @@ const MAX_CURVE_POINTS = 1200; // IPC payload cap; full resolution stays on disk
 // Anti-FOUC window background per theme — must equal each theme's --bg in the renderer CSS.
 const THEME_BG = { dark: "#07090d", light: "#eef1f6" };
 const uiTheme = () => (state.settings.ui && state.settings.ui.theme === "light" ? "light" : "dark");
+const uiLocale = () => (state.settings.ui && state.settings.ui.locale === "en" ? "en" : "ru");
 
 process.on("uncaughtException", (e) => console.error("[main] uncaughtException:", e));
 process.on("unhandledRejection", (e) => console.error("[main] unhandledRejection:", e));
@@ -2593,6 +2594,16 @@ function wireIpcUi() {
     saveSettings(baseDir, state.settings);
     if (win && !win.isDestroyed()) win.setBackgroundColor(THEME_BG[theme]); // live: resize/overscroll flashes match
     return { ok: true, theme };
+  });
+  // Локаль UI (ru|en) - зеркально теме: sendSync читается инлайн-скриптом <head> до отрисовки
+  ipcMain.on("ui:getLocale", (e) => {
+    e.returnValue = uiLocale();
+  });
+  ipcMain.handle("ui:setLocale", async (_e, l) => {
+    const locale = l === "en" ? "en" : "ru";
+    state.settings.ui = { ...(state.settings.ui || {}), locale };
+    saveSettings(baseDir, state.settings);
+    return { ok: true, locale };
   });
 }
 

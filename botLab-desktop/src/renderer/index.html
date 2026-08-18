@@ -11,7 +11,12 @@
 /* Тема ДО первой отрисовки (анти-FOUC): preload-мост window.ui читает settings.json синхронно.
    try/catch — файл обязан работать и без моста (file://-режим, selector-oracle). */
 try{ if(window.ui && window.ui.getThemeSync()==='light') document.documentElement.dataset.theme='light'; }catch(e){}
+/* Локаль тем же приёмом: <html lang> до первой отрисовки; словари подключаются скриптами ниже */
+try{ if(window.ui && window.ui.getLocaleSync && window.ui.getLocaleSync()==='en') document.documentElement.lang='en'; }catch(e){}
 </script>
+<script src="./i18n.js"></script>
+<script src="./locales/ru.js"></script>
+<script src="./locales/en.js"></script>
 
 <!--
   ============================================================================
@@ -978,63 +983,70 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
   <!-- ══════════════════ TOP BAR (C: бейдж + Live + штамп) ══════════════════ -->
   <header class="topbar">
     <div class="brand">
-      <button class="mark markbtn" id="homeMark" aria-label="BOT·LAB — к обзору">BOT<span class="dot">·</span>LAB</button>
+      <button class="mark markbtn" id="homeMark" aria-label="BOT·LAB — к обзору" data-i18n-aria="chrome.brand.aria">BOT<span class="dot">·</span>LAB</button>
     </div>
 
     <!-- переключатель модулей-ботов: «Обзор» + активные боты + заглушки (WAI-ARIA tabs) -->
-    <div class="botswitch" id="botSwitch" role="tablist" aria-label="Основная навигация">
-      <button role="tab" id="tab-home" aria-controls="view-home" aria-selected="true" tabindex="0" class="tab">Обзор</button>
-      <button role="tab" id="tab-funding-arb" aria-controls="view-funding-arb" aria-selected="false" tabindex="-1" class="tab"><span class="bot-dot idle" aria-hidden="true"></span>Funding-arb<span class="sr-only" id="tabStatus-funding-arb">, не запущен</span></button>
-      <button role="tab" id="tab-btc-options" aria-controls="view-btc-options" aria-selected="false" tabindex="-1" class="tab"><span class="bot-dot idle" aria-hidden="true"></span>BTC-опционы<span class="sr-only" id="tabStatus-btc-options">, готовится</span></button>
-      <button role="tab" id="tab-otm-scanner" aria-controls="view-otm-scanner" aria-selected="false" tabindex="-1" class="tab"><span class="bot-dot idle" aria-hidden="true"></span>Сканер<span class="sr-only" id="tabStatus-otm-scanner">, не запущен</span></button>
+    <div class="botswitch" id="botSwitch" role="tablist" aria-label="Основная навигация" data-i18n-aria="chrome.nav.aria">
+      <button role="tab" id="tab-home" aria-controls="view-home" aria-selected="true" tabindex="0" class="tab" data-i18n="chrome.tab.home">Обзор</button>
+      <button role="tab" id="tab-funding-arb" aria-controls="view-funding-arb" aria-selected="false" tabindex="-1" class="tab"><span class="bot-dot idle" aria-hidden="true"></span><span data-i18n="chrome.tab.fa">Funding-arb</span><span class="sr-only" id="tabStatus-funding-arb" data-i18n="chrome.tabst.idle">, не запущен</span></button>
+      <button role="tab" id="tab-btc-options" aria-controls="view-btc-options" aria-selected="false" tabindex="-1" class="tab"><span class="bot-dot idle" aria-hidden="true"></span><span data-i18n="chrome.tab.opt">BTC-опционы</span><span class="sr-only" id="tabStatus-btc-options" data-i18n="chrome.tabst.prep">, готовится</span></button>
+      <button role="tab" id="tab-otm-scanner" aria-controls="view-otm-scanner" aria-selected="false" tabindex="-1" class="tab"><span class="bot-dot idle" aria-hidden="true"></span><span data-i18n="chrome.tab.scn">Сканер</span><span class="sr-only" id="tabStatus-otm-scanner" data-i18n="chrome.tabst.idle">, не запущен</span></button>
     </div>
 
     <span class="spacer"></span>
-    <span class="badge-paper"><span class="blip"></span>PAPER · без реального капитала</span>
+    <span class="badge-paper"><span class="blip"></span><span data-i18n="chrome.badge.paper">PAPER · без реального капитала</span></span>
 
-    <button class="verpill" id="verPill" aria-haspopup="dialog" aria-expanded="false" aria-label="Версия и статус обновления">
+    <button class="verpill" id="verPill" aria-haspopup="dialog" aria-expanded="false" aria-label="Версия и статус обновления" data-i18n-aria="chrome.ver.aria">
       <span class="vdot"></span><span id="verPillTxt">—</span>
     </button>
-    <button class="help-btn" data-help="updater" aria-haspopup="dialog" aria-expanded="false" aria-label="Справка: обновления приложения">?</button>
+    <button class="help-btn" data-help="updater" aria-haspopup="dialog" aria-expanded="false" aria-label="Справка: обновления приложения" data-i18n-aria="chrome.help.updater.aria">?</button>
     <!-- переключатель темы: постоянный chrome (НЕ в контекстно-скрываемом #botTools);
          сегмент: активная тема подсвечена, соседняя ячейка = доступное действие -->
-    <div class="pollctl themectl" title="Тема интерфейса">
-      <div class="seg" id="themeSel" role="group" aria-label="Тема интерфейса">
-        <button data-v="dark"  aria-pressed="true"  aria-label="Тёмная тема">☾</button>
-        <button data-v="light" aria-pressed="false" aria-label="Светлая тема">☀</button>
+    <div class="pollctl themectl" title="Тема интерфейса" data-i18n-title="chrome.theme.title">
+      <div class="seg" id="themeSel" role="group" aria-label="Тема интерфейса" data-i18n-aria="chrome.theme.title">
+        <button data-v="dark"  aria-pressed="true"  aria-label="Тёмная тема" data-i18n-aria="chrome.theme.dark">☾</button>
+        <button data-v="light" aria-pressed="false" aria-label="Светлая тема" data-i18n-aria="chrome.theme.light">☀</button>
+      </div>
+    </div>
+    <!-- переключатель языка: тот же постоянный chrome и та же идиома сегмента, что у темы -->
+    <div class="pollctl themectl" title="Язык интерфейса" data-i18n-title="chrome.lang.title">
+      <div class="seg" id="langSel" role="group" aria-label="Язык интерфейса" data-i18n-aria="chrome.lang.title">
+        <button data-v="ru" aria-pressed="true"  aria-label="Русский" data-i18n-aria="chrome.lang.ru">RU</button>
+        <button data-v="en" aria-pressed="false" aria-label="English" data-i18n-aria="chrome.lang.en">EN</button>
       </div>
     </div>
 
     <!-- контролы живых данных Funding-arb: контекстные, скрыты вне его вида; при нехватке ширины
          переносятся на вторую строку единым блоком (персистентная хром-часть остаётся на строке 1) -->
     <div class="bot-tools" id="botTools">
-      <div class="pollctl" title="Интервал опроса живых данных — как часто обновляется бумажный тест">
-        <span class="lbl">опрос</span>
-        <div class="seg" id="pollSel" role="group" aria-label="Интервал опроса живых данных">
-          <button data-v="1"  aria-pressed="false">1м</button>
-          <button data-v="5"  aria-pressed="true">5м</button>
-          <button data-v="15" aria-pressed="false">15м</button>
+      <div class="pollctl" title="Интервал опроса живых данных — как часто обновляется бумажный тест" data-i18n-title="chrome.poll.title">
+        <span class="lbl" data-i18n="chrome.poll.lbl">опрос</span>
+        <div class="seg" id="pollSel" role="group" aria-label="Интервал опроса живых данных" data-i18n-aria="chrome.poll.aria">
+          <button data-v="1"  aria-pressed="false" data-i18n="chrome.poll.m1">1м</button>
+          <button data-v="5"  aria-pressed="true" data-i18n="chrome.poll.m5">5м</button>
+          <button data-v="15" aria-pressed="false" data-i18n="chrome.poll.m15">15м</button>
         </div>
       </div>
-      <button class="live" id="liveBtn" title="Обновить живые данные сейчас (опрос идёт автоматически по выбранному интервалу)">
-        <span class="led"></span><span id="liveTxt">ЗАГРУЗКА…</span><span aria-hidden="true" style="opacity:.55">⟳</span>
+      <button class="live" id="liveBtn" title="Обновить живые данные сейчас (опрос идёт автоматически по выбранному интервалу)" data-i18n-title="chrome.live.title">
+        <span class="led"></span><span id="liveTxt" data-i18n="chrome.live.loading">ЗАГРУЗКА…</span><span aria-hidden="true" style="opacity:.55">⟳</span>
       </button>
-      <button class="help-btn" data-help="topbar" aria-haspopup="dialog" aria-expanded="false" aria-label="Справка: статус данных и опрос">?</button>
-      <span class="stamp">данные по состоянию на <b id="stamp">ожидание живых данных…</b></span>
+      <button class="help-btn" data-help="topbar" aria-haspopup="dialog" aria-expanded="false" aria-label="Справка: статус данных и опрос" data-i18n-aria="chrome.live.helpAria">?</button>
+      <span class="stamp"><span data-i18n="chrome.stamp.prefix">данные по состоянию на</span> <b id="stamp">ожидание живых данных…</b></span>
     </div>
   </header>
 
   <!-- ═══════════════════════ ВИД · ОБЗОР (home) ═══════════════════════ -->
   <section id="view-home" role="tabpanel" aria-labelledby="tab-home" tabindex="-1" class="view reveal">
     <div class="home-head">
-      <h1>Обзор</h1>
-      <span class="sub">Модули стратегий и их состояние · бумажный тест, без реального капитала</span>
+      <h1 data-i18n="home.title">Обзор</h1>
+      <span class="sub" data-i18n="home.sub">Модули стратегий и их состояние · бумажный тест, без реального капитала</span>
     </div>
 
     <div class="card agg" aria-live="polite">
-      <div><div class="k">Готовых модулей</div><div class="v" id="aggReady">— / —</div></div>
-      <div><div class="k">Открытых позиций</div><div class="v" id="aggOpen">—</div></div>
-      <div><div class="k">Суммарный P&amp;L · нетто</div><div class="v" id="aggPnl">—</div></div>
+      <div><div class="k" data-i18n="home.agg.ready">Готовых модулей</div><div class="v" id="aggReady">— / —</div></div>
+      <div><div class="k" data-i18n="home.agg.open">Открытых позиций</div><div class="v" id="aggOpen">—</div></div>
+      <div><div class="k" data-i18n="home.agg.pnl">Суммарный P&amp;L · нетто</div><div class="v" id="aggPnl">—</div></div>
     </div>
 
     <div class="botgrid">
@@ -1042,38 +1054,38 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
         <div class="bc-top">
           <span class="bot-dot idle" id="card-dot-funding-arb" aria-hidden="true"></span>
           <span class="bc-name">Funding-arb</span>
-          <span class="bc-tag idle" id="card-tag-funding-arb">НЕ ЗАПУЩЕН</span>
+          <span class="bc-tag idle" id="card-tag-funding-arb" data-i18n="home.tag.idle">НЕ ЗАПУЩЕН</span>
         </div>
-        <p class="bc-desc">Дельта-нейтральный арбитраж ставок финансирования · GMX&nbsp;V2 (Arbitrum) × Hyperliquid</p>
+        <p class="bc-desc" data-i18n="home.fa.desc">Дельта-нейтральный арбитраж ставок финансирования · GMX&nbsp;V2 (Arbitrum) × Hyperliquid</p>
         <div class="bc-foot">
-          <span id="card-status-funding-arb">○ не запущен — нет открытых позиций</span>
-          <span class="bc-open">Открыть <span class="arw">→</span></span>
+          <span id="card-status-funding-arb" data-i18n="home.fa.idle">○ не запущен — нет открытых позиций</span>
+          <span class="bc-open"><span data-i18n="home.card.open">Открыть</span> <span class="arw">→</span></span>
         </div>
       </button>
 
       <button class="botcard" type="button" data-open="btc-options">
         <div class="bc-top">
           <span class="bot-dot idle" id="card-dot-btc-options" aria-hidden="true"></span>
-          <span class="bc-name">BTC-опционы</span>
-          <span class="bc-tag soon" id="card-tag-btc-options">ГОТОВИТСЯ</span>
+          <span class="bc-name" data-i18n="home.opt.name">BTC-опционы</span>
+          <span class="bc-tag soon" id="card-tag-btc-options" data-i18n="home.tag.prep">ГОТОВИТСЯ</span>
         </div>
-        <p class="bc-desc">Крылатый стрэддл на BTC-опционах + дельта-хедж перпом · живые данные Deribit</p>
+        <p class="bc-desc" data-i18n="home.opt.desc">Крылатый стрэддл на BTC-опционах + дельта-хедж перпом · живые данные Deribit</p>
         <div class="bc-foot">
-          <span id="card-status-btc-options">○ каркас модуля готов — UI по фазам</span>
-          <span class="bc-open">Открыть <span class="arw">→</span></span>
+          <span id="card-status-btc-options" data-i18n="home.opt.card.idle">○ каркас модуля готов — UI по фазам</span>
+          <span class="bc-open"><span data-i18n="home.card.open">Открыть</span> <span class="arw">→</span></span>
         </div>
       </button>
 
       <button class="botcard" type="button" data-open="otm-scanner">
         <div class="bc-top">
           <span class="bot-dot idle" id="card-dot-otm-scanner" aria-hidden="true"></span>
-          <span class="bc-name">OTM-сканер</span>
-          <span class="bc-tag idle" id="card-tag-otm-scanner">НЕ ЗАПУЩЕН</span>
+          <span class="bc-name" data-i18n="home.scn.name">OTM-сканер</span>
+          <span class="bc-tag idle" id="card-tag-otm-scanner" data-i18n="home.tag.idle">НЕ ЗАПУЩЕН</span>
         </div>
-        <p class="bc-desc">Сканер точек входа для покупки OTM-опционов BTC · чеклист условий · живые данные Deribit</p>
+        <p class="bc-desc" data-i18n="home.scn.desc">Сканер точек входа для покупки OTM-опционов BTC · чеклист условий · живые данные Deribit</p>
         <div class="bc-foot">
-          <span id="card-status-otm-scanner">○ не запущен — откройте вкладку, чтобы начать сканирование</span>
-          <span class="bc-open">Открыть <span class="arw">→</span></span>
+          <span id="card-status-otm-scanner" data-i18n="home.scn.idle">○ не запущен — откройте вкладку, чтобы начать сканирование</span>
+          <span class="bc-open"><span data-i18n="home.card.open">Открыть</span> <span class="arw">→</span></span>
         </div>
       </button>
     </div>
@@ -2794,6 +2806,10 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
    ========================================================================== */
 'use strict';
 
+/* ── страховка i18n: файл обязан работать даже если i18n.js/словари не подгрузились
+   (осиротевшая копия index.html без соседних файлов) - тогда t() возвращает ключ ── */
+if (typeof window.t !== 'function') { window.t = function(k){ return k; }; window.applyI18n = function(){}; }
+
 /* ── const формулы (из движка funding_spread_core.py) ── */
 const SEC_PER_HOUR = 3600, HOURS_PER_YEAR = 8760;          // annualize: factor*3600*8760 ; HL: rate*8760
 const fmtUSD = (v, dp=2) => {
@@ -3780,7 +3796,7 @@ if($('recalcBtn')) $('recalcBtn').onclick = async ()=>{
 
 /* live-кнопка = индикатор свежести + принудительное обновление сейчас (не тумблер) */
 $('liveBtn').onclick = async ()=>{
-  $('liveTxt').textContent='ОБНОВЛЕНИЕ…';
+  $('liveTxt').textContent=t('chrome.live.updating');
   try{
     if(window.fa){ const ds=await window.fa.refreshNow(); applyDataset(ds); }
   }catch(e){ console.warn('refreshNow failed', e); }
@@ -3809,23 +3825,23 @@ function updateFreshness(){
   const f=LIVE.fresh; const stamp=$('stamp'); if(!stamp) return;
   if(f) syncPollSel(f.pollMinutes); // отразить фактический интервал опроса на кнопках
   if(!f || !f.gmxAtIso){
-    stamp.textContent='ожидание живых данных…';
+    stamp.textContent=t('chrome.stamp.waiting');
     stamp.title='';
-    $('liveTxt').textContent='НЕТ ДАННЫХ';
+    $('liveTxt').textContent=t('chrome.live.nodata');
     $('liveBtn').classList.remove('fresh');
     return;
   }
   const iso = f.gmxAtIso.replace('T',' ').slice(0,19)+' UTC';
-  const age = (f.ageSec==null)?'—':((f.ageSec<90? f.ageSec+'с' : Math.round(f.ageSec/60)+'м')+' назад');
-  const bf  = (f.backfilling && f.backfilling.length) ? ' · <span class="neu">история: загрузка '+f.backfilling.length+' инстр.</span>' : '';
+  const age = (f.ageSec==null)?'—':(f.ageSec<90? t('chrome.age.sec',{n:f.ageSec}) : t('chrome.age.min',{n:Math.round(f.ageSec/60)}));
+  const bf  = (f.backfilling && f.backfilling.length) ? ' · <span class="neu">'+t('chrome.stamp.backfill',{n:f.backfilling.length})+'</span>' : '';
   const notes=[...(f.notes||[]),...(f.bootNotes||[])];
-  const warnings=notes.length ? ' · <b class="neu">⚠ сообщений: '+notes.length+'</b>' : '';
-  stamp.innerHTML = iso+' · '+age + (f.stale?' · <b class="neg">УСТАРЕЛО</b>':'') + (f.gateOk?'':' · <b class="neg">⚠ гейт знаков — начисление приостановлено</b>') + bf + warnings;
+  const warnings=notes.length ? ' · <b class="neu">'+t('chrome.stamp.notes',{n:notes.length})+'</b>' : '';
+  stamp.innerHTML = iso+' · '+age + (f.stale?' · <b class="neg">'+t('chrome.live.stale')+'</b>':'') + (f.gateOk?'':' · <b class="neg">'+t('chrome.stamp.gate')+'</b>') + bf + warnings;
   stamp.title=notes.join('\n');
   const degraded=(f.notes||[]).length>0 || f.accrualOk===false;
   const led=$('liveBtn').querySelector('.led'); if(led) led.style.background = f.stale? 'var(--neg)' : (degraded?'var(--neu)':'var(--pos)');
   $('liveBtn').classList.toggle('fresh', !f.stale);
-  $('liveTxt').textContent = f.stale ? 'УСТАРЕЛО' : (degraded ? 'ПРЕДУПР.' : 'LIVE');
+  $('liveTxt').textContent = f.stale ? t('chrome.live.stale') : (degraded ? t('chrome.live.warn') : t('chrome.live.live'));
 }
 
 /* форвардный бумажный тест */
@@ -4973,50 +4989,50 @@ function refreshOverview(){
   if(aggOpen)  aggOpen.textContent = String(totalOpen);
   if(aggPnl){
     if(pnls.length){ const s=pnls.reduce((a,b)=>a+b,0); aggPnl.textContent = fmtUSDfull(s); aggPnl.className = 'v '+clsSign(s); }
-    else { aggPnl.textContent = 'нет открытых позиций'; aggPnl.className = 'v faint'; }
+    else { aggPnl.textContent = t('home.agg.noOpen'); aggPnl.className = 'v faint'; }
   }
   // — карточка/точка funding-arb —
   overviewCard('funding-arb', faRun, faPnl,
-    faRun ? faOpen+' откр. из '+acc.count+' · P&L нетто <span class="'+clsSign(faPnl)+'">'+fmtUSDfull(faPnl)+'</span>'
-      : (acc && acc.count>0 ? 'нет открытых позиций · закрытых: '+acc.count : '○ не запущен — нет открытых позиций'));
+    faRun ? t('home.openOf',{open:faOpen,total:acc.count})+' · '+t('home.pnlNet')+' <span class="'+clsSign(faPnl)+'">'+fmtUSDfull(faPnl)+'</span>'
+      : (acc && acc.count>0 ? t('home.fa.closed',{n:acc.count}) : t('home.fa.idle')));
   // — карточка/точка btc-options —
   overviewCard('btc-options', s1Run, s1Pnl,
-    s1Open ? 'структура открыта · '+optDecisionWord(s1cyc&&s1cyc.decision)+' · P&L нетто <span class="'+clsSign(s1Pnl)+'">'+fmtUSDfull(s1Pnl)+'</span>'
-      : (s1ch && s1ch.on) ? 'цепочка продавца · подбор ноги: '
-          +chEsc((s1ch.last && !s1ch.last.ok && s1ch.last.reason) ? s1ch.last.reason : 'правило выбирает контракт')
-      : s1Run ? 'опрос идёт · структура не открыта'
-      : '○ структура не открыта — готов к запуску');
+    s1Open ? t('home.opt.open')+' · '+optDecisionWord(s1cyc&&s1cyc.decision)+' · '+t('home.pnlNet')+' <span class="'+clsSign(s1Pnl)+'">'+fmtUSDfull(s1Pnl)+'</span>'
+      : (s1ch && s1ch.on) ? t('home.opt.chain')
+          +chEsc((s1ch.last && !s1ch.last.ok && s1ch.last.reason) ? s1ch.last.reason : t('home.opt.chainFallback'))
+      : s1Run ? t('home.opt.poll')
+      : t('home.opt.idle'));
   // — карточка/точка otm-scanner: позиций и P&L нет (pnl=null) — в aggOpen/aggPnl не входит никогда,
   //   в aggReady входит как модуль (ui-spec §2.9); статус — состояние сигнала —
   const scn = LIVE_SCN || null, scnCyc = scn && scn.cycle;
   const scnRun = !!(scn && scn.running);
-  let scnStatus = '○ не запущен — откройте вкладку, чтобы начать сканирование';
+  let scnStatus = t('home.scn.idle');
   if(scnRun && scnCyc){
     const sig = scnCyc.signal, sc = scnCyc.score || {};
     if(sig){
       const ttl = scnCyc.lifecycle && scnCyc.lifecycle.ttl;
-      scnStatus = 'сигнал · '+(sig.direction==='call'?'CALL':'PUT')+' <span class="num">'+sig.instrument+'</span>'+
+      scnStatus = t('home.scn.sigWord')+' · '+(sig.direction==='call'?'CALL':'PUT')+' <span class="num">'+sig.instrument+'</span>'+
                   (ttl ? ' · TTL '+scnMMSS(ttl.leftSec) : '');
     } else {
-      scnStatus = 'сканирует · счёт '+(Number.isFinite(sc.passed)? sc.passed+'/'+sc.applicable : '—')+
-                  ' · сигналов за 24ч: '+scnSignals24h(scnCyc.journal);
+      scnStatus = t('home.scn.scanScore',{score:(Number.isFinite(sc.passed)? sc.passed+'/'+sc.applicable : '—'),
+                  n:scnSignals24h(scnCyc.journal)});
     }
-  } else if(scnRun) scnStatus = 'сканирует · ожидание первого тика';
+  } else if(scnRun) scnStatus = t('home.scn.first');
   overviewCard('otm-scanner', scnRun, null, scnStatus);
   // словарь карточки сканера: «СКАНИРУЕТ» вместо «ЗАПУЩЕН» — у сканера нет позиций, он наблюдает
-  const scnTag=$('card-tag-otm-scanner'); if(scnTag && scnRun) scnTag.textContent='СКАНИРУЕТ';
-  const scnSr=$('tabStatus-otm-scanner'); if(scnSr) scnSr.textContent = scnRun ? ', сканирует' : ', не запущен';
+  const scnTag=$('card-tag-otm-scanner'); if(scnTag && scnRun) scnTag.textContent=t('home.tag.scan');
+  const scnSr=$('tabStatus-otm-scanner'); if(scnSr) scnSr.textContent = scnRun ? t('chrome.tabst.scan') : t('chrome.tabst.idle');
 }
 // общий апдейт карточки/точки/вкладки бота в «Обзоре»
 function overviewCard(id, running, pnl, statusHtml){
   const tab = tabEl(id), dotTab = tab && tab.querySelector('.bot-dot');
   const dotCard=$('card-dot-'+id), tag=$('card-tag-'+id), st=$('card-status-'+id), srt=$('tabStatus-'+id);
   [dotTab, dotCard].forEach(d=>{ if(d) d.className = 'bot-dot' + (running?' run':' idle'); });
-  if(tag){ tag.textContent = running?'ЗАПУЩЕН':'НЕ ЗАПУЩЕН'; tag.className = 'bc-tag' + (running?' run':' idle'); }
-  if(srt) srt.textContent = running?', запущен':', не запущен';
+  if(tag){ tag.textContent = running?t('home.tag.run'):t('home.tag.idle'); tag.className = 'bc-tag' + (running?' run':' idle'); }
+  if(srt) srt.textContent = running?t('chrome.tabst.run'):t('chrome.tabst.idle');
   if(st) st.innerHTML = statusHtml;
 }
-function optDecisionWord(d){ return d==='HEDGE'?'ХЕДЖ':(d==='BLACKOUT'?'ПАУЗА':'ПРОПУСК'); }
+function optDecisionWord(d){ return d==='HEDGE'?t('opt.decision.hedge'):(d==='BLACKOUT'?t('opt.decision.pause'):t('opt.decision.skip')); }
 
 // высота шапки (одна/две строки — зависит от вида и ширины окна) → CSS-переменная,
 // чтобы липкий тулбар анализа всегда стоял точно под шапкой при прокрутке
@@ -5038,7 +5054,8 @@ updateFreshness();
     const b=document.createElement('div');
     b.style.cssText='position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:99;padding:8px 16px;'+
       'background:var(--neg-bg);border:1px solid var(--neg);border-radius:8px;color:var(--neg-bri);font:600 12px var(--f-sans)';
-    b.textContent='ФАЙЛОВЫЙ РЕЖИМ: живые данные недоступны — запустите приложение (npm start)';
+    b.textContent=t('chrome.filemode');
+    b.setAttribute('data-i18n','chrome.filemode'); // баннер живёт до конца сессии - пусть переключается вместе с локалью
     document.body.appendChild(b);
     return;
   }
@@ -5055,7 +5072,7 @@ updateFreshness();
     window.fa.onPush(ds2=>applyDataset(ds2));
   }catch(e){
     console.warn('getState failed', e);
-    const stamp=$('stamp'); if(stamp) stamp.innerHTML='<b class="neg">ошибка соединения с main-процессом</b>';
+    const stamp=$('stamp'); if(stamp) stamp.innerHTML='<b class="neg">'+t('chrome.stamp.ipcError')+'</b>';
   }
 })();
 
@@ -7475,6 +7492,29 @@ if($('themeSel')) $('themeSel').querySelectorAll('button').forEach(b=>{
   b.onclick=()=>{ if(b.dataset.v!==themeCurrent()) setTheme(b.dataset.v); };
 });
 syncThemeSel();
+
+/* ── язык: <html lang> выставлен инлайн-скриптом в <head> до первой отрисовки (без вспышки
+   чужого языка); здесь - сегмент RU│EN (идиома themeSel), применение словаря к статике,
+   перерисовка динамики фазы 1 и персист в settings.json через window.ui ── */
+function localeCurrent(){ return document.documentElement.lang==='en' ? 'en' : 'ru'; }
+function syncLangSel(){
+  const sel=$('langSel'); if(!sel) return; const cur=localeCurrent();
+  sel.querySelectorAll('button').forEach(b=> b.setAttribute('aria-pressed', b.dataset.v===cur ? 'true':'false'));
+}
+function setLocale(l){
+  document.documentElement.lang = l==='en' ? 'en' : 'ru';
+  applyI18n();
+  syncLangSel();
+  updateFreshness();          // динамика фазы 1: штамп свежести и LIVE-пилюля
+  refreshOverview();          // карточки и sr-статусы вкладок
+  if(window.ui && window.ui.setLocale) Promise.resolve(window.ui.setLocale(l)).catch(e=>console.warn('ui.setLocale', e));
+  repaintCharts();            // подписи канвасов перейдут на словарь в следующих фазах
+}
+applyI18n(); // стартовое применение словаря к статике (для ru - тождество)
+if($('langSel')) $('langSel').querySelectorAll('button').forEach(b=>{
+  b.onclick=()=>{ if(b.dataset.v!==localeCurrent()) setLocale(b.dataset.v); };
+});
+syncLangSel();
 
 window.addEventListener('load', renderCharts);          // belt-and-suspenders for font swap
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(renderCharts);

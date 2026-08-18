@@ -42,6 +42,9 @@ contextBridge.exposeInMainWorld("fa", {
 contextBridge.exposeInMainWorld("ui", {
   getThemeSync: () => ipcRenderer.sendSync("ui:getTheme"),
   setTheme: (t) => ipcRenderer.invoke("ui:setTheme", t),
+  // локаль UI - тот же приём: sendSync до первой отрисовки, invoke для персиста
+  getLocaleSync: () => ipcRenderer.sendSync("ui:getLocale"),
+  setLocale: (l) => ipcRenderer.invoke("ui:setLocale", l),
 });
 
 // ── Bot 2 «BTC-опционы» (Strategy One) — a PARALLEL bridge, fully isolated from `fa` above ──
