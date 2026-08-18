@@ -27,7 +27,7 @@ import { buildXlsxBuffer } from "./xlsx-writer.js";
 import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes } from "../engine/store.js";
 import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
-import { buildStructure as s1buildStructure, buildSellStructure as s1buildSellStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry } from "../engine/btcopt/structure.js";
+import { buildStructure as s1buildStructure, buildSellStructure as s1buildSellStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry, sellRowsFromSnapshot as s1sellRows } from "../engine/btcopt/structure.js";
 import { rankSellLegs as s1rankSellLegs, SELLHEDGE_DEFAULTS } from "../engine/otmscan/sellhedge.js";
 import { buildS1TickRecord } from "../engine/btcopt/record.js";
 import { SELL_SANITY_DEFAULTS } from "../engine/otmscan/sanity.js";
@@ -44,6 +44,11 @@ import { SCAN_PRESETS, SCAN_DATA_RULES, SCAN_SCHEMA_VERSION, defaultScanSettings
 import { tvToCandles, computeRvBundle } from "../engine/otmscan/rv.js";
 import { selectCandidates as scnSelectCandidates, expiriesInWindow as scnExpiriesInWindow } from "../engine/otmscan/candidates.js";
 import { createScanState, evaluateScan } from "../engine/otmscan/scan-engine.js";
+// Режим ПРОДАЖИ сканера (П1 анализа 2026-08-18): правила ноги/санитарии/размера - те же файлы,
+// что исполняет бот 2 (sellhedge/sanity через buildSellStructure); здесь только снабжение.
+// SELLHEDGE_DEFAULTS, rankSellLegs (s1rankSellLegs) и SELL_SANITY_DEFAULTS уже импортированы выше
+// трактом бота 2 - режим продажи сканера сознательно читает ТЕ ЖЕ привязки, не свои копии.
+import { evaluateSellScan, sanitizeRestoredSellState, SELL_SCAN_ID } from "../engine/otmscan/sell-scan.js";
 import { buildSurfaceRows, buildGreekChecks, buildLegGreekChecks, summarizeSurface } from "../engine/otmscan/surface.js";
 import { buildTickRecord } from "../engine/otmscan/tick-record.js";
 import { foldScanStats, bumpScanStart } from "./scn-stats.js";
@@ -131,7 +136,7 @@ const state = {
   // топ-ап), dvol (дневные закрытия 90д → baseline), chain (USDC), set (опрашиваемый набор:
   // перп + ATM near/far + крылья + кандидаты — паттерн band), books (стаканы финалистов).
   // engineState — персистентный редьюсер scan-engine (сигнал/журнал/кулдауны/гистерезис/телеметрия).
-  otmScanner: { engineState: null, settings: {}, source: null, running: false, cycle: null, lastSnapshot: null,
+  otmScanner: { engineState: null, sellEngineState: null, settings: {}, source: null, running: false, cycle: null, lastSnapshot: null,
     candles: [], candlesTsMs: 0, candlesBundle: null, dvol: null, chain: null, ivRef: null, wings: null,
     set: null, books: {}, event: { flagged: false, note: null, untilTs: null }, degraded: false,
     telemetryDirtyAt: 0, telemetryFlushedAt: 0, getCountAt: 0, budget: null, lastKickAt: 0,
@@ -1553,6 +1558,12 @@ function resolveScanPreset() {
   return sc.settings.userPresets?.[id] ?? SCAN_PRESETS[id] ?? SCAN_PRESETS["dmitri-v1"];
 }
 
+// Режим сканера: buy (чеклист У1-У14, историческое поведение) | sell (курс на измеренный край,
+// П1 анализа 2026-08-18). Ключ scanMode живёт в settings через forward-совместимость
+// normalizeScanPatch (неизвестные ключи проходят); дефолт - здесь, а не в defaultScanSettings,
+// потому что presets.js входит в четвёрку общих с ботом 2 файлов и по решению П1 не трогается.
+const scnMode = () => (state.otmScanner.settings.scanMode === "sell" ? "sell" : "buy");
+
 function saveScanSettings() {
   const sc = state.otmScanner;
   saveBotSettings(baseDir, SCN_ID, { ...sc.settings, event: sc.event });
@@ -1568,6 +1579,14 @@ function persistScanState() {
   const { telemetry, ...core } = sc.engineState;
   saveBotState(baseDir, SCN_ID, { botId: SCN_ID, ...core });
   sc.telemetryDirtyAt = Date.now();
+}
+
+// Редьюсер режима ПРОДАЖИ - в своём файле (otm-scanner-sell.json): схема покупательского
+// состояния не растягивается, а неактивный режим замораживается и переживает переключения.
+function persistSellState() {
+  const sc = state.otmScanner;
+  if (!sc.sellEngineState) return;
+  saveBotState(baseDir, `${SCN_ID}-sell`, { botId: SCN_ID, mode: "sell", ...sc.sellEngineState });
 }
 
 function flushScanTelemetry(force) {
@@ -1620,9 +1639,19 @@ function loadOrInitOtmScanner() {
     for (const n of boot.notes) console.log(`[scn] boot-гигиена: ${n}`);
   }
   if (!persisted) persistScanState(); // файл создаётся ровно один раз; «маркер» = его существование
+
+  // Режим ПРОДАЖИ: свой редьюсер, тот же контракт рестарта (счётчики не переживают разрыв,
+  // ACTIVE ревалидируется первым тиком; битый JSON карантинится, не перезаписывается молча).
+  const sellRes = loadBotStateQuarantine(baseDir, `${SCN_ID}-sell`);
+  if (sellRes.corrupt) console.warn(`[scn] ${SCN_ID}-sell.json битый - карантин .corrupt-*, чистый re-init`);
+  const sellBoot = sanitizeRestoredSellState(sellRes.state && typeof sellRes.state === "object" ? sellRes.state : null);
+  sc.sellEngineState = sellBoot.state;
+  for (const n of sellBoot.notes) console.log(`[scn] boot-гигиена(продажа): ${n}`);
+
   console.log(
-    `[scn] init: phase=${sc.engineState.phase} preset=${sc.settings.presetId}` +
-      (sc.engineState.signal ? ` · ACTIVE ${sc.engineState.signal.instrument} восстановлен (ревалидация первым тиком)` : ""),
+    `[scn] init: phase=${sc.engineState.phase} preset=${sc.settings.presetId} режим=${scnMode()}` +
+      (sc.engineState.signal ? ` · ACTIVE ${sc.engineState.signal.instrument} восстановлен (ревалидация первым тиком)` : "") +
+      (sc.sellEngineState.signal ? ` · ACTIVE(продажа) ${sc.sellEngineState.signal.instrument} восстановлен` : ""),
   );
 }
 
@@ -1828,6 +1857,7 @@ function buildScanSet(spot, nowMs) {
   const sc = state.otmScanner;
   const chain = sc.chain;
   if (!chain || !Number.isFinite(spot) || spot <= 0) return null;
+  if (scnMode() === "sell") return buildSellScanSet(chain, spot, nowMs);
   const preset = resolveScanPreset();
   const s = sc.settings;
   const bundle = sc.candlesBundle;
@@ -1893,6 +1923,39 @@ function buildScanSet(spot, nowMs) {
   };
 }
 
+// ── Набор режима ПРОДАЖИ: коллы окна схемы (SELLHEDGE_DEFAULTS 336-672 ч), ближайшие к деньгам
+// первыми. Дельту до тикеров знать неоткуда (та же причина, что у сита delta-пресетов): полоса
+// 0.35-0.55 живёт у денег, поэтому сортировка по |K/S − 1| гарантирует носителям полосы место в
+// срезе. Кап - nCandidatesMax (окно несёт 1-2 экспирации по 2-4 страйка полосы). ATM-пары и
+// крылья не собираются: условий У1-У8 в этом режиме нет, IV контекста несёт сама нога.
+function buildSellScanSet(chain, spot, nowMs) {
+  const sc = state.otmScanner;
+  const near = [];
+  for (const m of chain.instruments ?? []) {
+    if (m?.option_type !== "call" || !Number.isFinite(m.expiration_timestamp) || !Number.isFinite(m.strike)) continue;
+    const h = (m.expiration_timestamp - nowMs) / 3600000;
+    if (h < SELLHEDGE_DEFAULTS.expiryMinH || h > SELLHEDGE_DEFAULTS.expiryMaxH) continue;
+    near.push({ n: m.instrument_name, d: Math.abs(m.strike / spot - 1), e: m.expiration_timestamp });
+  }
+  near.sort((a, b) => a.d - b.d || a.e - b.e);
+  const candidates = near.slice(0, Math.max(1, sc.settings.nCandidatesMax || 8)).map((x) => x.n);
+  const pinned = sc.sellEngineState?.phase === "active" ? (sc.sellEngineState.signal?.instrument ?? null) : null;
+  const names = new Set(candidates);
+  if (pinned) names.add(pinned);
+  return {
+    mode: "sell",
+    instruments: [...names],
+    candidates,
+    pinned,
+    nearExpiryMs: scnExpiriesInWindow(chain, nowMs, SELLHEDGE_DEFAULTS)[0] ?? null,
+    side: null,
+    presetId: SELL_SCAN_ID,
+    sigmaConvention: sc.settings.sigmaConvention,
+    anchorSpot: spot,
+    chainFetchedAt: chain.fetchedAt,
+  };
+}
+
 function pointScanSource() {
   const sc = state.otmScanner;
   if (!sc.source) return;
@@ -1906,17 +1969,24 @@ function refreshScanSet(spot, nowMs) {
   const sc = state.otmScanner;
   if (!sc.chain || !Number.isFinite(spot) || spot <= 0) return false;
   const cur = sc.set;
+  const mode = scnMode();
   const preset = resolveScanPreset();
   const bundleSide = sc.candlesBundle?.direction ?? null;
-  const pinned = sc.engineState?.phase === "active" ? (sc.engineState.signal?.instrument ?? null) : null;
-  const nearNow = scnExpiriesInWindow(sc.chain, nowMs, preset)[0] ?? null;
+  // Пин и ближняя экспирация - у КАЖДОГО режима свои: продажа пинует сигнал своего редьюсера и
+  // живёт в окне схемы, покупка - в окне пресета. Сторона и пресет триггерят пересборку только
+  // в режиме покупки (у продажи стороны нет, а её «пресет» - константа схемы).
+  const pinned = mode === "sell"
+    ? (sc.sellEngineState?.phase === "active" ? sc.sellEngineState.signal?.instrument ?? null : null)
+    : (sc.engineState?.phase === "active" ? sc.engineState.signal?.instrument ?? null : null);
+  const nearNow = scnExpiriesInWindow(sc.chain, nowMs, mode === "sell" ? SELLHEDGE_DEFAULTS : preset)[0] ?? null;
   const stale =
     !cur ||
+    (cur.mode ?? "buy") !== mode ||
     cur.chainFetchedAt !== sc.chain.fetchedAt ||
     Math.abs(spot - cur.anchorSpot) / cur.anchorSpot > SCN_RULES.setDriftPct / 100 ||
-    cur.side !== bundleSide ||
-    cur.presetId !== preset.id ||
-    cur.sigmaConvention !== sc.settings.sigmaConvention ||
+    (mode === "buy" && cur.side !== bundleSide) ||
+    (mode === "buy" && cur.presetId !== preset.id) ||
+    (mode === "buy" && cur.sigmaConvention !== sc.settings.sigmaConvention) ||
     (cur.nearExpiryMs ?? null) !== nearNow ||
     (cur.pinned ?? null) !== pinned;
   if (!stale) return false;
@@ -2118,6 +2188,7 @@ async function onScanSnapshot(snap) {
     ensureScanDvol();
     ensureScanChain();
     ensureScanSurface(); // S3c: слой записи, свой медленный каданс; fire-and-forget как прочие джобы
+    if (scnMode() === "sell") return await onSellScanSnapshot(snap); // режим продажи: свой тик ниже
     deriveScanIvRef(snap, Date.now()); // по набору, которым СДЕЛАН этот снапшот (до пересборки)
     const preset = resolveScanPreset();
     const finalists = pickBookFinalists(snap, preset);
@@ -2169,6 +2240,70 @@ async function onScanSnapshot(snap) {
   }
 }
 
+// ── Тик режима ПРОДАЖИ: снабжение evaluateSellScan (правила - в движке, здесь только подача).
+// Отличия от покупательского тика названы поимённо: IV_ref и крылья не выводятся (условий У1-У8
+// нет, IV контекста несёт нога), книги достаются верху санитарной очереди по дельте (правило
+// одно - rankSellLegs, те же привязки, что у бота 2), fold статистики S3b пропускается (её
+// распределения покупательские), запись тика ОСТАЁТСЯ - строка несёт уровень актива и глубину
+// книг, а pid "sell-v1" помечает режим прямо в записи. Вызывается ИЗНУТРИ try онScanSnapshot:
+// плохой тик не роняет приложение по тому же закону.
+async function onSellScanSnapshot(snap) {
+  const sc = state.otmScanner;
+  const spot = snap.perp?.index ?? null;
+  const legsMerged = {};
+  for (const name of sc.set?.instruments ?? []) {
+    const l = snap.legs?.[name];
+    if (!l) continue; // нет тикера - нога честно не оценивается (санитария/выбор её не увидят)
+    legsMerged[name] = { ...l, ts: l.ts ?? snap.ts ?? Date.now(), book: sc.books[name] ?? null };
+  }
+  const snapshotForRows = { underlying: snap.underlying ?? spot, index: snap.index ?? spot, legs: legsMerged };
+  // Книги - верху очереди по дельте ЭТОГО снапшота (не прошлого тика): у санитарии есть ось
+  // глубины, и книга обязана достаться тем ногам, которые builder проверит первыми. Кандидаты
+  // за booksPerTickMax остаются без книги и дают честный unknown-вето - это цена бюджета §4.1.
+  const queue = s1rankSellLegs(s1sellRows(sc.chain ?? { instruments: [] }, snapshotForRows, Date.now()), SELLHEDGE_DEFAULTS, SELL_SANITY_DEFAULTS.maxCandidates).map((r) => r.n);
+  const [booksFetched] = await Promise.all([
+    queue.length ? fetchScanBooks(queue.slice(0, SCN_RULES.booksPerTickMax)) : 0,
+    fetchScanPerpBook(), // стакан перпа: панель честности и запись строки D живут и в этом режиме
+  ]);
+  for (const name of Object.keys(legsMerged)) legsMerged[name] = { ...legsMerged[name], book: sc.books[name] ?? null };
+  const nowMs = Date.now();
+  const { state: nextSell, cycle } = evaluateSellScan(sc.sellEngineState, {
+    settings: sc.settings,
+    perp: snap.perp ? { indexPrice: snap.perp.index, markPrice: snap.perp.mark, tsMs: snap.perp.ts ?? snap.ts ?? nowMs } : null,
+    chain: sc.chain ?? { instruments: [] },
+    chainTsMs: sc.chain?.fetchedAt ?? null,
+    legs: legsMerged,
+    underlying: snap.underlying ?? spot,
+    candlesBundle: sc.candlesBundle ?? {},
+  }, nowMs);
+  sc.sellEngineState = nextSell;
+  sc.cycle = cycle;
+  recordScanTick(cycle, nowMs); // buildTickRecord читает цикл оборонительно: pid "sell-v1", уровень актива, книги
+  persistSellState();
+  pushScan();
+
+  // Бюджет §4.3 - тот же счётчик и тот же лог-паттерн, подпись режима в строке.
+  const total = deribit.getRpcCallCount();
+  if (sc.getCountAt) {
+    const gets = total - sc.getCountAt;
+    sc.budget = { lastTickGets: gets, instruments: sc.set?.instruments.length ?? 0, books: booksFetched, at: nowMs };
+    console.log(
+      `[scn] тик(продажа): GET ${gets} · инстр ${sc.budget.instruments} · книг ${booksFetched} · вердикт ${cycle.verdict}` +
+        ` · фаза ${cycle.lifecycle.phase}` +
+        (cycle.leg ? ` · нога ${cycle.leg.instrument}` : ` · ${cycle.reason ?? "нет ноги"}`) +
+        `${state.btcOptions.running ? " · (совместно с ботом 2)" : ""}`,
+    );
+  }
+  sc.getCountAt = total;
+
+  const grew = refreshScanSet(spot, Date.now());
+  maybeDegradeScanCadence();
+  if (grew && Date.now() - sc.lastKickAt > 5000) {
+    sc.lastKickAt = Date.now();
+    sc.source?.refreshNow();
+  }
+}
+
 // Создать (если нет) и запустить источник сканера. Идемпотентно; набор может быть пуст
 // (холодный старт) — первый тик перп-only сеет спот, набор рождается в его обработчике.
 function ensureScanSource() {
@@ -2186,7 +2321,7 @@ function ensureScanSource() {
   if (!sc.running) {
     sc.running = true; // до start(): кэш-джобы первого тика гейтятся на running
     sc.getCountAt = deribit.getRpcCallCount(); // бюджет-лог считает с начала сессии опроса
-    sc.stats = bumpScanStart(sc.stats, resolveScanPreset().id, Date.now(), SCN_RULES); // S3b: рестарт-счётчик обкатки
+    sc.stats = bumpScanStart(sc.stats, scnMode() === "sell" ? SELL_SCAN_ID : resolveScanPreset().id, Date.now(), SCN_RULES); // S3b: рестарт-счётчик обкатки
     sc.telemetryDirtyAt = Date.now(); // starts попадёт в файл и без первого тика
     sc.source.start(onScanSnapshot);
   }
@@ -2220,9 +2355,13 @@ function resetScanDataRings() {
 function assembleDatasetScan() {
   const sc = state.otmScanner;
   const preset = resolveScanPreset();
+  // В режиме продажи канвас «RV против IV» кормится волатильностью САМОЙ ноги (ATM-пары в наборе
+  // нет, ivRef доживает и протух бы молча) - источник подписывается явно.
+  const sellIv = scnMode() === "sell" && sc.cycle?.kind === "sell" ? sc.cycle.leg?.ivPct ?? null : null;
   return {
     botId: SCN_ID,
     running: sc.running,
+    scanMode: scnMode(), // buy | sell - тулбар биндится к нему
     settings: sc.settings, // живые параметры (применяются сразу — «оценка живая, сигнал снимок»)
     presetId: preset.id,
     preset, // полный объект порогов — тулбар/редактор S3 биндятся к нему
@@ -2234,8 +2373,8 @@ function assembleDatasetScan() {
       rv7dPct: sc.candlesBundle?.rv7dPct ?? null,
       rv3dPct: sc.candlesBundle?.rv3dPct ?? null,
       sigma1dPct: sc.candlesBundle?.sigma1dPct ?? null,
-      ivRefPct: sc.ivRef?.nearPct ?? null,
-      ivSource: sc.ivRef?.source ?? null,
+      ivRefPct: sellIv ?? sc.ivRef?.nearPct ?? null,
+      ivSource: sellIv != null ? "sell-leg" : sc.ivRef?.source ?? null,
       baselineIvPct: sc.dvol?.baselineIvPct ?? null,
     },
     event: effectiveScanEvent(Date.now()),
@@ -2330,9 +2469,23 @@ function wireIpcScan() {
   ipcMain.handle("scn:setSettings", async (_e, patch) => {
     const sc = state.otmScanner;
     const norm = normalizeScanPatch(patch || {}); // невалидное ОТКЛОНЯЕТСЯ с причиной, не коерцится
-    const before = { scanRepriceSec: sc.settings.scanRepriceSec, testnet: !!sc.settings.testnet };
+    // scanMode вне RANGES/ENUMS пресетного файла (он из четвёрки общих с ботом 2 и не трогается),
+    // поэтому значение проверяется здесь - тем же правилом «отклонить, не коерцить».
+    if (norm.value.scanMode !== undefined && norm.value.scanMode !== "buy" && norm.value.scanMode !== "sell") {
+      norm.errors.push(`scanMode: «${String(norm.value.scanMode)}» не входит в buy|sell - отклонено`);
+      delete norm.value.scanMode;
+    }
+    const before = { scanRepriceSec: sc.settings.scanRepriceSec, testnet: !!sc.settings.testnet, mode: scnMode() };
     sc.settings = { ...sc.settings, ...norm.value };
     saveScanSettings();
+    if (scnMode() !== before.mode) {
+      // Смена режима: набор пересобирается немедленно (окно схемы против окна пресета); состояния
+      // обоих режимов не трогаются - неактивный замораживается и переживает переключение.
+      sc.set = null;
+      pointScanSource();
+      if (sc.running) sc.source?.refreshNow();
+      console.log(`[scn] режим сканера: ${before.mode} сменился на ${scnMode()}`);
+    }
     const cadenceChanged = sc.settings.scanRepriceSec !== before.scanRepriceSec;
     const testnetChanged = !!sc.settings.testnet !== before.testnet;
     if (testnetChanged) resetScanDataRings(); // §7 случай 16: семьи данных несовместимы
