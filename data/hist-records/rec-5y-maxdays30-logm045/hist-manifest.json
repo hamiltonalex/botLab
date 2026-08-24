@@ -1,0 +1,54 @@
+{
+  "builtAt": "2026-08-24T19:21:24.162Z",
+  "from": "2021-08-09",
+  "to": "2026-08-13",
+  "stepMin": 60,
+  "tape": "inverse",
+  "fit": {
+    "windowMin": 240,
+    "halfLifeMin": 45,
+    "minPoints": 4,
+    "xMarginFrac": 0.25,
+    "ivSource": "trade"
+  },
+  "caps": {
+    "maxDays": 30,
+    "maxLogMoneyness": 0.45
+  },
+  "chain": {
+    "requested": "auto",
+    "used": "inverse",
+    "linearListedFrom": "2025-08-06",
+    "note": "набор инструментов с обратной цепочки: премия в USD по Блэку-76, обеспечение у обратных опционов в BTC"
+  },
+  "syntheticQuotes": {
+    "isAssumption": true,
+    "mode": "ivPoints",
+    "scale": 1,
+    "provenance": {
+      "source": "запись прогона 5 (внутренний архив обкатки 2026-08-04..07, вне репозитория)",
+      "windowUtc": "2026-08-04T16:48Z .. 2026-08-07T17:37Z",
+      "snapshots": 809,
+      "instruments": 428,
+      "statistic": "медиана по клетке, клетки с n < 30 не заполнялись",
+      "isAssumption": true,
+      "caveat": "спокойный режим рынка; проскальзывание и глубина не моделируются"
+    }
+  },
+  "noDepth": "стакана в истории нет: строк D нет, У12 требует --depth assume",
+  "stats": {
+    "ticks": 43919,
+    "ticksSkipped": 1,
+    "surfaceRows": 12144351,
+    "snapshots": 43919,
+    "noIv": 1434217,
+    "noForward": 0,
+    "noPrice": 196,
+    "noQuote": 6671540,
+    "instrumentsSeen": 15449976,
+    "expiriesFitted": 456010,
+    "tradesUsed": 79882674,
+    "tickNoSide": 30,
+    "tickNoRv": 151
+  }
+}
