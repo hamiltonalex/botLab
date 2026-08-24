@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import {
   SELLHEDGE_DEFAULTS, pickSellLeg, openSellTrade, halfSpreadUsd, wantHedge, shouldRehedge,
   walkSellTrade, settleSellTrade, lotsByMargin, usdDeltaOfInversePerp, sellhedgeEngineCfg, shouldOpenNext,
-  rankSellLegs, shouldOpenDegraded,
+  rankSellLegs, shouldOpenDegraded, sellerZone,
 } from "../src/engine/otmscan/sellhedge.js";
 import { markPerp } from "../src/engine/btcopt/pnl.js";
 import { effectiveDeadband } from "../src/engine/btcopt/hedge.js";
@@ -308,4 +308,24 @@ test("ожидание санитарии: окно истекает ровно 
   assert.equal(shouldOpenDegraded({ sanityWaitingSince: t0, nowMs: t0 + win - 1, windowMs: win }), false);
   assert.equal(shouldOpenDegraded({ sanityWaitingSince: t0, nowMs: t0 + win, windowMs: win }), true);
   assert.equal(shouldOpenDegraded({ sanityWaitingSince: null, nowMs: t0, windowMs: win }), false, "без начала ожидания не деградируем");
+});
+
+// ── ЗОНА ПРОДАВЦА. Правило одно на проект: чип живого сканера и столбец книги офлайн-отчёта зовут
+// эту функцию, поэтому «худшая зона» в интерфейсе и в отчёте обязаны означать ровно одно.
+test("зона: RV7d выше IV ноги - худшая, иначе обычная", () => {
+  assert.equal(sellerZone({ ivPct: 40, rv7dPct: 55 }), "worst");
+  assert.equal(sellerZone({ ivPct: 55, rv7dPct: 40 }), "normal");
+});
+
+test("зона: равенство относится к обычной - граница у строгого «выше»", () => {
+  assert.equal(sellerZone({ ivPct: 50, rv7dPct: 50 }), "normal");
+});
+
+test("зона: нет данных - null, а не «обычная»", () => {
+  // Начало записи: RV7d ещё не набрал недельное окно. Зачислить такие сделки в благополучную зону
+  // значило бы записать разогрев в хороший режим просто потому, что мерить было нечем.
+  assert.equal(sellerZone({ ivPct: 50, rv7dPct: null }), null);
+  assert.equal(sellerZone({ ivPct: null, rv7dPct: 50 }), null);
+  assert.equal(sellerZone({ ivPct: 50, rv7dPct: NaN }), null);
+  assert.equal(sellerZone(), null);
 });

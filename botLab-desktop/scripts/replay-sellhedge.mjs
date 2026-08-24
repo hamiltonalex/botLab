@@ -35,7 +35,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { priceAt, makePriceStats, countPrice, formatPriceStats } from "../src/engine/otmscan/hist-price.js";
-import { shouldOpenNext } from "../src/engine/otmscan/sellhedge.js";
+import { shouldOpenNext, sellerZone } from "../src/engine/otmscan/sellhedge.js";
 import * as s1engine from "../src/engine/btcopt/engine.js";
 
 const fin = (x) => Number.isFinite(x);
@@ -93,19 +93,24 @@ function load(dir) {
   }
   ticks.sort((a, b) => a.ts - b.ts);
   const times = [...snaps.keys()].sort((a, b) => a - b);
+  // Спот и rv7 приходят из ОДНОЙ строки тика: зона продавца сравнивает IV ноги с волатильностью
+  // того же момента, и разные строки означали бы сравнение с другим моментом.
   const tts = ticks.map((t) => t.ts);
-  const spot = times.map((t) => {
+  const tickIdx = times.map((t) => {
     let lo = 0, hi = tts.length - 1, res = null;
     while (lo <= hi) { const m = (lo + hi) >> 1; if (tts[m] <= t) { res = m; lo = m + 1; } else hi = m - 1; }
-    return res == null ? null : ticks[res].S ?? null;
+    return res;
   });
+  const field = (k, name) => (k == null ? null : ticks[k]?.[name] ?? null);
+  const spot = tickIdx.map((k) => field(k, "S"));
+  const rv7 = tickIdx.map((k) => field(k, "rv7"));
   const byExp = new Map();
   for (const [ts, m] of snaps) {
     const e = new Map();
     for (const r of m.values()) { let a = e.get(r.e); if (!a) { a = []; e.set(r.e, a); } a.push(r); }
     byExp.set(ts, e);
   }
-  return { snaps, times, spot, byExp, stats: makePriceStats() };
+  return { snaps, times, spot, rv7, byExp, stats: makePriceStats() };
 }
 const R = load(DIR);
 const N = R.times.length;
@@ -286,6 +291,9 @@ for (let i = 0; i < N; i++) {
         leg: { instrument: l.instrument, strike: l.strike, expiryMs: l.expiryMs },
         openIdx: i, openTs: ts, sizing: res.structure.sizing, qtyAbs: l.qtyAbs,
         entryMark: l.entryMark, entrySpot: S, entryCostUsd: res.structure.entryCostUsd,
+        // IV берётся у ноги, которую ВЫБРАЛ движок (pickedLeg), а не у строки записи: если движок
+        // и эталон разойдутся в выборе, столбец зоны обязан это показать, а не сгладить.
+        zone: sellerZone({ ivPct: res.structure.pickedLeg?.ivPct, rv7dPct: R.rv7[i] }),
         ledgerFrom: before,
         acc0: { fund: accOf(st), fees: feesOf(st), realPerp: realPerpOf(st), realOpt: realOptOf(st), shadow: shadowFund },
       };
@@ -332,6 +340,9 @@ for (let i = 0; i < N; i++) {
       exitSpot: S,
       strike: open.leg.strike,
       entryMark: open.entryMark,
+      // Зона продавца НА ВХОДЕ, правилом движка (sellhedge.js) - тем же, каким её пишет эталон.
+      // Сверка книг поэтому проверяет и то, что обе стороны видят один режим рынка.
+      zone: open.zone ?? null,
       equityAtOpen: DEPOSIT + open.acc0.realPerp + open.acc0.realOpt + open.acc0.fund - open.acc0.fees,
       flatCount: flat.length,
     });
@@ -348,10 +359,11 @@ for (let i = 0; i < N; i++) {
 const f = (x, d) => (fin(x) ? x.toFixed(d) : "н/д");
 const iso = (ms) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
 const HEAD = ["#", "инструмент", "открыт", "закрыт", "лотов", "залог", "перекладок", "оборот BTC",
-  "премия-выкуп", "хедж", "издержки", "фандинг", "итого"].join("\t");
+  "премия-выкуп", "хедж", "издержки", "фандинг", "итого", "зона"].join("\t");
 const bookLine = (b, k) => [
   k + 1, b.instrument, iso(b.openTs), iso(b.closeTs), b.lots, f(b.imUsd, 2), b.rehedges,
   f(b.turnoverBtc, 6), f(b.optLeg, 2), f(b.hedgeLeg, 2), f(b.cost, 2), f(b.funding, 2), f(b.pnl, 2),
+  b.zone ?? "н-д",
 ].join("\t");
 const bookText = [HEAD, ...book.map(bookLine)].join("\n") + "\n";
 if (argOf("--book")) writeFileSync(argOf("--book"), bookText);

@@ -46,7 +46,7 @@
 // выключаются НАСТРОЙКОЙ sanityCfg вызывающего - идиома sanity.js, ветвлений здесь нет.
 
 import { buildSellStructure, sellRowsFromSnapshot } from "../btcopt/structure.js";
-import { SELLHEDGE_DEFAULTS, lotsByMargin } from "./sellhedge.js";
+import { SELLHEDGE_DEFAULTS, lotsByMargin, sellerZone } from "./sellhedge.js";
 import { SELL_SANITY_DEFAULTS, evaluateInstrumentSanity, summarizeSanityFailure } from "./sanity.js";
 import { scanBlackout } from "./scan-engine.js";
 import { SCAN_DATA_RULES, defaultScanSettings } from "./presets.js";
@@ -154,7 +154,7 @@ export function evaluateSellScan(state, inputs, nowMs) {
   // ── Контекст IV-RV: информация, не гейт (замер 2026-08-18: гейты цепочку ухудшают).
   const rv7 = inputs?.candlesBundle?.rv7dPct ?? null;
   const ivRv = leg && fin(leg.ivPct) && fin(rv7)
-    ? { ivPct: leg.ivPct, rv7dPct: rv7, spreadPts: leg.ivPct - rv7, sellerZone: rv7 > leg.ivPct ? "worst" : "normal" }
+    ? { ivPct: leg.ivPct, rv7dPct: rv7, spreadPts: leg.ivPct - rv7, sellerZone: sellerZone({ ivPct: leg.ivPct, rv7dPct: rv7 }) }
     : { ivPct: leg?.ivPct ?? null, rv7dPct: rv7, spreadPts: null, sellerZone: null };
 
   // ── Вердикт тика и называемая причина. Нехватка счёта блокирует СИГНАЛ (честный отказ,

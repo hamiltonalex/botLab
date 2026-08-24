@@ -53,7 +53,7 @@ import { priceAt, makePriceStats, countPrice, formatPriceStats } from "../src/en
 import { computeTradeCosts } from "../src/engine/otmscan/economics.js";
 import { legMargin } from "../src/engine/btcopt/margin.js";
 import {
-  pickSellLeg, openSellTrade, halfSpreadUsd, walkSellTrade, settleSellTrade, lotsByMargin,
+  pickSellLeg, openSellTrade, halfSpreadUsd, walkSellTrade, settleSellTrade, lotsByMargin, sellerZone,
 } from "../src/engine/otmscan/sellhedge.js";
 import { parseGateSpec, formatGateTerms, makeGateCounter, testGate } from "../src/engine/otmscan/hist-gate.js";
 
@@ -88,7 +88,8 @@ if (has("--help") || !argOf("--dir")) {
                       минус колл, п.в.); знаки >= <= > <; несколько условий через запятую (И).
                       Пример: --gate "ivrv>=5,imp<=3". Гейт МЕНЯЕТ книгу и делает её несравнимой
                       с прогоном движка: у живой схемы входных гейтов нет.
-  --gate-sweep        таблица «гейт → сделок / итог / просадка» рядом с базой`);
+  --gate-sweep        таблица «гейт → сделок / итог / просадка» рядом с базой
+  --zones             разрез сделок по зоне продавца (RV7d против IV ноги НА ВХОДЕ)`);
   process.exit(argOf("--dir") ? 0 : 1);
 }
 
@@ -260,7 +261,11 @@ function runTrade(i, leg, cfg) {
   if (!walk) return null;
   const s = settleSellTrade({ open, walk, cfg });
   const endIdx = base + walk.exitIndex;
+  // Зона продавца НА МОМЕНТ ВХОДА (правило sellhedge.js, то же, каким живой сканер рисует чип):
+  // режим рынка это свойство входа, а не итога, и мерить его выходом значило бы судить сделку тем,
+  // чего в момент решения не было.
   return { i, endIdx, ts: R.times[i], exitTs: R.times[endIdx], pnl: s.pnl, im, prem: leg.m, iv: leg.iv,
+    zone: sellerZone({ ivPct: leg.iv, rv7dPct: R.rv7[i] }), rv7: R.rv7[i],
     strike: leg.k, spot0: S0, spotEnd: R.spot[endIdx], reh: walk.rehedges, name: leg.n,
     turnover: walk.turnoverBtc, retIm: (s.pnl / im) * 100, retPrem: (s.pnl / leg.m) * 100,
     optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, cost: s.cost, fund: s.fund };
@@ -439,17 +444,62 @@ if (argOf("--book")) {
   const FIXED = argOf("--book-lots") == null ? null : Number(argOf("--book-lots"));
   const f6 = (x, d) => (fin(x) ? x.toFixed(d) : "н/д");
   const iso = (ms) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+  // ЗОНА ИДЁТ ПОСЛЕДНИМ СТОЛБЦОМ, и это не косметика: порядок разбора в compare-books.mjs означает
+  // «расхождение раннего столбца объясняет поздние», а зона ничего не объясняет - она контекст
+  // входа. Значение машинное (worst/normal/н-д), чтобы обе стороны сверки писали ровно одну строку.
   const lines = [["#", "инструмент", "открыт", "закрыт", "лотов", "залог", "перекладок", "оборот BTC",
-    "премия-выкуп", "хедж", "издержки", "фандинг", "итого"].join("\t")];
+    "премия-выкуп", "хедж", "издержки", "фандинг", "итого", "зона"].join("\t")];
   accounts[start].log.forEach((x, k) => {
     const lots = FIXED ?? x.lots;
     const q = lots * LOT;
     const pnl = FIXED == null ? x.pnl : x.t.pnl * q;
     lines.push([k + 1, x.t.name, iso(x.t.ts), iso(x.t.exitTs), lots, f6(x.t.im * q, 2), x.t.reh,
       f6(x.t.turnover * q, 6), f6(x.t.optLeg * q, 2), f6(x.t.hedgeLeg * q, 2), f6(x.t.cost * q, 2),
-      f6(-x.t.fund * q, 2), f6(pnl, 2)].join("\t"));
+      f6(-x.t.fund * q, 2), f6(pnl, 2), x.t.zone ?? "н-д"].join("\t"));
   });
   writeFileSync(argOf("--book"), lines.join("\n") + "\n");
+}
+
+// ── РАЗРЕЗ ПО ЗОНЕ ПРОДАВЦА. Отвечает на вопрос, которого перечень гейтов НЕ решает: гейт меряет
+// «что будет, если не входить в плохом режиме», а разрез - «сколько принесли сделки, открытые в
+// нём». Это разные величины, и цитата в шапке sell-scan.js содержит обе («худшая зона давала
+// +2.71% залога за сделку против +4.93% в среднем при просадке 26.7% против 13.5%»), поэтому
+// воспроизводить их надо тоже обеими, а не одной.
+//
+// ЗОНА БЕРЁТСЯ НА ВХОДЕ и считается правилом движка (`sellerZone`), тем же, каким живой сканер
+// рисует чип «зона продавца». Метка «нет данных» это ОТДЕЛЬНАЯ строка, а не тихое зачисление в
+// «обычную»: в начале записи RV7d отсутствует (недельный разогрев окна), и такие сделки не знают
+// своего режима.
+//
+// «ЗАЛОГ ВЫРОС В» ПО ЗОНЕ - ЭТО ВКЛАД ПОДПОСЛЕДОВАТЕЛЬНОСТИ, А НЕ РЕЗУЛЬТАТ СТРАТЕГИИ «торговать
+// только эту зону». Сделки зоны компаундятся подряд, как будто между ними ничего не было, а в
+// действительности там стояла бы пауза - её цена меряется перечнем гейтов выше и в этой таблице
+// НЕ учтена. Читать столбец как достижимый итог нельзя.
+if (has("--zones")) {
+  console.log(`\n## Разрез по зоне продавца (на момент входа)\n`);
+  const label = { worst: "худшая (RV7d выше IV ноги)", normal: "обычная (IV выше RV7d)", "н-д": "нет данных (разогрев RV)" };
+  console.log(`| зона | сделок | доля | средняя сделка | медиана | худшая | залог вырос в | просадка |`);
+  console.log(`|---|---|---|---|---|---|---|---|`);
+  const line = (key, rs) => {
+    if (!rs.length) { console.log(`| ${label[key] ?? key} | 0 | - | - | - | - | - | - |`); return; }
+    const e = equity(rs);
+    console.log(`| ${label[key] ?? key} | ${rs.length} | ${f2((100 * rs.length) / rows.length, 0)}% | `
+      + `${f2(mean(rs.map((r) => r.retIm)))}% | ${f2(q(rs.map((r) => r.retIm), 0.5))}% | `
+      + `${f2(Math.min(...rs.map((r) => r.retIm)))}% | ${f2(e.eq)} | ${f2(e.dd, 1)}% |`);
+  };
+  for (const key of ["worst", "normal", "н-д"]) line(key, rows.filter((r) => (r.zone ?? "н-д") === key));
+  const all = equity(rows);
+  console.log(`| **все сделки** | **${rows.length}** | 100% | **${f2(mean(rows.map((r) => r.retIm)))}%** | `
+    + `${f2(q(rows.map((r) => r.retIm), 0.5))}% | ${f2(Math.min(...rows.map((r) => r.retIm)))}% | `
+    + `**${f2(all.eq)}** | ${f2(all.dd, 1)}% |`);
+  const worst = rows.filter((r) => r.zone === "worst");
+  if (worst.length) {
+    const spread = worst.map((r) => r.iv - r.rv7).filter(fin);
+    console.log(`\nВ худшей зоне открыто ${worst.length} сделок из ${rows.length}; медиана разрыва IV−RV7d на`);
+    console.log(`их входах ${f2(q(spread, 0.5))} п.в. Столбец «залог вырос в» по зоне - вклад её сделок,`);
+    console.log(`компаунднутых подряд, а не результат стратегии «торговать только эту зону»: цена пауз между`);
+    console.log(`ними меряется перечнем гейтов, а не здесь.`);
+  }
 }
 
 // ── ПЕРЕБОР ВХОДНЫХ ГЕЙТОВ. Смысл ровно тот же, что у перебора полосы ниже: не найти лучшую клетку,
