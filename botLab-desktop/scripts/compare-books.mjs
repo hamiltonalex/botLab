@@ -53,6 +53,10 @@ const COLS = [
   { i: 10, name: "издержки", kind: "usd" },
   { i: 11, name: "фандинг", kind: "usd" },
   { i: 12, name: "итого", kind: "usd" },
+  // Зона входа идёт ПОСЛЕ арифметики итога: она ничего в ней не объясняет, но сверяется, а не
+  // возится молча пассажиром. Расхождение здесь означает, что стороны видят разный режим рынка на
+  // одном и том же входе - то есть разошлись либо в выборе ноги (её IV), либо в снабжении rv7.
+  { i: 13, name: "зона", kind: "str" },
 ];
 // Денежные и BTC-столбцы сверяются В РАЗРЯДАХ ПЕЧАТИ (центы и шестые знаки): книга печатается
 // toFixed, а сравнение сырых double глотало расхождение ровно в один разряд, когда float-разность
@@ -69,11 +73,19 @@ console.log(`# Сверка книг\n`);
 console.log(`эталон ${A}: ${rowsA.length} сделок`);
 console.log(`движок ${B}: ${rowsB.length} сделок\n`);
 
+// СТОЛБЕЦ, КОТОРОГО В КНИГЕ НЕТ, НЕ СЧИТАЕТСЯ СОШЕДШИМСЯ. Книга старого формата короче нынешнего
+// COLS, и наивное сравнение читало бы в обеих undefined, признавало их равными и печатало «16/16»
+// про столбец, которого не существует ни с одной стороны. Это ровно то молчаливое «всё сошлось»,
+// ради отсутствия которого сверка и написана, поэтому недостающий столбец называется отсутствующим.
+const present = new Set(COLS.filter((c) => head[c.i] === c.name).map((c) => c.name));
+const missing = COLS.filter((c) => !present.has(c.name));
+
 const n = Math.min(rowsA.length, rowsB.length);
 const byCol = new Map(COLS.map((c) => [c.name, { ok: 0, bad: 0, worst: 0, worstRow: null }]));
 let firstBad = null;
 for (let k = 0; k < n; k++) {
   for (const c of COLS) {
+    if (!present.has(c.name)) continue;
     const x = rowsA[k][c.i], y = rowsB[k][c.i];
     const acc = byCol.get(c.name);
     if (same(c.kind, x, y)) { acc.ok += 1; continue; }
@@ -90,8 +102,13 @@ console.log(`## Столбец за столбцом (в порядке разб
 console.log(`| столбец | сошлось | разошлось | максимум расхождения | где |`);
 console.log(`|---|---|---|---|---|`);
 for (const c of COLS) {
+  if (!present.has(c.name)) { console.log(`| ${c.name} | нет в книге | - | - | - |`); continue; }
   const s = byCol.get(c.name);
   console.log(`| ${c.name} | ${s.ok}/${n} | ${s.bad} | ${s.bad && c.kind !== "str" ? s.worst.toPrecision(4) : "-"} | ${s.worstRow ? `сделка ${s.worstRow}` : "-"} |`);
+}
+if (missing.length) {
+  console.log(`\nСтолбцов нет в обеих книгах: ${missing.map((c) => c.name).join(", ")} - книги сняты`);
+  console.log(`форматом старше нынешнего. Совпадением это НЕ считается; пересними обе стороны.`);
 }
 
 if (rowsA.length !== rowsB.length) {
@@ -113,7 +130,7 @@ if (!firstBad && rowsA.length === rowsB.length) {
 if (ALL) {
   console.log(`\n## Все расхождения\n`);
   for (let k = 0; k < n; k++) {
-    const bad = COLS.filter((c) => !same(c.kind, rowsA[k][c.i], rowsB[k][c.i]));
+    const bad = COLS.filter((c) => present.has(c.name) && !same(c.kind, rowsA[k][c.i], rowsB[k][c.i]));
     if (!bad.length) continue;
     console.log(`- сделка ${k + 1} (${rowsA[k][1]}): ` + bad.map((c) => `${c.name} ${rowsA[k][c.i]} против ${rowsB[k][c.i]}`).join("; "));
   }

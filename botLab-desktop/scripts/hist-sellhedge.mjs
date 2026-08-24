@@ -53,8 +53,9 @@ import { priceAt, makePriceStats, countPrice, formatPriceStats } from "../src/en
 import { computeTradeCosts } from "../src/engine/otmscan/economics.js";
 import { legMargin } from "../src/engine/btcopt/margin.js";
 import {
-  pickSellLeg, openSellTrade, halfSpreadUsd, walkSellTrade, settleSellTrade, lotsByMargin,
+  pickSellLeg, openSellTrade, halfSpreadUsd, walkSellTrade, settleSellTrade, lotsByMargin, sellerZone,
 } from "../src/engine/otmscan/sellhedge.js";
+import { parseGateSpec, formatGateTerms, makeGateCounter, testGate } from "../src/engine/otmscan/hist-gate.js";
 
 const fin = (x) => Number.isFinite(x);
 const args = process.argv.slice(2);
@@ -81,7 +82,14 @@ if (has("--help") || !argOf("--dir")) {
   --book-lots <n>     книга ФИКСИРОВАННЫМ размером в лотах вместо счёта: убирает обратную связь
                       счёта (итог задаёт лоты, лоты задают итог) и делает каждую сделку независимой точкой
   --band-sweep        перебрать полосу при трёх стоимостях перекладки
-  --stress            перебрать сценарии исполнения и параметры`);
+  --stress            перебрать сценарии исполнения и параметры
+  --gate <условия>    входной гейт: не открывать сделку, пока условие не выполнено. Оси:
+                      ivrv (IV ноги минус RV7d, п.в.), imp (импульс движения за сутки, в s1d), skew (±1s пут
+                      минус колл, п.в.); знаки >= <= > <; несколько условий через запятую (И).
+                      Пример: --gate "ivrv>=5,imp<=3". Гейт МЕНЯЕТ книгу и делает её несравнимой
+                      с прогоном движка: у живой схемы входных гейтов нет.
+  --gate-sweep        таблица «гейт → сделок / итог / просадка» рядом с базой
+  --zones             разрез сделок по зоне продавца (RV7d против IV ноги НА ВХОДЕ)`);
   process.exit(argOf("--dir") ? 0 : 1);
 }
 
@@ -98,6 +106,16 @@ const USE_FUNDING = !has("--no-funding");
 const DEPOSITS = (argOf("--deposit", "500,2000,20000")).split(",").map(Number).filter(fin);
 const PERIODS = (argOf("--periods") ?? "").split(",").filter(Boolean).map((d) => Date.parse(`${d}T00:00:00Z`));
 const LOT = 0.01, DEPLOY = 0.70;
+
+// Гейт разбирается ДО чтения записи: неверная спецификация обязана падать за миллисекунду, а не
+// через десять минут прогона. Правила разбора и сравнения живут в движке (hist-gate.js).
+const GATE_TERMS = (() => {
+  const spec = argOf("--gate");
+  if (spec == null) return null;
+  const { terms, error } = parseGateSpec(spec);
+  if (error) { console.error(`--gate: ${error}`); process.exit(1); }
+  return terms;
+})();
 
 // ── запись
 function load(dir) {
@@ -118,19 +136,29 @@ function load(dir) {
   // СПОТ ПОДБИРАЕТСЯ БЛИЖАЙШИМ ТИКОМ НЕ ПОЗЖЕ МЕТКИ, а не точным совпадением: в восстановленной
   // записи метки совпадают по построению, а в ЖИВОЙ нет (тики раз в 30 с, поверхность раз в 300 с
   // со своей меткой), и точное совпадение молча обнулило бы весь расчёт.
+  // ОДИН ТИК НА ТРИ ВЕЛИЧИНЫ. Спот, rv7 и импульс обязаны приходить из ОДНОЙ строки: иначе гейт
+  // сравнивал бы IV этого снимка с волатильностью другого момента, и «разрыв IV-RV» значил бы не то,
+  // что написано. Поэтому сперва индекс тика, и только потом чтение полей.
   const tts = ticks.map((t) => t.ts);
-  const spot = times.map((t) => {
+  const tickIdx = times.map((t) => {
     let lo = 0, hi = tts.length - 1, res = null;
     while (lo <= hi) { const m = (lo + hi) >> 1; if (tts[m] <= t) { res = m; lo = m + 1; } else hi = m - 1; }
-    return res == null ? null : ticks[res].S ?? null;
+    return res;
   });
+  const field = (k, name) => (k == null ? null : ticks[k]?.[name] ?? null);
+  const spot = tickIdx.map((k) => field(k, "S"));
+  // rv7 и импульс НЕ пересчитываются здесь: их посчитал движок (`computeRvBundle`) при сборке
+  // записи, и второй расчёт был бы вторым определением одной величины. Записи старого сборщика
+  // этих полей не несут - тогда весь столбец null, и гейт честно упрётся в «нет данных».
+  const rv7 = tickIdx.map((k) => field(k, "rv7"));
+  const imp = tickIdx.map((k) => field(k, "imp"));
   const byExp = new Map();
   for (const [ts, m] of snaps) {
     const e = new Map();
     for (const r of m.values()) { let a = e.get(r.e); if (!a) { a = []; e.set(r.e, a); } a.push(r); }
     byExp.set(ts, e);
   }
-  return { snaps, times, spot, byExp, stats: makePriceStats() };
+  return { snaps, times, spot, rv7, imp, byExp, stats: makePriceStats() };
 }
 const R = load(DIR);
 const N = R.times.length;
@@ -169,6 +197,42 @@ function pickLeg(i, cfg) {
   return pickSellLeg(snap.values(), cfg);
 }
 
+// ── СНАБЖЕНИЕ ВХОДНОГО ГЕЙТА (правила сравнения - hist-gate.js, здесь только величины).
+//
+// СКОС СЧИТАЕТСЯ ИЗ ПОВЕРХНОСТИ, потому что крыльев ±1σ в строке тика восстановленной записи нет:
+// их пишет только живой рекордер. Определение берётся то же, что у У7 (прокси 25Δ RR: пут минус
+// колл на страйках около ±1σ), и та же формула σ_T = IV·√T, какой набирает крылья main.js.
+// ОДНА ПРАВКА, И ОНА СОДЕРЖАТЕЛЬНА: сигма и страйки берутся на экспирации НОГИ, а не на ближней
+// экспирации сканера. Гейтить продавца скосом чужого срока значило бы судить схему числом, которого
+// она не видит: её окно 336-672 ч, а ближняя экспирация сканера живёт в двух-четырнадцати сутках.
+const nearestIvOf = (rows, type, target) => {
+  let best = null, bestD = Infinity;
+  for (const r of rows) {
+    if (r.s !== type || !fin(r.iv) || !fin(r.k)) continue;
+    const d = Math.abs(r.k - target);
+    if (d < bestD) { bestD = d; best = r.iv; }
+  }
+  return best;
+};
+function skewPtsAt(i, leg) {
+  const rows = R.byExp.get(R.times[i])?.get(leg.e);
+  const S = R.spot[i];
+  if (!rows || !(S > 0) || !fin(leg.iv) || !(leg.h > 0)) return null;
+  const sigmaPct = leg.iv * Math.sqrt(leg.h / (365 * 24));
+  if (!(sigmaPct > 0)) return null;
+  const put = nearestIvOf(rows, "P", S * (1 - sigmaPct / 100));
+  const call = nearestIvOf(rows, "C", S * (1 + sigmaPct / 100));
+  return fin(put) && fin(call) ? put - call : null;
+}
+
+// Величины осей ЛЕНИВЫ (геттеры), а не посчитаны заранее: скос стоит прохода по строкам экспирации,
+// а гейт со спецификацией "ivrv>=5" его не спрашивает вовсе. На пяти годах это разница в минуты.
+const gateMeasures = (i, leg) => ({
+  get ivrv() { return fin(leg.iv) && fin(R.rv7[i]) ? leg.iv - R.rv7[i] : null; },
+  get imp() { return R.imp[i]; },
+  get skew() { return skewPtsAt(i, leg); },
+});
+
 // Одна сделка НА ОДИН КОНТРАКТ 1.0 BTC, от входа до экспирации. Решения (что продать, когда
 // переложить хедж, чем кончается сделка) принимает sellhedge.js; здесь снабжение записью.
 function runTrade(i, leg, cfg) {
@@ -197,19 +261,28 @@ function runTrade(i, leg, cfg) {
   if (!walk) return null;
   const s = settleSellTrade({ open, walk, cfg });
   const endIdx = base + walk.exitIndex;
+  // Зона продавца НА МОМЕНТ ВХОДА (правило sellhedge.js, то же, каким живой сканер рисует чип):
+  // режим рынка это свойство входа, а не итога, и мерить его выходом значило бы судить сделку тем,
+  // чего в момент решения не было.
   return { i, endIdx, ts: R.times[i], exitTs: R.times[endIdx], pnl: s.pnl, im, prem: leg.m, iv: leg.iv,
+    zone: sellerZone({ ivPct: leg.iv, rv7dPct: R.rv7[i] }), rv7: R.rv7[i],
     strike: leg.k, spot0: S0, spotEnd: R.spot[endIdx], reh: walk.rehedges, name: leg.n,
     turnover: walk.turnoverBtc, retIm: (s.pnl / im) * 100, retPrem: (s.pnl / leg.m) * 100,
     optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, cost: s.cost, fund: s.fund };
 }
 
 // ЦЕПОЧКА: закрылась сделка, в тот же день открывается следующая. Ни пропусков, ни выбора момента.
-function chain(cfg, start = 0) {
+// `gate` = { terms, counter } либо null. ГЕЙТ ТОЛЬКО ОТКЛАДЫВАЕТ ВХОД, и это не упрощение: нога уже
+// выбрана правилом схемы, гейт её не меняет и не улучшает - «не сейчас» означает ровно то, что
+// цепочка попробует на следующем снимке. Поэтому цена гейта это простой, и она видна в столбце
+// «вне рынка», а не в качестве сделки.
+function chain(cfg, start = 0, gate = null) {
   const out = [];
   let i = start;
   while (i < N - 1) {
     const leg = pickLeg(i, cfg);
     if (!leg) { i += 1; continue; }
+    if (gate && !testGate(gate.terms, gateMeasures(i, leg), gate.counter)) { i += 1; continue; }
     const t = runTrade(i, leg, cfg);
     if (!t) { i += 1; continue; }
     out.push(t);
@@ -227,16 +300,52 @@ const equity = (rows, pick = (r) => r.retIm) => {
   return { eq, dd: dd * 100 };
 };
 
+// Доля времени записи ВНЕ позиции. Без неё таблица гейта нечитаема: гейт не улучшает сделку, он её
+// откладывает, и потерянное время это и есть его цена. Считается по покрытию всей записи, а не по
+// промежутку между первой и последней сделкой: ожидание ПЕРЕД первым входом гейт создаёт тоже.
+const idlePct = (rows) => {
+  const span = R.times.at(-1) - R.times[0];
+  if (!(span > 0)) return NaN;
+  const held = rows.reduce((a, r) => a + (r.exitTs - r.ts), 0);
+  return Math.max(0, 100 * (1 - held / span));
+};
+
+// Есть ли в записи то, чем гейт судит. Столбец «нет данных» отвечает на это по факту, но молчаливый
+// прогон, где ВСЕ входы отклонены отсутствием поля, читался бы как «гейт всё зарезал» - поэтому
+// предупреждение печатается до таблицы и называет недостающее поле.
+const gateDataNote = () => {
+  const miss = [];
+  if (!R.rv7.some(fin)) miss.push("rv7 (ось ivrv)");
+  if (!R.imp.some(fin)) miss.push("imp (ось imp)");
+  return miss.length
+    ? `ВНИМАНИЕ: в строках тика записи нет полей ${miss.join(", ")} - эти оси дадут «нет данных» на каждом входе. Пересоберите запись (npm run hist:build).`
+    : null;
+};
+
 // ── ОТЧЁТ
 console.log(`# Продажа опциона с дельта-хеджем\n`);
 console.log(`Запись ${DIR}: ${N} снимков, ${dt(R.times[0])} .. ${dt(R.times.at(-1))}.`);
 console.log(`Срок ${E_MIN}-${E_MAX} ч · дельта ${D_TARGET} · полоса хеджа ${BAND} BTC · `
   + `комиссия перпа ${(PERP_FEE * 1e4).toFixed(1)} б.п. · спред ×${SPREAD}`
   + `${HAIRCUT ? ` · вычет ${HAIRCUT} п. воли` : ""}${CHAIN_ADJ !== 1 ? ` · поправка цепочки ×${CHAIN_ADJ}` : ""}.`);
-console.log(`Фандинг ${USE_FUNDING ? `учтён почасово (${FUND.size} записей)` : "ОТКЛЮЧЁН (контроль)"}.\n`);
+console.log(`Фандинг ${USE_FUNDING ? `учтён почасово (${FUND.size} записей)` : "ОТКЛЮЧЁН (контроль)"}.`);
+if (GATE_TERMS) {
+  console.log(`Входной гейт: ${formatGateTerms(GATE_TERMS)}. У ЖИВОЙ СХЕМЫ ГЕЙТОВ НЕТ - это измерение,`);
+  console.log(`а не конфигурация; книга такого прогона с прогоном движка не сверяется.`);
+  const note = gateDataNote();
+  if (note) console.log(note);
+}
+console.log("");
 
-const rows = chain(CFG);
-if (!rows.length) { console.error("сделок не получилось: проверьте окно срока и полосу дельты"); process.exit(1); }
+const GATE_RUN = GATE_TERMS ? { terms: GATE_TERMS, counter: makeGateCounter() } : null;
+const rows = chain(CFG, 0, GATE_RUN);
+if (!rows.length) {
+  console.error(GATE_TERMS
+    ? `сделок не получилось: гейт «${formatGateTerms(GATE_TERMS)}» не пустил ни одного входа `
+      + `(проверено ${GATE_RUN.counter.checked}, из них нет данных ${GATE_RUN.counter.noData})`
+    : "сделок не получилось: проверьте окно срока и полосу дельты");
+  process.exit(1);
+}
 
 console.log(`## 1 · Цепочка\n`);
 console.log(`| величина | значение |`);
@@ -253,6 +362,15 @@ console.log(`| поправок хеджа всего | ${rows.reduce((a, r) => 
 const E = equity(rows);
 console.log(`| залог вырос в | **${f2(E.eq)} раза** |`);
 console.log(`| максимальная просадка залога | ${f2(E.dd, 1)}% |`);
+// Строки гейта печатаются ТОЛЬКО при --gate: без него отчёт обязан остаться прежним до строки.
+if (GATE_RUN) {
+  const c = GATE_RUN.counter;
+  console.log(`| входов отклонено гейтом | ${c.blocked}${c.noData ? ` (+${c.noData} без данных)` : ""} из ${c.checked} проверенных |`);
+  for (const [axis, b] of Object.entries(c.byAxis)) {
+    console.log(`| из них решила ось ${axis} | ${b.blocked} по значению${b.noData ? ` · ${b.noData} без данных` : ""} |`);
+  }
+  console.log(`| вне рынка | ${f2(idlePct(rows), 1)}% времени записи |`);
+}
 
 console.log(`\n## 2 · Из чего сложился итог, USD на один контракт\n`);
 const sum = (k) => rows.reduce((a, r) => a + r[k], 0) * (k === "cost" || k === "fund" ? -1 : 1);
@@ -326,17 +444,108 @@ if (argOf("--book")) {
   const FIXED = argOf("--book-lots") == null ? null : Number(argOf("--book-lots"));
   const f6 = (x, d) => (fin(x) ? x.toFixed(d) : "н/д");
   const iso = (ms) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+  // ЗОНА ИДЁТ ПОСЛЕДНИМ СТОЛБЦОМ, и это не косметика: порядок разбора в compare-books.mjs означает
+  // «расхождение раннего столбца объясняет поздние», а зона ничего не объясняет - она контекст
+  // входа. Значение машинное (worst/normal/н-д), чтобы обе стороны сверки писали ровно одну строку.
   const lines = [["#", "инструмент", "открыт", "закрыт", "лотов", "залог", "перекладок", "оборот BTC",
-    "премия-выкуп", "хедж", "издержки", "фандинг", "итого"].join("\t")];
+    "премия-выкуп", "хедж", "издержки", "фандинг", "итого", "зона"].join("\t")];
   accounts[start].log.forEach((x, k) => {
     const lots = FIXED ?? x.lots;
     const q = lots * LOT;
     const pnl = FIXED == null ? x.pnl : x.t.pnl * q;
     lines.push([k + 1, x.t.name, iso(x.t.ts), iso(x.t.exitTs), lots, f6(x.t.im * q, 2), x.t.reh,
       f6(x.t.turnover * q, 6), f6(x.t.optLeg * q, 2), f6(x.t.hedgeLeg * q, 2), f6(x.t.cost * q, 2),
-      f6(-x.t.fund * q, 2), f6(pnl, 2)].join("\t"));
+      f6(-x.t.fund * q, 2), f6(pnl, 2), x.t.zone ?? "н-д"].join("\t"));
   });
   writeFileSync(argOf("--book"), lines.join("\n") + "\n");
+}
+
+// ── РАЗРЕЗ ПО ЗОНЕ ПРОДАВЦА. Отвечает на вопрос, которого перечень гейтов НЕ решает: гейт меряет
+// «что будет, если не входить в плохом режиме», а разрез - «сколько принесли сделки, открытые в
+// нём». Это разные величины, и цитата в шапке sell-scan.js содержит обе («худшая зона давала
+// +2.71% залога за сделку против +4.93% в среднем при просадке 26.7% против 13.5%»), поэтому
+// воспроизводить их надо тоже обеими, а не одной.
+//
+// ЗОНА БЕРЁТСЯ НА ВХОДЕ и считается правилом движка (`sellerZone`), тем же, каким живой сканер
+// рисует чип «зона продавца». Метка «нет данных» это ОТДЕЛЬНАЯ строка, а не тихое зачисление в
+// «обычную»: в начале записи RV7d отсутствует (недельный разогрев окна), и такие сделки не знают
+// своего режима.
+//
+// «ЗАЛОГ ВЫРОС В» ПО ЗОНЕ - ЭТО ВКЛАД ПОДПОСЛЕДОВАТЕЛЬНОСТИ, А НЕ РЕЗУЛЬТАТ СТРАТЕГИИ «торговать
+// только эту зону». Сделки зоны компаундятся подряд, как будто между ними ничего не было, а в
+// действительности там стояла бы пауза - её цена меряется перечнем гейтов выше и в этой таблице
+// НЕ учтена. Читать столбец как достижимый итог нельзя.
+if (has("--zones")) {
+  console.log(`\n## Разрез по зоне продавца (на момент входа)\n`);
+  const label = { worst: "худшая (RV7d выше IV ноги)", normal: "обычная (IV выше RV7d)", "н-д": "нет данных (разогрев RV)" };
+  console.log(`| зона | сделок | доля | средняя сделка | медиана | худшая | залог вырос в | просадка |`);
+  console.log(`|---|---|---|---|---|---|---|---|`);
+  const line = (key, rs) => {
+    if (!rs.length) { console.log(`| ${label[key] ?? key} | 0 | - | - | - | - | - | - |`); return; }
+    const e = equity(rs);
+    console.log(`| ${label[key] ?? key} | ${rs.length} | ${f2((100 * rs.length) / rows.length, 0)}% | `
+      + `${f2(mean(rs.map((r) => r.retIm)))}% | ${f2(q(rs.map((r) => r.retIm), 0.5))}% | `
+      + `${f2(Math.min(...rs.map((r) => r.retIm)))}% | ${f2(e.eq)} | ${f2(e.dd, 1)}% |`);
+  };
+  for (const key of ["worst", "normal", "н-д"]) line(key, rows.filter((r) => (r.zone ?? "н-д") === key));
+  const all = equity(rows);
+  console.log(`| **все сделки** | **${rows.length}** | 100% | **${f2(mean(rows.map((r) => r.retIm)))}%** | `
+    + `${f2(q(rows.map((r) => r.retIm), 0.5))}% | ${f2(Math.min(...rows.map((r) => r.retIm)))}% | `
+    + `**${f2(all.eq)}** | ${f2(all.dd, 1)}% |`);
+  const worst = rows.filter((r) => r.zone === "worst");
+  if (worst.length) {
+    const spread = worst.map((r) => r.iv - r.rv7).filter(fin);
+    console.log(`\nВ худшей зоне открыто ${worst.length} сделок из ${rows.length}; медиана разрыва IV−RV7d на`);
+    console.log(`их входах ${f2(q(spread, 0.5))} п.в. Столбец «залог вырос в» по зоне - вклад её сделок,`);
+    console.log(`компаунднутых подряд, а не результат стратегии «торговать только эту зону»: цена пауз между`);
+    console.log(`ними меряется перечнем гейтов, а не здесь.`);
+  }
+}
+
+// ── ПЕРЕБОР ВХОДНЫХ ГЕЙТОВ. Смысл ровно тот же, что у перебора полосы ниже: не найти лучшую клетку,
+// а показать ЦЕНУ условия. Вывод замера 2026-08-18 («входные гейты цепочку только ухудшают: база
+// ×46.5 против ×34 у лучшего гейта») до этой таблицы жил в проекте цитатой в шапке sell-scan.js -
+// перепроверить его на новой записи или пересчитать после правки издержек было нечем.
+//
+// ЧИТАТЬ НАДО ЗНАК РАЗНИЦЫ С БАЗОЙ НА ВСЕЙ СЕТКЕ, А НЕ МАКСИМУМ СТОЛБЦА. Пороги перебираются по ТОЙ
+// ЖЕ записи, на которой меряется итог, поэтому клетка выше базы была бы подгонкой, а не находкой -
+// та же оговорка, что печатает eval-relax.mjs. Столбец «вне рынка» здесь главный: он показывает
+// механизм, которым гейт платит (простой), и он же объясняет, почему средняя сделка может вырасти,
+// а итог упасть.
+//
+// СЕТКА ЗАДАНА РУКАМИ И НЕ ВЫВОДИТСЯ ИЗ ДАННЫХ: пороги должны быть теми же от прогона к прогону,
+// иначе таблицы двух записей несравнимы. Направления - те, которых хочет продавец: разрыв IV-RV
+// ВЫШЕ порога (реализованная волатильность дешевле проданной), импульс НИЖЕ (не продавать в
+// движение), скос НИЖЕ (коллы дороже путов).
+if (has("--gate-sweep")) {
+  console.log(`\n## Перебор входных гейтов\n`);
+  const note = gateDataNote();
+  if (note) console.log(`${note}\n`);
+  const grid = ["ivrv>=0", "ivrv>=2", "ivrv>=5", "ivrv>=8", "imp<=8", "imp<=5", "imp<=3", "skew<=0", "skew<=-2"];
+  console.log(`| гейт | сделок | залог вырос в | просадка | средняя сделка | вне рынка | входов отклонено |`);
+  console.log(`|---|---|---|---|---|---|---|`);
+  const line = (label, rs, counter) => {
+    if (!rs.length) {
+      console.log(`| ${label} | 0 | - | - | - | 100.0% | ${counter ? counter.blocked + counter.noData : 0} |`);
+      return;
+    }
+    const e = equity(rs);
+    const rej = counter ? `${counter.blocked}${counter.noData ? ` (+${counter.noData} без данных)` : ""}` : "-";
+    console.log(`| ${label} | ${rs.length} | ${f2(e.eq)} | ${f2(e.dd, 1)}% | ${f2(mean(rs.map((r) => r.retIm)))}% | `
+      + `${f2(idlePct(rs), 1)}% | ${rej} |`);
+  };
+  // База считается заново только если основной прогон УЖЕ был с гейтом: пять лет цепочки стоят
+  // минуты, и лишний прогон ради той же строки был бы ценой без смысла.
+  line("без гейта (база)", GATE_RUN ? chain(CFG) : rows, null);
+  for (const spec of grid) {
+    const { terms, error } = parseGateSpec(spec);
+    if (error) { console.log(`| ${spec} | - | - | - | - | - | ${error} |`); continue; }
+    const gate = { terms, counter: makeGateCounter() };
+    line(formatGateTerms(terms), chain(CFG, 0, gate), gate.counter);
+  }
+  console.log(`\nГейт не выбирает ногу и не меняет размер - он умеет только ОТЛОЖИТЬ вход, поэтому`);
+  console.log(`каждая его клетка отдаёт сделки и время. Строка выше базы означала бы, что отложенные`);
+  console.log(`входы были в среднем хуже пропущенного простоя - на сетке это надо видеть целиком.`);
 }
 
 // ── ПЕРЕБОР ПОЛОСЫ. Смысл не в поиске максимума, а в показе того, что оптимум ДВИГАЕТСЯ вместе
