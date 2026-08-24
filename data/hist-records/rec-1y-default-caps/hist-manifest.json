@@ -1,0 +1,54 @@
+{
+  "builtAt": "2026-08-24T19:06:24.215Z",
+  "from": "2025-08-16",
+  "to": "2026-08-09",
+  "stepMin": 60,
+  "tape": "inverse",
+  "fit": {
+    "windowMin": 240,
+    "halfLifeMin": 45,
+    "minPoints": 4,
+    "xMarginFrac": 0.25,
+    "ivSource": "trade"
+  },
+  "caps": {
+    "maxDays": 90,
+    "maxLogMoneyness": 0.6
+  },
+  "chain": {
+    "requested": "auto",
+    "used": "linear",
+    "linearListedFrom": "2025-08-06",
+    "note": null
+  },
+  "syntheticQuotes": {
+    "isAssumption": true,
+    "mode": "ivPoints",
+    "scale": 1,
+    "provenance": {
+      "source": "запись прогона 5 (внутренний архив обкатки 2026-08-04..07, вне репозитория)",
+      "windowUtc": "2026-08-04T16:48Z .. 2026-08-07T17:37Z",
+      "snapshots": 809,
+      "instruments": 428,
+      "statistic": "медиана по клетке, клетки с n < 30 не заполнялись",
+      "isAssumption": true,
+      "caveat": "спокойный режим рынка; проскальзывание и глубина не моделируются"
+    }
+  },
+  "noDepth": "стакана в истории нет: строк D нет, У12 требует --depth assume",
+  "stats": {
+    "ticks": 8592,
+    "ticksSkipped": 0,
+    "surfaceRows": 3439468,
+    "snapshots": 8592,
+    "noIv": 210573,
+    "noForward": 0,
+    "noPrice": 67,
+    "noQuote": 1877394,
+    "instrumentsSeen": 4035046,
+    "expiriesFitted": 100022,
+    "tradesUsed": 17781756,
+    "tickNoSide": 0,
+    "tickNoRv": 0
+  }
+}
