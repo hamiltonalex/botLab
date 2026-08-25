@@ -10,7 +10,7 @@
 //  * getState/select respond immediately; backfills run in the background and arrive via push.
 //  * Snapshots that fail the netRate sign gate are shown with a warning but NOT accrued.
 
-import { app, BrowserWindow, dialog, ipcMain, powerMonitor, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Notification, powerMonitor, shell } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -527,6 +527,9 @@ function loadOrInitBtcOptions() {
   if (healedBenefit && st.settings) st.settings = { ...st.settings, benefitMovePct: settings.benefitMovePct };
   state.btcOptions.engine = st;
   state.btcOptions.settings = settings;
+  // Водяной знак нотификаций маржи: исторические строки margin-alert загруженного леджера уже
+  // были донесены (или устарели) - системное уведомление получает только пересечения ЭТОЙ сессии.
+  s1MarginAlertSeq = st.ledger?.length ? st.ledger[st.ledger.length - 1].seq ?? 0 : 0;
   // Phase 3b: the persisted IV history (its OWN file — never inside btc-options.json) survives
   // restarts so the 24h regime window doesn't start empty every session.
   const histRes = loadBotStateQuarantine(baseDir, `${BTCOPT_ID}-history`);
@@ -906,6 +909,36 @@ function push1() {
   if (win && !win.isDestroyed()) win.webContents.send("s1:push", assembleDataset1());
 }
 
+// ── Системная нотификация маржин-колла (ревизия 2026-08-25, Р1). Пересечения порогов и гистерезис
+// считает ДВИЖОК (trackMarginAlert) и оставляет строку margin-alert в леджере; main только доносит
+// новые строки до ОС - движок про Electron не знает, а строка переживает рестарт. Водяной знак по
+// seq ставится на буте на ХВОСТ загруженного леджера (исторические алерты не перепроигрываются) и
+// двигается на каждый вызов; вызовы стоят после evaluate тикового и ручного трактов - алерт другого
+// пути (открытие структуры) доносит следующий тик, опрос при открытой позиции работает всегда.
+let s1MarginAlertSeq = 0;
+function notifyMarginAlerts() {
+  const eng = state.btcOptions.engine;
+  const rows = eng?.ledger ?? [];
+  const fresh = [];
+  for (let i = rows.length - 1; i >= 0 && (rows[i].seq ?? 0) > s1MarginAlertSeq; i--) {
+    if (rows[i].type === "margin-alert") fresh.push(rows[i]);
+  }
+  s1MarginAlertSeq = rows.length ? rows[rows.length - 1].seq ?? s1MarginAlertSeq : s1MarginAlertSeq;
+  if (!fresh.length) return;
+  for (const r of fresh.reverse()) {
+    try {
+      if (!Notification.isSupported()) break;
+      // Тело = note строки: движок уже вписал туда утилизацию, порог и оценку цены ликвидации.
+      new Notification({
+        title: "botLab · бот 2: маржа",
+        body: String(r.note || "утилизация MM пересекла порог"),
+      }).show();
+    } catch (e) {
+      console.warn("[s1] margin-alert notification:", String(e?.message || e));
+    }
+  }
+}
+
 // The source tick: raw composite snapshot → record history (3b) → attach the IV context → ingest
 // (funding) → evaluate (hedge + P&L + iv_regime) → persist → push → maintain the band/DVOL caches.
 // Wrapped so a bad tick (network hiccup, unexpected shape) can never crash the app.
@@ -922,6 +955,7 @@ function onBtcOptSnapshot(snap) {
     // следующая сделка открывается следующим тиком, а не той же меткой, что расчёт старой.
     maybeOpenNextSell(); // async, самогейтится, в тик не бросает
     bo.snapshot = s1engine.evaluate(bo.engine, snap, Date.now());
+    notifyMarginAlerts(); // новые строки margin-alert этого evaluate → системная нотификация
     // Expiry settlement inside evaluate() may have flattened the book — re-point the source so the
     // now-dead legs stop being the gate-relevant primary (band-only polling, like after a close).
     if (hadStructure && !bo.engine.structure) pointBtcOptSource();
