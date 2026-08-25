@@ -1831,8 +1831,37 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
           </div>
         </div>
 
-        <!-- ── Структура · 4 ноги + перп-нога ── -->
-        <div class="card flush" id="optLegsCard">
+        <!-- ── Маржа и риск ── (живой счёт: cyc.account; переехала из секции гипотез парой к
+             кокпиту - UI-ревью 2026-08-25 П2: карточка показывает бумажный счёт, а стояла под
+             шапкой «гипотеза · не бумажный счёт», в последней трети страницы) -->
+        <div class="card" id="optMarginCard">
+          <div class="sec-head"><h2 data-i18n="opt.margin.title">Маржа и риск</h2>
+            <button class="help-btn" data-help="opt-margin">?</button>
+            <span class="tag amber" data-i18n="opt.pnl.phase">Фаза 2</span><span class="rule"></span>
+            <span class="hint" data-i18n="opt.margin.hint">Deribit · короткие ноги · станд. маржа</span></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="opt.margin.rowIM">начальная маржа (IM)</span><span class="v num" id="optMarginIM">—</span></div>
+            <div class="row"><span class="k" data-i18n="opt.margin.rowMM">поддерживающая (MM)</span><span class="v num" id="optMarginMM">—</span></div>
+          </div>
+          <div class="opt-bar cost" style="margin-top:10px"><div class="lbl"><span data-i18n="opt.margin.mu">утилизация MM · тек.</span><span class="num" id="optMarginMuPct">—</span></div>
+            <div class="track"><div class="fill" id="optMarginMuBar"></div></div></div>
+          <!-- П3: путь цены от входа до оценки ликвидации тем же примитивом бара; заполнение =
+               пройденная доля (index − entry)/(liq − entry), зоны цвета те же, что у утилизации -->
+          <div class="opt-bar cost" id="optMarginPath" style="margin-top:10px" hidden>
+            <div class="lbl"><span class="num" id="optMarginPathEntry">—</span><span class="num" id="optMarginPathLiq">—</span></div>
+            <div class="track"><div class="fill" id="optMarginPathFill"></div></div>
+          </div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="opt.margin.rowWorst">худшая утилизация MM</span><span class="v num" id="optMarginWorst">—</span></div>
+            <div class="row"><span class="k" data-i18n="opt.margin.rowEquity">депозит · equity</span><span class="v num" id="optMarginEquity">—</span></div>
+            <div class="row"><span class="k" data-i18n="opt.margin.rowLiq">ликвидация при BTC ≈</span><span class="v num" id="optMarginLiq">—</span></div>
+            <div class="row"><span class="k" data-i18n="opt.margin.rowHeadroom">запас до MM = equity</span><span class="v num" id="optMarginHeadroom">—</span></div>
+          </div>
+          <div class="opt-verdict" id="optMarginAlert" style="margin-top:8px" aria-live="polite">—</div>
+        </div>
+
+        <!-- ── Структура · 4 ноги + перп-нога ── (span2: пару к кокпиту занял живой риск) -->
+        <div class="card flush span2" id="optLegsCard">
           <div class="sec-head" style="padding:16px 16px 0;margin-bottom:10px">
             <h2 id="optLegsTitle" data-i18n="opt.legs.title0">Структура · winged straddle</h2>
             <button class="help-btn" id="optLegsHelp" data-help="opt-legs" data-help-alt="opt-legs-sell">?</button>
@@ -2289,25 +2318,6 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
             <canvas id="optPriceCanvas" class="price-canvas" aria-label="Путь цены BTC с маркерами исполнения хеджа" data-i18n-aria="opt.price.canvasAria"></canvas>
             <div class="chart-tip" id="optPriceTip"></div>
           </div>
-        </div>
-        <div class="card" id="optMarginCard">
-          <div class="sec-head"><h2 data-i18n="opt.margin.title">Маржа и риск</h2>
-            <button class="help-btn" data-help="opt-margin">?</button>
-            <span class="tag amber" data-i18n="opt.pnl.phase">Фаза 2</span><span class="rule"></span>
-            <span class="hint" data-i18n="opt.margin.hint">Deribit · короткие ноги · станд. маржа</span></div>
-          <div class="dl">
-            <div class="row"><span class="k" data-i18n="opt.margin.rowIM">начальная маржа (IM)</span><span class="v num" id="optMarginIM">—</span></div>
-            <div class="row"><span class="k" data-i18n="opt.margin.rowMM">поддерживающая (MM)</span><span class="v num" id="optMarginMM">—</span></div>
-          </div>
-          <div class="opt-bar cost" style="margin-top:10px"><div class="lbl"><span data-i18n="opt.margin.mu">утилизация MM · тек.</span><span class="num" id="optMarginMuPct">—</span></div>
-            <div class="track"><div class="fill" id="optMarginMuBar"></div></div></div>
-          <div class="dl">
-            <div class="row"><span class="k" data-i18n="opt.margin.rowWorst">худшая утилизация MM</span><span class="v num" id="optMarginWorst">—</span></div>
-            <div class="row"><span class="k" data-i18n="opt.margin.rowEquity">депозит · equity</span><span class="v num" id="optMarginEquity">—</span></div>
-            <div class="row"><span class="k" data-i18n="opt.margin.rowLiq">ликвидация при BTC ≈</span><span class="v num" id="optMarginLiq">—</span></div>
-            <div class="row"><span class="k" data-i18n="opt.margin.rowHeadroom">запас до MM = equity</span><span class="v num" id="optMarginHeadroom">—</span></div>
-          </div>
-          <div class="opt-verdict" id="optMarginAlert" style="margin-top:8px" aria-live="polite">—</div>
         </div>
         <div class="card flush" id="optStress">
           <div class="sec-head" style="padding:16px 16px 0;margin-bottom:8px"><h2 data-i18n="opt.stress.title">Стресс-сценарии</h2>
@@ -5416,6 +5426,24 @@ function renderOptMargin(cyc){
     /* зоны: <60% зелёная, 60%..порог алерта жёлтая, дальше красная (база .cost) */
     bar.className='fill '+(alertOn?'':mu>=0.6?'mz-warn':'mz-ok');
   }
+  /* П3: шкала пути цены «вход - текущая - ликвидация». Заполнение = пройденная доля пути от
+     входа к оценке ликвидации (кламп 0..1: цена ушла в выгодную сторону - бар пуст); работает и
+     для нижней стороны (путы: liq < entry, дробь остаётся положительной). Скрывается, когда нет
+     позиции, оценки или якоря входа (структуры старых персистов без entryUnderlying). */
+  const path=$('optMarginPath');
+  if(path){
+    const entry=cyc.entry_index, liq2=a.liq_price_est, idx2=cyc.index_price;
+    const ok = cyc.structure_id && entry>0 && Number.isFinite(liq2) && Number.isFinite(idx2) && Math.abs(liq2-entry)>1e-9;
+    path.hidden = !ok;
+    if(ok){
+      const frac=Math.max(0,Math.min(1,(idx2-entry)/(liq2-entry)));
+      const fill=$('optMarginPathFill');
+      if(fill){ fill.style.transform='scaleX('+frac+')';
+        fill.className='fill '+(alertOn?'':mu>=0.6?'mz-warn':'mz-ok'); }
+      $('optMarginPathEntry').textContent=t('opt.margin.pathEntry',{p:optUsd0(entry)});
+      $('optMarginPathLiq').textContent=t('opt.margin.pathLiq',{p:optUsd0(liq2)});
+    }
+  }
   optSetNum('optMarginWorst', ((a.worst_utilisation||0)*100).toFixed(0)+'%');
   optSetNum('optMarginEquity', a.equity!=null?optUsd0(a.equity):'—');
   /* класс пишется ДО optSetNum: та добавляет вспышку opt-tick, и запись className после неё
@@ -5879,15 +5907,18 @@ function renderOptStructPreview(){
 /* ── КАНВАСЫ (на канвас-ките: setupCanvas → C → niceTicks → attachCrosshair) ── */
 /* payoff: открытая структура → cycle.payoff; иначе гипотеза-preview.payoff (общая форма {pts,K,Kc,Kp,D,breakEvens}) */
 function optPayoffData(){
-  const ds=LIVE_S1||{}; let pf=null, spot=null, stress=null;
+  const ds=LIVE_S1||{}; let pf=null, spot=null, stress=null, liq=null;
   if(ds.cycle && ds.cycle.payoff){ pf=ds.cycle.payoff; spot=ds.cycle.underlying_price;
-    stress=((ds.cycle.stress&&ds.cycle.stress.scenarios)||[]).filter(s=>s.kind==='spot'&&s.id!=='flat'); }
+    stress=((ds.cycle.stress&&ds.cycle.stress.scenarios)||[]).filter(s=>s.kind==='spot'&&s.id!=='flat');
+    /* метка LIQ ТОЛЬКО у открытой структуры (cycle.payoff существует лишь при ней): на гипотезе
+       превью живого риска нет, и рисовать его там значило бы смешать гипотезу с живым счётом */
+    liq=(ds.cycle.account&&Number.isFinite(ds.cycle.account.liq_price_est))?ds.cycle.account.liq_price_est:null; }
   else { /* гипотеза: кэш берётся по активной схеме, иначе график продавца молчал бы до открытия */
     const pc = optIsSell() ? optSellPreviewCache : optPreviewCache;
     if(pc && pc.payoff){ pf=pc.payoff; spot=pc.underlying; } }
   if(!pf || !pf.pts || !pf.pts.length) return null;
   const be=pf.breakEvens||[];
-  return { pts:pf.pts, K:pf.K, Kc:pf.Kc, Kp:pf.Kp, D:pf.D, spot:spot, beLo:be[0], beHi:be[1], stress:stress };
+  return { pts:pf.pts, K:pf.K, Kc:pf.Kc, Kp:pf.Kp, D:pf.D, spot:spot, beLo:be[0], beHi:be[1], stress:stress, liq:liq };
 }
 function optDeltaData(){
   if(!optDeltaRing.length) return null;
@@ -6002,6 +6033,7 @@ function drawPayoff(cv, data, tipEl){
   vline(data.Kp,C('--txt-faint'),[3,3],'Kp'); vline(data.Kc,C('--txt-faint'),[3,3],'Kc');
   vline(data.beLo,C('--accent'),[2,3],'BE↓'); vline(data.beHi,C('--accent'),[2,3],'BE↑');
   vline(data.K,C('--neu'),null,'K'); vline(data.spot,C('--price'),null,'S');
+  vline(data.liq,C('--neg'),[2,3],'LIQ'); // оценка цены ликвидации - только у открытой структуры (optPayoffData)
   (data.stress||[]).forEach(sc=>{ if(Number.isFinite(sc.shockedSpot)) vline(sc.shockedSpot, C('--accent'), [1,5]); }); // Фаза 2d: метки стресс-сдвигов
   ctx.beginPath(); pts.forEach((p,i)=>{ const x=X(p.s),y=Y(p.pi); i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
   ctx.strokeStyle=C('--price'); ctx.lineWidth=2; ctx.lineJoin='round'; ctx.stroke();
