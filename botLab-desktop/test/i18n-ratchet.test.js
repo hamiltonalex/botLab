@@ -10,7 +10,9 @@ import { dirname, join } from "node:path";
 // Потолок после Ф3 (все три вкладки в словарях). Остаток - почти целиком русские
 // fallback-значения ВНУТРИ размеченных data-i18n элементов (остаются в разметке намеренно)
 // плюс единичные данные-литералы; заметно ниже он опустится только если убирать fallback-тексты.
-const CEILING = 827;
+// 2026-08-25: +2 - две новые строки карточки маржи (ликвидация при BTC, запас до MM = equity),
+// оба текста - штатные fallback внутри data-i18n, ключи в обоих словарях (план Р1 маржин-колла).
+const CEILING = 829;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(HERE, "..", "src", "renderer", "index.html"), "utf8");

@@ -421,6 +421,9 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible{
   text-transform:uppercase; padding:3px 8px; border-radius:20px; border:1px solid var(--line); color:var(--txt-dim); }
 .botcard .bc-tag.run{ color:var(--pos); background:var(--pos-bg); border-color:color-mix(in srgb, var(--pos) 40%, transparent); }
 .botcard .bc-tag.soon{ color:var(--neu); background:var(--neu-bg); border-color:color-mix(in srgb, var(--neu) 30%, transparent); }
+/* маржин-колл бота 2 виден с «Обзора» (план Р1 ревизии 2026-08-25): при утилизации MM от порога
+   алерта чип несёт маржу, а не только фазу */
+.botcard .bc-tag.alert{ color:var(--neg-bri); background:var(--neg-bg); border-color:color-mix(in srgb, var(--neg) 55%, transparent); }
 .botcard .bc-desc{ margin:9px 0 0; font-size:12px; color:var(--txt-dim); line-height:1.5; }
 .botcard .bc-foot{ display:flex; align-items:center; gap:10px; margin-top:12px;
   padding-top:11px; border-top:1px solid var(--line-soft);
@@ -879,6 +882,9 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
 .opt-bar.armed .track{ background:var(--accent-bg); } .opt-bar.armed .fill{ background:var(--accent); }
 .opt-bar.wait  .track{ background:var(--neu-bg); }    .opt-bar.wait  .fill{ background:var(--neu); }
 .opt-bar.rate  .track{ background:var(--inset); }     .opt-bar.rate  .fill{ background:var(--txt-dim); }
+/* цветовые зоны бара утилизации MM (план Р1 ревизии 2026-08-25): ниже 60% зелёная, 60-80 жёлтая,
+   от порога алерта красная. Классы вешает renderOptMargin, база .cost остаётся красной. */
+.opt-bar.cost .fill.mz-ok{ background:var(--pos); } .opt-bar.cost .fill.mz-warn{ background:var(--neu); }
 /* акцентный чип CALL/PUT/ядро — копия стиля .chip.B, семантическое имя (направление, не денежный поток) */
 .chip.side{ color:var(--accent); background:var(--accent-bg); border:1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
 /* полая точка токена (ОЖИДАНИЕ/ФОРМИРУЕТСЯ — «ещё не событие»): инсет-кольцо тем же currentColor */
@@ -2282,6 +2288,8 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
           <div class="dl">
             <div class="row"><span class="k" data-i18n="opt.margin.rowWorst">худшая утилизация MM</span><span class="v num" id="optMarginWorst">—</span></div>
             <div class="row"><span class="k" data-i18n="opt.margin.rowEquity">депозит · equity</span><span class="v num" id="optMarginEquity">—</span></div>
+            <div class="row"><span class="k" data-i18n="opt.margin.rowLiq">ликвидация (MM = equity) при BTC</span><span class="v num" id="optMarginLiq">—</span></div>
+            <div class="row"><span class="k" data-i18n="opt.margin.rowHeadroom">запас до MM = equity</span><span class="v num" id="optMarginHeadroom">—</span></div>
           </div>
           <div class="opt-verdict" id="optMarginAlert" style="margin-top:8px" aria-live="polite">—</div>
         </div>
@@ -4757,6 +4765,13 @@ function refreshOverview(){
           +chEsc((s1ch.last && !s1ch.last.ok && s1ch.last.reason) ? s1ch.last.reason : t('home.opt.chainFallback'))
       : s1Run ? t('home.opt.poll')
       : t('home.opt.idle'));
+  // Маржин-колл виден с «Обзора» (план Р1 ревизии 2026-08-25): при утилизации MM от порога алерта
+  // чип бота 2 несёт маржу, а не только фазу - оператор, не открывавший вкладку, иначе его не видел.
+  const s1acct = s1cyc && s1cyc.account;
+  if (s1acct && s1acct.margin_alert){
+    const s1tag = $('card-tag-btc-options');
+    if (s1tag){ s1tag.textContent = t('home.tag.margin',{p:Math.round(100*(s1acct.maintenance_utilisation||0))}); s1tag.className = 'bc-tag alert'; }
+  }
   // — карточка/точка otm-scanner: позиций и P&L нет (pnl=null) — в aggOpen/aggPnl не входит никогда,
   //   в aggReady входит как модуль (ui-spec §2.9); статус — состояние сигнала —
   const scn = LIVE_SCN || null, scnCyc = scn && scn.cycle;
@@ -5336,16 +5351,40 @@ function renderOptMetrics(cyc){
   optSetNum('optMxCycles', String(m.cycles||0));
 }
 
-/* — Фаза 2c: маржа и риск (реальная станд. маржа Deribit коротких ног; честный алерт превышения) — */
+/* — Фаза 2c: маржа и риск (реальная станд. маржа Deribit коротких ног; честный алерт превышения).
+   Ревизия 2026-08-25 Р1: запас до ликвидации В ЦЕНЕ (строка «MM = equity при BTC ≈ $X»), запас в
+   долларах и цветовые зоны бара: проценты утилизации не отвечали на вопрос «сколько ещё пройдёт
+   BTC», а живая сделка тем временем прошла пик 104.5% MM. — */
 function renderOptMargin(cyc){
   const a=cyc.account; if(!a || !$('optMarginIM')) return;
   optSetNum('optMarginIM', a.initial_margin!=null?fmtUSD(a.initial_margin,2):'—');
   optSetNum('optMarginMM', a.maintenance_margin!=null?fmtUSD(a.maintenance_margin,2):'—');
   const mu=a.maintenance_utilisation||0;
   optSetNum('optMarginMuPct', (mu*100).toFixed(0)+'%');
-  const bar=$('optMarginMuBar'); if(bar) bar.style.transform='scaleX('+Math.max(0,Math.min(1,mu))+')';
+  const bar=$('optMarginMuBar'); if(bar){
+    bar.style.transform='scaleX('+Math.max(0,Math.min(1,mu))+')';
+    /* зоны: <60% зелёная, 60%..порог алерта жёлтая, дальше красная (база .cost) */
+    bar.className='fill '+(a.margin_alert?'':mu>=0.6?'mz-warn':'mz-ok');
+  }
   optSetNum('optMarginWorst', ((a.worst_utilisation||0)*100).toFixed(0)+'%');
   optSetNum('optMarginEquity', a.equity!=null?fmtUSD(a.equity,2):'—');
+  const liqEl=$('optMarginLiq');
+  if(liqEl){
+    const liq=a.liq_price_est, hr=a.mm_headroom_usd, idx=cyc.index_price;
+    if(!cyc.structure_id || liq==null){ liqEl.textContent='—'; liqEl.className='v num'; }
+    else if(hr!=null && hr<=0){ liqEl.textContent=t('opt.margin.liqNow'); liqEl.className='v num neg'; }
+    else{
+      const d=(idx>0)?(100*(liq-idx)/idx):null;
+      liqEl.textContent=fmtUSD(liq,0)+(d!=null?' ('+(d>=0?'+':'')+d.toFixed(1)+'%)':'');
+      liqEl.className='v num '+(a.margin_alert?'neg':'');
+    }
+  }
+  const hrEl=$('optMarginHeadroom');
+  if(hrEl){
+    const hr=a.mm_headroom_usd;
+    if(!cyc.structure_id || hr==null){ hrEl.textContent='—'; hrEl.className='v num'; }
+    else{ hrEl.textContent=fmtUSD(hr,0); hrEl.className='v num '+clsSign(hr); }
+  }
   const al=$('optMarginAlert'); if(!al) return;
   if(a.over_deposit){ al.textContent=t('opt.r.mgOver',{im:fmtUSD(a.initial_margin,0),eq:fmtUSD(a.equity,0)}); al.className='opt-verdict neg'; }
   else if(a.margin_alert){ al.textContent=t('opt.r.mgAlert',{p:(mu*100).toFixed(0)}); al.className='opt-verdict neg'; }
@@ -5500,9 +5539,13 @@ async function fetchOptLedgerRows(){
       /* только реально эмитируемые движком типы (engine.js appendLedger): фандинг — накопительный
          perpState.fundingCum, комиссии — поле feeUsd на строках hedge/close-perp, отдельных строк нет */
       const tl={ get open(){return t('opt.r.tlOpen');}, get 'open-cost'(){return t('opt.tk.sellCost');}, get hedge(){return t('opt.chain.tktHedge');}, get 'close-perp'(){return t('opt.r.tlClosePerp');}, get 'close-options'(){return t('opt.r.tlCloseOpt');}, get 'settle-options'(){return t('opt.r.tlSettle');} };
+      /* margin-alert несёт порог в meta (гистерезис в движке); цена строки = индекс на пересечении */
+      const tlOf = (ev)=> ev.type==='margin-alert'
+        ? t('opt.r.tlMarginAlert',{p:Math.round(100*((ev.meta&&ev.meta.threshold)||0))})
+        : (tl[ev.type]||ev.type);
       $('optLedgerBody').innerHTML = r.events.map(ev=>{
         const pnlVal = ev.realizedUsd||0;
-        return '<tr><td class="lft ts">'+optClock(ev.t)+'</td><td class="lft">'+(tl[ev.type]||ev.type)+'</td>'+
+        return '<tr><td class="lft ts">'+optClock(ev.t)+'</td><td class="lft">'+tlOf(ev)+'</td>'+
           '<td class="num">'+(ev.deltaBtc!=null?optSigned(ev.deltaBtc,4):'—')+'</td>'+
           '<td class="num">'+(ev.contracts!=null?ev.contracts:'—')+'</td>'+
           '<td class="num px">'+(ev.priceRef?Math.round(ev.priceRef).toLocaleString('en-US'):'—')+'</td>'+
