@@ -329,3 +329,27 @@ test("зона: нет данных - null, а не «обычная»", () => {
   assert.equal(sellerZone({ ivPct: 50, rv7dPct: NaN }), null);
   assert.equal(sellerZone(), null);
 });
+
+// ── наблюдатель шага (ревизия 2026-08-25 Р2: маржинальный путь и режим ликвидации эталона)
+test("протяжка: onStep видит каждый оценённый шаг и НЕ меняет итог ни на бит", () => {
+  const seen = [];
+  const base = walk({ steps: 5, spot: (k) => 100000 + 1000 * k, delta: (k) => 0.45 + 0.05 * k });
+  const T0 = Date.parse("2026-01-01T00:00:00Z");
+  const observed = walkSellTrade({
+    count: 5,
+    tsAt: (k) => T0 + (k + 1) * 3600000,
+    spotAt: (k) => 100000 + 1000 * k,
+    priceAt: (k) => ({ markUsd: 100, delta: 0.45 + 0.05 * k }),
+    fundRateAt: () => 0,
+    expiryMs: T0 + 5 * 3600000,
+    entry: { qPerp: 0.45, hedgeFee: 0 }, entryTsMs: T0, entrySpot: 100000, cfg: C,
+    onStep: (s) => seen.push(s),
+  });
+  assert.deepEqual(observed, base, "наблюдатель ничего не меняет");
+  assert.equal(seen.length, 5, "каждый оценённый шаг виден, включая экспирационный");
+  assert.equal(seen.at(-1).atExpiry, true, "последний шаг помечен экспирацией");
+  assert.equal(seen[0].qPerp, 0.45, "позиция ДО перекладки шага");
+  assert.equal(seen[1].qPerp, 0.45, "шаг 0 дельту не сдвинул (разрыв в полосе)");
+  near(seen[1].hedgePnl, 0.45 * 1000, 1e-9, "накопители на момент наблюдения");
+  assert.ok(seen.every((s) => s.mark === 100 && s.S > 0 && Number.isFinite(s.funding)), "поля шага");
+});

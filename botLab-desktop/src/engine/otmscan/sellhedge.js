@@ -130,9 +130,14 @@ export function shouldRehedge({ want, have, bandBtc } = {}) {
 //   fundRateAt(tsMs) - часовая ставка фандинга (положительная = лонги платят);
 //   expiryMs    - экспирация проданной ноги;
 //   entry       - { qPerp, hedgeFee } из openSellTrade;
-//   entryTsMs / entrySpot - метка и индекс на входе.
+//   entryTsMs / entrySpot - метка и индекс на входе;
+//   onStep      - НАБЛЮДАТЕЛЬ шага (опционально): {ts, S, mark, delta, qPerp, hedgePnl, funding,
+//                 hedgeFee, atExpiry} после начислений и цены, ДО перекладки. Нужен измерителю
+//                 маржинального пути и режиму ликвидации эталона (ревизия 2026-08-25 Р2): без него
+//                 внутрисделочный путь пришлось бы восстанавливать второй реализацией этой же
+//                 протяжки. Наблюдатель только читает; без него поведение прежнее до бита.
 export function walkSellTrade({
-  count, tsAt, spotAt, priceAt, fundRateAt, expiryMs, entry, entryTsMs, entrySpot,
+  count, tsAt, spotAt, priceAt, fundRateAt, expiryMs, entry, entryTsMs, entrySpot, onStep,
   cfg = SELLHEDGE_DEFAULTS,
 } = {}) {
   if (!Number.isInteger(count) || count <= 0 || !entry) return null;
@@ -158,6 +163,7 @@ export function walkSellTrade({
     const p = priceAt(k);
     if (!p) return null; // цена не вышла: сделка не засчитывается, вызывающий обязан это СЧИТАТЬ
     exitIndex = k;
+    if (onStep) onStep({ ts, S, mark: p.markUsd, delta: p.delta ?? null, qPerp, hedgePnl, funding, hedgeFee, atExpiry: ts >= expiryMs });
     if (ts >= expiryMs) {
       exitVal = p.markUsd;
       break;
