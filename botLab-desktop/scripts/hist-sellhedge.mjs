@@ -76,6 +76,10 @@ if (has("--help") || !argOf("--dir")) {
   --chain-adj <x>     множитель итога сделки (0.69 приводит обратную цепочку к линейной)
   --no-funding        не учитывать фандинг (контрольный прогон)
   --deposit <$,...>   стартовые депозиты для симуляции счёта (по умолчанию 500,2000,20000)
+  --liquidation       симуляция счёта С ЛИКВИДАЦИЕЙ: MM короткой ноги от 100% equity на любом
+                      часе пути = принудительное закрытие по цене этого часа (плюс вторая
+                      половина круга издержек). Без флага «×N за 5 лет» верен только при
+                      допущении «биржа не ликвидирует внутри сделки»
   --periods <д,...>   границы режимов рынка для разбивки (даты UTC)
   --trades            печатать все сделки по одной строке
   --book <файл>       записать книгу сделок (TSV) для сверки с прогоном движка
@@ -103,6 +107,7 @@ const SPREAD = Number(argOf("--spread-scale", "1.10"));
 const HAIRCUT = Number(argOf("--iv-haircut", "0"));
 const CHAIN_ADJ = Number(argOf("--chain-adj", "1"));
 const USE_FUNDING = !has("--no-funding");
+const HAS_LIQ = has("--liquidation");
 const DEPOSITS = (argOf("--deposit", "500,2000,20000")).split(",").map(Number).filter(fin);
 const PERIODS = (argOf("--periods") ?? "").split(",").filter(Boolean).map((d) => Date.parse(`${d}T00:00:00Z`));
 const LOT = 0.01, DEPLOY = 0.70;
@@ -248,6 +253,9 @@ function runTrade(i, leg, cfg) {
   const meta = { name: leg.n, expiryMs: leg.e, strikeUsd: leg.k, type: "C" };
 
   const base = i + 1;
+  // Путь шагов собирается ТОЛЬКО под --liquidation: наблюдатель onStep читает и не меняет протяжку
+  // (доказано тестом «не меняет итог ни на бит»), а без флага отчёт обязан остаться прежним до байта.
+  const steps = HAS_LIQ ? [] : null;
   const walk = walkSellTrade({
     count: N - base,
     tsAt: (k) => R.times[base + k],
@@ -257,6 +265,7 @@ function runTrade(i, leg, cfg) {
       spotAtExpiry: spotBefore(leg.e) })),
     fundRateAt: fundRate,
     expiryMs: leg.e, entry: open, entryTsMs: R.times[i], entrySpot: S0, cfg,
+    onStep: steps ? (s) => steps.push(s) : undefined,
   });
   if (!walk) return null;
   const s = settleSellTrade({ open, walk, cfg });
@@ -268,7 +277,8 @@ function runTrade(i, leg, cfg) {
     zone: sellerZone({ ivPct: leg.iv, rv7dPct: R.rv7[i] }), rv7: R.rv7[i],
     strike: leg.k, spot0: S0, spotEnd: R.spot[endIdx], reh: walk.rehedges, name: leg.n,
     turnover: walk.turnoverBtc, retIm: (s.pnl / im) * 100, retPrem: (s.pnl / leg.m) * 100,
-    optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, cost: s.cost, fund: s.fund };
+    optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, cost: s.cost, fund: s.fund,
+    premSold: open.premSold, optCost: open.optCost, steps };
 }
 
 // ЦЕПОЧКА: закрылась сделка, в тот же день открывается следующая. Ни пропусков, ни выбора момента.
@@ -405,6 +415,63 @@ for (const start of DEPOSITS) {
   }
   accounts[start] = { acc, maxDd: maxDd * 100, log };
   console.log(`| $${start} | ${played} | ${skipped} | **$${f2(acc, 0)}** | ×${f2(acc / start, 1)} | ${f2(maxDd * 100, 1)}% |`);
+}
+
+// ── СЧЁТ С ЛИКВИДАЦИЕЙ (Р2 ревизии 2026-08-25). Раздел 3 выше шагает по границам сделок и потому
+// молчит о том, что маржинальный путь ВНУТРИ сделки пересекал зону ликвидации реального счёта:
+// при deployPct 0.70 таких сделок было 13 из 84 за пять лет с пиком MM 244% equity. Здесь тот же
+// счёт целыми лотами, но каждый час пути сделки проверяется MM ≥ equity, и пересечение закрывает
+// позицию принудительно по цене этого часа. «×N за 5 лет» перестаёт быть условным.
+//
+// Механика и допущения, поимённо:
+//   - MM только опционной ноги (маржа перпа не моделируется, как всюду) - реальный счёт СТРОЖЕ;
+//   - выкуп при ликвидации по МАРКУ часа плюс ВТОРАЯ половина круга издержек входа (вход платил
+//     половину, потому что экспирация книгу не пересекает; принудительный выкуп пересекает);
+//   - после ликвидации цепочка продолжает со СЛЕДУЮЩЕЙ сделки базовой цепочки (её вход стоит после
+//     старой экспирации): окно от ликвидации до входа - вне рынка, это консервативно;
+//   - шаг проверки = шаг записи (час): внутричасовые пики биржа увидела бы раньше.
+if (HAS_LIQ) {
+  console.log(`\n## 3а · Счёт целыми лотами С ЛИКВИДАЦИЕЙ (MM ≥ 100% equity = принудительное закрытие)\n`);
+  console.log(`| старт | сыграно | ликвидаций | пропущено | конец | рост | макс. просадка | пик MM |`);
+  console.log(`|---|---|---|---|---|---|---|---|`);
+  for (const start of DEPOSITS) {
+    let acc = start, peak = start, maxDd = 0, skipped = 0, played = 0, liqs = 0, peakMM = 0, dead = false;
+    const liqEvents = [];
+    for (const t of rows) {
+      if (dead) break;
+      const { lots } = lotsByMargin({ imUsdPerContract: t.im, equityUsd: acc, cfg: CFG });
+      if (lots < 1) { skipped += 1; continue; }
+      const q = lots * LOT;
+      let liqAt = null;
+      for (const s of t.steps ?? []) {
+        // MtM на один контракт в конвенции settleSellTrade: (премия − выкуп) + хедж − издержки −
+        // фандинг, целиком ×chainAdj. Издержки шага не включают закрытие перпа в экспирацию
+        // (walk добавляет его после цикла) - при нулевой комиссии перпа разницы нет.
+        const mtm1 = (t.premSold - s.mark + s.hedgePnl - (t.optCost + s.hedgeFee) - s.funding) * CFG.chainAdj;
+        const eqStep = acc + mtm1 * q;
+        const mm = legMargin({ type: "call", side: "short", strike: t.strike, mark: s.mark,
+          underlying: s.S, index: s.S, amount: 1 }).mm * q;
+        if (eqStep > 0) peakMM = Math.max(peakMM, mm / eqStep);
+        if (mm >= eqStep) { liqAt = { s, mtm1 }; break; }
+      }
+      played += 1;
+      const pnl = liqAt ? (liqAt.mtm1 - t.optCost * CFG.chainAdj) * q : t.pnl * LOT * lots;
+      if (liqAt) {
+        liqs += 1;
+        liqEvents.push({ name: t.name, ts: liqAt.s.ts, spot: liqAt.s.S, pnl, openTs: t.ts });
+      }
+      acc += pnl;
+      peak = Math.max(peak, acc);
+      maxDd = Math.max(maxDd, (peak - acc) / peak);
+      if (acc <= 0) dead = true; // счёт кончился: дальше играть нечем
+    }
+    console.log(`| $${start} | ${played} | ${liqs} | ${skipped} | **$${f2(acc, 0)}**${dead ? " (обнулён)" : ""} | ×${f2(acc / start, 1)} | ${f2(maxDd * 100, 1)}% | ${f2(peakMM * 100, 0)}% |`);
+    for (const e of liqEvents.slice(0, 10)) {
+      console.log(`|   ликвидация: ${e.name}, вход ${dt(e.openTs)}, снос ${dt(e.ts)} при споте ${f2(e.spot, 0)} | | | | P&L ${f2(e.pnl, 0)} | | | |`);
+    }
+  }
+  console.log(`\nЧитать вместе с разделом 3: разница столбца «конец» и есть цена допущения «биржа не`);
+  console.log(`ликвидирует внутри сделки». Пик MM здесь - максимум по пути ПРИ ЭТОМ размере лотов.`);
 }
 
 // ── разбивка по режимам рынка
