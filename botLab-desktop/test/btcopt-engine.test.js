@@ -874,14 +874,17 @@ test("account(): mm_headroom_usd и liq_price_est едут в счёт; конв
   const rows = maRows(st);
   assert.equal(rows.length, 1, "evaluate оставил ровно одну строку margin-alert");
   assert.equal(rows[0].meta.level, 2);
+  assert.equal(cyc.account.margin_alert_level, 2, "счёт несёт ступень ЭТОГО тика (уточнена после трекера)");
   const again = engine.evaluate(st, snap, NOON + 120000);
   assert.equal(maRows(st).length, 1, "второй тик выше порога строку не дублирует");
   assert.ok(again.account.margin_alert, "флаг алерта карточки живёт как жил");
+  assert.equal(again.account.margin_alert_level, 2, "ступень держится гистерезисом");
 });
 
-test("account(): без структуры liq_price_est = null, запас равен всему счёту", () => {
+test("account(): без структуры liq_price_est = null, запас равен всему счёту, ступень 0", () => {
   const st = engine.create({ nowMs: NOON, settings: { paperEquityUsd: 100 } });
   const a = engine.account(st, mkSnapshot());
   assert.equal(a.liq_price_est, null);
   near(a.mm_headroom_usd, a.equity, 1e-9, "MM нулевая - запас равен equity");
+  assert.equal(a.margin_alert_level, 0, "плоский счёт - ступень алерта нулевая");
 });

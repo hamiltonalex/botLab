@@ -367,7 +367,8 @@ export function evaluate(state, snapshot, nowMs) {
   const acct = account(state, snapshot);
   // Пересечения порогов утилизации MM вверх → строка margin-alert (гистерезис внутри). Здесь, а не
   // в account(): account зовут и превью с прогонами размера, а строку рождает только живой цикл.
-  trackMarginAlert(state, acct, snapshot, cfg, nowMs);
+  // Возвращённая ступень уточняет поле счёта (account() успел прочитать лишь уровень прошлого тика).
+  acct.margin_alert_level = trackMarginAlert(state, acct, snapshot, cfg, nowMs);
 
   // ── Hedge vs no-hedge (Phase 2a): a real shadow book (perpQty ≡ 0) run in parallel. Its net is the
   // options-only, after-costs outcome; hedge_contribution is the hedge program's true net contribution
@@ -945,6 +946,11 @@ export function account(state, snapshot) {
     worst_utilisation: Math.max(maintenance_utilisation, state.metrics?.worstMaintUtil ?? 0),
     over_deposit: m.initial > equity,
     margin_alert: maintenance_utilisation >= (cfg.marginAlertPct ?? 0.8),
+    // Ступень алерта С ГИСТЕРЕЗИСОМ - единый источник для всех поверхностей UI (бар, чип обзора,
+    // вердикт, точка вкладки): голый флаг margin_alert без гистерезиса дёргал бы их на каждом
+    // тике при дрожании утилизации вокруг порога. Здесь уровень ПРОШЛОГО тика (trackMarginAlert
+    // ещё не отработал); evaluate после трекера перезаписывает поле точным уровнем этого тика.
+    margin_alert_level: state.marginAlert?.level ?? 0,
     // Заблаговременность маржин-колла в понятных единицах (ревизия 2026-08-25): запас в долларах
     // до MM = equity и оценка цены индекса, на которой запас кончается (модель в шапке liqPriceEst).
     mm_headroom_usd: equity - m.maintenance,
