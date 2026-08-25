@@ -888,3 +888,16 @@ test("account(): без структуры liq_price_est = null, запас ра
   near(a.mm_headroom_usd, a.equity, 1e-9, "MM нулевая - запас равен equity");
   assert.equal(a.margin_alert_level, 0, "плоский счёт - ступень алерта нулевая");
 });
+
+test("entryIndex: открытие штампует индекс входа, цикл несёт entry_index, старый персист живёт fallback-ом", () => {
+  const { st, snap } = opened();
+  assert.equal(st.structure.entryIndex, 61000, "индекс снимка на моменте открытия");
+  const cyc = engine.evaluate(st, snap, NOON + 60000);
+  assert.equal(cyc.entry_index, 61000);
+  delete st.structure.entryIndex; // структура, записанная до появления поля
+  const cyc2 = engine.evaluate(st, snap, NOON + 120000);
+  assert.equal(cyc2.entry_index, st.structure.entryUnderlying, "fallback на entryUnderlying");
+  engine.closeStructure(st, snap, NOON + 180000);
+  const cyc3 = engine.evaluate(st, snap, NOON + 240000);
+  assert.equal(cyc3.entry_index, null, "без структуры якоря нет");
+});

@@ -500,6 +500,9 @@ export function evaluate(state, snapshot, nowMs) {
     ts: snapshot.ts ?? nowMs,
     underlying_price: snapshot.underlying ?? null,
     index_price: snapshot.index ?? null,
+    // Якорь шкалы пути до ликвидации; у структур из старых персистов поля entryIndex нет -
+    // честный запасной вариант это entryUnderlying (в записи и у линейных снимков это одно число).
+    entry_index: structure ? structure.entryIndex ?? structure.entryUnderlying ?? null : null,
     structure_id: structure?.id ?? null,
     option_legs,
     net_option_delta_bs: optionDelta,
@@ -647,6 +650,10 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
 
   built.id = `s1-${built.expiryMs}-${built.strikes.atm}-${nowMs}`;
   built.createdAt = nowMs;
+  // Индекс на моменте входа - якорь шкалы «вход - текущая - ликвидация» (UI-ревью 2026-08-25 П3).
+  // Именно индекс, а не спот: MM и оценка цены ликвидации считаются от индексной цены. Структуры,
+  // записанные до этого поля, читаются через fallback на entryUnderlying (см. evaluate).
+  built.entryIndex = snapshot.index ?? snapshot.underlying ?? null;
   // Замер счётчиков ДО строки `open-cost`: издержки входа обязаны попасть в сделку, которая их
   // заплатила, а не раствориться между сделками цепочки.
   if (built.kind === "sell-call") {
