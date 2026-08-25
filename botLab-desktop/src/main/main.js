@@ -1320,6 +1320,10 @@ function wireIpcStrategy1() {
     bo.source = null;
     bo.running = false;
     bo.engine = s1engine.create({ settings: bo.settings, nowMs: Date.now() });
+    // Леджер пересоздан пустым - водяной знак нотификаций маржи обязан обнулиться вместе с ним,
+    // иначе строки нового леджера (seq с единицы) молча не доходили бы до системной нотификации,
+    // пока seq не перегонит старый знак.
+    s1MarginAlertSeq = 0;
     bo.snapshot = null;
     bo.lastSnapshot = null;
     saveBotState(baseDir, BTCOPT_ID, bo.engine);
