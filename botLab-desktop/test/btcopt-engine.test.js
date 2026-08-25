@@ -457,6 +457,47 @@ test("R3: ingest через 8ч разрыв - фандинг клампится
   assert.equal(st.ledger.filter((e) => e.type === "funding-gap").length, 2);
 });
 
+// ── Тик без перпа при удерживаемой позиции (fix 2026-08-25) ─────────────────────────────────────
+// Живой снимок деградирует так: REST перпа отказал (503), опционные ноги ответили,
+// buildDeribitSnapshot отдал perp = null. Прогон mbp15 ронял на этом каждый такой тик:
+// attribute() падал в markPerp на perp.contractSize, тик гиб целиком (запись, персист, пуш),
+// а lastIngestAt при этом уже уехал вперёд - интервал фандинга терялся молча.
+test("тик без перпа: evaluate не падает, решение SKIP, метрики не фолдятся", () => {
+  const { st, snap } = opened();
+  engine.ingest(st, snap, NOON);
+  engine.evaluate(st, snap, NOON); // HEDGE: перп набирается, метрики фолдятся один раз
+  assert.ok(st.perpState.qty !== 0, "хедж набран");
+  const nBefore = st.metrics.n;
+
+  const degraded = { ...mkSnapshot(1_700_000_015_000), perp: null, liquidity: null };
+  const cycle = engine.evaluate(st, degraded, NOON + 15_000); // не должен бросить
+  assert.equal(cycle.decision, "SKIP", "деградировавший снимок не торгует");
+  assert.equal(cycle.current_futures_delta, 0, "дельту перпа маркировать нечем - честный ноль");
+  assert.equal(st.metrics.n, nBefore, "фантомный провал net без MtM перпа в метрики не фолдится");
+});
+
+test("тик без перпа не двигает часы фандинга: следующий оценённый тик доначисляет весь разрыв", () => {
+  const st = engine.create({ nowMs: NOON, settings: { deadbandRefQty: 1 } });
+  st.perpState.qty = -12;
+  st.perpState.avgEntry = 61000;
+  st.lastIngestAt = NOON;
+  const perp = { funding8h: 0.0001, contractSize: 10, mark: 61000 };
+
+  engine.ingest(st, { perp: null, underlying: 61000 }, NOON + 15_000);
+  assert.equal(st.lastIngestAt, NOON, "часы не тронуты: начисление не могло пройти");
+
+  const before = st.perpState.fundingCum;
+  engine.ingest(st, { perp, underlying: 61000 }, NOON + 30_000);
+  const fullDelta = -(-12) * 10 * 0.0001 * (30 / 28800); // весь разрыв 30с, не только последние 15с
+  near(st.perpState.fundingCum - before, fullDelta, 1e-12, "доначислен весь интервал от последнего оценённого тика");
+  assert.equal(st.lastIngestAt, NOON + 30_000, "оценённый тик двигает часы как обычно");
+
+  // плоская позиция: ждать нечего, часы идут и без перпа
+  st.perpState.qty = 0;
+  engine.ingest(st, { perp: null, underlying: 61000 }, NOON + 45_000);
+  assert.equal(st.lastIngestAt, NOON + 45_000, "без позиции тик без перпа часы двигает");
+});
+
 // ── Дельта перпа против его номинала (fix 2026-08-13) ────────────────────────────────────────────
 // Ни один прежний тест не держал позицию, у которой средний вход РАЗОШЁЛСЯ с марком, поэтому
 // подмена дельты номиналом жила в коде незамеченной. Здесь цена уходит на 10% после перекладки.

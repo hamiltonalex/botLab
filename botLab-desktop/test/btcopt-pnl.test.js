@@ -89,6 +89,30 @@ test("markPerp: flat / unpriced (qty 0, avgEntry 0) → all zeros", () => {
   assert.deepEqual(r, { futuresDeltaBtc: 0, futuresNotionalBtc: 0, upl_usd: 0, upl_btc: 0, notionalUsd: 0 });
 });
 
+test("markPerp: перп без цены при удерживаемой позиции - нули, а не исключение (fix 2026-08-25)", () => {
+  // Живой случай mbp15: REST перпа отказал, buildDeribitSnapshot отдал perp = null, и attribute()
+  // падал на perp.contractSize, роняя весь тик. Нули означают «маркировать нечем».
+  const ps = { qty: 7722, avgEntry: 72465, feesCum: 0, fundingCum: 0, realizedUsd: 675 };
+  const zeros = { futuresDeltaBtc: 0, futuresNotionalBtc: 0, upl_usd: 0, upl_btc: 0, notionalUsd: 0 };
+  assert.deepEqual(markPerp(ps, null), zeros, "perp null");
+  assert.deepEqual(markPerp(ps, undefined), zeros, "perp undefined");
+  assert.deepEqual(markPerp(ps, {}), zeros, "perp без полей");
+  assert.deepEqual(markPerp(ps, { mark: 0, contractSize: 10 }), zeros, "mark 0");
+  assert.deepEqual(markPerp(ps, { mark: 61000 }), zeros, "нет contractSize");
+});
+
+test("attribute: снимок без перпа при позиции - futures_upl равен реализованному, тождество сходится", () => {
+  const st = {
+    structure: null,
+    realizedOptionsUsd: -63,
+    perpState: { qty: 100, avgEntry: 60000, feesCum: 5, fundingCum: -7, realizedUsd: 40 },
+    ledger: [],
+  };
+  const a = attribute(st, { legs: {}, perp: null });
+  assert.equal(a.futures_upl, 40, "MtM перпа маркировать нечем - остаётся реализованное");
+  assert.equal(a.net_total, -63 + 40 - 7 - 5, "тождество атрибуции не рвётся");
+});
+
 test("markPerp: upl_usd equals upl_btc·mark (inverse identity)", () => {
   const r = markPerp({ qty: -7, avgEntry: 61000 }, { mark: 59000, contractSize: 10 });
   near(r.upl_usd, r.upl_btc * 59000, 1e-9, "upl_usd == upl_btc·mark");

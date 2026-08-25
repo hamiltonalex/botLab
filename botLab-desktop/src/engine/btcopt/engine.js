@@ -203,7 +203,11 @@ export function classifyGapCause({ fromMs, toMs, hints = {} } = {}) {
 
 export function ingest(state, snapshot, nowMs, hints = {}) {
   const cfg = buildCfg(state.settings);
-  if (state.perpState.qty !== 0 && snapshot.perp && Number.isFinite(snapshot.perp.funding8h)) {
+  // Начисление возможно, только когда перп снимка оценён. Тик без перпа при удерживаемой позиции
+  // НЕ двигает часы фандинга (см. конец функции): иначе интервал молча выпадал бы из начисления.
+  const holdingPerp = state.perpState.qty !== 0;
+  const perpPriced = !!(snapshot.perp && Number.isFinite(snapshot.perp.funding8h));
+  if (holdingPerp && perpPriced) {
     const last = state.lastIngestAt ?? nowMs;
     const dtSec = Math.max(0, (nowMs - last) / 1000);
     if (dtSec > 0) {
@@ -243,7 +247,13 @@ export function ingest(state, snapshot, nowMs, hints = {}) {
     u.lastAt = nowMs;
     u.nominalSec = cfg.repriceSec || 15;
   }
-  state.lastIngestAt = nowMs;
+  // ЧАСЫ ФАНДИНГА ДВИГАЮТСЯ ТОЛЬКО КОГДА НАЧИСЛЕНИЕ МОГЛО ПРОЙТИ. Тик без оценённого перпа при
+  // удерживаемой позиции прежде продвигал lastIngestAt, и интервал до него выпадал из начисления
+  // молча - ни строки, ни счётчика (найдено прогоном mbp15: отказ REST перпа при живых опционных
+  // ногах). Теперь такой тик часы не трогает: следующий оценённый тик доначислит весь разрыв через
+  // тот же анти-catch-up кламп, а разрыв больше клампа виден строкой funding-gap (закон А6 R3
+  // «деградация видима»). Плоской позиции ждать нечего - часы идут как шли.
+  if (!holdingPerp || perpPriced) state.lastIngestAt = nowMs;
   state.lastUnderlying = snapshot.underlying;
   return state;
 }
@@ -440,7 +450,13 @@ export function evaluate(state, snapshot, nowMs) {
   // леджера можно, но это была бы вторая реализация того же счёта.
   if (!Array.isArray(state.sellChain?.trades))
     state.sellChain = { on: false, stopRequested: false, armedAt: null, stoppedAt: null, params: null, trades: [], mark: null };
-  if (structure) {
+  // Тик с удерживаемым перпом, но без его цены в метрики НЕ фолдится: net_total такого тика не
+  // содержит MtM перпа (markPerp честно отдал нули), и фолд вписал бы в Sharpe/maxDD фантомный
+  // провал на всю нереализованную прибыль позиции с восстановлением следующим тиком. До правки
+  // markPerp такие тики до фолда не доживали (evaluate падал раньше), так что поведение метрик
+  // этой строкой не меняется - меняется только способ выживания тика.
+  const perpMarked = state.perpState.qty === 0 || !!(perp && perp.mark > 0);
+  if (structure && perpMarked) {
     foldCycle(state.metrics, {
       net: pnl.net_total,
       totalDelta,

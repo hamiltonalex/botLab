@@ -36,7 +36,8 @@ export function markStructure(structure, snapshot) {
 
 // ── Inverse perpetual hedge (BTC-denominated PnL) ───────────────────────────────────────────────
 // markPerp(perpState, perp) → { futuresDeltaBtc, futuresNotionalBtc, upl_usd, upl_btc, notionalUsd }.
-// Flat / unpriced (qty===0 || avgEntry<=0) → all zeros. Otherwise (INVERSE math):
+// Flat / unpriced (qty===0 || avgEntry<=0, либо перп снимка без mark/contractSize) → all zeros.
+// Otherwise (INVERSE math):
 //   futuresDeltaBtc    = qty·contractSize / avgEntry       (USD-PnL delta, see below)
 //   futuresNotionalBtc = qty·contractSize / mark           (BTC face at the CURRENT price)
 //   upl_btc            = qty·contractSize·(1/avgEntry − 1/mark)
@@ -63,7 +64,12 @@ export function markStructure(structure, snapshot) {
 export function markPerp(perpState, perp) {
   const qty = perpState?.qty ?? 0;
   const avgEntry = perpState?.avgEntry ?? 0;
-  if (qty === 0 || avgEntry <= 0) {
+  // Перп без цены - та же ветка нулей, что плоская позиция. Снимок деградирует так живьём: REST
+  // перпа отказал, опционные ноги ответили, buildDeribitSnapshot отдал perp = null. Прежде это
+  // роняло attribute() исключением из perp.contractSize, и весь тик (запись, персист, пуш) гиб
+  // вместе с ним, хотя решение хеджа уже верно стояло в SKIP. Нули означают «маркировать нечем»:
+  // реализованные счётчики позиции живут в perpState и в этой ветке не теряются.
+  if (qty === 0 || avgEntry <= 0 || !(perp?.mark > 0) || !(perp?.contractSize > 0)) {
     return { futuresDeltaBtc: 0, futuresNotionalBtc: 0, upl_usd: 0, upl_btc: 0, notionalUsd: 0 };
   }
   const cs = perp.contractSize;
