@@ -20,7 +20,7 @@ import { payoffCurve, payoffAt } from "./payoff.js";
 import { decideHedge, applyFill, settlementBlackout } from "./hedge.js";
 import { markStructure, markPerp, accrueFunding, attribute, noHedgeAttribute, appendLedger } from "./pnl.js";
 import { initMetrics, foldCycle, summarize } from "./metrics.js";
-import { structureMargin } from "./margin.js";
+import { structureMargin, liqPriceEst } from "./margin.js";
 import { computeScenarios } from "./stress.js";
 import { computeRegime } from "./regime.js";
 import { SELLHEDGE_DEFAULTS, sellhedgeEngineCfg, shouldOpenDegraded } from "../otmscan/sellhedge.js";
@@ -126,6 +126,8 @@ export function create(params) {
     lastUnderlying: null, // last seen BTC price
     metrics: initMetrics(), // run-metrics accumulators (Phase 2b) — O(1) scalars, reset at each structure open
     lastRunMetrics: null, // frozen summary of the LAST finished run — the only survivor of openStructure's metrics reset
+    marginAlert: { level: 0 }, // ступень маржин-алерта (0 | 1 | 2) с гистерезисом - см. trackMarginAlert
+
     // ЦЕПОЧКА СХЕМЫ ПРОДАВЦА. Отдельный накопитель нужен потому, что `metrics` обнуляется КАЖДЫМ
     // открытием, а `lastRunMetrics` хранит ровно одну прошлую сделку: на вопрос «схема из
     // семнадцати сделок работает или нет» ответить было нечем. Леджер накопительный, то есть данные
@@ -363,6 +365,9 @@ export function evaluate(state, snapshot, nowMs) {
       : 0;
   const pnl = attribute(state, snapshot);
   const acct = account(state, snapshot);
+  // Пересечения порогов утилизации MM вверх → строка margin-alert (гистерезис внутри). Здесь, а не
+  // в account(): account зовут и превью с прогонами размера, а строку рождает только живой цикл.
+  trackMarginAlert(state, acct, snapshot, cfg, nowMs);
 
   // ── Hedge vs no-hedge (Phase 2a): a real shadow book (perpQty ≡ 0) run in parallel. Its net is the
   // options-only, after-costs outcome; hedge_contribution is the hedge program's true net contribution
@@ -940,5 +945,56 @@ export function account(state, snapshot) {
     worst_utilisation: Math.max(maintenance_utilisation, state.metrics?.worstMaintUtil ?? 0),
     over_deposit: m.initial > equity,
     margin_alert: maintenance_utilisation >= (cfg.marginAlertPct ?? 0.8),
+    // Заблаговременность маржин-колла в понятных единицах (ревизия 2026-08-25): запас в долларах
+    // до MM = equity и оценка цены индекса, на которой запас кончается (модель в шапке liqPriceEst).
+    mm_headroom_usd: equity - m.maintenance,
+    liq_price_est: state.structure ? liqPriceEst(state.structure, snapshot, equity) : null,
   };
+}
+
+// ── Маржин-алерт с гистерезисом (ревизия 2026-08-25, Р1): пересечение порогов утилизации MM ВВЕРХ
+// оставляет строку `margin-alert` в леджере - ровно одну на пересечение, а не на тик. Молчащий
+// алерт на невидимой вкладке неотличим от его отсутствия; строка леджера переживает рестарт и
+// даёт main-процессу точку для системной нотификации (движок про Electron не знает).
+//
+// ПОРОГИ: первый - marginAlertPct (та же настройка, что красит алерт карточки; дефолт 0.80),
+// второй - 0.90, но не ниже первого (оператор, поднявший первый порог выше 0.85, получает второй
+// на +5 п.п. от него). ГИСТЕРЕЗИС 5 п.п.: уровень снимается только падением ниже (порог − 0.05),
+// иначе дрожание утилизации вокруг порога рождало бы строку на каждый второй тик. Понижение
+// уровня строк не пишет: тревога - это рост риска, а не его спад. Закрытие структуры обнуляет
+// утилизацию, и уровень штатно спадает тем же путём.
+export function trackMarginAlert(state, acct, snapshot, cfg, nowMs) {
+  const l1 = cfg.marginAlertPct ?? 0.8;
+  const l2 = Math.max(l1 + 0.05, 0.9);
+  const REARM = 0.05;
+  const ma = state.marginAlert ?? (state.marginAlert = { level: 0 }); // профили до этого поля
+  const mu = acct.maintenance_utilisation ?? 0;
+  const thr = (lvl) => (lvl === 2 ? l2 : l1);
+  while (ma.level > 0 && mu < thr(ma.level) - REARM) ma.level -= 1;
+  const lvl = mu >= l2 ? 2 : mu >= l1 ? 1 : 0;
+  if (lvl > ma.level) {
+    // Скачок через оба порога за один тик даёт ОДНУ строку верхнего уровня: она строже и включает
+    // нижнюю по смыслу, а две строки одной меткой читались бы как два события.
+    appendLedger(state, {
+      t: nowMs,
+      type: "margin-alert",
+      priceRef: snapshot?.index ?? snapshot?.underlying ?? 0,
+      note:
+        `утилизация MM ${(100 * mu).toFixed(0)}% ≥ порога ${(100 * thr(lvl)).toFixed(0)}%` +
+        (Number.isFinite(acct.liq_price_est)
+          ? ` · MM = equity около BTC ${Math.round(acct.liq_price_est)}`
+          : "") +
+        (lvl === 2 ? " · зона ликвидации реального счёта при 100%" : ""),
+      meta: {
+        level: lvl,
+        threshold: thr(lvl),
+        util: mu,
+        equity: acct.equity,
+        mm: acct.maintenance_margin,
+        liq: acct.liq_price_est ?? null,
+      },
+    });
+    ma.level = lvl;
+  }
+  return ma.level;
 }

@@ -44,6 +44,83 @@ export function legMargin(leg) {
   return { im, mm };
 }
 
+// ── liqPriceEst(structure, snapshot, equity) → цена ИНДЕКСА, при которой оценка MM коротких ног
+// достигает equity (зона ликвидации реального счёта), либо null, когда пересечения нет.
+//
+// ЗАЧЕМ ЭТО ЧИСЛО. Утилизация MM в процентах не отвечает на вопрос оператора «сколько ещё может
+// пройти BTC до ликвидации»: у захеджированной схемы equity почти не движется, а MM растёт
+// линейно со спотом без потолка (у колла в деньгах обе части формулы, 0.075·индекс и марк,
+// растут вместе с индексом). Ревизия 2026-08-25: живая сделка прошла пик 104.5% MM, и алерт
+// «91.9%» не говорил, что 100% наступает уже около BTC ~81,300.
+//
+// МОДЕЛЬ ЯВНАЯ И НАЗВАНА, а не подразумевается:
+//   - марк ноги при индексе I оценивается как «внутренняя стоимость при I плюс ТЕКУЩАЯ временная»
+//     (tv = max(0, марк_сейчас − внутренняя_сейчас)); временная на самом деле тает со сроком и
+//     растёт с волой, но оба эффекта второго порядка против внутренней, растущей 1:1 с индексом;
+//   - equity берётся ТЕКУЩИМ и считается константой: схема дельта-нейтральна, остаточный ход
+//     equity на порядок меньше хода MM (замерено пятилетним маржинальным путём);
+//   - маржа перпа не моделируется - как и всюду в приложении (реальный счёт СТРОЖЕ оценки).
+// Поэтому это ОЦЕНКА для заблаговременности, а не обещание точной цены ликвидации биржи.
+//
+// РЕШЕНИЕ ТОЧНОЕ, БЕЗ ИТЕРАЦИЙ: при такой модели MM(I) кусочно-линейна с изломами ровно на
+// страйках коротких ног (у пута ломается и min(I,K)). Проход по сегментам с линейной
+// интерполяцией даёт точное пересечение; последний неограниченный сегмент решается наклоном из
+// одной пробы (кусочная линейность делает пробу точной). Формула ноги НЕ повторяется - зовётся
+// тот же legMargin, что считает живую маржу, иначе это была бы вторая реализация формулы биржи.
+//
+// Возвращается БЛИЖАЙШЕЕ к текущему индексу пересечение из двух сторон (вверх тянут короткие
+// коллы, вниз - короткие путы). MM уже на уровне equity или выше - возвращается текущий индекс
+// (запас нулевой, UI показывает «зона достигнута» по mm_headroom_usd).
+const intrinsicOf = (type, index, strike) =>
+  type === "call" ? Math.max(index - strike, 0) : Math.max(strike - index, 0);
+
+export function liqPriceEst(structure, snapshot, equity) {
+  if (!Number.isFinite(equity)) return null;
+  const marks = snapshot?.legs ?? {};
+  const underlying = snapshot?.underlying;
+  const I0 = snapshot?.index ?? underlying;
+  if (!(I0 > 0)) return null;
+  const shorts = [];
+  for (const l of structure?.legs ?? []) {
+    const amount = l.qtyAbs ?? Math.abs(l.qtySigned ?? 0);
+    if (l.side !== "short" || !(amount > 0) || !(l.strike > 0)) continue;
+    const mark = (marks[l.instrument] || {}).mark ?? l.entryMark ?? 0; // тот же fallback, что у structureMargin
+    shorts.push({ type: l.type, strike: l.strike, amount, tv: Math.max(0, mark - intrinsicOf(l.type, I0, l.strike)) });
+  }
+  if (!shorts.length) return null;
+  const mmAt = (I) => {
+    let mm = 0;
+    for (const s of shorts)
+      mm += legMargin({
+        type: s.type, side: "short", strike: s.strike,
+        mark: intrinsicOf(s.type, I, s.strike) + s.tv, underlying: I, index: I, amount: s.amount,
+      }).mm;
+    return mm;
+  };
+  const mm0 = mmAt(I0);
+  if (mm0 >= equity) return I0; // уже в зоне: запас нулевой
+  // Проход по сегментам от I0 в одну сторону: узлы - страйки коротких ног (изломы MM).
+  const crossToward = (points, dir) => {
+    let a = I0, mmA = mm0;
+    for (const b of points) {
+      const mmB = mmAt(b);
+      if (mmB >= equity) return a + ((equity - mmA) * (b - a)) / (mmB - mmA);
+      a = b; mmA = mmB;
+    }
+    const step = Math.max(1, I0 * 0.05) * dir; // проба наклона последнего сегмента
+    const slope = (mmAt(a + step) - mmA) / step;
+    if (dir > 0 ? !(slope > 0) : !(slope < 0)) return null; // MM в эту сторону не растёт
+    const I = a + (equity - mmA) / slope;
+    return I > I0 * 1e-3 ? I : null; // индекс у нуля - пересечение практически недостижимо
+  };
+  const ks = [...new Set(shorts.map((s) => s.strike))];
+  const up = crossToward(ks.filter((k) => k > I0).sort((x, y) => x - y), 1);
+  const down = crossToward(ks.filter((k) => k < I0).sort((x, y) => y - x), -1);
+  const cands = [up, down].filter((x) => Number.isFinite(x) && x > 0);
+  if (!cands.length) return null;
+  return cands.reduce((best, x) => (Math.abs(x - I0) < Math.abs(best - I0) ? x : best));
+}
+
 // structureMargin(structure, snapshot) → { initial, maintenance } USDC = Σ short-leg requirements.
 // Marks fall back to the leg's entry mark when the snapshot lacks the leg (same rule as markStructure).
 export function structureMargin(structure, snapshot) {

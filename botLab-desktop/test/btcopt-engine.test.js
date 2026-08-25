@@ -135,8 +135,11 @@ test("the HEDGE fill is a side-effect that takes effect on the NEXT tick (pre-fi
   assert.equal(cyc.decision, "HEDGE");
   // The paper fill executed: −0.0019 BTC of short-delta neutralized by +12 inverse contracts.
   assert.equal(st.perpState.qty, 12, "perp filled to +12 contracts (round(0.001967·61001/10))");
-  assert.equal(st.ledger.length, 2, "open + hedge events");
-  assert.equal(st.ledger[1].type, "hedge");
+  // Ревизия 2026-08-25: тот же тик пересекает порог маржи ($100 депозита против MM ≈ $8.8k
+  // стрэддла) и оставляет строку margin-alert ДО исполнения хеджа - счёт снимается до филла.
+  assert.equal(st.ledger.length, 3, "open + margin-alert + hedge events");
+  assert.equal(st.ledger[1].type, "margin-alert");
+  assert.equal(st.ledger[2].type, "hedge");
   // The cycle's last_hedge reflects the just-executed hedge even though position fields were pre-fill.
   assert.ok(cyc.last_hedge && cyc.last_hedge.side === "buy");
 });
@@ -803,4 +806,82 @@ test("санитария: полный отказ заводит окно ожи
 
   engine.settleStructure(st, { ...f.snapshot, index: 90000, underlying: 90000 }, f.expiry + 1000);
   assert.equal(st.sellChain.trades[0].sanity, "degraded", "пометка доезжает до сделки цепочки");
+});
+
+// ── Маржин-алерт (ревизия 2026-08-25 Р1): строки margin-alert на пересечении порогов ВВЕРХ,
+// гистерезис 5 п.п., account() несёт запас в долларах и оценку цены ликвидации.
+
+const maRows = (st) => st.ledger.filter((e) => e.type === "margin-alert");
+const maTick = (st, mu, t) =>
+  engine.trackMarginAlert(st, { maintenance_utilisation: mu, equity: 1000, maintenance_margin: 1000 * mu }, { index: 60000 }, { marginAlertPct: 0.8 }, t);
+
+test("margin-alert: пересечение 80% вверх даёт одну строку, дрожание над порогом не повторяет её", () => {
+  const st = engine.create({ nowMs: NOON });
+  maTick(st, 0.5, 1000);
+  assert.equal(maRows(st).length, 0, "ниже порога строк нет");
+  maTick(st, 0.82, 2000);
+  assert.equal(maRows(st).length, 1, "пересечение 80% вверх");
+  assert.equal(maRows(st)[0].meta.level, 1);
+  near(maRows(st)[0].meta.threshold, 0.8, 1e-12, "порог в meta");
+  assert.equal(maRows(st)[0].priceRef, 60000, "цена индекса в строке");
+  maTick(st, 0.83, 3000);
+  maTick(st, 0.81, 4000);
+  assert.equal(maRows(st).length, 1, "выше порога повторных строк нет");
+});
+
+test("margin-alert: гистерезис 5 п.п. - спад до 76% не взводит, ниже 75% взводит заново", () => {
+  const st = engine.create({ nowMs: NOON });
+  maTick(st, 0.82, 1000);
+  maTick(st, 0.76, 2000); // внутри гистерезиса: уровень держится
+  maTick(st, 0.82, 3000);
+  assert.equal(maRows(st).length, 1, "внутри гистерезиса повторного алерта нет");
+  maTick(st, 0.74, 4000); // ниже порог − 0.05: уровень снят
+  maTick(st, 0.82, 5000);
+  assert.equal(maRows(st).length, 2, "после спада ниже 75% новое пересечение алармит");
+});
+
+test("margin-alert: скачок сразу за 90% даёт одну строку уровня 2; спад и возврат алармит уровнем 2", () => {
+  const st = engine.create({ nowMs: NOON });
+  maTick(st, 0.95, 1000);
+  assert.equal(maRows(st).length, 1, "один тик через оба порога = одна строка");
+  assert.equal(maRows(st)[0].meta.level, 2);
+  near(maRows(st)[0].meta.threshold, 0.9, 1e-12, "верхний порог");
+  assert.match(maRows(st)[0].note, /зона ликвидации/);
+  maTick(st, 0.86, 2000); // выше 0.85: уровень 2 держится
+  maTick(st, 0.93, 3000);
+  assert.equal(maRows(st).length, 1);
+  maTick(st, 0.84, 4000); // ниже 0.85: уровень спал до 1
+  maTick(st, 0.91, 5000); // новое пересечение 90%
+  assert.equal(maRows(st).length, 2);
+  assert.equal(maRows(st)[1].meta.level, 2);
+});
+
+test("margin-alert: профиль без поля marginAlert (старый персист) поднимается на лету", () => {
+  const st = engine.create({ nowMs: NOON });
+  delete st.marginAlert;
+  maTick(st, 0.82, 1000);
+  assert.equal(maRows(st).length, 1, "лениво поднятое поле работает");
+  assert.equal(st.marginAlert.level, 1);
+});
+
+test("account(): mm_headroom_usd и liq_price_est едут в счёт; конвейер evaluate пишет строку margin-alert", () => {
+  const { st, snap } = opened(); // депозит $100, MM стрэддла ≈ $8.8k ⇒ утилизация >> 100%
+  const cyc = engine.evaluate(st, snap, NOON + 60000);
+  const a = cyc.account;
+  assert.ok(a.maintenance_utilisation > 1, "фикстура заведомо в зоне");
+  near(a.mm_headroom_usd, a.equity - a.maintenance_margin, 1e-9, "запас = equity − MM");
+  assert.equal(a.liq_price_est, 61000, "уже в зоне: оценка ликвидации = текущий индекс");
+  const rows = maRows(st);
+  assert.equal(rows.length, 1, "evaluate оставил ровно одну строку margin-alert");
+  assert.equal(rows[0].meta.level, 2);
+  const again = engine.evaluate(st, snap, NOON + 120000);
+  assert.equal(maRows(st).length, 1, "второй тик выше порога строку не дублирует");
+  assert.ok(again.account.margin_alert, "флаг алерта карточки живёт как жил");
+});
+
+test("account(): без структуры liq_price_est = null, запас равен всему счёту", () => {
+  const st = engine.create({ nowMs: NOON, settings: { paperEquityUsd: 100 } });
+  const a = engine.account(st, mkSnapshot());
+  assert.equal(a.liq_price_est, null);
+  near(a.mm_headroom_usd, a.equity, 1e-9, "MM нулевая - запас равен equity");
 });
