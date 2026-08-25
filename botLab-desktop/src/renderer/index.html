@@ -889,6 +889,15 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
    порога алерта (marginAlertPct, дефолт 80%) жёлтая, дальше красная. Классы вешает
    renderOptMargin, база .cost остаётся красной. */
 .opt-bar.cost .fill.mz-ok{ background:var(--pos); } .opt-bar.cost .fill.mz-warn{ background:var(--neu); }
+/* П7: засечки границ зон на треке утилизации - для цветослабых деление зон иначе невидимо.
+   60% фиксированные (граница зелёной), порог алерта приходит переменной --mz-alert из
+   renderOptMargin (движок отдаёт margin_alert_pct - засечка стоит там, где судит движок).
+   z-index поднимает штрихи над заливкой: ::before иначе рисуется под потомком-.fill. */
+#optMarginMuTrack{ position:relative; }
+#optMarginMuTrack::before, #optMarginMuTrack::after{ content:""; position:absolute; top:0; bottom:0;
+  width:1px; background:var(--line-2); z-index:1; }
+#optMarginMuTrack::before{ left:60%; }
+#optMarginMuTrack::after{ left:var(--mz-alert, 80%); }
 /* акцентный чип CALL/PUT/ядро — копия стиля .chip.B, семантическое имя (направление, не денежный поток) */
 .chip.side{ color:var(--accent); background:var(--accent-bg); border:1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
 /* полая точка токена (ОЖИДАНИЕ/ФОРМИРУЕТСЯ — «ещё не событие»): инсет-кольцо тем же currentColor */
@@ -1844,7 +1853,7 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
             <div class="row"><span class="k" data-i18n="opt.margin.rowMM">поддерживающая (MM)</span><span class="v num" id="optMarginMM">—</span></div>
           </div>
           <div class="opt-bar cost" style="margin-top:10px"><div class="lbl"><span data-i18n="opt.margin.mu">утилизация MM · тек.</span><span class="num" id="optMarginMuPct">—</span></div>
-            <div class="track"><div class="fill" id="optMarginMuBar"></div></div></div>
+            <div class="track" id="optMarginMuTrack"><div class="fill" id="optMarginMuBar"></div></div></div>
           <!-- П3: путь цены от входа до оценки ликвидации тем же примитивом бара; заполнение =
                пройденная доля (index − entry)/(liq − entry), зоны цвета те же, что у утилизации -->
           <div class="opt-bar cost" id="optMarginPath" style="margin-top:10px" hidden>
@@ -5212,7 +5221,17 @@ function chGapPrice(hours){
 function renderOptUptime(ds){
   const card=$('optUptimeCard'); if(!card) return;
   const up = ds.sellChain && ds.sellChain.uptime ? ds.sellChain.uptime : null;
-  card.hidden = !up; if(!up) return;
+  if(!up){ card.hidden = true; return; }
+  /* Пороги вердикта считаются ДО решения о показе: карточка (span2) - показатель ЗДОРОВЬЯ, и в
+     здоровом состоянии она дублирует пилюлю «опрос N%» в шапке цепочки (UI-ревью 2026-08-25 П5а).
+     Прячется только при полностью чистой истории: вердикт pass, тег green и ни одного перерыва;
+     первый же перерыв или деградация каданса раскрывают её до конца сделки - история не чистится. */
+  const eff=up.effectiveSec, gapMs=up.maxGapMs||0;
+  const effBad = Number.isFinite(eff) && eff>3600;
+  const gapBad = gapMs>3600000;
+  const warn = gapBad || (Number.isFinite(eff) && eff>up.nominalSec*10);
+  const healthy = !effBad && !warn && !((up.gaps||[]).length);
+  card.hidden = healthy; if(healthy) return;
   optSetNum('optUpKpiCov', Number.isFinite(up.coveragePct) ? up.coveragePct.toFixed(1)+'%' : '—');
   $('optUpKpiCovSub').textContent = t('opt.r.upCovSub',{ticks:up.ticks,exp:up.expected});
   optSetNum('optUpKpiCad', chSec(up.effectiveSec));
@@ -5234,9 +5253,6 @@ function renderOptUptime(ds){
     $('optUpStripCaption').textContent = t('opt.r.upWindow',{w:chDur(up.spanMs),c:chDur(cell)});
   }
   renderOptUptimeGaps(up);
-  const eff=up.effectiveSec, gapMs=up.maxGapMs||0;
-  const effBad = Number.isFinite(eff) && eff>3600;
-  const gapBad = gapMs>3600000;
   const v=$('optUpVerdict');
   if(v){
     v.className = 'opt-verdict '+((effBad||gapBad)?'fail':'pass');
@@ -5247,7 +5263,6 @@ function renderOptUptime(ds){
   }
   const tag=$('optUpTag');
   if(tag){
-    const warn = gapBad || (Number.isFinite(eff) && eff>up.nominalSec*10);
     tag.className='tag '+(effBad?'red':(warn?'amber':'green'));
     tag.textContent = effBad?t('opt.r.upTagLost'):(warn?t('opt.r.upTagSlow'):t('opt.r.upTagOk')); }
 }
@@ -5425,6 +5440,9 @@ function renderOptMargin(cyc){
     bar.style.transform='scaleX('+Math.max(0,Math.min(1,mu))+')';
     /* зоны: <60% зелёная, 60%..порог алерта жёлтая, дальше красная (база .cost) */
     bar.className='fill '+(alertOn?'':mu>=0.6?'mz-warn':'mz-ok');
+    /* П7: засечка порога алерта стоит там, где судит движок (настройка marginAlertPct) */
+    const track=$('optMarginMuTrack');
+    if(track) track.style.setProperty('--mz-alert', (100*(a.margin_alert_pct??0.8)).toFixed(0)+'%');
   }
   /* П3: шкала пути цены «вход - текущая - ликвидация». Заполнение = пройденная доля пути от
      входа к оценке ликвидации (кламп 0..1: цена ушла в выгодную сторону - бар пуст); работает и

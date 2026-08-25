@@ -953,6 +953,9 @@ export function account(state, snapshot) {
     worst_utilisation: Math.max(maintenance_utilisation, state.metrics?.worstMaintUtil ?? 0),
     over_deposit: m.initial > equity,
     margin_alert: maintenance_utilisation >= (cfg.marginAlertPct ?? 0.8),
+    // Порог алерта отдаётся ЯВНО: засечка порога на баре утилизации (UI-ревью П7) обязана стоять
+    // там, где судит движок, а не на захардкоженных 80% - настройка marginAlertPct двигает обоих.
+    margin_alert_pct: cfg.marginAlertPct ?? 0.8,
     // Ступень алерта С ГИСТЕРЕЗИСОМ - единый источник для всех поверхностей UI (бар, чип обзора,
     // вердикт, точка вкладки): голый флаг margin_alert без гистерезиса дёргал бы их на каждом
     // тике при дрожании утилизации вокруг порога. Здесь уровень ПРОШЛОГО тика (trackMarginAlert

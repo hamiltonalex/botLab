@@ -887,6 +887,9 @@ test("account(): без структуры liq_price_est = null, запас ра
   assert.equal(a.liq_price_est, null);
   near(a.mm_headroom_usd, a.equity, 1e-9, "MM нулевая - запас равен equity");
   assert.equal(a.margin_alert_level, 0, "плоский счёт - ступень алерта нулевая");
+  near(a.margin_alert_pct, 0.8, 1e-12, "порог алерта отдаётся явно (дефолт)");
+  const st2 = engine.create({ nowMs: NOON, settings: { marginAlertPct: 0.7 } });
+  near(engine.account(st2, mkSnapshot()).margin_alert_pct, 0.7, 1e-12, "настройка двигает порог в счёте");
 });
 
 test("entryIndex: открытие штампует индекс входа, цикл несёт entry_index, старый персист живёт fallback-ом", () => {
