@@ -40,6 +40,8 @@ if (args.includes("--help") || !argOf("--dir")) {
   --dir <каталог>     запись восстановления (обязательно)
   --funding <файл>    почасовой фандинг перпа (по умолчанию из кэша hist-download)
   --deposit <$>       стартовый счёт (по умолчанию 20000)
+  --expiry <a,b>      окно срока ноги в часах, уходит движку через sellCfg
+                      (по умолчанию не передаётся - действует дефолт схемы 336,672)
   --deploys <a,b,..>  уровни deployPct базового правила (по умолчанию 0.70,0.50,0.40,0.30,0.25,0.20,0.15)
   --size-rule stress  замер правила размера от СТРЕСС-МАРЖИ вместо доли IM на входе
   --stress-x <a,b,..> проценты стресс-хода спота для --size-rule stress (по умолчанию 10,15,20,25,30)
@@ -50,6 +52,15 @@ if (args.includes("--help") || !argOf("--dir")) {
 
 const DIR = argOf("--dir", join(homedir(), "botlab-hist-5y"));
 const DEPOSIT = Number(argOf("--deposit", "20000"));
+// Окно срока НЕ дублирует дефолт схемы: без флага sellCfg поля не несёт, и движок берёт своё
+// (SELLHEDGE_DEFAULTS). Дублирование здесь означало бы два места, где живёт число 336-672.
+const EXPW = (() => {
+  const raw = argOf("--expiry");
+  if (raw == null) return null;
+  const [a, b] = raw.split(",").map(Number);
+  if (!(a > 0) || !(b > a)) { console.error(`--expiry: ожидается «мин,макс» в часах, получено «${raw}»`); process.exit(1); }
+  return { expiryMinH: a, expiryMaxH: b };
+})();
 const DEPLOYS = (argOf("--deploys", "0.70,0.50,0.40,0.30,0.25,0.20,0.15")).split(",").map(Number).filter(fin);
 const SIZE_RULE = argOf("--size-rule", "deploy");
 const STRESS_X = (argOf("--stress-x", "10,15,20,25,30")).split(",").map(Number).filter(fin);
@@ -183,6 +194,7 @@ function stressLots({ strike, mark, S, equity, xPct, capFrac }) {
 //   sizing = { kind: "deploy", pct } | { kind: "stress", xPct, capFrac }
 function run(sizing) {
   const sellCfg = { bandBtc: BAND, lot: LOT, execModel: "maker-mid",
+    ...(EXPW ?? {}),
     ...(sizing.kind === "deploy" ? { deployPct: sizing.pct } : {}) };
   const st = s1engine.create({ nowMs: R.times[0], settings });
   const trades = [];
@@ -257,6 +269,7 @@ const modes = SIZE_RULE === "stress"
   ? STRESS_X.map((x) => ({ label: `MM@+${x}% ≤ ${STRESS_CAP.toFixed(2)}·eq`, sizing: { kind: "stress", xPct: x, capFrac: STRESS_CAP } }))
   : DEPLOYS.map((d) => ({ label: d.toFixed(2), sizing: { kind: "deploy", pct: d } }));
 console.log(`# Маржинальный путь внутри сделок (запись ${DIR}, ${N} снимков, депозит $${DEPOSIT})\n`);
+if (EXPW) console.log(`Окно срока ноги: ${EXPW.expiryMinH}-${EXPW.expiryMaxH} ч (через sellCfg; дефолт схемы 336-672).\n`);
 console.log(SIZE_RULE === "stress"
   ? `Правило размера: лоты от СТРЕСС-МАРЖИ - максимум q, при котором MM на споте ×(1+X%) не выше ${STRESS_CAP.toFixed(2)}·equity (Р2 ревизии 2026-08-25).\n`
   : `Правило размера: боевое lotsByMargin - лоты от доли IM на входе (deployPct).\n`);
