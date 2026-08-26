@@ -2034,6 +2034,7 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
           <div class="seg" id="optModeSel" role="group" aria-label="Схема" data-i18n-aria="opt.tb.variant">
             <button data-v="straddle"  aria-pressed="true" data-i18n="opt.tb.vStraddle">4 ноги</button>
             <button data-v="sell-call" aria-pressed="false" data-i18n="opt.tb.vSellCall">продажа колла</button>
+            <button data-v="sell-strangle" aria-pressed="false" data-i18n="opt.tb.vSellStrangle">стрэнгл</button>
           </div>
         </div>
         <!-- Режим цепочки: непрерывно (дефолт замера: 16-17 сделок в год подряд) либо одна сделка -
@@ -4905,7 +4906,7 @@ let optDeltaRing = [], optLastStructId = null;     // локальное окн�
 let optChainLoaded = false, optHydrated = false;
 const optSel = { expiry:null, wing:10, qty:0.01, deadband:'normal', priceTrig:0.5,
                  lambda:1.25, reprice:15, exec:'limit', blackout:'on',
-                 mode:'straddle', sellQty:null, chainMode:'continuous' }; /* mode: straddle | sell-call; sellQty null = размер по залогу */
+                 mode:'straddle', sellQty:null, chainMode:'continuous' }; /* mode: straddle | sell-call | sell-strangle; sellQty null = размер по залогу */
 /* Гипотеза схемы продавца держится ОТДЕЛЬНО от покупательской: у них разные поля, и общий кэш
    заставил бы каждую ветку проверять, чей ответ там лежит. */
 let optSellPreviewCache = null, optSellPreviewErr = null, optSellBusy = false;
@@ -4916,7 +4917,10 @@ let optLastStructKind = null;
    уже открытой позиции и оператор читал бы чужую схему. */
 function optModeActive(){ return (LIVE_S1 && LIVE_S1.structure && LIVE_S1.structure.kind)
   ? LIVE_S1.structure.kind : optSel.mode; }
-function optIsSell(){ return optModeActive()==='sell-call'; }
+/* Схемы ПРОДАВЦА две (колл и стрэнгл), и различать их по строке в каждом месте значило бы
+   пропустить одно из них при следующей схеме; предикат один - как isSellKind у движка. */
+function optIsSellKind(k){ return k==='sell-call' || k==='sell-strangle'; }
+function optIsSell(){ return optIsSellKind(optModeActive()); }
 
 /* — мелкие форматтеры домена — */
 const optSigned = (v,dp)=> (v>0?'+':(v<0?'−':'')) + Math.abs(Number(v)||0).toFixed(dp);
@@ -5042,7 +5046,7 @@ const chDate = ms => Number.isFinite(ms) ? new Date(ms).toISOString().slice(0,16
    ровно один («СТОП»): экран обязан читаться за две секунды, а не расшифровываться. */
 function optChainState(ds){
   const ch = ds.sellChain || null;
-  const st = ds.structure && ds.structure.kind==='sell-call' ? ds.structure : null;
+  const st = ds.structure && optIsSellKind(ds.structure.kind) ? ds.structure : null;
   if(!ch) return { key:'off', token:t('opt.chain.tokenOff'), cls:'dim hollow' };
   const now = Date.now();
   if(st && Number.isFinite(st.expiryMs) && now >= st.expiryMs)
@@ -5050,7 +5054,9 @@ function optChainState(ds){
   if(st && ch.stopRequested)
     return { key:'stopping', token:t('opt.r.tokStopping'), cls:'neu hollow',
       reason:t('opt.r.rsnStopping') };
-  if(st) return { key:'live', token:t('opt.r.tokLive'), cls:'pos', reason: st.legs && st.legs[0] ? st.legs[0].instrument : '' };
+  if(st) return { key:'live', token:t('opt.r.tokLive'), cls:'pos',
+    /* Пара называет ОБЕ ноги: показывать половину проданного значило бы врать о позиции. */
+    reason: st.legs && st.legs.length ? st.legs.map(l=>l.instrument).join('+') : '' };
   if(!ch.on) return { key:'off', token:t('opt.chain.tokenOff'), cls:'dim hollow',
     /* Одноразовое завершение это не проблема, а объявленный заранее исход, поэтому off, а не
        halted: красный занят настоящими остановками. Причина остаётся видимой. */
@@ -5091,7 +5097,7 @@ function renderOptChainCard(ds){
 
   /* Часы: срок, а не результат. Секунды на четырнадцатидневном горизонте это шум, поэтому
      округляем до часов и обновляем вместе с тиком. */
-  const st = ds.structure && ds.structure.kind==='sell-call' ? ds.structure : null;
+  const st = ds.structure && optIsSellKind(ds.structure.kind) ? ds.structure : null;
   const lbl=$('optChainClockLbl'), clk=$('optChainClock'), sub=$('optChainClockSub');
   if(st && Number.isFinite(st.expiryMs)){
     if(lbl) lbl.textContent=t('opt.chain.clockLbl');
@@ -5312,7 +5318,7 @@ function renderOptConform(ds){
   const sec=$('optConformSection'); if(!sec) return;
   sec.hidden = !optIsSell(); if(sec.hidden) return;
   const sel = ds.selection || {};
-  const open = !!(ds.structure && ds.structure.kind==='sell-call');
+  const open = !!(ds.structure && optIsSellKind(ds.structure.kind));
   const up = ds.sellChain && ds.sellChain.uptime ? ds.sellChain.uptime : null;
   const band = Number.isFinite(sel.deadbandBtc) && Number.isFinite(sel.deadbandRefQty) && sel.deadbandRefQty>0
     ? sel.deadbandBtc/sel.deadbandRefQty : null;
@@ -5840,8 +5846,8 @@ function renderOptSellPreview(){
   const dash='—';
   let legTxt=dash, credit=null, sizeTxt=dash, spot=null, expMs=null, imUsd=null, costUsd=null;
   if(st){
-    const l=st.legs&&st.legs[0];
-    legTxt = l ? l.instrument : dash;
+    /* Пара называет обе ноги через «+»; у одной ноги строка прежняя. */
+    legTxt = st.legs && st.legs.length ? st.legs.map(x=>x.instrument).join('+') : dash;
     credit = -st.entryDebitUsd;
     spot = st.entryUnderlying; expMs = st.expiryMs;
     imUsd = st.sizing ? st.sizing.imUsedUsd : null;
@@ -5849,7 +5855,8 @@ function renderOptSellPreview(){
     sizeTxt = st.sizing ? t('opt.r.lotsIm',{lots:st.sizing.lots,im:optDollars(st.sizing.imUsedUsd)}) : dash;
     if(tag){ tag.textContent=t('opt.r.tagOpen'); tag.className='tag amber'; }
   } else if(pv){
-    legTxt = pv.pickedLeg ? pv.pickedLeg.name : dash;
+    legTxt = pv.pickedPair ? pv.pickedPair.call.name+'+'+pv.pickedPair.put.name
+      : (pv.pickedLeg ? pv.pickedLeg.name : dash);
     credit = pv.premiumCreditUsd; spot = pv.underlying; expMs = pv.chosenExpiry;
     imUsd = pv.sizing ? pv.sizing.imUsedUsd : null; costUsd = pv.entryCostUsd;
     sizeTxt = pv.sizing ? t('opt.r.lotsIm',{lots:pv.sizing.lots,im:optDollars(pv.sizing.imUsedUsd)}) : dash;
@@ -6105,7 +6112,8 @@ function drawDelta(cv, data, tipEl){
 function optStructParams(){ return { expiry:optSel.expiry, callOffsetPct:optSel.wing, putOffsetPct:optSel.wing, qty:optSel.qty, execStyle:optSel.exec }; }
 /* Схема продавца НЕ передаёт ни экспирацию, ни крылья: срок и страйк выбирает правило в движке.
    qty === null означает «размер считает lotsByMargin», и это отличается от «ноль». */
-function optSellStructParams(){ return { kind:'sell-call', qty:optSel.sellQty, execStyle:optSel.exec }; }
+function optSellStructParams(){ return { kind: optModeActive()==='sell-strangle' ? 'sell-strangle' : 'sell-call',
+  qty:optSel.sellQty, execStyle:optSel.exec }; }
 let optSellPrevTimer;
 /* Тот же дебаунс, что у покупателя, но с ЧЕСТНОЙ меткой ожидания: раунд-трип объективно длиннее
    (срез всей поверхности плюс тикер выбранной ноги), и молчащий экран читался бы как поломка. */
@@ -6319,7 +6327,7 @@ function closeOptTicket(focusBack){ const tk=$('optLaunchTicket'); if(!tk || tk.
   if(focusBack) $('optOpenBtn').focus({preventScroll:true}); }
 function releaseOptSellProbe(){
   if(!window.s1 || !window.s1.cancelSellPreview) return;
-  if(LIVE_S1 && LIVE_S1.structure && LIVE_S1.structure.kind==='sell-call') return;
+  if(LIVE_S1 && LIVE_S1.structure && optIsSellKind(LIVE_S1.structure.kind)) return;
   window.s1.cancelSellPreview().catch(()=>{}); }
 async function confirmOptStructure(){ const err=$('optTicketErr');
   if(!window.s1){ err.textContent=t('opt.r.noBridgeLong'); err.hidden=false; return; }
@@ -6379,7 +6387,10 @@ async function chainSet(patch){
 }
 async function confirmOptChain(){
   const cf=$('optChainTktConfirm'); if(cf) cf.disabled=true;
-  const r=await chainSet({ on:true, params:{ qty:null, execStyle:(optSel&&optSel.exec)||'limit',
+  /* Вид структуры вооружается ВМЕСТЕ с цепочкой: перевход открывает ровно то, что было выбрано
+     при включении, а не то, куда позже ушёл тумблер. Старые цепочки без kind читаются коллом. */
+  const r=await chainSet({ on:true, params:{ kind: optModeActive()==='sell-strangle' ? 'sell-strangle' : 'sell-call',
+    qty:null, execStyle:(optSel&&optSel.exec)||'limit',
     mode:(optSel&&optSel.chainMode)||'continuous' } });
   if(r && r.error){ const err=$('optChainTktErr'); if(err){ err.hidden=false;
       err.textContent=t('opt.r.armFail',{e:r.error}); }
@@ -6441,7 +6452,7 @@ function initOpt(){ if(!$('view-btc-options')) return;
       optSel.mode=v;
       for(const x of el.querySelectorAll('button[data-v]')) x.setAttribute('aria-pressed', String(x.getAttribute('data-v')===v));
       closeOptTicket(false);
-      if(v==='sell-call'){ requestOptSellPreview(); }
+      if(optIsSellKind(v)){ optSellPreviewCache=null; optSellPreviewErr=null; requestOptSellPreview(); }
       else { releaseOptSellProbe(); optSellPreviewCache=null; optSellPreviewErr=null; requestOptPreview(); }
       /* Карточки цепочки и паспорт зависят от РЕЖИМА, а не только от датасета: без этих двух
          вызовов они меняли бы вид лишь на следующем пуше, то есть после запуска опроса, и на

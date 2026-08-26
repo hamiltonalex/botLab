@@ -27,8 +27,9 @@ import { buildXlsxBuffer } from "./xlsx-writer.js";
 import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes } from "../engine/store.js";
 import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
-import { buildStructure as s1buildStructure, buildSellStructure as s1buildSellStructure, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry, sellRowsFromSnapshot as s1sellRows } from "../engine/btcopt/structure.js";
+import { buildStructure as s1buildStructure, buildSellStructure as s1buildSellStructure, buildSellStrangleStructure as s1buildSellStrangle, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry, sellRowsFromSnapshot as s1sellRows } from "../engine/btcopt/structure.js";
 import { rankSellLegs as s1rankSellLegs, SELLHEDGE_DEFAULTS } from "../engine/otmscan/sellhedge.js";
+import { rankStranglePairs as s1rankStranglePairs } from "../engine/otmscan/sellstrangle.js";
 import { buildS1TickRecord } from "../engine/btcopt/record.js";
 import { SELL_SANITY_DEFAULTS } from "../engine/otmscan/sanity.js";
 import * as s1sellhedge from "../engine/otmscan/sellhedge.js";
@@ -662,16 +663,22 @@ async function resolveBtcOptSellStructureLive(params) {
   const rows = await ensureBtcOptSellSurface(Date.now());
   if (!rows?.length) return { error: "не удалось получить срез поверхности Deribit" };
   // Ступень A отдаёт ОЧЕРЕДЬ кандидатов, а не одного победителя: вето санитарии внутри движка
-  // переключает ногу (§1.8), и запасным нужны настоящие тикеры, взятые одним батчем.
+  // переключает ногу или пару (§1.8), и запасным нужны настоящие тикеры, взятые одним батчем.
+  // Для стрэнгла кандидат это ПАРА (rankStranglePairs), и в опрос уходят обе ноги каждой пары.
   const sanityCfg = { ...SELL_SANITY_DEFAULTS, ...(params?.sanityCfg ?? {}) };
-  const cands = s1rankSellLegs(rows, cfg, sanityCfg.maxCandidates);
+  const isStrangle = params?.kind === "sell-strangle";
+  const cands = isStrangle
+    ? s1rankStranglePairs(rows, cfg, sanityCfg.maxCandidates)
+    : s1rankSellLegs(rows, cfg, sanityCfg.maxCandidates);
   if (!cands.length) {
-    return { error: `нет колла в окне ${cfg.expiryMinH}-${cfg.expiryMaxH} ч с |дельтой| у ${cfg.deltaTarget} (срез поверхности)` };
+    return { error: isStrangle
+      ? `нет пары колл+пут одной экспирации в окне ${cfg.expiryMinH}-${cfg.expiryMaxH} ч с |дельтой| у ${cfg.deltaTarget} (срез поверхности)`
+      : `нет колла в окне ${cfg.expiryMinH}-${cfg.expiryMaxH} ч с |дельтой| у ${cfg.deltaTarget} (срез поверхности)` };
   }
   const perpTk = await deribit.getTicker(deribit.PERP_INSTRUMENT, { testnet: !!bo.settings.testnet });
   // Ступень B: настоящие тикеры кандидатов одним вызовом. Кандидаты запоминаются и попадают в опрос
   // следующих тиков, иначе открытая структура осталась бы без котировок до пересчёта полосы.
-  const legNames = cands.map((c) => c.n);
+  const legNames = [...new Set(isStrangle ? cands.flatMap((p) => [p.call.n, p.put.n]) : cands.map((c) => c.n))];
   const snap = await deribit.buildDeribitSnapshot({
     legInstruments: legNames, testnet: !!bo.settings.testnet, nowMs: Date.now(),
   });
@@ -1129,7 +1136,8 @@ async function previewSellStructure(params) {
       nowMs: Date.now(),
       windowMs: (res.params?.sanityCfg?.waitWindowH ?? SELL_SANITY_DEFAULTS.waitWindowH) * 3600000,
     });
-    const built = s1buildSellStructure({ ...res.params, qty: params?.qty ?? null, equityUsd, allowDegraded }, res.chain, res.buildSnap, Date.now());
+    const buildSeller = params?.kind === "sell-strangle" ? s1buildSellStrangle : s1buildSellStructure;
+    const built = buildSeller({ ...res.params, qty: params?.qty ?? null, equityUsd, allowDegraded }, res.chain, res.buildSnap, Date.now());
     captureSellSanity(built);
     if (built.error) return { error: built.error, sizing: built.sizing ?? null };
     const metaByInstrument = {};
@@ -1147,21 +1155,30 @@ async function previewSellStructure(params) {
     const premiumCreditUsd = -built.entryDebitUsd; // дебет отрицателен у продавца: это полученный кредит
     return {
       ok: true,
-      kind: "sell-call",
+      kind: built.kind,
       underlying: res.snap.underlying,
       chosenExpiry: built.expiryMs,
-      strikes: built.strikes, // только { atm }: тента у этой структуры нет, kc/kp отсутствуют намеренно
+      // Одна нога несёт только { atm } (тента нет), стрэнгл - { kc, kp } (середины нет): форма
+      // страйков и есть подпись схемы, подставлять недостающие ключи нельзя.
+      strikes: built.strikes,
       pickedLeg: built.pickedLeg,
+      pickedPair: built.pickedPair ?? null,
       entryDebitUsd: built.entryDebitUsd,
       premiumCreditUsd,
       entryCostUsd: built.entryCostUsd,
       costs: built.costs,
       sizing: built.sizing,
       maxProfitUsd: premiumCreditUsd, // выше премии продавец не заработает никогда
-      // УБЫТОК НЕ ЧИСЛО. Непокрытый проданный колл теряет неограниченно вверх, и подставить сюда
-      // какое-либо конечное число значило бы соврать в самом опасном месте интерфейса.
+      // УБЫТОК НЕ ЧИСЛО. Непокрытая продажа теряет неограниченно (колл - вверх, пара - в обе
+      // стороны), и подставить сюда какое-либо конечное число значило бы соврать в самом опасном
+      // месте интерфейса.
       maxLoss: "unbounded",
-      breakEvenUsd: unit > 0 ? built.strikes.atm + premiumCreditUsd / unit : null,
+      // Брейк-эвены: у одной ноги одна точка от atm, у пары две - от крыльев (кредит пары на
+      // единицу распределяется в обе стороны от kp и kc).
+      breakEvenUsd: unit > 0 && Number.isFinite(built.strikes.atm) ? built.strikes.atm + premiumCreditUsd / unit : null,
+      breakEvensUsd: unit > 0 && built.kind === "sell-strangle"
+        ? [built.strikes.kp - premiumCreditUsd / unit, built.strikes.kc + premiumCreditUsd / unit]
+        : null,
       payoff,
       valid: !rejections.some((r) => r.severity === "block"),
       rejections,
@@ -1184,7 +1201,8 @@ async function openSellStructure(params, guard = null) {
     if (guard && !guard()) return { error: "остановлено оператором до открытия" };
     const r = s1engine.openStructure(
       bo.engine,
-      { ...res.params, kind: "sell-call", qty: params?.qty ?? null, execStyle: params?.execStyle },
+      { ...res.params, kind: params?.kind === "sell-strangle" ? "sell-strangle" : "sell-call",
+        qty: params?.qty ?? null, execStyle: params?.execStyle },
       res.chain, res.buildSnap, Date.now(),
     );
     captureSellSanity(r.structure ?? r);
@@ -1374,7 +1392,7 @@ function wireIpcStrategy1() {
     // Ветка схемы продавца стоит ПЕРВОЙ строкой и не трогает покупательский путь ни одним символом:
     // движок уже ветвится по `params.kind` внутри одной функции, и IPC повторяет это решение вместо
     // того, чтобы заводить парный канал. Весь риск регресса сводится к «не сработал добавленный if».
-    if (params?.kind === "sell-call") return previewSellStructure(params);
+    if (s1engine.isSellKind(params?.kind)) return previewSellStructure(params);
     try {
       const res = await resolveBtcOptStructureLive(params);
       if (res.error) return { error: res.error };
@@ -1418,7 +1436,7 @@ function wireIpcStrategy1() {
 
   ipcMain.handle("s1:openStructure", async (_e, params) => {
     const bo = state.btcOptions;
-    if (params?.kind === "sell-call") return openSellStructure(params);
+    if (s1engine.isSellKind(params?.kind)) return openSellStructure(params);
     try {
       const res = await resolveBtcOptStructureLive(params);
       if (res.error) return { error: res.error };

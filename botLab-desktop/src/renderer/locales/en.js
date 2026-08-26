@@ -668,6 +668,7 @@ registerLocale('en', {
   'opt.tb.variant': 'Variant',
   'opt.tb.vStraddle': '4 legs',
   'opt.tb.vSellCall': 'sell call',
+  'opt.tb.vSellStrangle': 'sell strangle',
   'opt.tb.chain': 'Chain',
   'opt.tb.chainAria': 'Chain mode',
   'opt.tb.chainCont': 'continuous',

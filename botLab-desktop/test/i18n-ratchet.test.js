@@ -12,7 +12,9 @@ import { dirname, join } from "node:path";
 // плюс единичные данные-литералы; заметно ниже он опустится только если убирать fallback-тексты.
 // 2026-08-25: +2 - две новые строки карточки маржи (ликвидация при BTC, запас до MM = equity),
 // оба текста - штатные fallback внутри data-i18n, ключи в обоих словарях (план Р1 маржин-колла).
-const CEILING = 829;
+// 2026-08-26: +1 - кнопка режима «стрэнгл» в тулбаре бота 2 (fallback внутри data-i18n,
+// ключ opt.tb.vSellStrangle в обоих словарях; перенос схемы sell-strangle).
+const CEILING = 830;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(HERE, "..", "src", "renderer", "index.html"), "utf8");

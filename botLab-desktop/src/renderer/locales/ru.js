@@ -668,6 +668,7 @@ registerLocale('ru', {
   'opt.tb.variant': 'Схема',
   'opt.tb.vStraddle': '4 ноги',
   'opt.tb.vSellCall': 'продажа колла',
+  'opt.tb.vSellStrangle': 'стрэнгл',
   'opt.tb.chain': 'Цепочка',
   'opt.tb.chainAria': 'Режим цепочки',
   'opt.tb.chainCont': 'непрерывно',
