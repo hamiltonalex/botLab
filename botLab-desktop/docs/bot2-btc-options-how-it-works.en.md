@@ -1,7 +1,8 @@
 # Bot 2 "BTC Options": How It Works
 
-A plain-language explanation of the bot's mechanics for a reader with no trading or
-options background: what the bot does, when, and why, across its whole life cycle.
+What the bot does, when, and why - the full life cycle, from contract selection to
+settlement and re-entry. Terms are explained as they appear; a glossary and a code map
+close the document.
 
 [Русская версия](bot2-btc-options-how-it-works.ru.md) · Document matches the code as of 2026-08-27.
 
@@ -172,7 +173,7 @@ A sold insurance makes the account price-sensitive: a short call loses when the 
 rises, a short put when it falls. The bot removes that sensitivity with a counterweight,
 a position in the BTC-PERPETUAL futures contract.
 
-There is exactly one rule, and it is simple:
+There is exactly one rule:
 
 - on every tick the bot computes **what counterweight is needed now** (from the total
   delta of the sold legs);
@@ -338,7 +339,7 @@ journal) and "Structure constructor" (scheme choice, preview, launch).
 
 ## Glossary
 
-| Term | In plain words |
+| Term | Meaning |
 |---|---|
 | Option | Insurance against a price move: the buyer pays a fee, the seller promises a payout if the price crosses a threshold by a date |
 | Premium | The insurance fee; the seller receives it up front |
@@ -361,7 +362,7 @@ journal) and "Structure constructor" (scheme choice, preview, launch).
 
 ---
 
-## Code Map (for the Curious)
+## Code Map
 
 | Module | Role |
 |---|---|

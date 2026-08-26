@@ -4,7 +4,7 @@ A cross-platform desktop app (Windows `.exe` today; the macOS build is code-read
 wired into CI - see "Build installers" below) that hosts several paper-trading bots as tabs. This
 file's walkthrough covers the original **funding-rate arbitrage** bot; see
 [CHANGELOG.md](CHANGELOG.md) for the BTC-options and OTM-scanner bots and the full version history.
-Bot 2 (BTC options) has a plain-language guide to its mechanics:
+Bot 2 (BTC options) mechanics guide:
 [docs/bot2-btc-options-how-it-works.en.md](docs/bot2-btc-options-how-it-works.en.md)
 ([по-русски](docs/bot2-btc-options-how-it-works.ru.md)).
 
