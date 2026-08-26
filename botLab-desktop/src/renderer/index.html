@@ -2136,7 +2136,7 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
         <div class="card flush" id="optConformCard">
           <div class="sec-head" style="padding:16px 16px 0;margin-bottom:10px">
             <h2 data-i18n="opt.conf.title">Паспорт соответствия измеренной конфигурации</h2>
-            <span class="tag amber" data-i18n="opt.conf.tag">замер: 5 лет · 84 сделки · это прошлое, не прогноз</span>
+            <span class="tag amber" id="optConfTag" data-i18n="opt.conf.tag">замер: 5 лет · 84 сделки · это прошлое, не прогноз</span>
             <span class="rule"></span>
             <span class="hint" id="optConformHint">—</span>
           </div>
@@ -2237,7 +2237,7 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
               <div class="trow" id="optTRowSellCredit" hidden><span class="k" data-i18n="opt.prev.rowSellCredit">премия получена (кредит)</span><span class="num pos" id="optTicketSellCredit">—</span></div>
               <div class="trow" id="optTRowSellQty" hidden><label class="k" for="optTicketSellQty" data-i18n="opt.tk.qty">кол-во, контрактов</label>
                 <input id="optTicketSellQty" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="по залогу" data-i18n-ph="opt.tk.sellQtyPh" aria-invalid="false" aria-describedby="optTicketSellQtyHint"></div>
-              <div class="trow" id="optTRowSellQtyHint" hidden><span class="k faint" id="optTicketSellQtyHint" data-i18n="opt.tk.sellQtyHint0">пусто = размер по залогу (правило)</span><span></span></div>
+              <div class="trow" id="optTRowSellQtyHint" hidden><span class="k faint" id="optTicketSellQtyHint" data-i18n="opt.tk.sellQtyHint0">пусто = размер считает правило схемы</span><span></span></div>
               <div class="trow" id="optTRowSellIM" hidden><span class="k" data-i18n="opt.tk.sellIM">залог (IM), требуется</span><span class="num" id="optTicketSellIM">—</span></div>
               <div class="trow" id="optTRowSellCost" hidden><span class="k" data-i18n="opt.tk.sellCost">издержки входа</span><span class="num neg" id="optTicketSellCost">—</span></div>
               <div class="trow" id="optTRowSellMax" hidden><span class="k" data-i18n="opt.prev.rowSellMax">макс. прибыль · макс. убыток</span><span class="num" id="optTicketSellMax">—</span></div>
@@ -5349,11 +5349,21 @@ function renderOptConform(ds){
   row(t('opt.conf.rFlat'), t('opt.conf.rFlatNow'), t('opt.conf.rFlatWant'), false,
     t('opt.conf.rFlatPrice'));
   row(t('opt.conf.rTenor'), t('opt.conf.tenorVal'), t('opt.conf.tenorVal'), true, t('opt.conf.byRule'));
-  row(t('opt.chain.tktSize'), t('opt.chain.tktSizeV'), t('opt.chain.tktSizeV'), true, t('opt.conf.byRule'));
+  /* Правило размера: у ОТКРЫТОЙ структуры - то, каким она реально посчитана (sizing.rule; старые
+     позиции без метки посчитаны деплоем), без позиции - то, каким вооружится следующая (стресс).
+     Оба правила измерены, поэтому строка документирует, а не судит. */
+  const szRule = (ds.structure && ds.structure.sizing)
+    ? (ds.structure.sizing.rule || 'deploy') : 'stress';
+  const szTxt = szRule==='stress' ? t('opt.conf.sizeStressV') : t('opt.chain.tktSizeV');
+  row(t('opt.chain.tktSize'), szTxt, szTxt, true, t('opt.conf.byRule'));
   const manual = ds.sellChain && ds.sellChain.stats ? (ds.sellChain.stats.manual||0) : 0;
   row(t('opt.conf.rExit'), manual?t('opt.conf.rExitManual',{n:manual}):t('opt.conf.expiryWord'), t('opt.conf.expiryWord'), manual===0,
     t('opt.conf.rExitPrice'));
 
+  /* Чип замера следует за схемой: у пары свой пятилетний замер (тот же счёт сделок, другой рост),
+     и подписывать её замером колла значило бы приписать паре чужие числа. */
+  const confTag=$('optConfTag');
+  if(confTag) confTag.textContent = optModeActive()==='sell-strangle' ? t('opt.conf.tagPair') : t('opt.conf.tag');
   const body=$('optConformBody');
   if(body) body.innerHTML = rows.map(r =>
     '<tr class="'+(r.ok?'ok':'dev')+'">'
@@ -6112,8 +6122,11 @@ function drawDelta(cv, data, tipEl){
 function optStructParams(){ return { expiry:optSel.expiry, callOffsetPct:optSel.wing, putOffsetPct:optSel.wing, qty:optSel.qty, execStyle:optSel.exec }; }
 /* Схема продавца НЕ передаёт ни экспирацию, ни крылья: срок и страйк выбирает правило в движке.
    qty === null означает «размер считает lotsByMargin», и это отличается от «ноль». */
+/* Размер продавца считает АВТОНОМНОЕ стресс-правило движка (MM при ±45% спота не выше 80% счёта,
+   константы зафиксированы замером 2026-08-26): операторского числа deployPct в вооружении больше
+   нет. Исторические книги сверок сняты правилом deploy - оно живёт в движке дефолтом. */
 function optSellStructParams(){ return { kind: optModeActive()==='sell-strangle' ? 'sell-strangle' : 'sell-call',
-  qty:optSel.sellQty, execStyle:optSel.exec }; }
+  qty:optSel.sellQty, execStyle:optSel.exec, sellCfg:{ sizeRule:'stress' } }; }
 let optSellPrevTimer;
 /* Тот же дебаунс, что у покупателя, но с ЧЕСТНОЙ меткой ожидания: раунд-трип объективно длиннее
    (срез всей поверхности плюс тикер выбранной ноги), и молчащий экран читался бы как поломка. */
@@ -6388,10 +6401,11 @@ async function chainSet(patch){
 async function confirmOptChain(){
   const cf=$('optChainTktConfirm'); if(cf) cf.disabled=true;
   /* Вид структуры вооружается ВМЕСТЕ с цепочкой: перевход открывает ровно то, что было выбрано
-     при включении, а не то, куда позже ушёл тумблер. Старые цепочки без kind читаются коллом. */
+     при включении, а не то, куда позже ушёл тумблер. Старые цепочки без kind читаются коллом.
+     Размер каждой сделки цепочки считает стресс-правило движка (см. optSellStructParams). */
   const r=await chainSet({ on:true, params:{ kind: optModeActive()==='sell-strangle' ? 'sell-strangle' : 'sell-call',
     qty:null, execStyle:(optSel&&optSel.exec)||'limit',
-    mode:(optSel&&optSel.chainMode)||'continuous' } });
+    mode:(optSel&&optSel.chainMode)||'continuous', sellCfg:{ sizeRule:'stress' } } });
   if(r && r.error){ const err=$('optChainTktErr'); if(err){ err.hidden=false;
       err.textContent=t('opt.r.armFail',{e:r.error}); }
     if(cf) cf.disabled=false; return; }
