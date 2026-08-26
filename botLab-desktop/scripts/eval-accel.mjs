@@ -56,6 +56,9 @@ if (args.includes("--help") || !argOf("--dir")) {
   --windows <а-б,..>    сетка окон срока для tenor и put (по умолчанию 48-168,168-336,336-672)
   --strangle-window <а-б> окно стрэнгла (по умолчанию 336-672)
   --ladder <а-б+в-г>    пара окон лестницы (по умолчанию 168-336+336-672)
+  --perp-fee <x>        комиссия перпа долей (0 мейкер, 0.00025 = 2.5 б.п.; стресс исполнения)
+  --exec <модель>       maker-mid | taker-cross (вход в опцион; стресс исполнения)
+  --spread-scale <x>    множитель модельного спреда (по умолчанию дефолт схемы 1.10)
   --json <файл>         машинный дамп метрик`);
   process.exit(argOf("--dir") ? 0 : 1);
 }
@@ -71,6 +74,10 @@ const WINDOWS = (argOf("--windows", "48-168,168-336,336-672")).split(",").map(pa
 const SW = parseWin(argOf("--strangle-window", "336-672"));
 const LADDER = (argOf("--ladder", "168-336+336-672")).split("+").map(parseWin);
 if (LADDER.length !== 2) { console.error("--ladder: ожидается ровно пара окон «а-б+в-г»"); process.exit(1); }
+const PERP_FEE = Number(argOf("--perp-fee", "0"));
+const EXEC = argOf("--exec", "maker-mid");
+if (EXEC !== "maker-mid" && EXEC !== "taker-cross") { console.error(`--exec: maker-mid | taker-cross, получено «${EXEC}»`); process.exit(1); }
+const SPREAD = argOf("--spread-scale") == null ? null : Number(argOf("--spread-scale"));
 const LOT = 0.01;
 
 // ── запись: загрузчик слово в слово тот же, что у эталона (слой снабжения общий).
@@ -132,7 +139,8 @@ const f2 = (x, d = 2) => (fin(x) ? x.toFixed(d) : "н/д");
 const pct = (x, d = 1) => (fin(x) ? (100 * x).toFixed(d) + "%" : "н/д");
 const dt = (ms) => new Date(ms).toISOString().slice(0, 10);
 
-const cfgOf = (over) => ({ ...SELLHEDGE_DEFAULTS, lot: LOT, execModel: "maker-mid", ...over });
+const cfgOf = (over) => ({ ...SELLHEDGE_DEFAULTS, lot: LOT, execModel: EXEC, perpFee: PERP_FEE,
+  ...(SPREAD == null ? {} : { spreadScale: SPREAD }), ...over });
 const mtype = (s) => (s === "P" ? "put" : "call");
 
 // ── одна сделка одной ноги, на 1.0 контракта, шаги СОБИРАЮТСЯ ВСЕГДА (наблюдатель walkSellTrade
@@ -415,7 +423,8 @@ function chainOf(kind, w, legType = "C") {
 console.log(`# Ускорение оборота схемы продавца: равный хвост (пик MM ≤ ${CAP})\n`);
 console.log(`Запись ${DIR}: ${N} снимков, ${dt(R.times[0])} .. ${dt(R.times.at(-1))} (${f2(spanDays / 365, 2)} года).`);
 console.log(`Депозит $${DEPOSIT}. Дельта ${SELLHEDGE_DEFAULTS.deltaTarget} · полоса ${SELLHEDGE_DEFAULTS.bandBtc} BTC ·`
-  + ` перп мейкер · спред ×${SELLHEDGE_DEFAULTS.spreadScale}. Размер варианта калибруется бинарным поиском`
+  + ` перп ${PERP_FEE ? (PERP_FEE * 1e4).toFixed(1) + " б.п." : "мейкер"} · вход ${EXEC}`
+  + ` · спред ×${SPREAD ?? SELLHEDGE_DEFAULTS.spreadScale}. Размер варианта калибруется бинарным поиском`
   + ` максимального deployPct, при котором пик MM-утилизации за ВСЮ запись не превышает ${CAP}.\n`);
 
 const variants = [];
