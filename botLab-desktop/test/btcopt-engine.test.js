@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import * as engine from "../src/engine/btcopt/engine.js";
 import { effectiveDeadband } from "../src/engine/btcopt/hedge.js";
 import { SELLHEDGE_DEFAULTS } from "../src/engine/otmscan/sellhedge.js";
+import { legMargin } from "../src/engine/btcopt/margin.js";
 
 const near = (a, b, tol, l) => assert.ok(Math.abs(a - b) < tol, `${l}: got ${a} want ${b} (±${tol})`);
 
@@ -903,4 +904,101 @@ test("entryIndex: открытие штампует индекс входа, ц�
   engine.closeStructure(st, snap, NOON + 180000);
   const cyc3 = engine.evaluate(st, snap, NOON + 240000);
   assert.equal(cyc3.entry_index, null, "без структуры якоря нет");
+});
+
+// ── СТРЭНГЛ ПРОДАВЦА (kind sell-strangle): правила пары - sellstrangle.js, исполнитель тот же ────
+// Проверяется главное обещание переноса: отдельного исполнителя у пары НЕТ. Открытие идёт общей
+// веткой продавца, хедж решает НЕТТО-дельта через optionDeltaTotal, маржа - сумма ног тем же
+// legMargin, расчёт в экспирацию - общий settleStructure по списку ног, цепочка - те же счётчики.
+
+function strangleFixture(nowMs) {
+  const expiry = nowMs + 480 * 3600000; // 480 ч = внутри окна схемы 336-672 ч
+  const callName = "BTC_USDC-1JAN26-100000-C";
+  const putName = "BTC_USDC-1JAN26-90000-P";
+  const meta = (n, k, t) => ({ instrument_name: n, strike: k, expiration_timestamp: expiry,
+    option_type: t, contract_size: 1, min_trade_amount: 0.01, tick_size: 0.5 });
+  const leg = (n, k, t, mark, delta) => ({ instrument: n, type: t, strike: k, expiryMs: expiry,
+    bid: mark - 50, ask: mark + 50, mark, markIv: 45, delta, gamma: 0.00001, vega: 120, theta: -5,
+    underlying: 100000, index: 100000, contractSize: 1, minTradeAmount: 0.01, markInUsd: true });
+  return {
+    expiry, callName, putName,
+    chain: [meta(callName, 100000, "call"), meta(putName, 90000, "put")],
+    snapshot: {
+      underlying: 100000, index: 100000,
+      perp: { mark: 100000, index: 100000, contractSize: 10, funding8h: 0, bid: 99999, ask: 100001 },
+      legs: {
+        [callName]: leg(callName, 100000, "call", 3000, 0.45),
+        [putName]: leg(putName, 90000, "put", 2600, -0.45),
+      },
+    },
+  };
+}
+const strangleIm = (f) =>
+  legMargin({ type: "call", side: "short", strike: 100000, mark: 3000, underlying: 100000, index: 100000, amount: 1 }).im
+  + legMargin({ type: "put", side: "short", strike: 90000, mark: 2600, underlying: 100000, index: 100000, amount: 1 }).im;
+
+test("стрэнгл: открывается парой коротких ног, залог суммой, размер от залога пары", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = strangleFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  const r = engine.openStructure(st, { kind: "sell-strangle", execStyle: "limit", sanityCfg: SANITY_OFF }, f.chain, f.snapshot, nowMs);
+  assert.ok(r.ok, `открытие: ${r.error ?? "ok"}`);
+  const b = st.structure;
+  assert.equal(b.kind, "sell-strangle");
+  assert.deepEqual(b.legs.map((l) => [l.type, l.side]), [["call", "short"], ["put", "short"]], "порядок [колл, пут]");
+  const imPair = strangleIm(f);
+  near(b.sizing.imPerContract, imPair, 1e-9, "залог за контракт пары = сумма ног тем же legMargin");
+  assert.equal(b.sizing.lots, Math.floor((200000 * 0.70) / (imPair * 0.01)), "лоты от залога пары, вниз");
+  assert.equal(b.legs[0].qtyAbs, b.legs[1].qtyAbs, "закон равных ног");
+  assert.ok(b.id.includes("100000x90000"), `id несёт пару страйков: ${b.id}`);
+  near(b.entryDebitUsd, -(3000 + 2600) * b.legs[0].qtyAbs, 1e-9, "кредит премий двух ног");
+  assert.equal(b.strikes.atm, undefined, "середины у стрэнгла нет - тент не рисуется");
+  assert.equal(b.pickedLeg.name, f.callName, "зона продавца судит по колловой ноге");
+  const open = st.ledger.find((row) => row.type === "open");
+  assert.ok(open.note.includes("продажа стрэнгла") && open.note.includes("+"), open.note);
+  const cost = st.ledger.find((row) => row.type === "open-cost");
+  assert.ok(cost && cost.realizedUsd < 0, "издержки входа книжатся сразу и отрицательны");
+});
+
+test("стрэнгл: хедж решает НЕТТО-дельта пары - симметрия стоит, перекос перекладывает", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = strangleFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  assert.ok(engine.openStructure(st, { kind: "sell-strangle", execStyle: "limit", sanityCfg: SANITY_OFF }, f.chain, f.snapshot, nowMs).ok);
+  const q = st.structure.legs[0].qtyAbs;
+  engine.ingest(st, f.snapshot, nowMs);
+  assert.equal(st.sellChain.uptime.ticks, 1, "непрерывность опроса считается и для пары");
+  const c1 = engine.evaluate(st, f.snapshot, nowMs);
+  near(c1.net_option_delta_bs, 0, 1e-12, "дельты ног взаимно гасятся на входе");
+  assert.equal(st.perpState.qty, 0, "нетто-нуль не хеджируется - как у эталона пары");
+  // Колл ушёл в деньги: нетто-дельта пары -0.15·q, полоса 0.03·q - разрыв в пять полос.
+  const moved = { ...f.snapshot, legs: { ...f.snapshot.legs,
+    [f.callName]: { ...f.snapshot.legs[f.callName], delta: 0.60 } } };
+  const t2 = nowMs + 60000;
+  engine.ingest(st, moved, t2);
+  const c2 = engine.evaluate(st, moved, t2);
+  near(c2.target_futures_delta, 0.15 * q, 1e-9, "цель = минус нетто-дельта опционов");
+  near(c2.hedge_deadband_btc, 0.03 * q, 1e-12, "полоса схемы масштабируется размером пары");
+  assert.equal(c2.decision, "HEDGE", "разрыв за полосой перекладывает");
+  assert.ok(st.perpState.qty > 0, "куплен перп под коротким коллом в деньгах");
+});
+
+test("стрэнгл: экспирация гасит обе ноги общим расчётом и дописывает сделку цепочки", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = strangleFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  assert.ok(engine.openStructure(st, { kind: "sell-strangle", execStyle: "limit", sanityCfg: SANITY_OFF }, f.chain, f.snapshot, nowMs).ok);
+  const q = st.structure.legs[0].qtyAbs;
+  const entryCost = -st.ledger.find((row) => row.type === "open-cost").realizedUsd;
+  // Индекс 85000: колл пуст, пут в деньгах на 5000. Премии 5600 покрывают выкуп - продавец в плюсе.
+  engine.settleStructure(st, { ...f.snapshot, index: 85000, underlying: 85000 }, f.expiry + 1000);
+  const settleRow = st.ledger.findLast((row) => row.type === "settle-options");
+  near(settleRow.realizedUsd, (5600 - 5000) * q, 1e-6, "расчёт = кредит премий минус внутренняя пута");
+  assert.equal(settleRow.meta.legs.length, 2, "delivery-сверка получает геометрию ОБЕИХ ног");
+  assert.equal(st.sellChain.trades.length, 1, "строка цепочки одна");
+  const t = st.sellChain.trades[0];
+  assert.equal(t.instrument, `${f.callName}+${f.putName}`, "сделка называет обе ноги");
+  near(t.pnlUsd, (5600 - 5000) * q - entryCost, 1e-6, "итог = расчёт минус издержки входа");
+  near(t.retImPct, (t.pnlUsd / t.imUsd) * 100, 1e-9, "доходность на залог пары");
+  assert.equal(engine.sellChainStats(st).n, 1, "сводка цепочки видит сделку пары");
 });

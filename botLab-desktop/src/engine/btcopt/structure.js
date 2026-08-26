@@ -7,6 +7,7 @@
 import { legMargin } from "./margin.js";
 import { computeTradeCosts } from "../otmscan/economics.js";
 import { SELLHEDGE_DEFAULTS, rankSellLegs, lotsByMargin, halfSpreadUsd, openSellTrade } from "../otmscan/sellhedge.js";
+import { rankStranglePairs, openStrangleTrade } from "../otmscan/sellstrangle.js";
 import { SELL_SANITY_DEFAULTS, evaluateInstrumentSanity, summarizeSanityFailure } from "../otmscan/sanity.js";
 
 // Accept a raw chain array OR a { instruments:[...] } envelope (get_instruments result shape).
@@ -252,6 +253,141 @@ export function buildSellStructure(params, chain, snapshot, nowMs) {
     entryCostUsd: open.optCost * qtyAbs * contractSize,
     pickedLeg: { name: leg.n, strike: leg.k, expiryMs: leg.e, mark: leg.m, delta: leg.d, ivPct: leg.iv, bid: leg.b, ask: leg.a, vega: leg.vg, hoursToExpiry: leg.h },
     costs,
+    sizing,
+    sanity: sanityMark,
+    sanityChecks: checks,
+  };
+}
+
+// ── ПРОДАЖА СТРЭНГЛА (правила sellstrangle.js; исследование «ускорение оборота» 2026-08-26) ─────
+//
+// Тот же довод, что у buildSellStructure выше: правила пары (какую пару, каким размером, почём
+// вход) лежат в движке otmscan и сюда НЕ переписываются, а вызываются; всё остальное у бота 2 уже
+// мультиногое и к числу коротких ног безразлично - `structureMargin` суммирует ноги, `payoffAt` и
+// расчёт в экспирацию считают по списку ног, `optionDeltaTotal` отдаёт НЕТТО-дельту, которую и
+// хеджирует decideHedge (ровно то правило, каким пара измерена: полоса 0.03·q на нетто-дельте,
+// замер при равном хвосте дал ×4.09 против ×2.59 у одиночного колла). Отдельного исполнителя у
+// стрэнгла нет и не появляется.
+//
+// САНИТАРИЯ НА ПАРЕ (§1.8): кандидаты - ПАРЫ в порядке близости колла к целевой дельте
+// (`rankStranglePairs`; колл без пута своей экспирации пропущен правилом, а не санитарией).
+// Пара проходит, только когда проходят ОБЕ ноги; вето любой ноги переключает на следующую пару;
+// не прошла ни одна - отказ с кодом, ожидание дольше окна - лучшая пара с постоянной пометкой
+// «ухудшенная санитария». Правило то же, что у одной ноги, применённое к обеим.
+export function buildSellStrangleStructure(params, chain, snapshot, nowMs) {
+  const underlying = snapshot?.underlying;
+  if (!Number.isFinite(underlying)) return { error: "Нет цены базового актива в снапшоте" };
+  const cfg = { ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) };
+  const sanityCfg = { ...SELL_SANITY_DEFAULTS, ...(params?.sanityCfg ?? {}) };
+  const pairs = rankStranglePairs(sellRowsFromSnapshot(chain, snapshot, nowMs), cfg, sanityCfg.maxCandidates);
+  if (!pairs.length) {
+    return { error: `Нет пары колл+пут одной экспирации в окне ${cfg.expiryMinH}-${cfg.expiryMaxH} ч с |дельтой| у ${cfg.deltaTarget}`, code: "no-leg" };
+  }
+  const checks = [];
+  let pair = null;
+  for (const p of pairs) {
+    const sc = evaluateInstrumentSanity(p.call, sanityCfg, nowMs);
+    const sp = evaluateInstrumentSanity(p.put, sanityCfg, nowMs);
+    checks.push(sc, sp);
+    if (sc.verdict === "pass" && sp.verdict === "pass") { pair = p; break; }
+  }
+  let sanityMark = "ok";
+  if (!pair) {
+    if (!params?.allowDegraded) {
+      return {
+        error: `Санитария: ни одна из ${pairs.length} пар в допуске дельты не прошла (${summarizeSanityFailure(checks)})`,
+        code: "sanity-none-passed",
+        sanityChecks: checks,
+      };
+    }
+    pair = pairs[0];
+    sanityMark = "degraded";
+  }
+
+  const index = snapshot.index ?? underlying;
+  const metaOf = (leg) => asMetas(chain).find((m) => m.instrument_name === leg.n);
+  const gOf = (leg) => snapshot.legs[leg.n];
+  // Залог пары ЗА ОДИН контракт = сумма требований ног (стандартная маржа Deribit короткие ноги не
+  // неттингует); формулы те же, что у эталона и живого счёта - legMargin, по типу каждой ноги.
+  const imPerContract =
+    legMargin({ type: "call", side: "short", strike: pair.call.k, mark: pair.call.m, underlying, index, amount: 1 }).im
+    + legMargin({ type: "put", side: "short", strike: pair.put.k, mark: pair.put.m, underlying, index, amount: 1 }).im;
+
+  let qtyAbs = params?.qty ?? null;
+  let sizing = null;
+  if (qtyAbs == null) {
+    if (!Number.isFinite(params?.equityUsd)) return { error: "Нет счёта для расчёта размера от залога" };
+    const s = lotsByMargin({ imUsdPerContract: imPerContract, equityUsd: params.equityUsd, cfg });
+    sizing = { ...s, imPerContract };
+    if (!(s.lots >= 1)) {
+      const need = Math.ceil((s.imLotUsd ?? 0) / (cfg.deployPct || 1));
+      return { error: `Залог $${Math.round(s.imLotUsd ?? 0)} за лот пары не помещается в счёт $${Math.round(params.equityUsd)}: `
+        + `нужно от $${need} (потолок развёртывания ${Math.round((cfg.deployPct || 0) * 100)}% счёта)`, sizing };
+    }
+    qtyAbs = s.lots * cfg.lot;
+  } else {
+    sizing = { lots: Math.round(qtyAbs / cfg.lot), imLotUsd: imPerContract * cfg.lot, imUsedUsd: imPerContract * qtyAbs, imPerContract };
+  }
+
+  // Издержки входа: каждая нога платит половину СВОЕГО круга (правило openStrangleTrade, тем же
+  // computeTradeCosts). Взвешенный по премиям круг кладётся в costs.roundTripCostPct, чтобы строка
+  // `open-cost` леджера читалась одним числом, как у одной ноги; поногово лежит рядом.
+  const mkCosts = (leg) => {
+    const half = halfSpreadUsd(leg, cfg);
+    return computeTradeCosts({ markUsd: leg.m, bidUsd: leg.m - half, askUsd: leg.m + half, indexPrice: underlying, execModel: cfg.execModel });
+  };
+  const costsCall = mkCosts(pair.call);
+  const costsPut = mkCosts(pair.put);
+  const open = costsCall && costsPut
+    ? openStrangleTrade({ pair, spotUsd: underlying, costsCall, costsPut, imUsd: imPerContract, cfg })
+    : null;
+  if (!open) return { error: `Не считаются издержки входа: нет bid/ask/mark у ${pair.call.n} или ${pair.put.n}` };
+  const premPair = pair.call.m + pair.put.m;
+
+  const mkLeg = (leg, type) => {
+    const meta = metaOf(leg);
+    const g = gOf(leg);
+    return {
+      instrument: leg.n,
+      type,
+      side: "short",
+      strike: leg.k,
+      expiryMs: leg.e,
+      qtyAbs,
+      qtySigned: -qtyAbs,
+      entryMark: g.mark ?? null,
+      contractSize: g.contractSize ?? meta?.contract_size ?? 1,
+      minTradeAmount: g.minTradeAmount ?? meta?.min_trade_amount ?? cfg.lot,
+      tickSize: g.tickSize ?? meta?.tick_size ?? null,
+      markInUsd: g.markInUsd ?? true,
+    };
+  };
+  // Порядок ног ЗНАЧИМ и закреплён: [колл, пут]. Закон равных ног (unit по legs[0]) выполняется,
+  // а вызывающие (книга сверки, карточка цепочки) читают колл первым.
+  const legs = [mkLeg(pair.call, "call"), mkLeg(pair.put, "put")];
+  const info = (leg) => ({ name: leg.n, strike: leg.k, expiryMs: leg.e, mark: leg.m, delta: leg.d,
+    ivPct: leg.iv, bid: leg.b, ask: leg.a, vega: leg.vg, hoursToExpiry: leg.h });
+  return {
+    expiryMs: pair.call.e,
+    kind: "sell-strangle",
+    params: { qty: qtyAbs, execStyle: params?.execStyle, sellCfg: params?.sellCfg ?? null },
+    // Страйки пары под теми же ключами, какими четырёхногая структура зовёт крылья; `atm` у пары
+    // нет намеренно - середины у стрэнгла не существует, и подставлять туда что-либо значило бы
+    // рисовать тент там, где его нет.
+    strikes: { kc: pair.call.k, kp: pair.put.k },
+    legs,
+    entryDebitUsd: legs.reduce((s, l) => s + l.qtySigned * (l.entryMark ?? 0) * l.contractSize, 0),
+    entryUnderlying: underlying,
+    entryCostUsd: open.optCost * qtyAbs * (legs[0].contractSize ?? 1),
+    // pickedLeg = КОЛЛ пары: зона продавца и сверка книг судят режим рынка по колловой ноге - тем
+    // же числом, каким его судит базовая схема, иначе один режим назывался бы двумя именами.
+    pickedLeg: info(pair.call),
+    pickedPair: { call: info(pair.call), put: info(pair.put) },
+    costs: {
+      roundTripCostPct: (costsCall.roundTripCostPct * pair.call.m + costsPut.roundTripCostPct * pair.put.m) / premPair,
+      call: costsCall,
+      put: costsPut,
+    },
     sizing,
     sanity: sanityMark,
     sanityChecks: checks,

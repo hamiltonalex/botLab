@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SELLHEDGE_DEFAULTS, walkSellTrade, settleSellTrade, stepMtm } from "../src/engine/otmscan/sellhedge.js";
-import { pickStranglePair, openStrangleTrade, stranglePrice } from "../src/engine/otmscan/sellstrangle.js";
+import { pickStranglePair, rankStranglePairs, openStrangleTrade, stranglePrice } from "../src/engine/otmscan/sellstrangle.js";
 import { near } from "./otmscan-helpers.mjs";
 
 const C = SELLHEDGE_DEFAULTS;
@@ -43,6 +43,32 @@ test("пара: нет пута в допуске - входа нет вовсе
 test("пара: rows обязан быть массивом - итератор снимка здесь не чинится молча", () => {
   const rows = [row(), row({ n: "p", s: "P", d: -0.45 })];
   assert.equal(pickStranglePair(new Map(rows.map((r) => [r.n, r])).values(), C), null);
+});
+
+// ── очередь пар (санитария §1.8 живого тракта): вето переключает ПАРУ, поэтому вызывающему нужна
+// очередь запасных; колл без пута своей экспирации пропускается ПРАВИЛОМ (структурное отсутствие).
+test("очередь: пары идут в порядке близости колла, лучший колл без пута пропускается правилом", () => {
+  const rows = [
+    row({ n: "c-best", d: 0.45, e: 111 }), // лучший колл, но у e=111 пута нет вовсе
+    row({ n: "c-2nd", d: 0.50, e: 222 }),
+    row({ n: "p-2nd", s: "P", d: -0.46, e: 222 }),
+    row({ n: "c-3rd", d: 0.54, e: 333 }),
+    row({ n: "p-3rd", s: "P", d: -0.44, e: 333 }),
+  ];
+  const q2 = rankStranglePairs(rows, C, 2);
+  assert.deepEqual(q2.map((p) => p.call.n), ["c-2nd", "c-3rd"], "порядок по дельте колла, дырка пропущена");
+  assert.deepEqual(q2.map((p) => p.put.n), ["p-2nd", "p-3rd"], "пут своей экспирации у каждой пары");
+  assert.equal(rankStranglePairs(rows, C, 1).length, 1, "limit режет очередь, а не пул коллов");
+});
+
+test("очередь: pickStranglePair это ровно первая пара очереди - одно правило, не два", () => {
+  const rows = [
+    row({ n: "c-best", d: 0.45, e: 111 }),
+    row({ n: "c-2nd", d: 0.50, e: 222 }),
+    row({ n: "p-2nd", s: "P", d: -0.46, e: 222 }),
+  ];
+  assert.equal(pickStranglePair(rows, C).call.n, "c-2nd", "структурная дырка не замораживает вход");
+  assert.equal(pickStranglePair(rows, C).call.n, rankStranglePairs(rows, C, 1)[0].call.n);
 });
 
 // ── вход

@@ -15,7 +15,7 @@
 //   account                          — paper equity/margin estimate.
 // All time-dependent behaviour takes an explicit nowMs (never Date.now()) so tests are reproducible.
 
-import { buildStructure, buildSellStructure, optionDeltaTotal, netGreeks, netDebit, pickExpiry, structureRejections } from "./structure.js";
+import { buildStructure, buildSellStructure, buildSellStrangleStructure, optionDeltaTotal, netGreeks, netDebit, pickExpiry, structureRejections } from "./structure.js";
 import { payoffCurve, payoffAt } from "./payoff.js";
 import { decideHedge, applyFill, settlementBlackout } from "./hedge.js";
 import { markStructure, markPerp, accrueFunding, attribute, noHedgeAttribute, appendLedger } from "./pnl.js";
@@ -28,6 +28,12 @@ import { SELL_SANITY_DEFAULTS } from "../otmscan/sanity.js";
 
 export const BOT_ID = "btc-options";
 export const SCHEMA_VERSION = 1;
+
+// Структуры СХЕМЫ ПРОДАВЦА (правила sellhedge.js/sellstrangle.js): одна проданная нога и стрэнгл.
+// Предикат существует затем, чтобы ветки цепочки, замороженной конфигурации и санитарии не
+// перечисляли виды по одному в восьми местах: пропуск одного места дал бы структуру, которая
+// хеджируется полосой схемы, но не попадает в цепочку, и расхождение всплыло бы только в сверке.
+export const isSellKind = (kind) => kind === "sell-call" || kind === "sell-strangle";
 
 // Cost-model rates + blackout windows the hedge engine needs but that aren't user-facing knobs. Merged
 // under the persisted settings at evaluate time (settings win if they ever override one).
@@ -224,13 +230,13 @@ export function ingest(state, snapshot, nowMs, hints = {}) {
       }
     }
   }
-  // ── НЕПРЕРЫВНОСТЬ ОПРОСА. Считается ТОЛЬКО пока открыта проданная нога, и это самый дорогой из
+  // ── НЕПРЕРЫВНОСТЬ ОПРОСА. Считается ТОЛЬКО пока открыта проданная структура, и это самый дорогой из
   // измеренных рисков схемы: каданс решения раз в сутки роняет пятилетний результат с роста залога
   // в 46.5 раза до 16.2, а просадку поднимает с 13.5% до 30.6%. Ни одного поля покрытия у бота 2 не
   // было, то есть оператор не мог отличить схему, которая хеджилась каждые 15 секунд, от схемы,
   // которая проспала четыре часа. Накопитель O(1) плюс короткий список перерывов: держать все тики
   // не нужно, а перерыв без метки времени нельзя ни объяснить, ни опровергнуть.
-  if (state.structure?.kind === "sell-call" && state.sellChain) {
+  if (isSellKind(state.structure?.kind) && state.sellChain) {
     const u = state.sellChain.uptime ?? (state.sellChain.uptime = { ticks: 0, firstAt: nowMs, lastAt: null, maxGapMs: 0, gaps: [] });
     const prev = u.lastAt;
     u.ticks += 1;
@@ -598,13 +604,14 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   // via closeStructure) and leave the perp hedge sized for the discarded legs. The IPC resolve path is
   // async, so a double-click/retried invoke CAN land here twice — the guard, not the UI, is the invariant.
   if (state.structure) return { error: "структура уже открыта — сначала закройте текущую" };
-  // ВЕТКА ПРОДАВЦА (params.kind === "sell-call"): контракт выбирает `pickSellLeg`, размер считает
-  // `lotsByMargin` от ФАКТИЧЕСКОГО счёта; оба правила живут в sellhedge.js и здесь только зовутся.
-  // Экспирация не подбирается и не передаётся: у этой схемы её выбирает окно срока внутри правила.
-  // Дальше путь ОДИН на обе структуры (preTradeCheck, заморозка cfg, леджер, сброс метрик); второй
-  // путь открытия означал бы второй набор предторговых проверок.
+  // ВЕТКА ПРОДАВЦА (схемы sellhedge/sellstrangle): контракт или пару выбирает правило движка
+  // (`pickSellLeg` / `rankStranglePairs`), размер считает `lotsByMargin` от ФАКТИЧЕСКОГО счёта;
+  // правила живут в otmscan и здесь только зовутся. Экспирация не подбирается и не передаётся:
+  // у этих схем её выбирает окно срока внутри правила. Дальше путь ОДИН на все структуры
+  // (preTradeCheck, заморозка cfg, леджер, сброс метрик); второй путь открытия означал бы второй
+  // набор предторговых проверок.
   let built;
-  if (params?.kind === "sell-call") {
+  if (isSellKind(params?.kind)) {
     // Окно ожидания санитарии: если ни одна нога не проходит дольше окна, открывается лучшая
     // доступная с постоянной пометкой «ухудшенная санитария» (§1.8: пометить лучше, чем
     // заблокировать - разрыв цепочки это единственная измеренно дорогая потеря).
@@ -613,7 +620,8 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
       nowMs,
       windowMs: (params?.sanityCfg?.waitWindowH ?? SELL_SANITY_DEFAULTS.waitWindowH) * 3600000,
     });
-    built = buildSellStructure(
+    const buildSeller = params.kind === "sell-strangle" ? buildSellStrangleStructure : buildSellStructure;
+    built = buildSeller(
       { ...params, allowDegraded, equityUsd: params.equityUsd ?? account(state, snapshot).equity },
       chain, snapshot, nowMs,
     );
@@ -630,7 +638,7 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
     if (built.code === "sanity-none-passed") sellChainSanityWaitBegin(state, nowMs);
     return built;
   }
-  if (built.kind === "sell-call") sellChainSanityWaitClear(state);
+  if (isSellKind(built.kind)) sellChainSanityWaitClear(state);
 
   // НАСТРОЙКИ СХЕМЫ ПРОДАВЦА приходят из её собственного модуля, а не из тулбара. Полоса, λ и
   // триггеры бота 2 калиброваны под четырёхногую структуру, и на этой схеме их дефолты стоят
@@ -638,8 +646,10 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   // `sellhedgeEngineCfg`. Патч применяется ДО предторговой проверки, потому что от него зависит и
   // она: блэкаут расчёта запрещает ОТКРЫТИЕ в окне 08:00 UTC, а экспирации Deribit наступают ровно
   // в 08:00 UTC, то есть при живом дефолте перевход упирался бы в собственный блэкаут.
+  // У стрэнгла конфигурация та же и это ИЗМЕРЕНО, а не предположено: пара мерена той же полосой
+  // 0.03 на контракт по НЕТТО-дельте, без триггеров и без блэкаута (eval-accel, равный хвост).
   const sellEngineCfg =
-    built.kind === "sell-call" ? sellhedgeEngineCfg({ ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) }) : null;
+    isSellKind(built.kind) ? sellhedgeEngineCfg({ ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) }) : null;
 
   const metas = Array.isArray(chain) ? chain : chain?.instruments ?? [];
   const metaByInstrument = {};
@@ -648,7 +658,10 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   const blocks = rejections.filter((r) => r.severity === "block");
   if (blocks.length) return { error: blocks.map((r) => r.detail).join("; "), rejections };
 
-  built.id = `s1-${built.expiryMs}-${built.strikes.atm}-${nowMs}`;
+  // Ключ страйков в id: у тентовых структур и одной ноги это atm, у стрэнгла середины нет - пара
+  // крыльев. Подстановка undefined в id молча пометила бы все стрэнглы одним именем.
+  const strikeKey = built.strikes.atm ?? `${built.strikes.kc}x${built.strikes.kp}`;
+  built.id = `s1-${built.expiryMs}-${strikeKey}-${nowMs}`;
   built.createdAt = nowMs;
   // Индекс на моменте входа - якорь шкалы «вход - текущая - ликвидация» (UI-ревью 2026-08-25 П3).
   // Именно индекс, а не спот: MM и оценка цены ликвидации считаются от индексной цены. Структуры,
@@ -656,7 +669,7 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   built.entryIndex = snapshot.index ?? snapshot.underlying ?? null;
   // Замер счётчиков ДО строки `open-cost`: издержки входа обязаны попасть в сделку, которая их
   // заплатила, а не раствориться между сделками цепочки.
-  if (built.kind === "sell-call") {
+  if (isSellKind(built.kind)) {
     chainMarkOpen(state, nowMs);
     // Покрытие меряется за жизнь КОНКРЕТНОЙ сделки: перерыв, случившийся в прошлой, к решениям
     // хеджа этой отношения не имеет, а смешение двух окон дало бы среднее, не описывающее ни одно.
@@ -684,7 +697,9 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
     note:
       built.kind === "sell-call"
         ? `продажа колла ${built.legs[0].instrument} · x${built.legs[0].qtyAbs}`
-        : `winged straddle Kp${built.strikes.kp}/K${built.strikes.atm}/Kc${built.strikes.kc} · x${built.legs[0].qtyAbs}`,
+        : built.kind === "sell-strangle"
+          ? `продажа стрэнгла ${built.legs.map((l) => l.instrument).join("+")} · x${built.legs[0].qtyAbs}`
+          : `winged straddle Kp${built.strikes.kp}/K${built.strikes.atm}/Kc${built.strikes.kc} · x${built.legs[0].qtyAbs}`,
   });
   // Издержки входа в опцион книжатся ОТДЕЛЬНОЙ строкой и сразу: они уплачены при пересечении книги, а
   // не при экспирации. Сумма идёт в realizedOptionsUsd (а не в feesCum перпа), поэтому ledgerReconciles
@@ -695,7 +710,9 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
       t: nowMs,
       type: "open-cost",
       realizedUsd: -built.entryCostUsd,
-      note: `издержки входа ${built.legs[0].instrument}: круг ${built.costs?.roundTripCostPct?.toFixed(3)}% премии, платится половина`,
+      // У пары круг взвешен премиями ног (structure.js кладёт его в costs.roundTripCostPct),
+      // строка по-прежнему читается одним числом.
+      note: `издержки входа ${built.kind === "sell-strangle" ? built.legs.map((l) => l.instrument).join("+") : built.legs[0].instrument}: круг ${built.costs?.roundTripCostPct?.toFixed(3)}% премии, платится половина`,
     });
   }
   return { ok: true, structure: built, rejections };
@@ -746,10 +763,15 @@ function chainMarkOpen(state, nowMs) {
 function chainAppendTrade(state, nowMs, reason, settleSeq = null) {
   const st = state.structure;
   const m = state.sellChain?.mark;
-  if (!st || st.kind !== "sell-call" || !m) return;
+  if (!st || !isSellKind(st.kind) || !m) return;
   const now = chainCounters(state);
   const pnl = now.opt - m.opt + (now.perp - m.perp) + (now.fund - m.fund) - (now.fees - m.fees);
   const leg = st.legs?.[0] ?? {};
+  // Имя сделки пары - обе ноги через «+»: строка цепочки обязана называть, ЧТО было продано, а не
+  // половину; у одной ноги строка прежняя до символа.
+  const tradeName = st.kind === "sell-strangle"
+    ? (st.legs ?? []).map((l) => l.instrument).join("+")
+    : leg.instrument ?? null;
   const im = st.sizing?.imUsedUsd ?? null;
   state.sellChain.trades.push({
     // Ссылка на строку `settle-options` своего расчёта: по ней поправка delivery-сверки находит
@@ -757,7 +779,7 @@ function chainAppendTrade(state, nowMs, reason, settleSeq = null) {
     // по индексу-прокси, а официальная delivery-цена публикуется позже.
     settleSeq,
     preliminary: reason === "expiry",
-    instrument: leg.instrument ?? null,
+    instrument: tradeName,
     openedAt: st.createdAt ?? m.at,
     closedAt: nowMs,
     expiryMs: st.expiryMs ?? null,
