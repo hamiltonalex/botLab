@@ -54,6 +54,7 @@ import { computeTradeCosts } from "../src/engine/otmscan/economics.js";
 import { legMargin } from "../src/engine/btcopt/margin.js";
 import {
   pickSellLeg, openSellTrade, halfSpreadUsd, walkSellTrade, settleSellTrade, lotsByMargin, sellerZone,
+  stepMtm,
 } from "../src/engine/otmscan/sellhedge.js";
 import { parseGateSpec, formatGateTerms, makeGateCounter, testGate } from "../src/engine/otmscan/hist-gate.js";
 
@@ -68,6 +69,9 @@ if (has("--help") || !argOf("--dir")) {
   --dir <каталог>     запись восстановления (обязательно)
   --funding <файл>    почасовой фандинг перпа (по умолчанию из кэша hist-download)
   --expiry <a,b>      окно срока в часах (по умолчанию 336,672)
+  --leg <C|P>         тип продаваемой ноги (по умолчанию C; P - офлайн-ветка замера Ф2,
+                      живой тракт бота 2 путы не продаёт)
+  --deploy <x>        доля счёта в залоге для симуляции счёта (по умолчанию 0.70)
   --delta <x>         целевая |дельта| (по умолчанию 0.45, допуск 0.10)
   --band <x>          полоса хеджа, BTC на контракт (по умолчанию 0.03)
   --perp-fee <x>      комиссия перпа долей (0 мейкер, 0.0005 тейкер; по умолчанию 0)
@@ -99,6 +103,8 @@ if (has("--help") || !argOf("--dir")) {
 
 const DIR = argOf("--dir");
 const [E_MIN, E_MAX] = (argOf("--expiry", "336,672")).split(",").map(Number);
+const LEG = (argOf("--leg", "C")).toUpperCase();
+if (LEG !== "C" && LEG !== "P") { console.error(`--leg: ожидается C или P, получено «${argOf("--leg")}»`); process.exit(1); }
 const D_TARGET = Number(argOf("--delta", "0.45"));
 const D_TOL = 0.10;
 const BAND = Number(argOf("--band", "0.03"));
@@ -110,7 +116,9 @@ const USE_FUNDING = !has("--no-funding");
 const HAS_LIQ = has("--liquidation");
 const DEPOSITS = (argOf("--deposit", "500,2000,20000")).split(",").map(Number).filter(fin);
 const PERIODS = (argOf("--periods") ?? "").split(",").filter(Boolean).map((d) => Date.parse(`${d}T00:00:00Z`));
-const LOT = 0.01, DEPLOY = 0.70;
+const LOT = 0.01;
+const DEPLOY = Number(argOf("--deploy", "0.70"));
+if (!(DEPLOY > 0 && DEPLOY <= 1)) { console.error(`--deploy: ожидается доля в (0,1], получено «${argOf("--deploy")}»`); process.exit(1); }
 
 // Гейт разбирается ДО чтения записи: неверная спецификация обязана падать за миллисекунду, а не
 // через десять минут прогона. Правила разбора и сравнения живут в движке (hist-gate.js).
@@ -246,11 +254,14 @@ function runTrade(i, leg, cfg) {
   const costs = computeTradeCosts({ markUsd: leg.m, bidUsd: leg.m - half, askUsd: leg.m + half,
     indexPrice: S0, execModel: cfg.execModel });
   if (!costs) return null;
-  const im = legMargin({ type: "call", side: "short", strike: leg.k, mark: leg.m,
+  // Тип ноги идёт из строки записи, а не из константы: правило выбора уже отфильтровало по
+  // cfg.legType, и подставить сюда «call» при ноге-путе значило бы мерить залог чужой формулой
+  // (у пута пол начального залога 0.10·страйк, а maintenance режется min(индекс, страйк)).
+  const im = legMargin({ type: leg.s === "P" ? "put" : "call", side: "short", strike: leg.k, mark: leg.m,
     underlying: S0, index: S0, amount: 1 }).im;
   const open = openSellTrade({ leg, spotUsd: S0, costs, imUsd: im, cfg });
   if (!open) return null;
-  const meta = { name: leg.n, expiryMs: leg.e, strikeUsd: leg.k, type: "C" };
+  const meta = { name: leg.n, expiryMs: leg.e, strikeUsd: leg.k, type: leg.s };
 
   const base = i + 1;
   // Путь шагов собирается ТОЛЬКО под --liquidation: наблюдатель onStep читает и не меняет протяжку
@@ -274,6 +285,7 @@ function runTrade(i, leg, cfg) {
   // режим рынка это свойство входа, а не итога, и мерить его выходом значило бы судить сделку тем,
   // чего в момент решения не было.
   return { i, endIdx, ts: R.times[i], exitTs: R.times[endIdx], pnl: s.pnl, im, prem: leg.m, iv: leg.iv,
+    type: leg.s,
     zone: sellerZone({ ivPct: leg.iv, rv7dPct: R.rv7[i] }), rv7: R.rv7[i],
     strike: leg.k, spot0: S0, spotEnd: R.spot[endIdx], reh: walk.rehedges, name: leg.n,
     turnover: walk.turnoverBtc, retIm: (s.pnl / im) * 100, retPrem: (s.pnl / leg.m) * 100,
@@ -300,7 +312,7 @@ function chain(cfg, start = 0, gate = null) {
   }
   return out;
 }
-const CFG = { expiryMinH: E_MIN, expiryMaxH: E_MAX, deltaTarget: D_TARGET, deltaTol: D_TOL,
+const CFG = { expiryMinH: E_MIN, expiryMaxH: E_MAX, legType: LEG, deltaTarget: D_TARGET, deltaTol: D_TOL,
   bandBtc: BAND, perpFee: PERP_FEE, spreadScale: SPREAD, ivHaircut: HAIRCUT, chainAdj: CHAIN_ADJ,
   lot: LOT, deployPct: DEPLOY, execModel: "maker-mid" };
 
@@ -337,6 +349,8 @@ console.log(`# Продажа опциона с дельта-хеджем\n`);
 console.log(`Запись ${DIR}: ${N} снимков, ${dt(R.times[0])} .. ${dt(R.times.at(-1))}.`);
 console.log(`Срок ${E_MIN}-${E_MAX} ч · дельта ${D_TARGET} · полоса хеджа ${BAND} BTC · `
   + `комиссия перпа ${(PERP_FEE * 1e4).toFixed(1)} б.п. · спред ×${SPREAD}`
+  + `${LEG === "P" ? " · нога ПУТ (офлайн-ветка: живой тракт путы не продаёт)" : ""}`
+  + `${DEPLOY !== 0.70 ? ` · в залоге до ${Math.round(DEPLOY * 100)}% счёта` : ""}`
   + `${HAIRCUT ? ` · вычет ${HAIRCUT} п. воли` : ""}${CHAIN_ADJ !== 1 ? ` · поправка цепочки ×${CHAIN_ADJ}` : ""}.`);
 console.log(`Фандинг ${USE_FUNDING ? `учтён почасово (${FUND.size} записей)` : "ОТКЛЮЧЁН (контроль)"}.`);
 if (GATE_TERMS) {
@@ -444,13 +458,12 @@ if (HAS_LIQ) {
       const q = lots * LOT;
       let liqAt = null;
       for (const s of t.steps ?? []) {
-        // MtM на один контракт в конвенции settleSellTrade: (премия − выкуп) + хедж − издержки −
-        // фандинг, целиком ×chainAdj. Издержки шага не включают закрытие перпа в экспирацию
-        // (walk добавляет его после цикла) - при нулевой комиссии перпа разницы нет.
-        const mtm1 = (t.premSold - s.mark + s.hedgePnl - (t.optCost + s.hedgeFee) - s.funding) * CFG.chainAdj;
+        // MtM на один контракт - правилом движка (stepMtm, конвенция settleSellTrade); оговорка про
+        // закрытие перпа в экспирацию переехала в его шапку вместе с формулой.
+        const mtm1 = stepMtm({ premSold: t.premSold, optCost: t.optCost, step: s, cfg: CFG });
         const eqStep = acc + mtm1 * q;
-        const mm = legMargin({ type: "call", side: "short", strike: t.strike, mark: s.mark,
-          underlying: s.S, index: s.S, amount: 1 }).mm * q;
+        const mm = legMargin({ type: t.type === "P" ? "put" : "call", side: "short", strike: t.strike,
+          mark: s.mark, underlying: s.S, index: s.S, amount: 1 }).mm * q;
         if (eqStep > 0) peakMM = Math.max(peakMM, mm / eqStep);
         if (mm >= eqStep) { liqAt = { s, mtm1 }; break; }
       }

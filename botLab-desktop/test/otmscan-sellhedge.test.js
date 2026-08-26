@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import {
   SELLHEDGE_DEFAULTS, pickSellLeg, openSellTrade, halfSpreadUsd, wantHedge, shouldRehedge,
   walkSellTrade, settleSellTrade, lotsByMargin, usdDeltaOfInversePerp, sellhedgeEngineCfg, shouldOpenNext,
-  rankSellLegs, shouldOpenDegraded, sellerZone,
+  rankSellLegs, shouldOpenDegraded, sellerZone, stepMtm,
 } from "../src/engine/otmscan/sellhedge.js";
 import { markPerp } from "../src/engine/btcopt/pnl.js";
 import { effectiveDeadband } from "../src/engine/btcopt/hedge.js";
@@ -24,8 +24,15 @@ test("нога: берётся колл с |дельтой| ближе всег�
   assert.equal(pickSellLeg(rows, C).n, "hit");
 });
 
-test("нога: пут не берётся никогда - схема продаёт колл и от рынка не зависит", () => {
+test("нога: дефолтное правило берёт только коллы - боевая схема продаёт колл", () => {
   assert.equal(pickSellLeg([row({ s: "P", d: -0.45 })], C), null);
+});
+
+test("нога: legType «P» переключает правило на путы, отсутствующее поле остаётся коллом", () => {
+  const rows = [row({ n: "call", d: 0.45 }), row({ n: "put", s: "P", d: -0.45 })];
+  assert.equal(pickSellLeg(rows, C).n, "call", "без поля - колл: старые вызывающие правок не требуют");
+  assert.equal(pickSellLeg(rows, { ...C, legType: "P" }).n, "put", "близость меряется |дельтой|, знак пута не мешает");
+  assert.equal(pickSellLeg([row({ n: "call" })], { ...C, legType: "P" }), null, "колл путовому правилу не нога");
 });
 
 test("нога: срок вне окна отвергается по обеим границам", () => {
@@ -352,4 +359,28 @@ test("протяжка: onStep видит каждый оценённый шаг
   assert.equal(seen[1].qPerp, 0.45, "шаг 0 дельту не сдвинул (разрыв в полосе)");
   near(seen[1].hedgePnl, 0.45 * 1000, 1e-9, "накопители на момент наблюдения");
   assert.ok(seen.every((s) => s.mark === 100 && s.S > 0 && Number.isFinite(s.funding)), "поля шага");
+});
+
+// ── МтМ шага: одна формула на режим ликвидации эталона и офлайн-оценщик, а не по копии в каждом.
+test("stepMtm: конвенция settleSellTrade; на экспирационном шаге при бесплатном перпе равен итогу", () => {
+  const seen = [];
+  const T0 = Date.parse("2026-01-01T00:00:00Z");
+  const open = { premSold: 3000, optCost: 60, imUsd: 9000, qPerp: 0.45, hedgeFee: 0 };
+  const w = walkSellTrade({
+    count: 5,
+    tsAt: (k) => T0 + (k + 1) * 3600000,
+    spotAt: (k) => 100000 + 2000 * k,
+    priceAt: (k) => ({ markUsd: 2000 + 100 * k, delta: 0.45 + 0.05 * k }),
+    fundRateAt: () => 0.00001,
+    expiryMs: T0 + 5 * 3600000,
+    entry: open, entryTsMs: T0, entrySpot: 100000, cfg: C,
+    onStep: (s) => seen.push(s),
+  });
+  const settle = settleSellTrade({ open, walk: w, cfg: C });
+  near(stepMtm({ premSold: open.premSold, optCost: open.optCost, step: seen.at(-1), cfg: C }),
+    settle.pnl, 1e-9, "перп мейкерский: закрытие после цикла бесплатно, шаг экспирации и есть итог");
+  // Поправка цепочки множит МтМ шага так же, как итог: одна конвенция, не вторая.
+  near(stepMtm({ premSold: open.premSold, optCost: open.optCost, step: seen[0], cfg: { ...C, chainAdj: 0.69 } }),
+    stepMtm({ premSold: open.premSold, optCost: open.optCost, step: seen[0], cfg: C }) * 0.69, 1e-12);
+  assert.equal(stepMtm({ premSold: 3000, optCost: 60, step: null, cfg: C }), null, "нет шага - нет оценки");
 });
