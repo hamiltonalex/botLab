@@ -37,7 +37,7 @@ import { computeTradeCosts } from "../src/engine/otmscan/economics.js";
 import { legMargin } from "../src/engine/btcopt/margin.js";
 import {
   SELLHEDGE_DEFAULTS, pickSellLeg, openSellTrade, halfSpreadUsd, walkSellTrade, settleSellTrade,
-  lotsByMargin, stepMtm,
+  lotsByMargin, stepMtm, sellerZone,
 } from "../src/engine/otmscan/sellhedge.js";
 import { pickStranglePair, openStrangleTrade, stranglePrice } from "../src/engine/otmscan/sellstrangle.js";
 
@@ -59,6 +59,10 @@ if (args.includes("--help") || !argOf("--dir")) {
   --perp-fee <x>        комиссия перпа долей (0 мейкер, 0.00025 = 2.5 б.п.; стресс исполнения)
   --exec <модель>       maker-mid | taker-cross (вход в опцион; стресс исполнения)
   --spread-scale <x>    множитель модельного спреда (по умолчанию дефолт схемы 1.10)
+  --book <файл>         записать книгу сделок (TSV формата эталона) - требует РОВНО ОДНОГО
+                        варианта в прогоне (например --mode strangle); счёт целыми лотами
+                        от --deposit при deployPct дефолта схемы, без ликвидации - тот же
+                        масштаб, каким пишет книгу hist-sellhedge и читает сверка compare-books
   --json <файл>         машинный дамп метрик`);
   process.exit(argOf("--dir") ? 0 : 1);
 }
@@ -102,14 +106,18 @@ function load(dir) {
     while (lo <= hi) { const m = (lo + hi) >> 1; if (tts[m] <= t) { res = m; lo = m + 1; } else hi = m - 1; }
     return res;
   });
-  const spot = tickIdx.map((k) => (k == null ? null : ticks[k]?.S ?? null));
+  // rv7 нужен ТОЛЬКО столбцу «зона» книги сверки; спот и rv7 приходят из одной строки тика -
+  // то же правило, что у эталона (зона сравнивает IV ноги с волатильностью того же момента).
+  const field = (k, name) => (k == null ? null : ticks[k]?.[name] ?? null);
+  const spot = tickIdx.map((k) => field(k, "S"));
+  const rv7 = tickIdx.map((k) => field(k, "rv7"));
   const byExp = new Map();
   for (const [ts, m] of snaps) {
     const e = new Map();
     for (const r of m.values()) { let a = e.get(r.e); if (!a) { a = []; e.set(r.e, a); } a.push(r); }
     byExp.set(ts, e);
   }
-  return { snaps, times, spot, byExp, stats: makePriceStats() };
+  return { snaps, times, spot, rv7, byExp, stats: makePriceStats() };
 }
 const R = load(DIR);
 const N = R.times.length;
@@ -179,6 +187,8 @@ function runTradeLeg(i, leg, cfg) {
   return { i, endIdx, ts: R.times[i], exitTs: R.times[endIdx], name: leg.n, type: leg.s,
     pnl: s.pnl, im, prem: leg.m, premSold: open.premSold, optCost: open.optCost,
     retIm: (s.pnl / im) * 100, rtPct: costs.roundTripCostPct, costUsd: s.cost,
+    optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, fund: s.fund, turnover: walk.turnoverBtc,
+    zone: sellerZone({ ivPct: leg.iv, rv7dPct: R.rv7[i] }),
     reh: walk.rehedges, stepTs: steps.map((st) => st.ts), mtm1s, mm1s };
 }
 
@@ -238,7 +248,11 @@ function runTradeStrangle(i, pair, cfg) {
     type: "CP", pnl: s.pnl, im: imC + imP, prem: premPair, premSold: open.premSold, optCost: open.optCost,
     retIm: (s.pnl / (imC + imP)) * 100,
     rtPct: (costsCall.roundTripCostPct * pair.call.m + costsPut.roundTripCostPct * pair.put.m) / premPair,
-    costUsd: s.cost, reh: walk.rehedges, stepTs: steps.map((st) => st.ts), mtm1s, mm1s };
+    costUsd: s.cost,
+    optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, fund: s.fund, turnover: walk.turnoverBtc,
+    // Зона судится по КОЛЛОВОЙ ноге - тем же числом, каким её судит базовая схема и живой чип.
+    zone: sellerZone({ ivPct: pair.call.iv, rv7dPct: R.rv7[i] }),
+    reh: walk.rehedges, stepTs: steps.map((st) => st.ts), mtm1s, mm1s };
 }
 
 // ── цепочка: закрылась сделка - со следующего снимка ищем новую (i = endIdx + 1, как у эталона).
@@ -522,6 +536,38 @@ console.log(`- проскальзывание перпа и его маржа н
 console.log(`- фандинг: почасовой кэш (${FUND.size} записей), начисление на дельта×спот (конвенция эталона);`);
 console.log(`- лестница: тайминг сделок из независимых цепочек, счёт общий - интерактивность занятого счёта`);
 console.log(`  сведена к пропуску сделки, которой не хватило лота.`);
+
+// ── КНИГА СДЕЛОК для сверки с прогоном живого движка (replay-sellhedge --kind ... --book). Формат
+// и масштаб ровно те же, что у книги эталона hist-sellhedge: счёт целыми лотами от --deposit при
+// deployPct дефолта схемы, БЕЗ ликвидации (движок в прогоне записи маржу тоже не принуждает),
+// знак фандинга нормализован к «вкладу в итог». Пишется с РОВНО ОДНОЙ цепочки: книга двух
+// вариантов сразу не значит ничего.
+if (argOf("--book")) {
+  if (chains.size !== 1) {
+    console.error(`--book: в прогоне ${chains.size} цепочек, книга пишется ровно с одной (например --mode strangle)`);
+    process.exit(1);
+  }
+  const rowsB = [...chains.values()][0].rows;
+  const bookCfg = cfgOf({});
+  const f6 = (x, d) => (fin(x) ? x.toFixed(d) : "н/д");
+  const iso = (ms) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+  const lines = [["#", "инструмент", "открыт", "закрыт", "лотов", "залог", "перекладок", "оборот BTC",
+    "премия-выкуп", "хедж", "издержки", "фандинг", "итого", "зона"].join("\t")];
+  let acc = DEPOSIT;
+  let k = 0;
+  for (const t of rowsB) {
+    const { lots, imLotUsd } = lotsByMargin({ imUsdPerContract: t.im, equityUsd: acc, cfg: bookCfg });
+    const qq = Math.max(0, lots) * LOT;
+    const pnl = lots < 1 ? 0 : t.pnl * qq;
+    k += 1;
+    lines.push([k, t.name, iso(t.ts), iso(t.exitTs), Math.max(0, lots), f6(t.im * qq, 2), t.reh,
+      f6(t.turnover * qq, 6), f6(t.optLeg * qq, 2), f6(t.hedgeLeg * qq, 2), f6(t.costUsd * qq, 2),
+      f6(-t.fund * qq, 2), f6(pnl, 2), t.zone ?? "н-д"].join("\t"));
+    acc += pnl;
+    if (lots >= 1 && acc < (imLotUsd ?? 0)) break; // счёт кончился - как в счёте эталона
+  }
+  writeFileSync(argOf("--book"), lines.join("\n") + "\n");
+}
 
 if (argOf("--json")) {
   writeFileSync(argOf("--json"), JSON.stringify({

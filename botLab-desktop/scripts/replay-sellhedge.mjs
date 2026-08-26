@@ -49,6 +49,8 @@ if (has("--help") || !argOf("--dir")) {
   --dir <каталог>     запись восстановления (обязательно)
   --funding <файл>    почасовой фандинг перпа (по умолчанию из кэша hist-download)
   --deposit <$>       стартовый счёт (по умолчанию 20000)
+  --kind <вид>        sell-call (по умолчанию) | sell-strangle: какую структуру продавца ведёт
+                      движок; книга пары сверяется с eval-accel --mode strangle --book
   --qty <x>           фиксированный размер в контрактах; по умолчанию размер от залога
   --band <x>          полоса хеджа, BTC на 1.0 контракта (по умолчанию 0.03)
   --perp-fee <x>      комиссия перпа долей (0 мейкер; по умолчанию 0)
@@ -67,6 +69,10 @@ if (has("--help") || !argOf("--dir")) {
 
 const DIR = argOf("--dir");
 const DEPOSIT = Number(argOf("--deposit", "20000"));
+const KIND = argOf("--kind", "sell-call");
+if (KIND !== "sell-call" && KIND !== "sell-strangle") {
+  console.error(`--kind: sell-call | sell-strangle, получено «${KIND}»`); process.exit(1);
+}
 const QTY_FIXED = argOf("--qty") == null ? null : Number(argOf("--qty"));
 const BAND = Number(argOf("--band", "0.03"));
 const PERP_FEE = Number(argOf("--perp-fee", "0"));
@@ -185,9 +191,9 @@ const sellCfg = {
 const sanityCfg = { ageMode: "off", spreadMode: "off", depthMode: "off" };
 
 // ── СБОРКА СНИМКА ИЗ ЗАПИСИ: ровно тот контракт, что отдаёт `buildDeribitSnapshot`.
-// Цена ОТКРЫТОЙ ноги всегда идёт через лестницу `priceAt` (как у эталона), даже когда строка в
+// Цена ОТКРЫТЫХ ног всегда идёт через лестницу `priceAt` (как у эталона), даже когда строка в
 // снимке есть: иначе счётчик ступеней считал бы не то, чем считали.
-function buildSnapshot(i, openLeg) {
+function buildSnapshot(i, openLegs) {
   const ts = R.times[i];
   const S = R.spot[i];
   const snap = R.snaps.get(ts);
@@ -207,21 +213,22 @@ function buildSnapshot(i, openLeg) {
     };
   }
   let gateOk = true;
-  if (openLeg) {
+  // Цена КАЖДОЙ открытой ноги идёт через лестницу; не вышла хотя бы одна - движок обязан стоять,
+  // а не хеджить по половине пары (то же правило, каким живой гейт греков держит паузу при
+  // пропаже тикера любой ноги структуры).
+  for (const ol of openLegs ?? []) {
     const p = countPrice(R.stats, priceAt({
-      snapshot: snap, expiryRows: R.byExp.get(ts)?.get(openLeg.expiryMs),
-      meta: { name: openLeg.instrument, expiryMs: openLeg.expiryMs, strikeUsd: openLeg.strike, type: "C" },
-      tsMs: ts, spotAtExpiry: spotBefore(openLeg.expiryMs),
+      snapshot: snap, expiryRows: R.byExp.get(ts)?.get(ol.expiryMs),
+      meta: { name: ol.instrument, expiryMs: ol.expiryMs, strikeUsd: ol.strike, type: ol.type },
+      tsMs: ts, spotAtExpiry: spotBefore(ol.expiryMs),
     }));
-    if (!p) gateOk = false; // цена не вышла: движок обязан стоять, а не хеджить по выдумке
-    else {
-      const prev = legs[openLeg.instrument] ?? {};
-      legs[openLeg.instrument] = {
-        ...prev, instrument: openLeg.instrument, type: "call", strike: openLeg.strike,
-        expiryMs: openLeg.expiryMs, mark: p.markUsd, delta: p.delta, markIv: p.ivPct,
-        underlying: S, index: S, contractSize: 1, minTradeAmount: LOT, markInUsd: true, ts,
-      };
-    }
+    if (!p) { gateOk = false; continue; }
+    const prev = legs[ol.instrument] ?? {};
+    legs[ol.instrument] = {
+      ...prev, instrument: ol.instrument, type: ol.type === "P" ? "put" : "call", strike: ol.strike,
+      expiryMs: ol.expiryMs, mark: p.markUsd, delta: p.delta, markIv: p.ivPct,
+      underlying: S, index: S, contractSize: 1, minTradeAmount: LOT, markInUsd: true, ts,
+    };
   }
   const perp = {
     instrument: "BTC-PERPETUAL", mark: S, index: S, bid: S, ask: S,
@@ -259,7 +266,7 @@ for (let i = 0; i < N; i++) {
   const S = R.spot[i];
   if (!(S > 0)) { noSpot += 1; continue; } // снимок без спота эталон пропускает целиком - и мы тоже
   const ts = R.times[i];
-  const snapshot = buildSnapshot(i, open?.leg ?? null);
+  const snapshot = buildSnapshot(i, open?.legs ?? null);
 
   if (st.perpState.qty !== 0 && prevTs != null) {
     const dBtc = st.perpState.avgEntry > 0 ? (st.perpState.qty * PERP_CS) / st.perpState.avgEntry : 0;
@@ -278,7 +285,7 @@ for (let i = 0; i < N; i++) {
     const before = st.ledger.length;
     const res = s1engine.openStructure(
       st,
-      { kind: "sell-call", qty: DROP === "size-off" ? LOT : QTY_FIXED, execStyle: "limit",
+      { kind: KIND, qty: DROP === "size-off" ? LOT : QTY_FIXED, execStyle: "limit",
         sellCfg: DROP === "pick-off" ? { ...sellCfg, deltaTarget: 0.30 } : sellCfg, sanityCfg },
       snapshot.chain, snapshot, ts,
     );
@@ -288,7 +295,8 @@ for (let i = 0; i < N; i++) {
     } else {
       const l = res.structure.legs[0];
       open = {
-        leg: { instrument: l.instrument, strike: l.strike, expiryMs: l.expiryMs },
+        legs: res.structure.legs.map((x) => ({ instrument: x.instrument, strike: x.strike,
+          expiryMs: x.expiryMs, type: x.type === "put" ? "P" : "C" })),
         openIdx: i, openTs: ts, sizing: res.structure.sizing, qtyAbs: l.qtyAbs,
         entryMark: l.entryMark, entrySpot: S, entryCostUsd: res.structure.entryCostUsd,
         // IV берётся у ноги, которую ВЫБРАЛ движок (pickedLeg), а не у строки записи: если движок
@@ -323,7 +331,9 @@ for (let i = 0; i < N; i++) {
     const flat = rows.filter((r) => r.type === "close-perp");
     const settle = rows.find((r) => r.type === "settle-options");
     book.push({
-      instrument: open.leg.instrument,
+      // Имя сделки пары - обе ноги через «+», ровно как пишет книга eval-accel; у одной ноги
+      // строка прежняя до символа.
+      instrument: open.legs.length > 1 ? open.legs.map((x) => x.instrument).join("+") : open.legs[0].instrument,
       openTs: open.openTs,
       closeTs: ts,
       lots: open.sizing?.lots ?? Math.round(open.qtyAbs / LOT),
@@ -338,7 +348,7 @@ for (let i = 0; i < N; i++) {
       fundingRefBase: shadowFund - open.acc0.shadow,
       entrySpot: open.entrySpot,
       exitSpot: S,
-      strike: open.leg.strike,
+      strike: open.legs[0].strike,
       entryMark: open.entryMark,
       // Зона продавца НА ВХОДЕ, правилом движка (sellhedge.js) - тем же, каким её пишет эталон.
       // Сверка книг поэтому проверяет и то, что обе стороны видят один режим рынка.
@@ -375,7 +385,9 @@ console.log(`# Прогон записи через живой движок бо
 console.log(`Запись ${DIR}: ${N} снимков, ${dt(R.times[0])} .. ${dt(R.times.at(-1))}.`);
 console.log(`Депозит $${DEPOSIT} · размер ${QTY_FIXED ?? "от залога (lotsByMargin)"} · полоса ${BAND} BTC на контракт `
   + `· комиссия перпа ${(PERP_FEE * 1e4).toFixed(1)} б.п.${PERP_CS !== 10 ? ` · контракт перпа $${PERP_CS} (диагностика)` : ""}${DROP ? ` · КОНТРОЛЬ: заглушено правило ${DROP}` : ""}.`);
-console.log(`Движок: openStructure(kind: "sell-call") зовёт pickSellLeg и lotsByMargin, evaluate зовёт decideHedge, applyFill и settleStructure.\n`);
+console.log(KIND === "sell-strangle"
+  ? `Движок: openStructure(kind: "sell-strangle") зовёт rankStranglePairs и lotsByMargin (залог суммой ног), evaluate зовёт decideHedge по НЕТТО-дельте, applyFill и settleStructure.\n`
+  : `Движок: openStructure(kind: "sell-call") зовёт pickSellLeg и lotsByMargin, evaluate зовёт decideHedge, applyFill и settleStructure.\n`);
 
 // ── НАКОПИТЕЛЬ ЦЕПОЧКИ. Печатается ровно то, что увидит оператор на экране бота 2: карточка «Цепочка
 // · итог» читает `sellChainStats` и ничего больше не считает. Смысл раздела в том, чтобы числа
