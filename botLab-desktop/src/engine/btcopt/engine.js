@@ -621,10 +621,18 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
       windowMs: (params?.sanityCfg?.waitWindowH ?? SELL_SANITY_DEFAULTS.waitWindowH) * 3600000,
     });
     const buildSeller = params.kind === "sell-strangle" ? buildSellStrangleStructure : buildSellStructure;
-    built = buildSeller(
-      { ...params, allowDegraded, equityUsd: params.equityUsd ?? account(state, snapshot).equity },
-      chain, snapshot, nowMs,
-    );
+    const sellerArgs = { ...params, allowDegraded, equityUsd: params.equityUsd ?? account(state, snapshot).equity };
+    built = buildSeller(sellerArgs, chain, snapshot, nowMs);
+    // ФОЛБЭК ПАРЫ (автономия 2026-08-26): структурное отсутствие пары (код no-leg) не должно
+    // останавливать цепочку, когда колл базовой схемы доступен - открывается колл, и структура
+    // ЧЕСТНО несёт kind sell-call (карточки и цепочка показывают, что реально продано). Только
+    // no-leg: вето санитарии фолбэком не обходится - у него своё окно деградации. На пятилетней
+    // записи фолбэк не сработал ни разу (пары пропадали только вместе с коллами), то есть замер
+    // ×4.09 он не трогает - это страховка живого рынка от зависания цепочки.
+    if (params.kind === "sell-strangle" && built?.code === "no-leg") {
+      const fb = buildSellStructure(sellerArgs, chain, snapshot, nowMs);
+      if (!fb.error) built = fb;
+    }
   } else {
     if (params && params.expiry == null) {
       const cfg = buildCfg(state.settings);

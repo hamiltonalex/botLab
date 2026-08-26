@@ -4,7 +4,7 @@
 // position (long ATM call + long ATM put − short OTM call − short OTM put); market greeks come FROM the
 // composite snapshot (Deribit), never priced here. engine.js later stamps id/createdAt — NOT here.
 
-import { legMargin } from "./margin.js";
+import { legMargin, lotsByStressMargin } from "./margin.js";
 import { computeTradeCosts } from "../otmscan/economics.js";
 import { SELLHEDGE_DEFAULTS, rankSellLegs, lotsByMargin, halfSpreadUsd, openSellTrade } from "../otmscan/sellhedge.js";
 import { rankStranglePairs, openStrangleTrade } from "../otmscan/sellstrangle.js";
@@ -144,6 +144,47 @@ export function sellRowsFromSnapshot(chain, snapshot, nowMs) {
   return rows;
 }
 
+// ── РАЗМЕР ПРОДАВЦА ПО ПРАВИЛУ СХЕМЫ: одно место на оба строителя (колл и пара) - иначе смена
+// правила означала бы две правки и однажды одну забытую. Правила два:
+//   "deploy" - боевое lotsByMargin: лоты от доли IM на входе (deployPct);
+//   "stress" - АВТОНОМНОЕ lotsByStressMargin: лоты от двухсторонней стресс-маржи (MM при споте
+//              ×(1±stressXPct%) не выше stressCapFrac·счёта); движок считает размер сам на каждом
+//              входе из живых величин ног, константы зафиксированы замером (сетка eval-accel
+//              --size-rule stress при критерии равного хвоста), а не выбором оператора.
+// Поверх обоих - предел биржи: залога (IM) не поставить больше счёта. Это ограничение исполнения,
+// а не правила, поэтому живёт здесь, у строителя, а не внутри lotsByStressMargin.
+//
+// ОТКАЗ НАЗЫВАЕТ ПРИЧИНУ ЧИСЛОМ, А НЕ ТОЛЬКО ФАКТ НЕХВАТКИ (перенесено из строителя колла):
+// дефолтный бумажный счёт $100 не даёт ни одного лота, и оператору надо сказать, сколько именно
+// завести; ноль лотов при недостаточном счёте - верный ответ, а не дефект.
+function sellSizingByRule({ cfg, equityUsd, imPerContract, stressLegs, indexUsd, what = null }) {
+  if (!Number.isFinite(equityUsd)) return { error: "Нет счёта для расчёта размера от залога" };
+  const imLotUsd = imPerContract * cfg.lot;
+  if (cfg.sizeRule === "stress") {
+    const st = lotsByStressMargin({ legs: stressLegs, indexUsd, equityUsd,
+      xPct: cfg.stressXPct, capFrac: cfg.stressCapFrac, lot: cfg.lot });
+    const lots = Math.max(0, Math.min(st.lots, Math.floor(equityUsd / Math.max(imLotUsd, 1e-9))));
+    const sizing = { lots, imLotUsd, imUsedUsd: lots * imLotUsd, imPerContract, rule: "stress",
+      stress: { xPct: cfg.stressXPct, capFrac: cfg.stressCapFrac,
+        mm1Up: st.mm1Up, mm1Down: st.mm1Down, bindingSide: st.bindingSide } };
+    if (!(lots >= 1)) {
+      const bindLot = Math.max(st.mm1Up ?? 0, st.mm1Down ?? 0) * cfg.lot;
+      return { error: `Стресс-правило не даёт ни лота${what ? ` (${what})` : ""}: MM при ±${cfg.stressXPct}% `
+        + `спота $${Math.round(bindLot)} за лот против ${Math.round((cfg.stressCapFrac || 0) * 100)}% `
+        + `счёта $${Math.round(equityUsd)}`, sizing };
+    }
+    return { sizing, qtyAbs: lots * cfg.lot };
+  }
+  const s = lotsByMargin({ imUsdPerContract: imPerContract, equityUsd, cfg });
+  const sizing = { ...s, imPerContract, rule: "deploy" };
+  if (!(s.lots >= 1)) {
+    const need = Math.ceil((s.imLotUsd ?? 0) / (cfg.deployPct || 1));
+    return { error: `Залог $${Math.round(s.imLotUsd ?? 0)} за лот${what ? ` ${what}` : ""} не помещается в счёт $${Math.round(equityUsd)}: `
+      + `нужно от $${need} (потолок развёртывания ${Math.round((cfg.deployPct || 0) * 100)}% счёта)`, sizing };
+  }
+  return { sizing, qtyAbs: s.lots * cfg.lot };
+}
+
 // buildSellStructure(params, chain, snapshot, nowMs) → структура из ОДНОЙ короткой ноги в той же
 // форме, что и четырёхногая (id/createdAt/engineCfg штампует engine.js).
 //   params.qty       - размер; null ⇒ считается от залога по `lotsByMargin` при params.equityUsd;
@@ -197,20 +238,12 @@ export function buildSellStructure(params, chain, snapshot, nowMs) {
   let qtyAbs = params?.qty ?? null;
   let sizing = null;
   if (qtyAbs == null) {
-    if (!Number.isFinite(params?.equityUsd)) return { error: "Нет счёта для расчёта размера от залога" };
-    const s = lotsByMargin({ imUsdPerContract: imPerContract, equityUsd: params.equityUsd, cfg });
-    sizing = { ...s, imPerContract };
-    // ОТКАЗ НАЗЫВАЕТ НУЖНЫЙ ДЕПОЗИТ, А НЕ ТОЛЬКО ФАКТ НЕХВАТКИ. Дефолтный бумажный счёт $100 не даёт
-    // ни одного лота (медиана залога за лот $92-102 при потолке развёртывания 70%), то есть на чистом
-    // профиле схема не открывается НИКОГДА, и оператору надо сказать не «не помещается», а сколько
-    // именно завести. Правило размера при этом не трогается: оно совпадает с эталоном и закреплено
-    // тестом, а ноль лотов при недостаточном счёте это верный ответ, а не дефект.
-    if (!(s.lots >= 1)) {
-      const need = Math.ceil((s.imLotUsd ?? 0) / (cfg.deployPct || 1));
-      return { error: `Залог $${Math.round(s.imLotUsd ?? 0)} за лот не помещается в счёт $${Math.round(params.equityUsd)}: `
-        + `нужно от $${need} (потолок развёртывания ${Math.round((cfg.deployPct || 0) * 100)}% счёта)`, sizing };
-    }
-    qtyAbs = s.lots * cfg.lot;
+    // Правило размера (deploy | stress) и предел биржи - в sellSizingByRule, одном на оба строителя.
+    const sz = sellSizingByRule({ cfg, equityUsd: params?.equityUsd, imPerContract,
+      stressLegs: [{ type: "call", strike: leg.k, mark: leg.m }], indexUsd: index });
+    if (sz.error) return { error: sz.error, sizing: sz.sizing };
+    sizing = sz.sizing;
+    qtyAbs = sz.qtyAbs;
   } else {
     sizing = { lots: Math.round(qtyAbs / cfg.lot), imLotUsd: imPerContract * cfg.lot, imUsedUsd: imPerContract * qtyAbs, imPerContract };
   }
@@ -316,15 +349,14 @@ export function buildSellStrangleStructure(params, chain, snapshot, nowMs) {
   let qtyAbs = params?.qty ?? null;
   let sizing = null;
   if (qtyAbs == null) {
-    if (!Number.isFinite(params?.equityUsd)) return { error: "Нет счёта для расчёта размера от залога" };
-    const s = lotsByMargin({ imUsdPerContract: imPerContract, equityUsd: params.equityUsd, cfg });
-    sizing = { ...s, imPerContract };
-    if (!(s.lots >= 1)) {
-      const need = Math.ceil((s.imLotUsd ?? 0) / (cfg.deployPct || 1));
-      return { error: `Залог $${Math.round(s.imLotUsd ?? 0)} за лот пары не помещается в счёт $${Math.round(params.equityUsd)}: `
-        + `нужно от $${need} (потолок развёртывания ${Math.round((cfg.deployPct || 0) * 100)}% счёта)`, sizing };
-    }
-    qtyAbs = s.lots * cfg.lot;
+    // То же правило размера, что у одной ноги; стресс-ноги - ОБЕ (пара двухсторонняя по природе).
+    const sz = sellSizingByRule({ cfg, equityUsd: params?.equityUsd, imPerContract,
+      stressLegs: [{ type: "call", strike: pair.call.k, mark: pair.call.m },
+        { type: "put", strike: pair.put.k, mark: pair.put.m }],
+      indexUsd: index, what: "пары" });
+    if (sz.error) return { error: sz.error, sizing: sz.sizing };
+    sizing = sz.sizing;
+    qtyAbs = sz.qtyAbs;
   } else {
     sizing = { lots: Math.round(qtyAbs / cfg.lot), imLotUsd: imPerContract * cfg.lot, imUsedUsd: imPerContract * qtyAbs, imPerContract };
   }

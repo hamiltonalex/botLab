@@ -27,7 +27,7 @@ import { gunzipSync } from "node:zlib";
 import { priceAt, makePriceStats, countPrice } from "../src/engine/otmscan/hist-price.js";
 import { shouldOpenNext } from "../src/engine/otmscan/sellhedge.js";
 import { buildSellStructure } from "../src/engine/btcopt/structure.js";
-import { legMargin } from "../src/engine/btcopt/margin.js";
+import { lotsByStressMargin } from "../src/engine/btcopt/margin.js";
 import * as s1engine from "../src/engine/btcopt/engine.js";
 
 const fin = (x) => Number.isFinite(x);
@@ -173,22 +173,14 @@ const settings = {
 };
 const sanityCfg = { ageMode: "off", spreadMode: "off", depthMode: "off" };
 
-// Лоты правила стресс-маржи: максимум q, при котором оценка MM на споте ×(1+x%) не превышает
-// cap·equity. Формула ноги НЕ повторяется - зовётся тот же legMargin, что считает живую маржу;
-// модель марка та же, что у liqPriceEst (внутренняя стоимость на стресс-споте плюс текущая
-// временная). MM линейна по размеру, поэтому ответ - одно деление, обрезанное вниз до лота.
+// Лоты правила стресс-маржи считает ДВИЖОК (lotsByStressMargin в btcopt/margin.js): правило
+// 2026-08-26 переехало из этого скрипта в код вместе с фиксацией констант, и здесь остался только
+// вызов. Для короткого колла двухсторонняя формула движка совпадает с прежней односторонней
+// (связывает всегда верхняя сторона), поэтому исторические таблицы этого режима воспроизводятся.
 // strike/mark приходят из structure.pickedLeg (та нога, которую выбрал движок).
-function stressLots({ strike, mark, S, equity, xPct, capFrac }) {
-  if (!(strike > 0) || !(mark > 0)) return { lots: 0, mm1: null };
-  const Is = S * (1 + xPct / 100);
-  const tv = Math.max(0, mark - Math.max(S - strike, 0));
-  const mm1 = legMargin({
-    type: "call", side: "short", strike,
-    mark: Math.max(Is - strike, 0) + tv, underlying: Is, index: Is, amount: 1,
-  }).mm;
-  if (!(mm1 > 0)) return { lots: 0, mm1: null };
-  return { lots: Math.max(0, Math.floor((equity * capFrac) / (mm1 * LOT))), mm1 };
-}
+const stressLots = ({ strike, mark, S, equity, xPct, capFrac }) =>
+  lotsByStressMargin({ legs: [{ type: "call", strike, mark }], indexUsd: S,
+    equityUsd: equity, xPct, capFrac, lot: LOT });
 
 // ── прогон одной конфигурации размера через живой движок.
 //   sizing = { kind: "deploy", pct } | { kind: "stress", xPct, capFrac }

@@ -121,6 +121,55 @@ export function liqPriceEst(structure, snapshot, equity) {
   return cands.reduce((best, x) => (Math.abs(x - I0) < Math.abs(best - I0) ? x : best));
 }
 
+// ── АВТОНОМНОЕ ПРАВИЛО РАЗМЕРА ПРОДАВЦА: лоты от ДВУХСТОРОННЕЙ СТРЕСС-МАРЖИ ────────────────────
+//
+// ЗАЧЕМ. Фиксированный deployPct ограничивает ВХОДНУЮ загрузку, а рвётся у продавца хвост ПУТИ
+// маржи (замер 2026-08-25: при 0.70 зона ликвидации в 13 сделках из 84 за пять лет, пик 244%).
+// Число 0.70/0.20 приходилось калибровать по прошлому и решать оператору. Это правило считает
+// размер САМО на каждом входе из живых величин ноги: максимум q, при котором оценка maintenance-
+// маржи на споте ×(1±X%) не превышает cap·equity. Продавцу колла связывает верхняя сторона,
+// продавцу пута - нижняя, ПАРЕ - худшая из двух (за этим правило и двухстороннее: у стрэнгла
+// стороны меняются местами по ходу рынка). Константы X и cap НЕ настройки оператора, а часть
+// схемы, зафиксированная замером при равном хвосте (пик MM за пять лет <= 0.8) - как полоса 0.03.
+//
+// МОДЕЛЬ МАРКА НА СТРЕССЕ та же, что у liqPriceEst и у замера margin-path: внутренняя стоимость
+// на стресс-споте плюс ТЕКУЩАЯ временная (tv = max(0, марк − внутренняя_сейчас)); временная на
+// деле тает со сроком и растёт с волой - оба эффекта второго порядка против внутренней. Формула
+// ноги НЕ повторяется: зовётся тот же legMargin, что считает живую маржу. MM линейна по размеру,
+// поэтому ответ - одно деление, обрезанное вниз до лота.
+//
+// ПРЕДЕЛ БИРЖИ ЗДЕСЬ НЕ ПРИМЕНЯЕТСЯ НАМЕРЕННО: «IM не больше счёта» - ограничение исполнения, а
+// не этого правила, и накладывает его вызывающий (строитель структуры) рядом со своим расчётом
+// IM. Так margin-path воспроизводит исторический замер стресс-правила без скрытой добавки.
+//   legs      - короткие ноги [{ type: "call"|"put", strike, mark }] на 1.0 контракта;
+//   indexUsd  - текущий индекс; equityUsd - счёт; xPct - стресс-ход спота в процентах;
+//   capFrac   - доля equity, которую MM на стрессе не должна превышать; lot - минимальный лот.
+export function lotsByStressMargin({ legs, indexUsd, equityUsd, xPct, capFrac, lot } = {}) {
+  if (!Array.isArray(legs) || !legs.length || !(indexUsd > 0) || !(equityUsd > 0)
+    || !(xPct > 0) || xPct >= 100 || !(capFrac > 0) || !(lot > 0)) {
+    return { lots: 0, mm1Up: null, mm1Down: null, bindingSide: null };
+  }
+  const mmAt = (I) => {
+    let mm = 0;
+    for (const l of legs) {
+      if (!(l?.strike > 0) || !(l?.mark >= 0)) return null;
+      const tv = Math.max(0, l.mark - intrinsicOf(l.type, indexUsd, l.strike));
+      mm += legMargin({ type: l.type, side: "short", strike: l.strike,
+        mark: intrinsicOf(l.type, I, l.strike) + tv, underlying: I, index: I, amount: 1 }).mm;
+    }
+    return mm;
+  };
+  const mm1Up = mmAt(indexUsd * (1 + xPct / 100));
+  const mm1Down = mmAt(indexUsd * (1 - xPct / 100));
+  if (!(mm1Up > 0) || !(mm1Down > 0)) return { lots: 0, mm1Up, mm1Down, bindingSide: null };
+  const binding = Math.max(mm1Up, mm1Down);
+  return {
+    lots: Math.max(0, Math.floor((equityUsd * capFrac) / (binding * lot))),
+    mm1Up, mm1Down,
+    bindingSide: mm1Up >= mm1Down ? "up" : "down",
+  };
+}
+
 // structureMargin(structure, snapshot) → { initial, maintenance } USDC = Σ short-leg requirements.
 // Marks fall back to the leg's entry mark when the snapshot lacks the leg (same rule as markStructure).
 export function structureMargin(structure, snapshot) {

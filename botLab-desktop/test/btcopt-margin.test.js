@@ -107,3 +107,47 @@ test("liqPriceEst: далеко не в деньгах и огромный сч�
   // (0.075·I + (I−70000) + 30)·0.01 = 5000 ⇒ I = (500000 − 30 + 70000)/1.075
   near(got, (5000 / 0.01 - 30 + 70000) / 1.075, 1e-6, "далёкое верхнее пересечение");
 });
+
+// ── АВТОНОМНОЕ ПРАВИЛО РАЗМЕРА: лоты от двухсторонней стресс-маржи ──────────────────────────────
+// Правило считает размер само на каждом входе; проверяется главное: какая сторона связывает какую
+// ногу, модель марка «внутренняя на стрессе плюс текущая временная» и линейность по размеру.
+import { lotsByStressMargin } from "../src/engine/btcopt/margin.js";
+
+test("стресс-размер: продавца колла связывает ВЕРХНЯЯ сторона, формула воспроизводится вручную", () => {
+  const S = 100000, K = 105000, mark = 3000, x = 20, cap = 0.8, equity = 20000, lot = 0.01;
+  const r = lotsByStressMargin({ legs: [{ type: "call", strike: K, mark }], indexUsd: S,
+    equityUsd: equity, xPct: x, capFrac: cap, lot });
+  assert.equal(r.bindingSide, "up", "колл рвётся вверх");
+  // Вручную: I+ = 120000, внутренняя 15000, tv = 3000 (сейчас вне денег), марк на стрессе 18000;
+  // MM = 0.075·120000 + 18000 = 27000. Лоты = floor(20000·0.8 / (27000·0.01)) = floor(59.2) = 59.
+  assert.equal(Math.round(r.mm1Up), 27000);
+  assert.equal(r.lots, 59);
+});
+
+test("стресс-размер: продавца пута связывает НИЖНЯЯ сторона, maintenance режется страйком", () => {
+  const r = lotsByStressMargin({ legs: [{ type: "put", strike: 95000, mark: 2600 }], indexUsd: 100000,
+    equityUsd: 20000, xPct: 20, capFrac: 0.8, lot: 0.01 });
+  assert.equal(r.bindingSide, "down", "пут рвётся вниз");
+  // I− = 80000, внутренняя 15000, tv = 2600, марк 17600; MM = 0.075·min(80000,95000) + 17600 = 23600.
+  assert.equal(Math.round(r.mm1Down), 23600);
+  assert.equal(r.lots, Math.floor((20000 * 0.8) / (23600 * 0.01)));
+});
+
+test("стресс-размер: ПАРЕ связывает худшая из двух сторон - за этим правило и двухстороннее", () => {
+  const legs = [{ type: "call", strike: 105000, mark: 3000 }, { type: "put", strike: 95000, mark: 2600 }];
+  const r = lotsByStressMargin({ legs, indexUsd: 100000, equityUsd: 20000, xPct: 20, capFrac: 0.8, lot: 0.01 });
+  const up = lotsByStressMargin({ legs: [legs[0]], indexUsd: 100000, equityUsd: 20000, xPct: 20, capFrac: 0.8, lot: 0.01 });
+  const down = lotsByStressMargin({ legs: [legs[1]], indexUsd: 100000, equityUsd: 20000, xPct: 20, capFrac: 0.8, lot: 0.01 });
+  assert.ok(r.mm1Up > up.mm1Up && r.mm1Down > down.mm1Down, "каждая сторона пары несёт ОБЕ ноги");
+  assert.ok(r.lots < Math.min(up.lots, down.lots), "пара строже каждой ноги поодиночке");
+  assert.equal(r.lots, Math.floor((20000 * 0.8) / (Math.max(r.mm1Up, r.mm1Down) * 0.01)), "деление по связывающей стороне");
+});
+
+test("стресс-размер: нелепые входы дают ноль лотов, а не исключение или догадку", () => {
+  assert.equal(lotsByStressMargin({}).lots, 0);
+  assert.equal(lotsByStressMargin({ legs: [], indexUsd: 1e5, equityUsd: 2e4, xPct: 20, capFrac: 0.8, lot: 0.01 }).lots, 0);
+  assert.equal(lotsByStressMargin({ legs: [{ type: "call", strike: 0, mark: 1 }], indexUsd: 1e5,
+    equityUsd: 2e4, xPct: 20, capFrac: 0.8, lot: 0.01 }).lots, 0);
+  assert.equal(lotsByStressMargin({ legs: [{ type: "call", strike: 1e5, mark: 1 }], indexUsd: 1e5,
+    equityUsd: 2e4, xPct: 100, capFrac: 0.8, lot: 0.01 }).lots, 0, "стресс 100% не определён (нижний спот ноль)");
+});

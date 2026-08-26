@@ -1002,3 +1002,60 @@ test("стрэнгл: экспирация гасит обе ноги общим
   near(t.retImPct, (t.pnlUsd / t.imUsd) * 100, 1e-9, "доходность на залог пары");
   assert.equal(engine.sellChainStats(st).n, 1, "сводка цепочки видит сделку пары");
 });
+
+// ── АВТОНОМНЫЙ РАЗМЕР (стресс-правило) и ФОЛБЭК ПАРЫ ────────────────────────────────────────────
+import { lotsByStressMargin } from "../src/engine/btcopt/margin.js";
+
+test("размер: стресс-правило считает лоты само из живых величин ноги (sizeRule stress)", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = sellFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  const r = engine.openStructure(st, { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF,
+    sellCfg: { sizeRule: "stress" } }, f.chain, f.snapshot, nowMs);
+  assert.ok(r.ok, r.error);
+  const sz = st.structure.sizing;
+  assert.equal(sz.rule, "stress", "правило помечено на структуре");
+  const want = lotsByStressMargin({ legs: [{ type: "call", strike: 100000, mark: 3000 }],
+    indexUsd: 100000, equityUsd: 200000, xPct: 45, capFrac: 0.8, lot: 0.01 });
+  assert.equal(sz.lots, want.lots, "лоты равны движковому правилу при константах схемы (45/0.8)");
+  assert.equal(sz.stress.bindingSide, "up", "колл связывает верхняя сторона");
+  // Вручную: I+ = 145000, внутренняя 45000 + tv 3000 → марк 48000; MM = 0.075·145000 + 48000 = 58875.
+  near(sz.stress.mm1Up, 58875, 1e-6, "модель марка «внутренняя на стрессе плюс текущая временная»");
+  assert.equal(want.lots, Math.floor((200000 * 0.8) / (58875 * 0.01)), "деление по связывающей стороне");
+});
+
+test("размер: стрэнгл при стресс-правиле держит ОБЕ стороны и строже колла", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = strangleFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  const r = engine.openStructure(st, { kind: "sell-strangle", execStyle: "limit", sanityCfg: SANITY_OFF,
+    sellCfg: { sizeRule: "stress" } }, f.chain, f.snapshot, nowMs);
+  assert.ok(r.ok, r.error);
+  const sz = st.structure.sizing;
+  assert.equal(sz.rule, "stress");
+  assert.ok(Number.isFinite(sz.stress.mm1Up) && Number.isFinite(sz.stress.mm1Down), "обе стороны посчитаны");
+  const callOnly = lotsByStressMargin({ legs: [{ type: "call", strike: 100000, mark: 3000 }],
+    indexUsd: 100000, equityUsd: 200000, xPct: 45, capFrac: 0.8, lot: 0.01 });
+  assert.ok(sz.lots < callOnly.lots, "пара строже одиночного колла: обе ноги в каждой стороне");
+});
+
+test("размер: стресс-правило на нехватке счёта отказывает СВОИМ текстом с числами", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = sellFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 100 } });
+  const r = engine.openStructure(st, { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF,
+    sellCfg: { sizeRule: "stress" } }, f.chain, f.snapshot, nowMs);
+  assert.ok(r.error && /Стресс-правило не даёт ни лота/.test(r.error), r.error);
+  assert.ok(/±45%/.test(r.error) && /80%/.test(r.error), "отказ называет константы схемы");
+});
+
+test("фолбэк пары: нет пары структурно (no-leg) - цепочка стрэнгла открывает КОЛЛ и честно метит kind", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = sellFixture(nowMs); // в фикстуре ЕСТЬ колл и НЕТ пута
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  const r = engine.openStructure(st, { kind: "sell-strangle", execStyle: "limit", sanityCfg: SANITY_OFF }, f.chain, f.snapshot, nowMs);
+  assert.ok(r.ok, r.error);
+  assert.equal(st.structure.kind, "sell-call", "структура несёт то, что реально продано");
+  assert.equal(st.structure.legs.length, 1);
+  assert.ok(st.ledger.find((row) => row.type === "open").note.includes("продажа колла"), "леджер называет колл");
+});

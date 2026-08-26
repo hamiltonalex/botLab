@@ -34,7 +34,7 @@ import { homedir } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { priceAt, makePriceStats, countPrice, formatPriceStats } from "../src/engine/otmscan/hist-price.js";
 import { computeTradeCosts } from "../src/engine/otmscan/economics.js";
-import { legMargin } from "../src/engine/btcopt/margin.js";
+import { legMargin, lotsByStressMargin } from "../src/engine/btcopt/margin.js";
 import {
   SELLHEDGE_DEFAULTS, pickSellLeg, openSellTrade, halfSpreadUsd, walkSellTrade, settleSellTrade,
   lotsByMargin, stepMtm, sellerZone,
@@ -63,6 +63,10 @@ if (args.includes("--help") || !argOf("--dir")) {
                         варианта в прогоне (например --mode strangle); счёт целыми лотами
                         от --deposit при deployPct дефолта схемы, без ликвидации - тот же
                         масштаб, каким пишет книгу hist-sellhedge и читает сверка compare-books
+  --size-rule stress    ДОБАВИТЬ таблицу автономного правила размера: лоты от двухсторонней
+                        стресс-маржи (движковый lotsByStressMargin) вместо доли IM на входе
+  --stress-x <а,б,..>   проценты стресс-хода спота (по умолчанию 10,15,20,25,30)
+  --stress-cap <а,б,..> доли equity для MM на стрессе (по умолчанию 0.8,1.0)
   --json <файл>         машинный дамп метрик`);
   process.exit(argOf("--dir") ? 0 : 1);
 }
@@ -78,6 +82,9 @@ const WINDOWS = (argOf("--windows", "48-168,168-336,336-672")).split(",").map(pa
 const SW = parseWin(argOf("--strangle-window", "336-672"));
 const LADDER = (argOf("--ladder", "168-336+336-672")).split("+").map(parseWin);
 if (LADDER.length !== 2) { console.error("--ladder: ожидается ровно пара окон «а-б+в-г»"); process.exit(1); }
+const SIZE_RULE = argOf("--size-rule", "deploy");
+const STRESS_X = (argOf("--stress-x", "10,15,20,25,30")).split(",").map(Number).filter(fin);
+const STRESS_CAP = (argOf("--stress-cap", "0.8,1.0")).split(",").map(Number).filter(fin);
 const PERP_FEE = Number(argOf("--perp-fee", "0"));
 const EXEC = argOf("--exec", "maker-mid");
 if (EXEC !== "maker-mid" && EXEC !== "taker-cross") { console.error(`--exec: maker-mid | taker-cross, получено «${EXEC}»`); process.exit(1); }
@@ -189,6 +196,7 @@ function runTradeLeg(i, leg, cfg) {
     retIm: (s.pnl / im) * 100, rtPct: costs.roundTripCostPct, costUsd: s.cost,
     optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, fund: s.fund, turnover: walk.turnoverBtc,
     zone: sellerZone({ ivPct: leg.iv, rv7dPct: R.rv7[i] }),
+    spot0: S0, legsAtEntry: [{ type: mtype(leg.s), strike: leg.k, mark: leg.m }],
     reh: walk.rehedges, stepTs: steps.map((st) => st.ts), mtm1s, mm1s };
 }
 
@@ -252,6 +260,9 @@ function runTradeStrangle(i, pair, cfg) {
     optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, fund: s.fund, turnover: walk.turnoverBtc,
     // Зона судится по КОЛЛОВОЙ ноге - тем же числом, каким её судит базовая схема и живой чип.
     zone: sellerZone({ ivPct: pair.call.iv, rv7dPct: R.rv7[i] }),
+    spot0: S0,
+    legsAtEntry: [{ type: "call", strike: pair.call.k, mark: pair.call.m },
+      { type: "put", strike: pair.put.k, mark: pair.put.m }],
     reh: walk.rehedges, stepTs: steps.map((st) => st.ts), mtm1s, mm1s };
 }
 
@@ -282,11 +293,24 @@ function chain(cfg, kind = "leg") {
   return { rows, priceFail, noPut };
 }
 
+// ── размер сделки по правилу: доля IM на входе (deploy, боевое lotsByMargin) либо автономное
+// стресс-правило движка (lotsByStressMargin, двухстороннее). Предел биржи «IM не больше счёта»
+// накладывается здесь же - то же ограничение наложит строитель структуры в живом тракте.
+function lotsOf(sizing, t, acc, cfg) {
+  if (sizing && sizing.kind === "stress") {
+    const s = lotsByStressMargin({ legs: t.legsAtEntry, indexUsd: t.spot0, equityUsd: acc,
+      xPct: sizing.xPct, capFrac: sizing.capFrac, lot: LOT });
+    return Math.min(s.lots, Math.floor(acc / (t.im * LOT)));
+  }
+  const pct = typeof sizing === "number" ? sizing : sizing.pct;
+  return lotsByMargin({ imUsdPerContract: t.im, equityUsd: acc, cfg: { ...cfg, deployPct: pct } }).lots;
+}
+
 // ── счёт целыми лотами по канону раздела 3а эталона + тиковая просадка по пути equity.
-function simAccount(rows, deploy, cfg) {
+function simAccount(rows, sizing, cfg) {
   let acc = DEPOSIT, peak = DEPOSIT, tickDd = 0, peakMM = 0, liqs = 0, skipped = 0, played = 0;
   for (const t of rows) {
-    const { lots } = lotsByMargin({ imUsdPerContract: t.im, equityUsd: acc, cfg: { ...cfg, deployPct: deploy } });
+    const lots = lotsOf(sizing, t, acc, cfg);
     if (lots < 1) { skipped += 1; continue; }
     const qq = lots * LOT;
     played += 1;
@@ -524,6 +548,37 @@ if (MODES.includes("ladder")) {
     deploy: cal.deploy, growth: cal.growth, tickDd: cal.tickDd, peakMM: cal.peakMM,
     skipped: cal.skipped, played: cal.played, corr: corr.corr, overlapPct: cal.overlapPct });
   console.log("");
+}
+
+// ── АВТОНОМНОЕ ПРАВИЛО РАЗМЕРА (--size-rule stress): вместо внутривыборочно калиброванного
+// deployPct размер каждой сделки считается движковым lotsByStressMargin из живых величин входа.
+// Таблица отвечает на вопрос выбора КОНСТАНТ схемы: какие (X, cap) держат пик MM за пять лет в
+// пределах критерия равного хвоста, и сколько роста стоит отказ от подгонки по прошлому.
+if (SIZE_RULE === "stress") {
+  console.log(`## Автономный размер: MM при споте ×(1±X%) не выше cap·счёта (lotsByStressMargin)\n`);
+  console.log(`| вариант | X% | cap | сыграно | проп. | рост | тиковая просадка | пик MM | ликв. | связывает низ |`);
+  console.log(`|---|---|---|---|---|---|---|---|---|---|`);
+  const rowsOfKey = (key) => {
+    const [kind, win] = key.split(":");
+    const mapKey = kind === "S" ? `strangle:C:${win}` : `leg:${kind}:${win}`;
+    return chains.get(mapKey)?.rows ?? null;
+  };
+  for (const v of variants) {
+    const rowsV = rowsOfKey(v.key);
+    if (!rowsV || !rowsV.length) continue;
+    for (const x of STRESS_X) {
+      const downN = rowsV.filter((t) => lotsByStressMargin({ legs: t.legsAtEntry, indexUsd: t.spot0,
+        equityUsd: 1e9, xPct: x, capFrac: 1, lot: LOT }).bindingSide === "down").length;
+      for (const cap of STRESS_CAP) {
+        const s = simAccount(rowsV, { kind: "stress", xPct: x, capFrac: cap }, cfgOf({}));
+        console.log(`| ${v.label} | ${x} | ${cap.toFixed(2)} | ${s.played} | ${s.skipped} | ×${f2(s.growth, 2)} | `
+          + `${pct(s.tickDd)} | ${pct(s.peakMM)} | ${s.liqs} | ${f2((100 * downN) / rowsV.length, 0)}% |`);
+      }
+    }
+  }
+  console.log(`\nЧитать так: искомые константы - наибольший X (запас на ход), при котором пик MM за`);
+  console.log(`запись не выше критерия хвоста на ВСЕХ вариантах сразу; «связывает низ» показывает,`);
+  console.log(`какой доле входов размер задала нижняя сторона (у пары стороны меняются местами).\n`);
 }
 
 console.log(`## Снабжение и границы\n`);
