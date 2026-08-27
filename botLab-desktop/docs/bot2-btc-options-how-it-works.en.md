@@ -37,16 +37,17 @@ risk, and keeps a journal. The operator turns the chain on and observes.
 ## The Whole Life Cycle
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "12px"}, "flowchart": {"nodeSpacing": 26, "rankSpacing": 18, "diagramPadding": 4, "wrappingWidth": 380}}}%%
 flowchart TD
-    A["App start:<br/>state restored from disk,<br/>an open trade continues"] --> B{"Chain is on<br/>and no trade is open?"}
-    B -- "yes" --> C["Pick a contract:<br/>14-28 days to expiry,<br/>delta near 0.45"]
-    C --> D{"Quote sanity:<br/>fresh, tight spread,<br/>order book not empty?"}
-    D -- "no candidate passed" --> W["Wait and retry:<br/>every 30 seconds;<br/>after 4 hours open the best one<br/>with a permanent mark"]
+    A["App start: state restored from disk,<br/>an open trade continues"] --> B{{"Chain is on and no trade is open?"}}
+    B -- "yes" --> C["Pick a contract: 14-28 days to expiry,<br/>delta near 0.45"]
+    C --> D{{"Quote sanity: fresh, tight spread, order book not empty?"}}
+    D -- "no candidate passed" --> W["Wait and retry: every 30 seconds;<br/>after 4 hours open the best one<br/>with a permanent mark"]
     W --> C
-    D -- "yes" --> E["Size by the stress rule:<br/>survive a 45% price move<br/>in either direction"]
+    D -- "yes" --> E["Size by the stress rule: survive a 45%<br/>price move in either direction"]
     E --> F["Open: premium received,<br/>counterweight placed"]
-    F --> G["In the trade. Every 15 seconds:<br/>adjust the counterweight,<br/>check margin, write the journal"]
-    G --> H{"Expiry?<br/>(08:00 UTC)"}
+    F --> G["In the trade. Every 15 seconds: adjust the<br/>counterweight, check margin, write the journal"]
+    G --> H{{"Expiry? (08:00 UTC)"}}
     H -- "no" --> G
     H -- "yes" --> I["Settlement: the trade's result<br/>is recorded in the chain"]
     I --> B
@@ -117,21 +118,22 @@ What matters about ticks:
 ## How the Bot Opens a Trade
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "12px"}, "flowchart": {"nodeSpacing": 26, "rankSpacing": 18, "diagramPadding": 4, "wrappingWidth": 380}}}%%
 flowchart TD
-    A["All BTC options on Deribit<br/>(hundreds of contracts)"] --> B["Tenor filter:<br/>14-28 days of life left"]
-    B --> C{"Chain mode"}
+    A["All BTC options on Deribit (hundreds of contracts)"] --> B["Tenor filter: 14-28 days of life left"]
+    B --> C{{"Chain mode"}}
     C -- "call" --> D["Calls with delta 0.45 ± 0.10,<br/>sorted by closeness to 0.45"]
-    C -- "strangle" --> E["Call + put pairs of one expiry;<br/>the call is picked by the same rule,<br/>the put is matched to it"]
+    C -- "strangle" --> E["Call + put pairs of one expiry; the call is picked<br/>by the same rule, the put is matched to it"]
     E -- "no pair exists at all" --> D
     D --> F["Sanity: up to 3 candidates"]
     E --> F
-    F --> G{"Ticker fresher than 60 seconds?<br/>Spread within 8% of premium?<br/>At least $5000 in the book?"}
+    F --> G{{"Ticker fresher than 60 seconds? Spread within 8% of premium? At least $5000 in the book?"}}
     G -- "candidate failed" --> H["Take the next candidate"]
     H --> G
-    G -- "none passed" --> I["Wait with the reason shown;<br/>after 4 hours take the best candidate<br/>with a 'degraded sanity' mark"]
-    G -- "passed" --> J["Size: stress rule ±45%,<br/>reserve at most 80% of the account,<br/>entry collateral within the account"]
+    G -- "none passed" --> I["Wait with the reason shown; after 4 hours take<br/>the best candidate with a 'degraded sanity' mark"]
+    G -- "passed" --> J["Size: stress rule ±45%, reserve at most 80%<br/>of the account, entry collateral within the account"]
     I --> J
-    J --> K["Trade opened:<br/>premium and entry costs journaled"]
+    J --> K["Trade opened: premium and entry costs journaled"]
 ```
 
 **What is sold.** In "call" mode, one insurance against a strong rise. In "strangle"
