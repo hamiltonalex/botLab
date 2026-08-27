@@ -205,3 +205,17 @@ test("hero is hypothesis-only; realized P&L lives in the trade zone (two-zone re
   const ruDict = readFileSync(new URL("../src/renderer/locales/ru.js", import.meta.url), "utf8");
   assert.ok(ruDict.includes("Оценка P&L за окно · история (гипотеза)"), "hero label is the invariant hypothesis text (ru dictionary)");
 });
+
+test("жетон цепочки продавца: СТОП судится кодом no-lots, разбор текста остаётся фолбэком", () => {
+  // Сверка руководства 2026-08-27 (находка 1, класс КОД): детектор /залог|депозит/ не ловил текст
+  // отказа стресс-правила («Стресс-правило не даёт ни лота…»), и живая цепочка (sizeRule stress)
+  // на нехватке счёта вечно показывала ПОДБОР вместо СТОП. Судья теперь - код no-lots от
+  // sellSizingByRule (structure.js), донесённый через sellChain.last; регэксп сохранён фолбэком
+  // для причин без кода (нехватка залога, названная другим текстом).
+  const html = readFileSync(new URL("../src/renderer/index.html", import.meta.url), "utf8");
+  const fn = html.match(/function optChainState\(ds\)\{([\s\S]*?)\nfunction renderOptChainCard/);
+  assert.ok(fn, "тело optChainState найдено");
+  assert.ok(fn[1].includes("'halted'"), "ветка halted существует");
+  assert.ok(fn[1].includes("fail.code === 'no-lots' ||"), "остановка судится структурированным кодом, текст - только фолбэк");
+  assert.ok(fn[1].includes("/залог|депозит/i"), "текстовый фолбэк для причин без кода сохранён");
+});

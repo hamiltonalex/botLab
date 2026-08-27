@@ -1047,6 +1047,33 @@ test("размер: стресс-правило на нехватке счёта
     sellCfg: { sizeRule: "stress" } }, f.chain, f.snapshot, nowMs);
   assert.ok(r.error && /Стресс-правило не даёт ни лота/.test(r.error), r.error);
   assert.ok(/±45%/.test(r.error) && /80%/.test(r.error), "отказ называет константы схемы");
+  // Сверка руководства 2026-08-27: жетон СТОП судит по коду, а не по разбору русского текста -
+  // текст стресс-ветки не попадал под /залог|депозит/ детектора карточки, и живая цепочка
+  // (sizeRule stress) на нехватке счёта вечно показывала ПОДБОР.
+  assert.equal(r.code, "no-lots", "отказ размера несёт структурированный код для жетона СТОП");
+});
+
+test("размер: отказ deploy-правила несёт ТОТ ЖЕ код no-lots, что и стресс", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = sellFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 100 } });
+  // sellCfg не передан: правило размера - движковый дефолт (deploy), ветка «Залог не помещается».
+  const r = engine.openStructure(st, { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF },
+    f.chain, f.snapshot, nowMs);
+  assert.ok(r.error && /не помещается в счёт/.test(r.error), r.error);
+  assert.equal(r.code, "no-lots", "код един на обе ветки правила размера");
+});
+
+test("размер: отказ пары при стресс-правиле доносит код no-lots через строитель стрэнгла", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = strangleFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 100 } });
+  const r = engine.openStructure(st, { kind: "sell-strangle", execStyle: "limit", sanityCfg: SANITY_OFF,
+    sellCfg: { sizeRule: "stress" } }, f.chain, f.snapshot, nowMs);
+  assert.ok(r.error && /Стресс-правило не даёт ни лота/.test(r.error), r.error);
+  // Код no-lots НЕ путается с no-leg: фолбэк пары на колл срабатывает только на структурном
+  // отсутствии пары, нехватка счёта фолбэком не лечится - колл не поместился бы так же.
+  assert.equal(r.code, "no-lots", "строитель пары пробрасывает код правила размера");
 });
 
 test("фолбэк пары: нет пары структурно (no-leg) - цепочка стрэнгла открывает КОЛЛ и честно метит kind", () => {

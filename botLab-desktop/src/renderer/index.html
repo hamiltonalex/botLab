@@ -5062,10 +5062,15 @@ function optChainState(ds){
        halted: красный занят настоящими остановками. Причина остаётся видимой. */
     reason: (ch.last && ch.last.ok && ch.last.reason) ? ch.last.reason+t('opt.r.rsnRearm')
       : t('opt.r.rsnOff') };
-  const why = ch.last && !ch.last.ok ? ch.last.reason : null;
+  const fail = ch.last && !ch.last.ok ? ch.last : null;
+  const why = fail ? fail.reason : null;
   /* Нехватка залога это НАСТОЯЩАЯ остановка, а не ожидание: повторять попытку каждые полминуты
-     неделями и молчать значило бы обманывать оператора. */
-  if(why && /залог|депозит/i.test(why)) return { key:'halted', token:t('opt.r.tokHalted'), cls:'neg', reason: why };
+     неделями и молчать значило бы обманывать оператора. Судья - код no-lots от правила размера
+     (structure.js, обе ветки: deploy и stress); разбор текста по словам однажды промолчал -
+     отказ стресс-правила под /залог|депозит/ не попадал. Регэксп остаётся фолбэком для причин
+     без кода (нехватка залога, названная не правилом размера, а другим текстом). */
+  if(fail && (fail.code === 'no-lots' || (why && /залог|депозит/i.test(why))))
+    return { key:'halted', token:t('opt.r.tokHalted'), cls:'neg', reason: why };
   return { key:'waiting', token:t('opt.r.tokPicking'), cls:'accent hollow', reason: why || t('home.opt.chainFallback') };
 }
 

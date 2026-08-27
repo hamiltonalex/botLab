@@ -1206,7 +1206,9 @@ async function openSellStructure(params, guard = null) {
       res.chain, res.buildSnap, Date.now(),
     );
     captureSellSanity(r.structure ?? r);
-    if (r.error) return { error: r.error, rejections: r.rejections ?? [] };
+    // Код отказа едет рядом с текстом: по нему жетон цепочки отличает настоящую остановку
+    // (no-lots) от ожидания, не разбирая русскую строку причины.
+    if (r.error) return { error: r.error, code: r.code ?? null, rejections: r.rejections ?? [] };
     bo.lastSnapshot = res.snap;
     bo.snapshot = s1engine.evaluate(bo.engine, res.snap, Date.now());
     bo.sellCandidate = null; // нога переехала в structLegs, отдельная проба больше не нужна
@@ -1281,8 +1283,9 @@ function maybeOpenNextSell() {
     .then((r) => {
       // Причина отказа ХРАНИТСЯ и уезжает в UI: молчащая цепочка, которая неделю не может открыться,
       // неотличима от работающей, а это ровно тот класс дефекта, который проект ловил раньше.
+      // Вместе с текстом хранится код (no-lots и родня): жетон СТОП судит по коду, а не по словам.
       bo.sellChainLast = r?.error
-        ? { at: now, ok: false, reason: r.error }
+        ? { at: now, ok: false, reason: r.error, code: r.code ?? null }
         : { at: now, ok: true, structureId: r?.structureId ?? null };
       if (!r?.error) push1();
     })

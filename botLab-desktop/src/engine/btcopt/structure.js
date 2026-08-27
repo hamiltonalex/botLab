@@ -157,6 +157,10 @@ export function sellRowsFromSnapshot(chain, snapshot, nowMs) {
 // ОТКАЗ НАЗЫВАЕТ ПРИЧИНУ ЧИСЛОМ, А НЕ ТОЛЬКО ФАКТ НЕХВАТКИ (перенесено из строителя колла):
 // дефолтный бумажный счёт $100 не даёт ни одного лота, и оператору надо сказать, сколько именно
 // завести; ноль лотов при недостаточном счёте - верный ответ, а не дефект.
+// РЯДОМ С ТЕКСТОМ ОТКАЗ НЕСЁТ КОД "no-lots" - ОДИН НА ОБЕ ВЕТКИ ПРАВИЛА: по нему жетон цепочки
+// судит «СТОП: размер не помещается в счёт», не разбирая русский текст. Судья по словам уже
+// промолчал однажды: тексты веток разные, и отказ стресс-ветки не попадал под /залог|депозит/
+// детектора карточки (сверка руководства 2026-08-27).
 function sellSizingByRule({ cfg, equityUsd, imPerContract, stressLegs, indexUsd, what = null }) {
   if (!Number.isFinite(equityUsd)) return { error: "Нет счёта для расчёта размера от залога" };
   const imLotUsd = imPerContract * cfg.lot;
@@ -171,7 +175,7 @@ function sellSizingByRule({ cfg, equityUsd, imPerContract, stressLegs, indexUsd,
       const bindLot = Math.max(st.mm1Up ?? 0, st.mm1Down ?? 0) * cfg.lot;
       return { error: `Стресс-правило не даёт ни лота${what ? ` (${what})` : ""}: MM при ±${cfg.stressXPct}% `
         + `спота $${Math.round(bindLot)} за лот против ${Math.round((cfg.stressCapFrac || 0) * 100)}% `
-        + `счёта $${Math.round(equityUsd)}`, sizing };
+        + `счёта $${Math.round(equityUsd)}`, code: "no-lots", sizing };
     }
     return { sizing, qtyAbs: lots * cfg.lot };
   }
@@ -180,7 +184,7 @@ function sellSizingByRule({ cfg, equityUsd, imPerContract, stressLegs, indexUsd,
   if (!(s.lots >= 1)) {
     const need = Math.ceil((s.imLotUsd ?? 0) / (cfg.deployPct || 1));
     return { error: `Залог $${Math.round(s.imLotUsd ?? 0)} за лот${what ? ` ${what}` : ""} не помещается в счёт $${Math.round(equityUsd)}: `
-      + `нужно от $${need} (потолок развёртывания ${Math.round((cfg.deployPct || 0) * 100)}% счёта)`, sizing };
+      + `нужно от $${need} (потолок развёртывания ${Math.round((cfg.deployPct || 0) * 100)}% счёта)`, code: "no-lots", sizing };
   }
   return { sizing, qtyAbs: s.lots * cfg.lot };
 }
@@ -241,7 +245,7 @@ export function buildSellStructure(params, chain, snapshot, nowMs) {
     // Правило размера (deploy | stress) и предел биржи - в sellSizingByRule, одном на оба строителя.
     const sz = sellSizingByRule({ cfg, equityUsd: params?.equityUsd, imPerContract,
       stressLegs: [{ type: "call", strike: leg.k, mark: leg.m }], indexUsd: index });
-    if (sz.error) return { error: sz.error, sizing: sz.sizing };
+    if (sz.error) return { error: sz.error, code: sz.code, sizing: sz.sizing };
     sizing = sz.sizing;
     qtyAbs = sz.qtyAbs;
   } else {
@@ -354,7 +358,7 @@ export function buildSellStrangleStructure(params, chain, snapshot, nowMs) {
       stressLegs: [{ type: "call", strike: pair.call.k, mark: pair.call.m },
         { type: "put", strike: pair.put.k, mark: pair.put.m }],
       indexUsd: index, what: "пары" });
-    if (sz.error) return { error: sz.error, sizing: sz.sizing };
+    if (sz.error) return { error: sz.error, code: sz.code, sizing: sz.sizing };
     sizing = sz.sizing;
     qtyAbs = sz.qtyAbs;
   } else {
