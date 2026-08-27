@@ -48,3 +48,16 @@ test("запись тика: снимок без метки времени не 
   assert.equal(buildS1TickRecord({ snap: { legs: {} } }), null);
   assert.equal(buildS1TickRecord({}), null);
 });
+
+test("запись тика: свежесть справочного спота едет в строку (sAge секунды, sSrc источник)", () => {
+  const s = { ...snap(), spot: { ts: 1_699_999_925_660, ageSec: 74340.44, stale: true, source: "index" } };
+  const row = buildS1TickRecord({ snap: s });
+  assert.equal(row.sAge, 74340.4, "возраст спота огрубляется до десятой секунды");
+  assert.equal(row.sSrc, "index");
+});
+
+test("запись тика: снимок без блока spot (реплей, старая запись) → sAge/sSrc пустые", () => {
+  const row = buildS1TickRecord({ snap: snap() });
+  assert.equal(row.sAge, null);
+  assert.equal(row.sSrc, null);
+});

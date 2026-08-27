@@ -125,6 +125,107 @@ test("snapshot: failed PRIMARY leg → primaryErrors non-empty, ok false, gate f
   }
 });
 
+// ── Справочный спот (pickSpotRef): свежайшая нога вместо гонки Promise.all; протухшая метка
+// (истёкший инструмент Deribit ~сутки отвечает замороженным тикером state "delivered") означает
+// фолбэк на живой индекс перпа. Дефект живого прогона 24-25.08.2026: S залип на 77394.16 в 2200
+// тиках 86 эпизодами (эпизод = серия тиков, где гонку выигрывала замороженная нога) при живом idx.
+import { pickSpotRef, SPOT_STALE_MS } from "../src/engine/btcopt/deribit.js";
+
+const NOW = 1787900000000;
+const uLeg = (underlying, ts, name = "L") => ({ instrument: name, underlying, ts });
+
+test("спот: побеждает нога с НОВЕЙШЕЙ меткой, порядок массива (гонка fetch) не решает", () => {
+  const a = uLeg(77394.16, NOW - 3600000, "DEAD");
+  const b = uLeg(80500, NOW - 2000, "LIVE");
+  for (const legs of [[a, b], [b, a]]) {
+    const r = pickSpotRef({ legs, perp: { index: 80480 }, nowMs: NOW });
+    assert.equal(r.underlying, 80500, "спот со свежайшей ноги");
+    assert.equal(r.spot.source, "options");
+    assert.equal(r.spot.stale, false);
+    assert.equal(r.spot.ts, NOW - 2000);
+  }
+});
+
+test("спот: единственная нога протухла → индекс перпа, stale и возраст названы", () => {
+  const r = pickSpotRef({ legs: [uLeg(77394.16, NOW - 20.6 * 3600000)], perp: { index: 80480 }, nowMs: NOW });
+  assert.equal(r.underlying, 80480, "взят живой индекс, а не замороженный форвард");
+  assert.equal(r.spot.source, "index");
+  assert.equal(r.spot.stale, true);
+  assert.ok(Math.abs(r.spot.ageSec - 20.6 * 3600) < 1, "возраст опционного спота в секундах");
+});
+
+test("спот: порог SPOT_STALE_MS включительно свеж, дальше протух", () => {
+  const at = (ageMs) => pickSpotRef({ legs: [uLeg(100, NOW - ageMs)], perp: { index: 200 }, nowMs: NOW });
+  assert.equal(at(SPOT_STALE_MS).underlying, 100, "ровно на пороге ещё свеж");
+  assert.equal(at(SPOT_STALE_MS + 1).underlying, 200, "за порогом - индекс");
+});
+
+test("спот: протух, а перпа нет → значение оставлено и помечено stale-options", () => {
+  const r = pickSpotRef({ legs: [uLeg(77394.16, NOW - 3600000)], perp: null, nowMs: NOW });
+  assert.equal(r.underlying, 77394.16, "лучше помеченное старое, чем ничего");
+  assert.equal(r.spot.source, "stale-options");
+  assert.equal(r.spot.stale, true);
+});
+
+test("спот: нога без конечной метки тикера спотом не становится (свежесть не доказать)", () => {
+  const r = pickSpotRef({ legs: [{ underlying: 100, ts: null }], perp: { index: 200 }, nowMs: NOW });
+  assert.equal(r.underlying, 200);
+  assert.equal(r.spot.source, "index");
+  assert.equal(r.spot.stale, false, "нет пригодной ноги - протухать нечему");
+  assert.equal(r.spot.ageSec, null);
+});
+
+test("спот: ни ног, ни перпа → null и source null (строители честно откажут)", () => {
+  const r = pickSpotRef({ legs: [], perp: null, nowMs: NOW });
+  assert.equal(r.underlying, null);
+  assert.equal(r.spot.source, null);
+});
+
+// Сквозной сценарий дефекта через buildDeribitSnapshot: замороженная нога (метка на 20 часов
+// старше nowMs) против живой. Раньше S зависел от порядка завершения fetch; теперь - нет.
+function stubFrozenFetch({ frozenName, frozenTs, liveTs }) {
+  const envelope = (result) => ({ ok: true, status: 200, json: async () => ({ jsonrpc: "2.0", result, usDiff: 1000 }) });
+  const ticker = (name) => {
+    if (name === "BTC-PERPETUAL")
+      return { mark_price: 80480, index_price: 80480, best_bid_price: 80479, best_ask_price: 80481, funding_8h: 0.0001, current_funding: 0.0001, timestamp: liveTs };
+    const frozen = name === frozenName;
+    return { mark_price: 900, best_bid_price: 890, best_ask_price: 910, mark_iv: 45, index_price: frozen ? 77394.16 : 80480,
+      underlying_price: frozen ? 77394.16 : 80500, timestamp: frozen ? frozenTs : liveTs,
+      greeks: { delta: 0.5, gamma: 0.0001, vega: 12, theta: -30, rho: 1 } };
+  };
+  const meta = (name) =>
+    name === "BTC-PERPETUAL"
+      ? { instrument_name: name, instrument_type: "reversed", contract_size: 10, tick_size: 0.5, min_trade_amount: 10 }
+      : { instrument_name: name, option_type: "call", strike: 80000, expiration_timestamp: 1790000000000, contract_size: 1, tick_size: 5, min_trade_amount: 0.01, quote_currency: "USDC", settlement_currency: "USDC" };
+  return async (url) => {
+    const u = new URL(String(url));
+    const name = u.searchParams.get("instrument_name");
+    if (u.pathname.endsWith("/public/ticker")) return envelope(ticker(name));
+    if (u.pathname.endsWith("/public/get_instrument")) return envelope(meta(name));
+    return envelope({});
+  };
+}
+
+test("снапшот: замороженная нога рядом с живой → S с живой; одна замороженная → S = индекс + заметка", async () => {
+  const real = global.fetch;
+  const frozenTs = NOW - 20 * 3600000;
+  try {
+    global.fetch = stubFrozenFetch({ frozenName: "DEAD-LEG", frozenTs, liveTs: NOW });
+    const both = await buildDeribitSnapshot({ legInstruments: ["DEAD-LEG", "LIVE-LEG"], primaryInstruments: [], nowMs: NOW });
+    assert.equal(both.underlying, 80500, "живая нога побеждает независимо от порядка завершения");
+    assert.equal(both.spot.source, "options");
+
+    const onlyDead = await buildDeribitSnapshot({ legInstruments: ["DEAD-LEG"], primaryInstruments: [], nowMs: NOW });
+    assert.equal(onlyDead.underlying, 80480, "протухший спот подменён индексом перпа");
+    assert.equal(onlyDead.spot.stale, true);
+    assert.equal(onlyDead.spot.source, "index");
+    assert.ok(onlyDead.fresh.notes.some((n) => n.includes("спот протух")), "кластер соединения видит подмену");
+    assert.equal(onlyDead.fresh.ok, true, "подменённый спот не роняет primary-вердикт");
+  } finally {
+    global.fetch = real;
+  }
+});
+
 // ── S2 (OTM-сканер) additive source API: errorStreak surfaces in status() (auto-degradation input),
 // setIntervalMs re-arms the timer WITHOUT recreating the source (recreation would zero errorStreak
 // and break recovery detection), and the GET-attempt counter feeds the §4.3 budget log. Also proves

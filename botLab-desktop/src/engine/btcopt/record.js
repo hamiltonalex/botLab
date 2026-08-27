@@ -44,6 +44,11 @@ export function buildS1TickRecord({ snap, cycle, chain } = {}) {
     v: 1,
     t: snap.ts,
     S: snap.underlying ?? null,
+    // Свежесть справочного спота (deribit.js pickSpotRef): возраст опционного спота в секундах и
+    // его источник ("options" | "index" | "stale-options"). Дефект 24-25.08.2026 (S залип на сутки
+    // при живом idx) был виден только сверкой S с idx задним числом - эти поля называют его прямо.
+    sAge: r(snap.spot?.ageSec, 1),
+    sSrc: snap.spot?.source ?? null,
     idx: snap.index ?? null,
     perp: p
       ? { b: p.bid ?? null, a: p.ask ?? null, m: p.mark ?? null, i: p.index ?? null, f8: p.funding8h ?? null }

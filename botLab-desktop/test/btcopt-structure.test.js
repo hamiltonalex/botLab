@@ -134,6 +134,27 @@ test("buildStructure returns a Russian error when the snapshot has no underlying
   assert.ok(st.error && typeof st.error === "string");
 });
 
+// --- refSpot: протухший справочный спот уступает живому индексу --------------------------------------
+// Дефект живого прогона 24-25.08.2026: S залип на 77394.16 на ~20.6 часа при живом индексе; выбор
+// ATM по такому споту сместил бы страйки на весь дневной ход цены. Источник (deribit.js) сам
+// подменяет спот индексом, эта защита - на случай снапшота, собранного иначе, но несущего метку.
+test("buildStructure: спот помечен протухшим → ATM считается от живого индекса", () => {
+  const stale = { underlying: 61000, index: 63400, spot: { ts: 1, ageSec: 74160, stale: true, source: "index" }, legs: {} };
+  const st = buildStructure(openParams, chain, stale);
+  assert.equal(st.strikes.atm, 63000, "страйк от индекса, а не от залипшего спота");
+  assert.equal(st.entryUnderlying, 63400, "entryUnderlying несёт реально использованную цену");
+});
+
+test("buildStructure: метки spot нет (проба, реплей записи) → underlying как есть", () => {
+  const st = buildStructure(openParams, chain, { underlying: 61000, index: 63400, legs: {} });
+  assert.equal(st.strikes.atm, 61000, "без метки поведение прежнее - за свежесть отвечает вызывающий");
+});
+
+test("buildStructure: спот протух, а индекса нет → строится по оставленному значению", () => {
+  const st = buildStructure(openParams, chain, { underlying: 61000, spot: { stale: true, source: "stale-options" }, legs: {} });
+  assert.equal(st.strikes.atm, 61000);
+});
+
 // --- validateStructure ------------------------------------------------------------------------------
 const metaByInstrument = Object.fromEntries(chain.map((m) => [m.instrument_name, m])); // min_trade_amount 0.01
 const buildAt = (qty) => buildStructure({ ...openParams, qty }, chain, { underlying: 61000, legs: {} });

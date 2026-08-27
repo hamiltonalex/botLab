@@ -187,6 +187,40 @@ export function bookToLiquidity(src) {
   return { bid, ask, mid, halfSpread, bidDepth: depth(bids), askDepth: depth(asks), levels: { bids, asks } };
 }
 
+// ── Справочный спот композитного снапшота ─────────────────────────────────────────────────────────
+// `underlying_price` несут тикеры опционных ног (форвард СВОЕЙ экспирации). Раньше спотом становилась
+// «первая попавшаяся» нога, но порядок Object.values(legs) - это порядок ЗАВЕРШЕНИЯ параллельных
+// fetch, а у ИСТЁКШЕГО инструмента Deribit ещё около суток отвечает тикером state "delivered" с
+// застывшими на моменте экспирации underlying_price и timestamp (проверено живым запросом
+// 2026-08-27; живой прогон 24-25.08.2026 держал S = 77394.16 в 2200 тиках 86 эпизодами при живом
+// индексе - гонка решала, чья нога станет спотом). Поэтому:
+//   - спотом становится нога с НОВЕЙШЕЙ меткой тикера (детерминированно, гонка не решает);
+//   - нога без конечной метки спотом не становится вовсе (её свежесть не доказать);
+//   - метка старше SPOT_STALE_MS означает протухание: спот подменяется живым индексом перпа - тем
+//     же фолбэком, каким уже живут engine.js (`snapshot.index || snapshot.underlying`) и маржа.
+// Порог: живые тикеры Deribit обновляются посекундно, каданс опроса до 15 с; 60 с - заведомо
+// деградация. Тот же порог держит санитария входа (tickerStaleSec = 60).
+export const SPOT_STALE_MS = 60000;
+
+// pickSpotRef({ legs, perp, nowMs }) → { underlying, spot } - ЧИСТЫЙ выбор справочного спота.
+// spot = { ts, ageSec, stale, source }: ts/ageSec описывают свежайшую опционную ногу со спотом
+// (и на фолбэке тоже - это возраст именно опционного спота); source: "options" - свежая нога,
+// "index" - индекс перпа (ноги нет или протухла), "stale-options" - протухла, а индекса нет
+// (значение оставлено и помечено), null - спота нет вовсе. stale относится к опционному споту.
+export function pickSpotRef({ legs = [], perp = null, nowMs } = {}) {
+  let best = null;
+  for (const l of legs) {
+    if (l?.underlying == null || !Number.isFinite(l?.ts)) continue;
+    if (!best || l.ts > best.ts) best = l;
+  }
+  const ref = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const ageSec = best ? Math.max(0, (ref - best.ts) / 1000) : null;
+  const fresh = best != null && ageSec * 1000 <= SPOT_STALE_MS;
+  const underlying = fresh ? best.underlying : perp?.index ?? best?.underlying ?? null;
+  const source = fresh ? "options" : perp?.index != null ? "index" : best ? "stale-options" : null;
+  return { underlying, spot: { ts: best?.ts ?? null, ageSec, stale: best != null && !fresh, source } };
+}
+
 // Names of the legs that FAIL the greeks gate: absent from `legs` entirely (fetch failed) or present
 // with a non-finite delta/gamma/vega/theta/mark. requiredNames (optional) is the list of legs that
 // MUST be present: a leg whose fetch failed entirely is absent from `legs`, and judging only the
@@ -217,6 +251,8 @@ export function greeksGateOk(legs, requiredNames = null) {
 // Phase 3b: legInstruments may include an auxiliary ATM band (IV regime + sweep capture) beyond the open
 // structure's legs. `primaryInstruments` names the legs the greeks gate / ok flag protect (default: all)
 // — a missing band quote must never pause the hedge engine or flip LIVE to warn; it only lands in notes.
+// `underlying` выбирает pickSpotRef (свежайшая нога, при протухании - живой индекс перпа); рядом
+// лежит блок `spot` = { ts, ageSec, stale, source } - телеметрия свежести опционного спота.
 // ---------------------------------------------------------------------------
 export async function buildDeribitSnapshot({ legInstruments = [], primaryInstruments = null, perpName = PERP_INSTRUMENT, metaCache, testnet = false, nowMs } = {}) {
   const errors = [];
@@ -249,8 +285,16 @@ export async function buildDeribitSnapshot({ legInstruments = [], primaryInstrum
   );
 
   const legArr = Object.values(legs);
-  const underlying = legArr.find((l) => l.underlying != null)?.underlying ?? perp?.index ?? null;
-  const index = perp?.index ?? legArr.find((l) => l.index != null)?.index ?? null;
+  // Справочный спот: свежайшая нога либо фолбэк на индекс (см. pickSpotRef); гонка fetch не решает.
+  const { underlying, spot } = pickSpotRef({ legs: legArr, perp, nowMs });
+  // Индексный фолбэк без перпа - тоже свежайшей ногой, а не первой попавшейся: у замороженного
+  // тикера index_price застывает так же, как underlying_price.
+  let idxLeg = null;
+  for (const l of legArr) {
+    if (l.index == null || !Number.isFinite(l.ts)) continue;
+    if (!idxLeg || l.ts > idxLeg.ts) idxLeg = l;
+  }
+  const index = perp?.index ?? idxLeg?.index ?? null;
   const tsList = [...legArr.map((l) => l.ts), perp?.ts].filter((x) => Number.isFinite(x));
   const ts = tsList.length ? Math.max(...tsList) : (nowMs ?? null);
   const liquidity = perp ? bookToLiquidity(perp) : null;
@@ -267,10 +311,16 @@ export async function buildDeribitSnapshot({ legInstruments = [], primaryInstrum
   const primaryErrors = errors.filter((e) => e.instrument === perpName || primarySet.has(e.instrument));
   const ok = !!perp && primaryErrors.length === 0 && gateOk;
 
+  // Протухший спот - ЗАМЕТКА в кластере соединения, а не warn: primary-вердикт судит открытую
+  // структуру, а спот уже подменён живым индексом (или честно помечен, когда подменить нечем).
+  const spotNote = spot.stale
+    ? `справочный спот протух (${Math.round(spot.ageSec)}с): ${spot.source === "index" ? "взят индекс перпа" : "индекса нет, значение оставлено"}`
+    : null;
   return {
     ts,
     underlying,
     index,
+    spot,
     legs,
     perp,
     liquidity,
@@ -282,7 +332,7 @@ export async function buildDeribitSnapshot({ legInstruments = [], primaryInstrum
       gateFailed,
       source: "deribit-rest",
       testnet,
-      notes: errors.map((e) => `${e.instrument}: ${e.message}`),
+      notes: [...errors.map((e) => `${e.instrument}: ${e.message}`), ...(spotNote ? [spotNote] : [])],
     },
     errors,
     primaryErrors,

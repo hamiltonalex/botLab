@@ -17,6 +17,14 @@ const asMetas = (chain) => (Array.isArray(chain) ? chain : chain?.instruments ??
 const nearest = (arr, target) =>
   arr.reduce((best, s) => (Math.abs(s - target) < Math.abs(best - target) ? s : best), arr[0]);
 
+// Справочный спот строителя: underlying снапшота, а когда источник ПОМЕТИЛ опционный спот протухшим
+// (snapshot.spot, deribit.js) и рядом есть живой индекс - индекс. Выбор ATM-страйка по споту
+// суточной давности сместил бы страйки на весь дневной ход цены (живой прогон 24-25.08.2026:
+// S залип на 77394.16 при живом индексе). Синтетические снапшоты проб ({ underlying }) и реплей
+// записи метки spot не несут и принимаются как есть - за их свежесть отвечает вызывающий.
+const refSpot = (snapshot) =>
+  snapshot?.spot?.stale && Number.isFinite(snapshot.index) ? snapshot.index : snapshot?.underlying;
+
 // pickExpiry(chain, nowMs, { maxDays, minLeadMs }) — the nearest LIVE expiry for auto-construct: the
 // smallest distinct expiration_timestamp strictly after nowMs + minLeadMs and at most maxDays·24h out
 // (boundary inclusive). minLeadMs lets the caller skip expiries already inside the pre-expiry blackout
@@ -37,7 +45,7 @@ export function pickExpiry(chain, nowMs, { maxDays = 3, minLeadMs = 0 } = {}) {
 // params = { expiry(ms), callOffsetPct, putOffsetPct, qty, execStyle }. Returns { error } (Russian) if a
 // strike/instrument can't be resolved. entryDebitUsd is positive for a net debit paid.
 export function buildStructure(params, chain, snapshot) {
-  const underlying = snapshot?.underlying;
+  const underlying = refSpot(snapshot);
   if (!Number.isFinite(underlying)) return { error: "Нет цены базового актива в снапшоте" };
 
   const metas = asMetas(chain).filter((m) => m.expiration_timestamp === params.expiry);
@@ -195,7 +203,7 @@ function sellSizingByRule({ cfg, equityUsd, imPerContract, stressLegs, indexUsd,
 //   params.sellCfg   - перекрытие SELLHEDGE_DEFAULTS (окно срока, дельта, лот, доля счёта);
 //   params.equityUsd - счёт для расчёта размера (нужен только при qty == null).
 export function buildSellStructure(params, chain, snapshot, nowMs) {
-  const underlying = snapshot?.underlying;
+  const underlying = refSpot(snapshot);
   if (!Number.isFinite(underlying)) return { error: "Нет цены базового актива в снапшоте" };
   const cfg = { ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) };
 
@@ -312,7 +320,7 @@ export function buildSellStructure(params, chain, snapshot, nowMs) {
 // не прошла ни одна - отказ с кодом, ожидание дольше окна - лучшая пара с постоянной пометкой
 // «ухудшенная санитария». Правило то же, что у одной ноги, применённое к обеим.
 export function buildSellStrangleStructure(params, chain, snapshot, nowMs) {
-  const underlying = snapshot?.underlying;
+  const underlying = refSpot(snapshot);
   if (!Number.isFinite(underlying)) return { error: "Нет цены базового актива в снапшоте" };
   const cfg = { ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) };
   const sanityCfg = { ...SELL_SANITY_DEFAULTS, ...(params?.sanityCfg ?? {}) };
