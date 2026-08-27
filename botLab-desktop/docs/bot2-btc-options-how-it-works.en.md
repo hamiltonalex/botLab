@@ -87,13 +87,13 @@ sequenceDiagram
     E->>E: accrue funding on the counterweight
     E->>E: expiry crossed? then settle first
     E->>E: recompute price sensitivity (delta)
-    alt gap to the needed counterweight exceeds the band
-        E->>E: paper trade in the perpetual
-        E->>J: "hedge" row in the journal
-    end
     E->>E: margin: share of reserve used, 80% and 90% thresholds
     opt threshold crossed upward
         E->>J: "margin-alert" row and a system notification
+    end
+    alt gap to the needed counterweight exceeds the band
+        E->>E: paper trade in the perpetual
+        E->>J: "hedge" row in the journal
     end
     E-->>J: refresh the interface cards
 ```
@@ -105,8 +105,9 @@ What matters about ticks:
 - **Bad data never trades.** If the snapshot is incomplete (no perpetual price, no
   greeks), the bot skips the decision instead of acting blindly.
 - **Polling runs only while there is something to watch.** With an open trade or an armed
-  chain it starts by itself (including after a restart); with neither, the bot stays
-  silent and off the network.
+  chain it starts by itself (including after a restart); with neither, the bot does not
+  start polling on its own (polling started manually with the LIVE button runs until
+  stopped).
 - **Interruptions are visible.** A sleeping computer, a network outage or app downtime is
   recorded as a gap with its cause; per-trade tick coverage is shown to the operator.
   Funding over a long gap is honestly marked as not accrued rather than back-filled.
@@ -183,16 +184,19 @@ There is exactly one rule:
 
 No schedules, no price triggers, no "is it worth it right now" filters: measurements
 showed the band decides, not the checking frequency. (The manual four-leg mode does have
-time and price triggers and a benefit filter, configurable in the toolbar; the seller
-scheme switches them off deliberately, because that is how it was measured.) An adjustment is modeled as a limit
+time and price triggers and a benefit filter: the price trigger and λ are configurable in
+the toolbar, the time trigger is an engine setting with no control; the seller scheme
+switches them all off deliberately, because that is how it was measured.) An adjustment is modeled as a limit
 order at the middle of the spread (maker fee 0%); if the operator selected "market", it
 crosses the spread and pays the taker fee. The perpetual carries funding, small periodic
 payments between buyers and sellers; the bot accrues it every tick, in either direction.
 
 **There are no exits before expiry.** No stop-losses, no take-profits: all of the
 scheme's statistics were taken with a single exit, living until expiry, and the project's
-sweeps of early exits produced not a single profitable configuration. A trade can be closed manually, but it is then
-permanently marked as closed early and kept apart from the measured statistics.
+sweeps of early exits produced not a single profitable configuration. A trade can be
+closed manually, but it is then permanently marked as closed early; the chain summary
+counts such closes separately and warns that a total including them goes beyond what was
+measured.
 
 ---
 
@@ -237,7 +241,8 @@ stateDiagram-v2
     Open --> Settle: 08.00 UTC on the expiry date
     Settle --> Search: "continuous" mode
     Settle --> Off: "single trade" mode or stop
-    Open --> Off: manual close (marked)
+    Open --> Search: manual close in "continuous" mode (marked, the chain continues)
+    Open --> Off: manual close in "single trade" mode or after a stop
 ```
 
 The chain card shows these states as tokens (off, picking, in trade, settling, stopping,
@@ -249,7 +254,8 @@ threshold, there is no payout and the whole premium is kept; if it crossed, the 
 the difference. Settlement uses the index price (an honest proxy of the exchange's
 official price); the official one is published later, and when it arrives the trade's
 result is corrected by an adjustment. The counterweight is closed at market. If the app
-was off at the expiry moment, settlement runs at the next start and is marked as late.
+was off at the expiry moment, settlement runs at the next start and, when the delay
+reaches an hour or more, is marked as late.
 
 **The trade's result** goes into the chain history: premium, costs, funding, outcome and
 return on collateral, the same measure the scheme was evaluated with historically.
@@ -307,11 +313,11 @@ journal) and "Structure constructor" (scheme choice, preview, launch).
 | Leg sanity | Quote freshness, spread, book depth; a veto switches the candidate; 4-hour waiting window |
 | Delta hedge | A perpetual counterweight with a 0.03 BTC-per-contract band, limit orders at mid |
 | Margin monitor | Reserve utilisation, liquidation price estimate, 80/90 alerts with hysteresis, system notifications |
-| Journal (ledger) | Every event as a row: open, entry costs, hedges, funding gaps, margin alerts, settlement, delivery adjustment; CSV, XLSX and JSON export |
+| Journal (ledger) | Every event as a row: open, entry costs, hedges, closes (perp and options), funding gaps, margin alerts, settlement, delivery adjustment; CSV, XLSX and JSON export |
 | Conformance passport | A row-by-row comparison of the trade's frozen configuration against the measured scheme: band, triggers, blackout, tenor, sizing rule, exit |
 | Chain history | Each link's outcome: premium, costs, return on collateral, "early close" and "degraded sanity" marks |
 | Tick coverage | Polling continuity per trade; gaps recorded with their cause (sleep, app downtime, no response) |
-| Payoff chart | "What happens at expiry at price X" with entry, current price and LIQ marks |
+| Payoff chart | "What happens at expiry at price X" with strike, break-even, current price and LIQ marks; the path from entry to the liquidation estimate is a scale on the margin card |
 | Stress scenarios | Instant "what if price or volatility jumped right now" recomputation |
 | Manual constructor | The bot's original scheme: a four-leg "tent" (buy a straddle, sell wings 5-15% away), opened manually |
 | Auto expiry pick | For the manual tent: the nearest live expiry within 3 days |
