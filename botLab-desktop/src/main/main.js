@@ -585,6 +585,23 @@ function pointBtcOptSource() {
   bo.source.setInstruments(union, structLegs);
 }
 
+// Кэш цепочки обновляется ТОЛЬКО по требованию (открытие сделки, клики в UI). При held-позиции без
+// оператора дневные экспирации в кэше кончаются за пару суток, btcOptBand не находит замену умершей
+// полосе, и та оставалась прибитой к ИСТЁКШИМ инструментам: Deribit ещё около суток отвечает на них
+// замороженным тикером (state "delivered" - живой прогон 24-25.08.2026 держал S = 77394.16 в 2200
+// тиках), затем ошибками, и карточка IV-режима слепла до перезапуска. Самогейт: один полёт, и не
+// чаще TTL кэша (свежий кэш означает, что дело не в нём - у Deribit честно нет экспирации ≤3д).
+let btcOptChainRefreshInFlight = false;
+function maybeRefreshBtcOptChainForBand() {
+  const bo = state.btcOptions;
+  if (btcOptChainRefreshInFlight || !bo.chain) return;
+  if (Date.now() - (bo.chain.fetchedAt || 0) <= 300000) return;
+  btcOptChainRefreshInFlight = true;
+  ensureBtcOptChain()
+    .catch((e) => console.warn("[s1] band chain refresh:", String(e?.message || e)))
+    .finally(() => { btcOptChainRefreshInFlight = false; });
+}
+
 // Re-derive the band when it's missing, the chain refreshed, the ATM drifted 2%, or the expiry rolled.
 function refreshBtcOptBand(underlying) {
   const bo = state.btcOptions;
@@ -600,7 +617,10 @@ function refreshBtcOptBand(underlying) {
   if (next) {
     bo.band = next;
     pointBtcOptSource();
+    return;
   }
+  // Замены в кэше не нашлось - обновить кэш цепочки; перевывод полосы случится следующим тиком.
+  maybeRefreshBtcOptChainForBand();
 }
 
 // ── СНАБЖЕНИЕ СХЕМЫ ПРОДАВЦА ────────────────────────────────────────────────────────────────────
