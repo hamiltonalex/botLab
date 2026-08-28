@@ -54,7 +54,7 @@ import { computeTradeCosts } from "../src/engine/otmscan/economics.js";
 import { legMargin } from "../src/engine/btcopt/margin.js";
 import {
   pickSellLeg, openSellTrade, halfSpreadUsd, walkSellTrade, settleSellTrade, lotsByMargin, sellerZone,
-  stepMtm,
+  stepMtm, makeStopAt, parseStopSpec, stopCostUsd,
 } from "../src/engine/otmscan/sellhedge.js";
 import { parseGateSpec, formatGateTerms, makeGateCounter, testGate } from "../src/engine/otmscan/hist-gate.js";
 
@@ -119,6 +119,36 @@ const PERIODS = (argOf("--periods") ?? "").split(",").filter(Boolean).map((d) =>
 const LOT = 0.01;
 const DEPLOY = Number(argOf("--deploy", "0.70"));
 if (!(DEPLOY > 0 && DEPLOY <= 1)) { console.error(`--deploy: ожидается доля в (0,1], получено «${argOf("--deploy")}»`); process.exit(1); }
+
+// ── ДОСРОЧНЫЙ ВЫХОД: ЗАМЕР, А НЕ СХЕМА. Предрегистрация `bot2-sl-предрегистрация-2026-08-28.md`
+// заморозила сетку и пороги ДО первого прогона. Без --stop ни одна ветка не исполняется, и это
+// проверяется не рассуждением, а плацебо-прогоном: книга обязана совпасть с базовой ПОБАЙТОВО.
+//
+// ПОЧЕМУ ОБЕ «РАЗМЕР-ЗАВИСИМЫЕ» МЕТРИКИ СЧИТАЮТСЯ НА ОДИН КОНТРАКТ. При любом правиле размера,
+// пропорциональном счёту (а таковы оба наших: deploy и stress), счёт из метрики СОКРАЩАЕТСЯ:
+// qty = deploy·acc/im, поэтому mtm·qty <= −level·acc это mtm <= −level·im/deploy, а
+// mm·qty/(acc + mtm·qty) это mm·deploy/im / (1 + mtm·deploy/im). Ни одна из формул счёта не
+// содержит, значит правило остаётся свойством СДЕЛКИ и цепочка по-прежнему считается один раз.
+const STOP = (() => {
+  const { stop, error } = parseStopSpec(argOf("--stop"), {
+    action: argOf("--stop-action"), hyst: argOf("--stop-hyst"), fill: argOf("--stop-fill") });
+  if (error) { console.error(`--stop: ${error}`); process.exit(1); }
+  return stop;
+})();
+const HAS_STOP = STOP != null;
+// Головной перевход предрегистрации это `expiry`: окно 336-672 ч непусто в 100% часов записи,
+// поэтому `now` даёт мгновенный перевход ВСЕГДА, чего живая линейная сетка не гарантирует.
+const STOP_REENTRY = argOf("--stop-reentry", "expiry");
+if (!["now", "expiry", "cooldown48"].includes(STOP_REENTRY)) {
+  console.error("--stop-reentry: now|expiry|cooldown48"); process.exit(1);
+}
+if (STOP_REENTRY === "cooldown48") {
+  // Честно отказываемся, а не исполняем половину правила: кулдаун требует ещё и запрета входа в
+  // ТУ ЖЕ экспирацию, а этого в выборе ноги нет. Ось живёт в фазе 2 протокола.
+  console.error("--stop-reentry cooldown48: не реализовано (нужен запрет повтора экспирации), фаза 2"); process.exit(1);
+}
+const STOP_COST_MULT = Number(argOf("--stop-cost-mult", "1"));
+if (!(STOP_COST_MULT > 0)) { console.error("--stop-cost-mult: положительное число"); process.exit(1); }
 
 // Гейт разбирается ДО чтения записи: неверная спецификация обязана падать за миллисекунду, а не
 // через десять минут прогона. Правила разбора и сравнения живут в движке (hist-gate.js).
@@ -267,20 +297,48 @@ function runTrade(i, leg, cfg) {
   // Путь шагов собирается ТОЛЬКО под --liquidation: наблюдатель onStep читает и не меняет протяжку
   // (доказано тестом «не меняет итог ни на бит»), а без флага отчёт обязан остаться прежним до байта.
   const steps = HAS_LIQ ? [] : null;
+
+  // ── Снабжение ДОСРОЧНОГО выхода. Решение принимается здесь, потому что цена выхода и залог
+  // живут в записи, а не в правиле; протяжка получает готовый вердикт (см. sellhedge.js §6).
+  let lastRow = null; // строка поверхности текущего шага: нужна ради bid/ask ВЫХОДА
+  const stopAt = HAS_STOP ? makeStopAt({
+    stop: STOP, premSold: open.premSold, optCost: open.optCost, imUsd: im, deployPct: DEPLOY,
+    strikes: [{ type: leg.s, strike: leg.k }],
+    marginAt: (ctx) => legMargin({ type: leg.s === "P" ? "put" : "call", side: "short", strike: leg.k,
+      mark: ctx.mark, underlying: ctx.S, index: ctx.S, amount: 1 }).mm,
+    costAt: (ctx) => stopCostUsd({ markUsd: ctx.mark, indexPrice: ctx.S,
+      bidUsd: lastRow?.b, askUsd: lastRow?.a, entryHalfSpreadPct: costs.halfSpreadPct,
+      mult: STOP_COST_MULT, cfg }),
+    cfg,
+  }) : undefined;
+
   const walk = walkSellTrade({
     count: N - base,
     tsAt: (k) => R.times[base + k],
     spotAt: (k) => R.spot[base + k],
-    priceAt: (k) => countPrice(R.stats, priceAt({ snapshot: R.snaps.get(R.times[base + k]),
-      expiryRows: R.byExp.get(R.times[base + k])?.get(leg.e), meta, tsMs: R.times[base + k],
-      spotAtExpiry: spotBefore(leg.e) })),
+    priceAt: (k) => {
+      if (HAS_STOP) lastRow = R.snaps.get(R.times[base + k])?.get(leg.n) ?? null;
+      return countPrice(R.stats, priceAt({ snapshot: R.snaps.get(R.times[base + k]),
+        expiryRows: R.byExp.get(R.times[base + k])?.get(leg.e), meta, tsMs: R.times[base + k],
+        spotAtExpiry: spotBefore(leg.e) }));
+    },
     fundRateAt: fundRate,
     expiryMs: leg.e, entry: open, entryTsMs: R.times[i], entrySpot: S0, cfg,
     onStep: steps ? (s) => steps.push(s) : undefined,
+    stopAt,
   });
   if (!walk) return null;
   const s = settleSellTrade({ open, walk, cfg });
   const endIdx = base + walk.exitIndex;
+  // Шаг ИСХОДНОЙ экспирации остановленной сделки. Нужен перевходу `expiry`: капитал не должен
+  // переразмещаться раньше, чем сделка кончилась бы сама, иначе замеряется скважность записи.
+  // До первого ОЦЕНИВАЕМОГО шага, а не просто до метки времени: снимок без спота протяжка
+  // пропускает целиком, и перевход по голому времени дал бы стопу фору на записи с дырами.
+  let expiryEndIdx = endIdx;
+  if (walk.stopped) {
+    while (expiryEndIdx < N - 1 && R.times[expiryEndIdx] < leg.e) expiryEndIdx += 1;
+    while (expiryEndIdx < N - 1 && !(R.spot[expiryEndIdx] > 0)) expiryEndIdx += 1;
+  }
   // Зона продавца НА МОМЕНТ ВХОДА (правило sellhedge.js, то же, каким живой сканер рисует чип):
   // режим рынка это свойство входа, а не итога, и мерить его выходом значило бы судить сделку тем,
   // чего в момент решения не было.
@@ -290,7 +348,8 @@ function runTrade(i, leg, cfg) {
     strike: leg.k, spot0: S0, spotEnd: R.spot[endIdx], reh: walk.rehedges, name: leg.n,
     turnover: walk.turnoverBtc, retIm: (s.pnl / im) * 100, retPrem: (s.pnl / leg.m) * 100,
     optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, cost: s.cost, fund: s.fund,
-    premSold: open.premSold, optCost: open.optCost, steps };
+    premSold: open.premSold, optCost: open.optCost, steps,
+    stopped: walk.stopped === true, stopCount: walk.stopCount ?? 0, expiryEndIdx };
 }
 
 // ЦЕПОЧКА: закрылась сделка, в тот же день открывается следующая. Ни пропусков, ни выбора момента.
@@ -308,7 +367,11 @@ function chain(cfg, start = 0, gate = null) {
     const t = runTrade(i, leg, cfg);
     if (!t) { i += 1; continue; }
     out.push(t);
-    i = t.endIdx + 1;
+    // ПЕРЕВХОД. Без стопа это прежняя строка: следующая сделка со следующего снимка. После
+    // ДОСРОЧНОГО выхода головной режим предрегистрации - `expiry`: цепочка ждёт ИСХОДНУЮ
+    // экспирацию остановленной сделки. Иначе выигрыш стопа оказался бы выигрышем скважности
+    // записи, где нога в окне 336-672 ч есть в 100% часов, чего живая сетка не гарантирует.
+    i = (t.stopped && STOP_REENTRY === "expiry" ? t.expiryEndIdx : t.endIdx) + 1;
   }
   return out;
 }

@@ -22,8 +22,9 @@
 //   2. `openSellTrade` - премия, издержки входа, начальный хедж, требование залога;
 //   3. `wantHedge`     - нужный размер перпа сейчас (дельта позиции);
 //   4. `shouldRehedge` - перекладываемся ли: |нужный − текущий| за полосой;
-//   5. `walkSellTrade` - протяжка до экспирации. ЕДИНСТВЕННЫЙ выход - экспирация;
-//   6. `lotsByMargin`  - сколько лотов позволяет залог.
+//   5. `walkSellTrade` - протяжка до экспирации. Боевой выход один - экспирация;
+//   6. `lotsByMargin`  - сколько лотов позволяет залог;
+//   7. `shouldStopOut` / `makeStopGate` - ЗАМЕРЯЕМЫЙ досрочный выход, по умолчанию выключен.
 //
 // ПОЧЕМУ ПРОТЯЖКА ЗДЕСЬ, А НЕ У ВЫЗЫВАЮЩЕГО - тот же довод, что у `walkExit` в exits.js: в цикле
 // спрятано РЕШЕНИЕ, которого нет в отдельных правилах. Здесь их два. Первое: досрочных выходов НЕТ
@@ -40,6 +41,8 @@
 // ЛЕНИВЫЙ ДОСТУП К ЗАПИСИ (`spotAt` / `priceAt` / `tsAt`), а не массив наблюдений: цена считается
 // лестницей и стоит дорого, а снимки без спота её не должны вызывать вовсе - иначе счётчик ступеней
 // лестницы у вызывающего насчитает оценки, которых не было.
+
+import { computeTradeCosts } from "./economics.js";
 
 const fin = (x) => Number.isFinite(x);
 const posNum = (x) => fin(x) && x > 0;
@@ -75,6 +78,14 @@ export const SELLHEDGE_DEFAULTS = Object.freeze({
   sizeRule: "deploy",
   stressXPct: 45,
   stressCapFrac: 0.8,
+  // Правило ДОСРОЧНОГО выхода. null = выхода нет, и это боевой дефолт: пятилетние книги сняты
+  // схемой, у которой единственный выход - экспирация. Поле существует ради ЗАМЕРА предложения
+  // заказчика («оптимизировать SL»), предрегистрация 2026-08-28. Форма:
+  //   { metric, level, action, hyst, fill }
+  //   metric: premx | im | eq | mny | mmu (см. shouldStopOut), level: число оси,
+  //   action: exit | halve | none, hyst: oneshot | band | rearm, fill: same | next.
+  // Пока значение null, ни одна ветка ниже не исполняется и арифметика протяжки прежняя ДО БИТА.
+  stop: null,
 });
 
 // ── 1. Выбор ноги. Нога типа `legType` (колл, пока не сказано иное) нужного срока с |дельтой|
@@ -139,9 +150,11 @@ export function shouldRehedge({ want, have, bandBtc } = {}) {
   return fin(want) && fin(have) && fin(bandBtc) && Math.abs(want - have) > bandBtc;
 }
 
-// ── 5. Протяжка до экспирации. ЕДИНСТВЕННЫЙ выход - экспирация: ни тейка, ни стопа, ни падения
-// воли, ни тайм-стопа. Возвращает { exitVal, exitIndex, hedgePnl, hedgeFee, funding, rehedges,
-// turnoverBtc, lastSpot } либо null, если цена не вышла хотя бы на одном шаге (см. шапку).
+// ── 5. Протяжка до экспирации. Выход БОЕВОЙ схемы один - экспирация: ни тейка, ни стопа, ни
+// падения воли, ни тайм-стопа. Досрочный выход существует ТОЛЬКО как замеряемая опция (`stopAt`,
+// см. раздел 6) и по умолчанию выключен: без этого колбэка цикл ниже исполняется ровно как
+// прежде. Возвращает { exitVal, exitIndex, hedgePnl, hedgeFee, funding, rehedges, turnoverBtc,
+// lastSpot } плюс поля стопа, либо null, если цена не вышла хотя бы на одном шаге (см. шапку).
 // `turnoverBtc` - суммарный ОБОРОТ хеджа (вход плюс все поправки, без закрытия перпа в экспирацию):
 // число перекладок само по себе ничего не говорит о том, сколько через них прошло.
 //   count       - сколько шагов доступно ПОСЛЕ входа, k = 0..count−1;
@@ -158,7 +171,7 @@ export function shouldRehedge({ want, have, bandBtc } = {}) {
 //                 внутрисделочный путь пришлось бы восстанавливать второй реализацией этой же
 //                 протяжки. Наблюдатель только читает; без него поведение прежнее до бита.
 export function walkSellTrade({
-  count, tsAt, spotAt, priceAt, fundRateAt, expiryMs, entry, entryTsMs, entrySpot, onStep,
+  count, tsAt, spotAt, priceAt, fundRateAt, expiryMs, entry, entryTsMs, entrySpot, onStep, stopAt,
   cfg = SELLHEDGE_DEFAULTS,
 } = {}) {
   if (!Number.isInteger(count) || count <= 0 || !entry) return null;
@@ -172,6 +185,16 @@ export function walkSellTrade({
   let prevTs = entryTsMs;
   let exitIndex = -1;
   let exitVal = null;
+  // Состояние ДОСРОЧНОГО выхода. Без `stopAt` не меняется вовсе: scale остаётся 1, накопители
+  // нулями, и возвращаемая структура несёт optLegOverride === null, то есть settleSellTrade
+  // считает старой формулой. `scale` это доля позиции, ещё живая на шаге (1 или 0.5 после
+  // урезания); `optRealized` - уже зафиксированная часть опционной ноги на 1.0 контракта.
+  let scale = 1;
+  let optRealized = 0;
+  let stopCost = 0;
+  let stopped = false;
+  let stopIndex = -1;
+  let stopCount = 0;
 
   for (let k = 0; k < count; k++) {
     const S = spotAt(k);
@@ -189,7 +212,36 @@ export function walkSellTrade({
       exitVal = p.markUsd;
       break;
     }
-    const want = wantHedge(p.delta ?? 0);
+    // ДОСРОЧНЫЙ ВЫХОД. Экспирация проверена ВЫШЕ и имеет приоритет: на экспирационном шаге стоп
+    // уже не спрашивается, иначе правило «успевало» бы выйти из сделки, которая и так завершена.
+    // Вердикт даёт вызывающий (счёт и цена выхода живут у него), протяжка исполняет механику.
+    if (stopAt) {
+      const act = stopAt({ k, ts, S, mark: p.markUsd, delta: p.delta ?? null, qPerp, hedgePnl, funding, hedgeFee, scale });
+      if (act && act.action) {
+        stopCount += 1;
+        if (stopIndex < 0) stopIndex = k;
+        if (act.action === "restore") {
+          // Возврат к полному размеру: недостающая доля ПРОДАЁТСЯ заново по марку ЭТОГО шага,
+          // а не по премии входа, поэтому поправка равна add·(марк − премия входа).
+          const add = 1 - scale;
+          if (add > 0) {
+            optRealized += add * (p.markUsd - entry.premSold);
+            stopCost += add * (act.costUsd ?? 0);
+            scale += add;
+          }
+        } else if (act.action === "exit" || act.action === "halve") {
+          const cut = act.action === "halve" ? scale * 0.5 : scale;
+          optRealized += cut * (entry.premSold - p.markUsd);
+          stopCost += cut * (act.costUsd ?? 0);
+          scale -= cut;
+          stopped = true;
+          if (scale <= 0) { exitVal = p.markUsd; break; }
+        }
+      }
+    }
+    // Умножение на scale выписано ветвью НАМЕРЕННО: при выключенном стопе обязано исполняться
+    // ровно прежнее выражение, иначе побайтовая сверка пятилетних книг перестаёт быть проверкой.
+    const want = scale === 1 ? wantHedge(p.delta ?? 0) : wantHedge(p.delta ?? 0) * scale;
     if (shouldRehedge({ want, have: qPerp, bandBtc: cfg.bandBtc })) {
       hedgeFee += Math.abs(want - qPerp) * S * cfg.perpFee;
       turnoverBtc += Math.abs(want - qPerp);
@@ -198,16 +250,25 @@ export function walkSellTrade({
     }
   }
   if (exitVal == null) return null;
-  hedgeFee += Math.abs(qPerp) * prevS * cfg.perpFee; // закрытие перпа в экспирацию
-  return { exitVal, exitIndex, hedgePnl, hedgeFee, funding, rehedges, turnoverBtc, lastSpot: prevS };
+  hedgeFee += Math.abs(qPerp) * prevS * cfg.perpFee; // закрытие перпа в экспирацию либо на стопе
+  return {
+    exitVal, exitIndex, hedgePnl, hedgeFee, funding, rehedges, turnoverBtc, lastSpot: prevS,
+    // Поля стопа. Без `stopAt` они тождественно нулевые/пустые, и settleSellTrade идёт прежней
+    // веткой. `optLegOverride` уже содержит и зафиксированную часть, и остаток до экспирации.
+    stopped, stopIndex, stopCount, scale,
+    stopCost: stopped ? stopCost : 0,
+    optLegOverride: stopped ? optRealized + scale * (entry.premSold - exitVal) : null,
+  };
 }
 
 // Итог одной сделки на ОДИН контракт 1.0 BTC. Поправка цепочки применяется к ИТОГУ, а не к статьям:
 // это множитель типа контракта (обратная цепочка против линейной), а не свойство какой-то статьи.
 export function settleSellTrade({ open, walk, cfg = SELLHEDGE_DEFAULTS } = {}) {
   if (!open || !walk) return null;
-  const optLeg = open.premSold - walk.exitVal;
-  const cost = open.optCost + walk.hedgeFee;
+  // Обе ветки выписаны явно: при выключенном стопе обязана исполняться прежняя арифметика в
+  // прежнем порядке слагаемых, иначе последний разряд поплывёт и побайтовая сверка книг умрёт.
+  const optLeg = walk.optLegOverride == null ? open.premSold - walk.exitVal : walk.optLegOverride;
+  const cost = walk.stopCost ? open.optCost + walk.hedgeFee + walk.stopCost : open.optCost + walk.hedgeFee;
   const pnl = (optLeg + walk.hedgePnl - cost - walk.funding) * cfg.chainAdj;
   return { pnl, optLeg, hedgeLeg: walk.hedgePnl, cost, fund: walk.funding };
 }
@@ -223,6 +284,160 @@ export function settleSellTrade({ open, walk, cfg = SELLHEDGE_DEFAULTS } = {}) {
 export function stepMtm({ premSold, optCost, step, cfg = SELLHEDGE_DEFAULTS } = {}) {
   if (!step || !fin(premSold) || !fin(optCost)) return null;
   return (premSold - step.mark + step.hedgePnl - (optCost + step.hedgeFee) - step.funding) * cfg.chainAdj;
+}
+
+// ── 6. ДОСРОЧНЫЙ ВЫХОД: ПРЕДИКАТ И ЗАТВОР.
+//
+// ЭТОГО В БОЕВОЙ СХЕМЕ НЕТ И ПО УМОЛЧАНИЮ НЕ БУДЕТ. Правило заведено под ЗАМЕР предложения
+// заказчика, предрегистрация `bot2-sl-предрегистрация-2026-08-28.md`: пороги, сетка и критерий
+// зачёта заморожены ДО первого прогона. Пока `cfg.stop` равен null, ни одна строка ниже не
+// исполняется, и книги остаются побайтово теми же.
+//
+// ПОЧЕМУ ПРЕДИКАТ ОТДЕЛЬНО ОТ ЗАТВОРА, А ЗАТВОР ОТДЕЛЬНО ОТ ПРОТЯЖКИ. Пять метрик делятся на две
+// группы: `premx`, `im`, `mny` считаются на ОДИН контракт и не зависят от размера позиции, а `eq`
+// и `mmu` зависят от счёта и от лотов. Протяжка про счёт не знает и знать не должна (она ведёт
+// один контракт), поэтому решение принимает ВЫЗЫВАЮЩИЙ, у которого есть и счёт, и запись, а
+// протяжка получает готовый вердикт колбэком - тем же приёмом, что и наблюдатель `onStep`.
+// Затвор (`makeStopGate`) держит гистерезис в ОДНОМ месте: иначе каждый из трёх вызывающих
+// написал бы свой, а это ровно тот класс дефекта, ради которого заведён этот модуль.
+//
+//   mtm1     - МтМ сделки на 1.0 контракта (stepMtm), в конвенции settleSellTrade;
+//   premSold - премия входа на контракт; imUsd - залог на контракт; mmUsd - поддерживающая
+//              маржа на контракт; qty - размер позиции в контрактах; equityUsd - счёт;
+//   spotUsd  - индекс на шаге; strikes - ноги структуры [{ type, strike }] (у пары обе).
+export function shouldStopOut({
+  metric, level, mtm1, premSold, imUsd, equityUsd, qty, mmUsd, spotUsd, strikes,
+} = {}) {
+  if (!metric || !fin(level)) return false;
+  switch (metric) {
+    // Стоп по P&L: убыток сделки достиг кратности проданной премии / доли залога / доли счёта.
+    case "premx": return fin(mtm1) && posNum(premSold) && mtm1 <= -level * premSold;
+    case "im": return fin(mtm1) && posNum(imUsd) && mtm1 <= -level * imUsd;
+    case "eq": return fin(mtm1) && posNum(qty) && posNum(equityUsd) && mtm1 * qty <= -level * equityUsd;
+    // Стоп по ЭКСПОЗИЦИИ: спот ушёл за страйк на `level`. Не зависит ни от размера, ни от
+    // переоценки; у пары срабатывает уход ЛЮБОЙ ноги в свою сторону.
+    case "mny": {
+      if (!posNum(spotUsd) || !Array.isArray(strikes) || !strikes.length) return false;
+      return strikes.some((leg) => posNum(leg?.strike) && (leg.type === "P"
+        ? spotUsd <= leg.strike * (1 - level)
+        : spotUsd >= leg.strike * (1 + level)));
+    }
+    // Стоп по РИСКУ, а не по убытку: утилизация поддерживающей маржи. Смотрит на способность
+    // счёта пережить СЛЕДУЮЩИЙ ход, а не на уже понесённый минус. Счёт ниже нуля означает, что
+    // биржа закрыла бы позицию сама, поэтому это безусловное срабатывание, а не деление на минус.
+    case "mmu": {
+      if (!posNum(mmUsd) || !posNum(qty) || !posNum(equityUsd) || !fin(mtm1)) return false;
+      const eq = equityUsd + mtm1 * qty;
+      return eq <= 0 || (mmUsd * qty) / eq >= level;
+    }
+    default: return false;
+  }
+}
+
+// Затвор гистерезиса. Принимает вердикт предиката на шаге и возвращает ДЕЙСТВИЕ либо null:
+//   "exit"    - закрыть сделку целиком;
+//   "halve"   - урезать позицию вдвое (де-леверидж, тета остаётся работать);
+//   "restore" - вернуть полный размер (только при hyst "rearm", после ухода метрики за гистерезис);
+//   "none"    - только счётчик срабатываний, механики нет (частотный контроль фазы 1ч).
+//   breached  - предикат на этом шаге; cleared - метрика ушла ниже порога возврата (по умолчанию
+//               это просто отсутствие пробоя; для 20% гистерезиса вызывающий считает свой).
+// hyst: "oneshot" срабатывает один раз за сделку; "band" требует ДВУХ шагов подряд за порогом
+// (защита от одиночного выброса часовой сетки); "rearm" перевооружается после возврата.
+// fill: "next" откладывает действие на следующий шаг (выход по марку СЛЕДУЮЩЕГО часа) - стресс
+// исполнения из предрегистрации, п. 4(в).
+// Разбор спецификации правила. Живёт здесь, а не в скриптах, чтобы эталон и гарнир принимали
+// РОВНО один набор метрик и значений осей: разошедшийся разбор дал бы разные сетки под одним
+// именем. Возвращает { stop } либо { error } с готовым текстом; печать ошибки за вызывающим.
+export function parseStopSpec(spec, opts = {}) {
+  if (spec == null) return { stop: null };
+  const METRICS = ["premx", "im", "eq", "mny", "mmu"];
+  const [metric, lv] = String(spec).split(":");
+  const level = Number(lv);
+  if (!METRICS.includes(metric) || !fin(level)) {
+    return { error: `ожидается «метрика:уровень», метрика из ${METRICS.join("|")}, получено «${spec}»` };
+  }
+  const ALLOWED = { action: ["exit", "halve", "none"], hyst: ["oneshot", "band", "rearm"], fill: ["same", "next"] };
+  const DEF = { action: "exit", hyst: "band", fill: "same" };
+  const out = { metric, level };
+  for (const k of ["action", "hyst", "fill"]) {
+    const v = opts[k] ?? DEF[k];
+    if (!ALLOWED[k].includes(v)) return { error: `${k}: ${ALLOWED[k].join("|")}, получено «${v}»` };
+    out[k] = v;
+  }
+  return { stop: out };
+}
+
+// Вторая половина круга издержек по цене ВЫХОДА, на 1.0 контракта. ЭТО НЕ ПРИДИРКА К ТОЧНОСТИ:
+// комиссия стороны равна min(0.0003·индекс, 0.125·марк), поэтому у выросшего в разы марка она
+// считается по другой ветке, чем на входе. Наблюдённый спред берётся, когда он в записи ЕСТЬ;
+// замер 2026-08-28 показал, что при |дельте| выше 0.8 (а стоп уводит сделку именно туда) bid/ask
+// в записи отсутствуют в 100% строк, поэтому фолбэк на долю спреда ВХОДА это не редкий случай, а
+// основной режим, и он обязан быть виден в отчёте как допущение.
+export function stopCostUsd({
+  markUsd, indexPrice, bidUsd, askUsd, entryHalfSpreadPct, mult = 1, cfg = SELLHEDGE_DEFAULTS,
+} = {}) {
+  if (!posNum(markUsd) || !posNum(indexPrice)) return 0;
+  const half = fin(bidUsd) && fin(askUsd) && askUsd >= bidUsd
+    ? ((askUsd - bidUsd) / 2) * cfg.spreadScale
+    : (fin(entryHalfSpreadPct) ? (entryHalfSpreadPct / 100) * markUsd : 0);
+  const c = computeTradeCosts({ markUsd, bidUsd: Math.max(0, markUsd - half), askUsd: markUsd + half,
+    indexPrice, execModel: cfg.execModel });
+  return c ? (c.roundTripCostPct / 100) * markUsd / 2 * mult : 0;
+}
+
+// Готовый колбэк `stopAt` для протяжки: собирает аргументы предиката из шага и прогоняет их через
+// затвор. Живёт здесь, а не у вызывающих, по той же причине, по которой здесь живёт само правило:
+// эталон и измерительный гарнир обязаны судить сделку ОДНИМ кодом, иначе сетка померит разницу
+// двух снабжений вместо разницы порогов.
+//   marginAt(ctx) - поддерживающая маржа на 1.0 контракта на шаге (зовётся только для метрики mmu);
+//   costAt(ctx)   - вторая половина круга издержек по цене ВЫХОДА, на 1.0 контракта.
+// Счёт в аргументы не входит намеренно: при размере, пропорциональном счёту, он сокращается из
+// обеих «размер-зависимых» метрик (qty = deployPct/im на $1 счёта), и правило остаётся свойством
+// сделки, а не портфеля.
+export function makeStopAt({
+  stop, premSold, optCost, imUsd, deployPct, strikes, marginAt, costAt, cfg = SELLHEDGE_DEFAULTS,
+} = {}) {
+  const gate = makeStopGate(stop);
+  if (!gate || !posNum(imUsd) || !posNum(deployPct)) return undefined;
+  const qty = deployPct / imUsd;
+  return (ctx) => {
+    const mtm1 = stepMtm({ premSold, optCost, step: ctx, cfg });
+    if (!fin(mtm1)) return null;
+    const args = { metric: stop.metric, level: stop.level, mtm1, premSold, imUsd, equityUsd: 1, qty,
+      spotUsd: ctx.S, strikes, mmUsd: stop.metric === "mmu" && marginAt ? marginAt(ctx) : null };
+    // «Вернулась» для перевооружения это уход метрики на 20% ниже порога, а не просто отсутствие
+    // пробоя: иначе правило дребезжало бы на часовой сетке вокруг самого порога.
+    const action = gate(shouldStopOut(args), !shouldStopOut({ ...args, level: stop.level * 0.8 }));
+    return action ? { action, costUsd: costAt ? costAt(ctx) : 0 } : null;
+  };
+}
+
+export function makeStopGate(stop = null) {
+  if (!stop || !stop.metric || !stop.action) return null;
+  const hyst = stop.hyst || "oneshot";
+  const fill = stop.fill || "same";
+  let run = 0;
+  let fired = false;
+  let waiting = false;
+  let reduced = false;
+  let pending = null;
+  return function gate(breached, cleared = !breached) {
+    if (pending) { const act = pending; pending = null; return act; }
+    if (hyst === "rearm") {
+      if (waiting) {
+        if (!cleared) return null;
+        waiting = false;
+        if (reduced && stop.action === "halve") { reduced = false; return "restore"; }
+        return null;
+      }
+    } else if (fired) return null;
+    run = breached ? run + 1 : 0;
+    if (run < (hyst === "band" ? 2 : 1)) return null;
+    run = 0;
+    if (hyst === "rearm") { waiting = true; reduced = stop.action === "halve"; } else fired = true;
+    if (fill === "next" && stop.action !== "none") { pending = stop.action; return null; }
+    return stop.action;
+  };
 }
 
 // ── 7. НАСТРОЙКИ ДВИЖКА, ПРИ КОТОРЫХ СХЕМА ИЗМЕРЕНА ────────────────────────────────────────────

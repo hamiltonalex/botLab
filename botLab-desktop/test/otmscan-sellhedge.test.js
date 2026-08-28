@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import {
   SELLHEDGE_DEFAULTS, pickSellLeg, openSellTrade, halfSpreadUsd, wantHedge, shouldRehedge,
   walkSellTrade, settleSellTrade, lotsByMargin, usdDeltaOfInversePerp, sellhedgeEngineCfg, shouldOpenNext,
-  rankSellLegs, shouldOpenDegraded, sellerZone, stepMtm,
+  rankSellLegs, shouldOpenDegraded, sellerZone, stepMtm, shouldStopOut, makeStopGate, makeStopAt,
 } from "../src/engine/otmscan/sellhedge.js";
 import { markPerp } from "../src/engine/btcopt/pnl.js";
 import { effectiveDeadband } from "../src/engine/btcopt/hedge.js";
@@ -383,4 +383,111 @@ test("stepMtm: конвенция settleSellTrade; на экспирационн
   near(stepMtm({ premSold: open.premSold, optCost: open.optCost, step: seen[0], cfg: { ...C, chainAdj: 0.69 } }),
     stepMtm({ premSold: open.premSold, optCost: open.optCost, step: seen[0], cfg: C }) * 0.69, 1e-12);
   assert.equal(stepMtm({ premSold: 3000, optCost: 60, step: null, cfg: C }), null, "нет шага - нет оценки");
+});
+
+// ── ДОСРОЧНЫЙ ВЫХОД (замер предложения заказчика, предрегистрация 2026-08-28).
+// Главный инвариант этого блока: при выключенном правиле протяжка обязана вести себя ровно как
+// раньше, и это проверяется не рассуждением, а полями возврата.
+const walkStop = ({ steps = 10, mark = () => 100, stopAt, premSold = 300, expiryAt = steps - 1 } = {}) => {
+  const T0 = Date.parse("2026-01-01T00:00:00Z");
+  return walkSellTrade({
+    count: steps,
+    tsAt: (k) => T0 + (k + 1) * 3600000,
+    spotAt: () => 100000,
+    priceAt: (k) => ({ markUsd: mark(k), delta: 0.45 }),
+    fundRateAt: () => 0,
+    expiryMs: T0 + (expiryAt + 1) * 3600000,
+    entry: { qPerp: 0.45, hedgeFee: 0, premSold },
+    entryTsMs: T0, entrySpot: 100000, cfg: C,
+    stopAt,
+  });
+};
+
+test("стоп выключен: протяжка не несёт ни поправки опционной ноги, ни издержек выхода", () => {
+  const r = walkStop({});
+  assert.equal(r.stopped, false);
+  assert.equal(r.optLegOverride, null, "без стопа итог обязан считаться прежней формулой");
+  assert.equal(r.stopCost, 0);
+  assert.equal(r.exitIndex, 9);
+});
+
+test("предикат: каждая из пяти метрик отвечает по своей величине", () => {
+  const base = { mtm1: -100, premSold: 200, imUsd: 500, equityUsd: 1, qty: 0.002, spotUsd: 100000,
+    strikes: [{ type: "C", strike: 100000 }] };
+  assert.equal(shouldStopOut({ ...base, metric: "premx", level: 0.5 }), true, "убыток = 0.5 премии");
+  assert.equal(shouldStopOut({ ...base, metric: "premx", level: 0.6 }), false);
+  assert.equal(shouldStopOut({ ...base, metric: "im", level: 0.2 }), true, "убыток = 0.2 залога");
+  assert.equal(shouldStopOut({ ...base, metric: "im", level: 0.3 }), false);
+  assert.equal(shouldStopOut({ ...base, metric: "eq", level: 0.2 }), true, "0.2 счёта при qty 0.002");
+  assert.equal(shouldStopOut({ ...base, metric: "eq", level: 0.3 }), false);
+  // Экспозиция: спот РОВНО на страйке это ещё не пробой при уровне 0.03.
+  assert.equal(shouldStopOut({ ...base, metric: "mny", level: 0.03 }), false);
+  assert.equal(shouldStopOut({ ...base, metric: "mny", level: 0, spotUsd: 100001 }), true);
+  // Пут срабатывает вниз тем же кодом, а не зеркальной веткой у вызывающего.
+  assert.equal(shouldStopOut({ ...base, metric: "mny", level: 0.05, spotUsd: 94000,
+    strikes: [{ type: "P", strike: 100000 }] }), true);
+  // Утилизация: mm·qty / (счёт + mtm·qty) = 400·0.002 / (1 − 0.2) = 1.0
+  assert.equal(shouldStopOut({ ...base, metric: "mmu", level: 0.99, mmUsd: 400 }), true);
+  assert.equal(shouldStopOut({ ...base, metric: "mmu", level: 1.01, mmUsd: 400 }), false);
+  assert.equal(shouldStopOut({ metric: "premx", level: 1 }), false, "без величин - молчание, не догадка");
+});
+
+test("затвор: oneshot один раз за сделку, band требует двух шагов подряд", () => {
+  const one = makeStopGate({ metric: "premx", level: 1, action: "exit", hyst: "oneshot" });
+  assert.equal(one(true), "exit");
+  assert.equal(one(true), null, "второй раз за сделку не срабатывает");
+  const band = makeStopGate({ metric: "premx", level: 1, action: "exit", hyst: "band" });
+  assert.equal(band(true), null, "одиночный выброс часовой сетки не считается");
+  assert.equal(band(false), null);
+  assert.equal(band(true), null, "счётчик подряд идущих сброшен возвратом");
+  assert.equal(band(true), "exit");
+});
+
+test("затвор: fill next откладывает действие ровно на один шаг", () => {
+  const g = makeStopGate({ metric: "premx", level: 1, action: "exit", hyst: "oneshot", fill: "next" });
+  assert.equal(g(true), null, "на шаге пробоя ещё не выходим");
+  assert.equal(g(false), "exit", "выходим по цене СЛЕДУЮЩЕГО шага");
+});
+
+test("затвор: rearm возвращает размер после ухода метрики и снова вооружается", () => {
+  const g = makeStopGate({ metric: "premx", level: 1, action: "halve", hyst: "rearm" });
+  assert.equal(g(true), "halve");
+  assert.equal(g(true), null, "пока метрика за порогом, ничего не делаем");
+  assert.equal(g(false, true), "restore", "метрика вернулась - восстанавливаем размер");
+  assert.equal(g(true), "halve", "правило перевооружено");
+});
+
+test("протяжка: выход ровно на первом шаге, где предикат истинен", () => {
+  const r = walkStop({ mark: (k) => (k === 2 ? 500 : 100),
+    stopAt: (ctx) => (ctx.k === 2 ? { action: "exit", costUsd: 10 } : null) });
+  assert.equal(r.stopped, true);
+  assert.equal(r.exitIndex, 2, "вышли на шаге пробоя, а не в экспирацию");
+  assert.equal(r.exitVal, 500);
+  assert.equal(r.stopCost, 10);
+  assert.equal(r.optLegOverride, 300 - 500, "опционная нога зафиксирована по марку выхода");
+});
+
+test("протяжка: урезание вдвое оставляет половину до экспирации и её тету", () => {
+  const r = walkStop({ mark: (k) => (k === 2 ? 500 : 100),
+    stopAt: (ctx) => (ctx.k === 2 ? { action: "halve", costUsd: 10 } : null) });
+  assert.equal(r.stopped, true);
+  assert.equal(r.exitIndex, 9, "половина позиции досидела до экспирации");
+  assert.equal(r.scale, 0.5);
+  assert.equal(r.stopCost, 5, "издержки выхода платятся с ПОЛОВИНЫ");
+  // 0.5·(300 − 500) зафиксировано на стопе плюс 0.5·(300 − 100) досижено до экспирации.
+  near(r.optLegOverride, 0.5 * (300 - 500) + 0.5 * (300 - 100), 1e-9);
+});
+
+test("расчёт сделки: со стопом издержки выхода добавляются РОВНО один раз", () => {
+  const walk = walkStop({ mark: (k) => (k === 2 ? 500 : 100),
+    stopAt: (ctx) => (ctx.k === 2 ? { action: "exit", costUsd: 10 } : null) });
+  const open = { premSold: 300, optCost: 7, imUsd: 1000, qPerp: 0.45, hedgeFee: 0 };
+  const s = settleSellTrade({ open, walk, cfg: C });
+  near(s.cost, 7 + walk.hedgeFee + 10, 1e-9);
+  near(s.optLeg, -200, 1e-9);
+});
+
+test("склейка: makeStopAt не строится без правила и без залога", () => {
+  assert.equal(makeStopAt({ stop: null, imUsd: 100, deployPct: 0.7 }), undefined);
+  assert.equal(makeStopAt({ stop: { metric: "premx", level: 1, action: "exit" }, deployPct: 0.7 }), undefined);
 });

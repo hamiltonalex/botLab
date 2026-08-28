@@ -37,7 +37,7 @@ import { computeTradeCosts } from "../src/engine/otmscan/economics.js";
 import { legMargin, lotsByStressMargin } from "../src/engine/btcopt/margin.js";
 import {
   SELLHEDGE_DEFAULTS, pickSellLeg, openSellTrade, halfSpreadUsd, walkSellTrade, settleSellTrade,
-  lotsByMargin, stepMtm, sellerZone,
+  lotsByMargin, stepMtm, sellerZone, parseStopSpec, makeStopAt, stopCostUsd,
 } from "../src/engine/otmscan/sellhedge.js";
 import { pickStranglePair, openStrangleTrade, stranglePrice } from "../src/engine/otmscan/sellstrangle.js";
 
@@ -91,6 +91,42 @@ if (EXEC !== "maker-mid" && EXEC !== "taker-cross") { console.error(`--exec: mak
 const SPREAD = argOf("--spread-scale") == null ? null : Number(argOf("--spread-scale"));
 const LOT = 0.01;
 
+// ── ДОСРОЧНЫЙ ВЫХОД: замер по предрегистрации 2026-08-28. Разбор спецификации общий с эталоном
+// (parseStopSpec в sellhedge.js), поэтому обе стороны принимают ровно один набор осей.
+const STOP = (() => {
+  const { stop, error } = parseStopSpec(argOf("--stop"), {
+    action: argOf("--stop-action"), hyst: argOf("--stop-hyst"), fill: argOf("--stop-fill") });
+  if (error) { console.error(`--stop: ${error}`); process.exit(1); }
+  return stop;
+})();
+const HAS_STOP = STOP != null;
+const STOP_REENTRY = argOf("--stop-reentry", "expiry");
+if (!["now", "expiry"].includes(STOP_REENTRY)) { console.error("--stop-reentry: now|expiry"); process.exit(1); }
+const STOP_COST_MULT = Number(argOf("--stop-cost-mult", "1"));
+if (!(STOP_COST_MULT > 0)) { console.error("--stop-cost-mult: положительное число"); process.exit(1); }
+// ── НУЛЕВОЙ КОНТРОЛЬ (предрегистрация, п. 4ж). Стоп срабатывает СЛУЧАЙНО, с той же частотой, что
+// у настоящего правила, но без всякой связи с рынком. Победитель обязан быть выше 95-го процентиля
+// этого распределения, иначе порог зачёта остаётся числом без масштаба.
+// Генератор детерминированный и засеян парой (сид, индекс входа сделки): порядок вычисления клеток
+// на результат не влияет, повтор прогона даёт то же число.
+const STOP_NULL = argOf("--stop-null") == null ? null : Number(argOf("--stop-null"));
+const STOP_NULL_RATE = Number(argOf("--stop-null-rate", "0"));
+if (STOP_NULL != null && !(STOP_NULL_RATE > 0 && STOP_NULL_RATE <= 1)) {
+  console.error("--stop-null требует --stop-null-rate в (0,1]: доля сделок со срабатыванием у настоящего правила");
+  process.exit(1);
+}
+function rng32(a, b) { // xorshift от пары целых: чистая функция, состояния нет
+  let x = (a * 0x9e3779b1 + b * 0x85ebca6b) >>> 0;
+  x ^= x << 13; x >>>= 0; x ^= x >> 17; x ^= x << 5; x >>>= 0;
+  return x / 4294967296;
+}
+
+// Подпись правила для ключа кэша цепочек. БЕЗ НЕЁ все клетки новой оси схлопнулись бы в одну
+// посчитанную цепочку и напечатались одинаковыми числами без единой ошибки.
+const STOP_SIG = HAS_STOP
+  ? `${STOP.metric}@${STOP.level}/${STOP.action}/${STOP.hyst}/${STOP.fill}/${STOP_REENTRY}/x${STOP_COST_MULT}`
+  : "off";
+
 // ── запись: загрузчик слово в слово тот же, что у эталона (слой снабжения общий).
 function load(dir) {
   const D = readdirSync(dir).some((f) => f === "scan-records") ? join(dir, "scan-records") : dir;
@@ -127,6 +163,26 @@ function load(dir) {
   return { snaps, times, spot, rv7, byExp, stats: makePriceStats() };
 }
 const R = load(DIR);
+// ── ОБРЕЗКА ЗАПИСИ ПО ДАТАМ. Нужна двум подтверждениям предрегистрации: раздельному зачёту по
+// половинам записи (п. 4г) и холдауту последних 12 месяцев (п. 4е). Режутся ТОЛЬКО индексные
+// массивы; snaps и byExp остаются как есть, потому что доступ к ним идёт исключительно через
+// times. Сделка, чья экспирация выпала за правый край, не досчитывается и попадает в «цена не
+// вышла» - это верно: незавершённую сделку засчитывать нельзя.
+const parseDay = (s, what) => {
+  if (s == null) return null;
+  const t = Date.parse(`${s}T00:00:00Z`);
+  if (!fin(t)) { console.error(`${what}: ожидается дата вида 2025-08-12, получено «${s}»`); process.exit(1); }
+  return t;
+};
+const FROM = parseDay(argOf("--from"), "--from");
+const TO = parseDay(argOf("--to"), "--to");
+if (FROM != null || TO != null) {
+  const keep = [];
+  R.times.forEach((t, i) => { if ((FROM == null || t >= FROM) && (TO == null || t <= TO)) keep.push(i); });
+  R.times = keep.map((i) => R.times[i]);
+  R.spot = keep.map((i) => R.spot[i]);
+  R.rv7 = keep.map((i) => R.rv7[i]);
+}
 const N = R.times.length;
 if (!N) { console.error(`пусто: ${DIR}`); process.exit(1); }
 
@@ -158,6 +214,21 @@ const cfgOf = (over) => ({ ...SELLHEDGE_DEFAULTS, lot: LOT, execModel: EXEC, per
   ...(SPREAD == null ? {} : { spreadScale: SPREAD }), ...over });
 const mtype = (s) => (s === "P" ? "put" : "call");
 
+// Затвор нулевого контроля: та же частота срабатываний, момент внутри сделки распределён равномерно,
+// связи с рынком нет никакой. Сделка «выбирается» и момент «бросается» детерминированно по паре
+// (сид, индекс входа), поэтому прогон воспроизводим и не зависит от порядка вычисления клеток.
+function makeNullStopAt(entryIdx, t0, t1, costAt) {
+  if (STOP_NULL == null) return undefined;
+  if (!(rng32(STOP_NULL, entryIdx) < STOP_NULL_RATE) || !(t1 > t0)) return () => null;
+  const u = rng32(STOP_NULL + 7919, entryIdx);
+  let done = false;
+  return (ctx) => {
+    if (done || (ctx.ts - t0) / (t1 - t0) < u) return null;
+    done = true;
+    return { action: "exit", costUsd: costAt(ctx) };
+  };
+}
+
 // ── одна сделка одной ноги, на 1.0 контракта, шаги СОБИРАЮТСЯ ВСЕГДА (наблюдатель walkSellTrade
 // доказан тестом «не меняет итог ни на бит»). Пошаговые массивы mtm1/mm1 считаются здесь ОДИН РАЗ:
 // калибровка гоняет только счёт, а не цепочку.
@@ -174,20 +245,45 @@ function runTradeLeg(i, leg, cfg) {
   const meta = { name: leg.n, expiryMs: leg.e, strikeUsd: leg.k, type: leg.s };
   const base = i + 1;
   const steps = [];
+  let lastRow = null; // строка поверхности шага: ради bid/ask ВЫХОДА, когда они в записи есть
+  const costAt = (ctx) => stopCostUsd({ markUsd: ctx.mark, indexPrice: ctx.S, bidUsd: lastRow?.b,
+    askUsd: lastRow?.a, entryHalfSpreadPct: costs.halfSpreadPct, mult: cfg.stopCostMult ?? 1, cfg });
+  const stopAt = !cfg.stop ? undefined : (STOP_NULL != null
+    ? makeNullStopAt(i, R.times[i], leg.e, costAt)
+    : makeStopAt({
+      stop: cfg.stop, premSold: open.premSold, optCost: open.optCost, imUsd: im,
+      deployPct: cfg.stopDeploy, strikes: [{ type: leg.s, strike: leg.k }],
+      marginAt: (ctx) => legMargin({ type: mtype(leg.s), side: "short", strike: leg.k,
+        mark: ctx.mark, underlying: ctx.S, index: ctx.S, amount: 1 }).mm,
+      costAt, cfg,
+    }));
   const walk = walkSellTrade({
     count: N - base,
     tsAt: (k) => R.times[base + k],
     spotAt: (k) => R.spot[base + k],
-    priceAt: (k) => countPrice(R.stats, priceAt({ snapshot: R.snaps.get(R.times[base + k]),
-      expiryRows: R.byExp.get(R.times[base + k])?.get(leg.e), meta, tsMs: R.times[base + k],
-      spotAtExpiry: spotBefore(leg.e) })),
+    priceAt: (k) => {
+      if (cfg.stop) lastRow = R.snaps.get(R.times[base + k])?.get(leg.n) ?? null;
+      return countPrice(R.stats, priceAt({ snapshot: R.snaps.get(R.times[base + k]),
+        expiryRows: R.byExp.get(R.times[base + k])?.get(leg.e), meta, tsMs: R.times[base + k],
+        spotAtExpiry: spotBefore(leg.e) }));
+    },
     fundRateAt: fundRate,
     expiryMs: leg.e, entry: open, entryTsMs: R.times[i], entrySpot: S0, cfg,
     onStep: (s) => steps.push(s),
+    stopAt,
   });
   if (!walk) return null;
   const s = settleSellTrade({ open, walk, cfg });
   const endIdx = base + walk.exitIndex;
+  // Шаг ИСХОДНОЙ экспирации. Идти надо не только по времени, но и до первого ОЦЕНИВАЕМОГО шага:
+  // базовый endIdx это шаг, на котором протяжка получила цену, а снимок без спота она пропускает
+  // целиком. На этой записи обе версии совпали на всех срабатываниях, но на записи с дырами
+  // перевход оказался бы на час-другой раньше базового, то есть у стопа появилась бы фора.
+  let expiryEndIdx = endIdx;
+  if (walk.stopped) {
+    while (expiryEndIdx < N - 1 && R.times[expiryEndIdx] < leg.e) expiryEndIdx += 1;
+    while (expiryEndIdx < N - 1 && !(R.spot[expiryEndIdx] > 0)) expiryEndIdx += 1;
+  }
   const mtm1s = steps.map((st) => stepMtm({ premSold: open.premSold, optCost: open.optCost, step: st, cfg }));
   const mm1s = steps.map((st) => legMargin({ type: mtype(leg.s), side: "short", strike: leg.k,
     mark: st.mark, underlying: st.S, index: st.S, amount: 1 }).mm);
@@ -197,7 +293,8 @@ function runTradeLeg(i, leg, cfg) {
     optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, fund: s.fund, turnover: walk.turnoverBtc,
     zone: sellerZone({ ivPct: leg.iv, rv7dPct: R.rv7[i] }),
     spot0: S0, legsAtEntry: [{ type: mtype(leg.s), strike: leg.k, mark: leg.m }],
-    reh: walk.rehedges, stepTs: steps.map((st) => st.ts), mtm1s, mm1s };
+    reh: walk.rehedges, stepTs: steps.map((st) => st.ts), mtm1s, mm1s,
+    stopped: walk.stopped === true, stopCount: walk.stopCount ?? 0, expiryEndIdx };
 }
 
 // ── одна сделка стрэнгла: пара выбрана движком, протяжка - тот же walkSellTrade с СОСТАВНОЙ ценой.
@@ -222,6 +319,32 @@ function runTradeStrangle(i, pair, cfg) {
   const base = i + 1;
   const steps = [];
   const marks = []; // марки ног шага, 1:1 с steps: priceAt зовётся ровно раз на оценённый шаг
+  let rowC = null, rowP = null; // строки ног шага: составная котировка выхода это сумма ног
+  const premPairEntry = pair.call.m + pair.put.m;
+  const pairCostAt = (ctx) => stopCostUsd({ markUsd: ctx.mark, indexPrice: ctx.S,
+    bidUsd: rowC && rowP && fin(rowC.b) && fin(rowP.b) ? rowC.b + rowP.b : undefined,
+    askUsd: rowC && rowP && fin(rowC.a) && fin(rowP.a) ? rowC.a + rowP.a : undefined,
+    entryHalfSpreadPct: (costsCall.halfSpreadPct * pair.call.m + costsPut.halfSpreadPct * pair.put.m) / premPairEntry,
+    mult: cfg.stopCostMult ?? 1, cfg });
+  const stopAt = !cfg.stop ? undefined : (STOP_NULL != null
+    ? makeNullStopAt(i, R.times[i], pair.call.e, pairCostAt)
+    : makeStopAt({
+    stop: cfg.stop, premSold: open.premSold, optCost: open.optCost, imUsd: imC + imP,
+    deployPct: cfg.stopDeploy,
+    // У ПАРЫ правило определено НА ПАРЕ, а не на ноге: уход любой ноги за свой страйк считается
+    // пробоем, маржа складывается по обеим. Иначе внешняя проверка померила бы другое правило.
+    strikes: [{ type: "C", strike: pair.call.k }, { type: "P", strike: pair.put.k }],
+    marginAt: (ctx) => {
+      const m = marks[marks.length - 1];
+      if (!m) return null;
+      return legMargin({ type: "call", side: "short", strike: pair.call.k, mark: m.c,
+        underlying: ctx.S, index: ctx.S, amount: 1 }).mm
+        + legMargin({ type: "put", side: "short", strike: pair.put.k, mark: m.p,
+          underlying: ctx.S, index: ctx.S, amount: 1 }).mm;
+    },
+    costAt: pairCostAt,
+    cfg,
+  }));
   const walk = walkSellTrade({
     count: N - base,
     tsAt: (k) => R.times[base + k],
@@ -230,6 +353,7 @@ function runTradeStrangle(i, pair, cfg) {
       const ts = R.times[base + k];
       const snap = R.snaps.get(ts);
       const er = R.byExp.get(ts);
+      if (cfg.stop) { rowC = snap?.get(pair.call.n) ?? null; rowP = snap?.get(pair.put.n) ?? null; }
       const pc = countPrice(R.stats, priceAt({ snapshot: snap, expiryRows: er?.get(pair.call.e),
         meta: metaC, tsMs: ts, spotAtExpiry: spotBefore(pair.call.e) }));
       const pp = countPrice(R.stats, priceAt({ snapshot: snap, expiryRows: er?.get(pair.put.e),
@@ -241,11 +365,17 @@ function runTradeStrangle(i, pair, cfg) {
     fundRateAt: fundRate,
     expiryMs: pair.call.e, entry: open, entryTsMs: R.times[i], entrySpot: S0, cfg,
     onStep: (s) => steps.push(s),
+    stopAt,
   });
   if (!walk) return null;
   if (steps.length !== marks.length) throw new Error("рассинхрон шагов и марков ног стрэнгла");
   const s = settleSellTrade({ open, walk, cfg });
   const endIdx = base + walk.exitIndex;
+  let expiryEndIdx = endIdx;
+  if (walk.stopped) {
+    while (expiryEndIdx < N - 1 && R.times[expiryEndIdx] < pair.call.e) expiryEndIdx += 1;
+    while (expiryEndIdx < N - 1 && !(R.spot[expiryEndIdx] > 0)) expiryEndIdx += 1;
+  }
   const mtm1s = steps.map((st) => stepMtm({ premSold: open.premSold, optCost: open.optCost, step: st, cfg }));
   const mm1s = steps.map((st, j) => legMargin({ type: "call", side: "short", strike: pair.call.k,
     mark: marks[j].c, underlying: st.S, index: st.S, amount: 1 }).mm
@@ -263,7 +393,8 @@ function runTradeStrangle(i, pair, cfg) {
     spot0: S0,
     legsAtEntry: [{ type: "call", strike: pair.call.k, mark: pair.call.m },
       { type: "put", strike: pair.put.k, mark: pair.put.m }],
-    reh: walk.rehedges, stepTs: steps.map((st) => st.ts), mtm1s, mm1s };
+    reh: walk.rehedges, stepTs: steps.map((st) => st.ts), mtm1s, mm1s,
+    stopped: walk.stopped === true, stopCount: walk.stopCount ?? 0, expiryEndIdx };
 }
 
 // ── цепочка: закрылась сделка - со следующего снимка ищем новую (i = endIdx + 1, как у эталона).
@@ -288,7 +419,9 @@ function chain(cfg, kind = "leg") {
     }
     if (!t) { i += 1; continue; }
     rows.push(t);
-    i = t.endIdx + 1;
+    // Перевход: без стопа прежняя строка. После досрочного выхода головной режим ждёт ИСХОДНУЮ
+    // экспирацию, иначе выигрыш правила окажется выигрышем скважности записи.
+    i = (t.stopped && STOP_REENTRY === "expiry" ? t.expiryEndIdx : t.endIdx) + 1;
   }
   return { rows, priceFail, noPut };
 }
@@ -307,8 +440,12 @@ function lotsOf(sizing, t, acc, cfg) {
 }
 
 // ── счёт целыми лотами по канону раздела 3а эталона + тиковая просадка по пути equity.
-function simAccount(rows, sizing, cfg) {
+// `withTails` собирает распределение утилизации по всем часам пути. Собирается ТОЛЬКО для итогового
+// чтения, а не в калибровке: та зовёт эту функцию до сорока раз на вариант, и массив на 44 тысячи
+// чисел в каждом вызове стоил бы дороже самого замера.
+function simAccount(rows, sizing, cfg, withTails = false) {
   let acc = DEPOSIT, peak = DEPOSIT, tickDd = 0, peakMM = 0, liqs = 0, skipped = 0, played = 0;
+  const utils = withTails ? [] : null;
   for (const t of rows) {
     const lots = lotsOf(sizing, t, acc, cfg);
     if (lots < 1) { skipped += 1; continue; }
@@ -320,7 +457,7 @@ function simAccount(rows, sizing, cfg) {
       const mm = t.mm1s[j] * qq;
       peak = Math.max(peak, eq);
       tickDd = Math.max(tickDd, (peak - eq) / peak);
-      if (eq > 0) peakMM = Math.max(peakMM, mm / eq);
+      if (eq > 0) { const u = mm / eq; peakMM = Math.max(peakMM, u); if (utils) utils.push(u); }
       if (mm >= eq) { liqAt = j; break; }
     }
     // Конвенция ликвидации - раздел 3а эталона: выкуп по марку часа плюс вторая половина круга.
@@ -331,7 +468,17 @@ function simAccount(rows, sizing, cfg) {
     tickDd = Math.max(tickDd, (peak - acc) / peak);
     if (acc <= 0) break;
   }
-  return { finalEq: acc, growth: acc / DEPOSIT, tickDd, peakMM, liqs, skipped, played };
+  const out = { finalEq: acc, growth: acc / DEPOSIT, tickDd, peakMM, liqs, skipped, played };
+  if (utils) {
+    out.p95MM = q(utils, 0.95);
+    out.p99MM = q(utils, 0.99);
+    out.hours07 = utils.length ? utils.filter((u) => u > 0.7).length / utils.length : NaN;
+    // Запас до ликвидации в долях счёта это в точности 1 минус пик утилизации: обе величины
+    // считаются от ТЕКУЩЕГО капитала. Печатается ради предрегистрации, самостоятельного сигнала
+    // сверх пика не несёт, и это зафиксировано в журнале замера.
+    out.minHeadroom = 1 - peakMM;
+  }
+  return out;
 }
 
 // ── калибровка равного хвоста: максимальный deployPct, при котором пик MM за запись не выше cap.
@@ -446,16 +593,42 @@ function contractStats(rows) {
     medIm: q(rows.map((r) => r.im), 0.5),
     medPrem: q(rows.map((r) => r.prem), 0.5),
     medReh: q(rows.map((r) => r.reh), 0.5),
+    // Хвост по сделкам: среднее худших 5% (при 84 сделках это 5 худших). Экстремум-одиночка
+    // (worstRetIm) не показывает, СКОЛЬКО сделок ушло в хвост, а правило судится именно по этому.
+    cvar5: (() => {
+      const s = rows.map((r) => r.retIm).filter(fin).sort((a, b) => a - b);
+      return s.length ? mean(s.slice(0, Math.max(1, Math.ceil(s.length * 0.05)))) : NaN;
+    })(),
+    stopped: rows.filter((r) => r.stopped).length,
+    fires: rows.reduce((a, r) => a + (r.stopCount ?? 0), 0),
   };
 }
 
 // ── прогоны по сетке, зафиксированной флагами.
 const winKey = (w) => `${w.expiryMinH}-${w.expiryMaxH}`;
 const chains = new Map(); // ключ - `${kind}:${окно}`: цепочка считается один раз, лестница переиспользует
-function chainOf(kind, w, legType = "C") {
-  const key = `${kind}:${legType}:${winKey(w)}`;
-  if (!chains.has(key)) chains.set(key, chain(cfgOf({ ...w, legType }), kind === "strangle" ? "strangle" : "leg"));
+function chainOf(kind, w, legType = "C", stop = null, stopDeploy = null) {
+  // ПОДПИСЬ ПРАВИЛА В КЛЮЧЕ ОБЯЗАТЕЛЬНА. Без неё все клетки оси стопа вернули бы одну и ту же
+  // посчитанную цепочку и напечатались одинаковыми числами БЕЗ ЕДИНОЙ ОШИБКИ - самый тихий из
+  // возможных дефектов замера.
+  const key = `${kind}:${legType}:${winKey(w)}:${stop ? `${STOP_SIG}@d${stopDeploy}` : "off"}`;
+  if (!chains.has(key)) {
+    chains.set(key, chain(cfgOf({ ...w, legType, stop, stopDeploy, stopCostMult: STOP_COST_MULT }),
+      kind === "strangle" ? "strangle" : "leg"));
+  }
   return chains.get(key);
+}
+
+// Цепочка варианта: базовая (без стопа) и, если правило включено, цепочка со стопом, построенная
+// при КОНТРФАКТНОМ размере - deployPct берётся из калибровки БАЗОВОЙ цепочки (предрегистрация,
+// раздел 1). Иначе стоп по утилизации маржи зажимал бы ровно ту величину, по которой идёт
+// калибровка, и получал бы рост через разрешённое плечо, а не через качество выходов.
+function variantChains(kind, w, legType, cfg) {
+  const base = chainOf(kind, w, legType);
+  if (!HAS_STOP) return { ch: base, base, baseCal: null, stopDeploy: null };
+  const baseCal = calibrate(base.rows, cfg);
+  const stopDeploy = fin(baseCal.deploy) ? baseCal.deploy : SELLHEDGE_DEFAULTS.deployPct;
+  return { ch: chainOf(kind, w, legType, STOP, stopDeploy), base, baseCal, stopDeploy };
 }
 
 console.log(`# Ускорение оборота схемы продавца: равный хвост (пик MM ≤ ${CAP})\n`);
@@ -468,31 +641,59 @@ console.log(`Депозит $${DEPOSIT}. Дельта ${SELLHEDGE_DEFAULTS.delta
 const variants = [];
 const seriesByKey = new Map();
 
-function reportVariant(key, label, ch, cfg) {
+// Размер БАЗЫ по предрегистрации, раздел 0: автономное стресс-правило движка. В этом размере
+// читаются хвостовые метрики обеих цепочек, поэтому сравнение идёт при одинаковом риске входа.
+const SIZE_BASE = { kind: "stress", xPct: 45, capFrac: 0.8 };
+
+function reportVariant(key, label, chs, cfg) {
+  const ch = chs.ch ?? chs;
   const st = contractStats(ch.rows);
-  const cal = calibrate(ch.rows, cfg);
+  // Размер-ЗАВИСИМЫЕ метрики читаются контрфактным размером, а не своей калибровкой: см.
+  // variantChains и раздел 1 предрегистрации.
+  const counterfactual = HAS_STOP && (STOP.metric === "eq" || STOP.metric === "mmu");
+  const cal = counterfactual
+    ? { deploy: chs.stopDeploy, ...simAccount(ch.rows, chs.stopDeploy, cfg) }
+    : calibrate(ch.rows, cfg);
+  const tails = simAccount(ch.rows, SIZE_BASE, cfg, true);
+  // СИММЕТРИЧНЫЙ джекнайф (предрегистрация, п. 4д): три сделки с наибольшим вкладом удаляются
+  // У ОБЕИХ цепочек, иначе клетке режут хвост доходности, а базе нет. Считается в размере базы,
+  // чтобы сравнение не смешивалось с плечом калибровки.
+  const jk = (rows) => {
+    if (!rows || rows.length < 10) return NaN;
+    const drop = new Set(rows.map((r, i) => [r.pnl, i]).sort((a, b) => b[0] - a[0]).slice(0, 3).map((x) => x[1]));
+    return simAccount(rows.filter((_, i) => !drop.has(i)), SIZE_BASE, cfg).growth;
+  };
   seriesByKey.set(key, dailySeries(ch.rows));
   variants.push({ key, label, ...st, priceFail: ch.priceFail, noPut: ch.noPut ?? 0,
     deploy: cal.deploy, growth: cal.growth, finalEq: cal.finalEq, tickDd: cal.tickDd,
-    peakMM: cal.peakMM, liqs: cal.liqs, skipped: cal.skipped, played: cal.played });
+    peakMM: cal.peakMM, liqs: cal.liqs, skipped: cal.skipped, played: cal.played,
+    counterfactual,
+    baseGrowth: chs.baseCal?.growth ?? null,
+    tail: tails,
+    baseTail: HAS_STOP && chs.base ? simAccount(chs.base.rows, SIZE_BASE, cfg, true) : null,
+    baseStats: HAS_STOP && chs.base ? contractStats(chs.base.rows) : null,
+    jkGrowth: HAS_STOP ? jk(ch.rows) : null,
+    jkBaseGrowth: HAS_STOP && chs.base ? jk(chs.base.rows) : null,
+    trades: HAS_STOP ? ch.rows.map((r) => r.pnl) : null,
+    baseTrades: HAS_STOP && chs.base ? chs.base.rows.map((r) => r.pnl) : null });
   return variants.at(-1);
 }
 
 const tenorRows = [];
 if (MODES.includes("tenor") || MODES.includes("ladder")) {
   for (const w of WINDOWS) {
-    const ch = chainOf("leg", w, "C");
+    const ch = variantChains("leg", w, "C", cfgOf({ ...w }));
     tenorRows.push(reportVariant(`C:${winKey(w)}`, `колл ${winKey(w)} ч`, ch, cfgOf({ ...w })));
   }
 }
 if (MODES.includes("put")) {
   for (const w of WINDOWS) {
-    const ch = chainOf("leg", w, "P");
+    const ch = variantChains("leg", w, "P", cfgOf({ ...w, legType: "P" }));
     reportVariant(`P:${winKey(w)}`, `пут ${winKey(w)} ч`, ch, cfgOf({ ...w, legType: "P" }));
   }
 }
 if (MODES.includes("strangle")) {
-  const ch = chainOf("strangle", SW);
+  const ch = variantChains("strangle", SW, "C", cfgOf({ ...SW }));
   reportVariant(`S:${winKey(SW)}`, `стрэнгл ${winKey(SW)} ч`, ch, cfgOf({ ...SW }));
 }
 
@@ -507,6 +708,41 @@ for (const v of variants) {
 }
 console.log(`\n\\* deploy - откалиброванная доля счёта в залоге на входе; «круг» - полный круг`
   + ` издержек опциона по computeTradeCosts (вход платит половину).\n`);
+
+// ── ЗАМЕР ДОСРОЧНОГО ВЫХОДА. Печатается ТОЛЬКО при --stop, и обе заявки предрегистрации читаются
+// в своих режимах: рост в равном хвосте, хвост в размере базы.
+if (HAS_STOP) {
+  console.log(`## Стоп ${STOP.metric}:${STOP.level} · ${STOP.action} · ${STOP.hyst}`
+    + ` · выход ${STOP.fill === "next" ? "по следующему часу" : "по часу пробоя"}`
+    + ` · перевход ${STOP_REENTRY === "expiry" ? "не раньше исходной экспирации" : "сразу"}`
+    + ` · цена выкупа ×${STOP_COST_MULT}\n`);
+  console.log(`Рост читается в режиме равного хвоста, хвост - в размере базы`
+    + ` (стресс X=${SIZE_BASE.xPct} cap ${SIZE_BASE.capFrac}). «сраб.» - сделок со срабатыванием`
+    + ` из общего числа.\n`);
+  // Столбцы «рост при размере базы» отвечают на вопрос, откуда взялся выигрыш: от качества
+  // выходов или от РАЗРЕШЁННОГО ПЛЕЧА. Правило, которое зажимает пик маржи, автоматически
+  // получает больший deployPct от калибровки равного хвоста, и рост в том режиме перестаёт быть
+  // свойством правила. При одинаковом размере этой добавки нет по построению.
+  console.log(`| вариант | сраб. | сделок | рост | рост базы | отношение | рост при размере базы |`
+    + ` база при размере базы | отн. при размере базы | p99 MM | p99 базы |`
+    + ` пик MM | пик базы | CVaR5 | CVaR5 базы | часы >0.7 |`);
+  console.log(`|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|`);
+  for (const v of variants) {
+    const bt = v.baseTail, bs = v.baseStats;
+    const ratio = fin(v.growth) && fin(v.baseGrowth) && v.baseGrowth > 0 ? v.growth / v.baseGrowth : NaN;
+    const ratioSize = fin(v.tail.growth) && fin(bt?.growth) && bt.growth > 0 ? v.tail.growth / bt.growth : NaN;
+    console.log(`| ${v.label} | ${v.stopped}/${v.fires} | ${v.n} (база ${bs?.n ?? "н/д"}) |`
+      + ` ${v.deploy == null ? "НЕ ВЛЕЗ" : "×" + f2(v.growth, 2)} | ×${f2(v.baseGrowth, 2)} |`
+      + ` ${f2(ratio, 3)} | ×${f2(v.tail.growth, 2)} | ×${f2(bt?.growth, 2)} | ${f2(ratioSize, 3)} |`
+      + ` ${pct(v.tail.p99MM)} | ${pct(bt?.p99MM)} | ${pct(v.tail.peakMM)} |`
+      + ` ${pct(bt?.peakMM)} | ${f2(v.cvar5, 2)}% | ${f2(bs?.cvar5, 2)}% | ${pct(v.tail.hours07)} |`);
+  }
+  console.log(`\nЗачёт по предрегистрации 2026-08-28: заявка «поднимает рост» требует отношения`
+    + ` не ниже 1.20 при неухудшении хвоста; заявка «обрезает хвост» требует p99 ниже базы`
+    + ` на 5.0 п.п. и более при отношении роста не ниже 0.95.`
+    + `${variants.some((v) => v.counterfactual) ? " Размер размер-зависимой метрики контрфактный:"
+      + " deployPct взят из калибровки цепочки БЕЗ стопа." : ""}\n`);
+}
 
 // корреляции путов с коллами
 if (MODES.includes("put")) {
