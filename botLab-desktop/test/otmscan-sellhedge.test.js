@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import {
   SELLHEDGE_DEFAULTS, pickSellLeg, openSellTrade, halfSpreadUsd, wantHedge, shouldRehedge,
   walkSellTrade, settleSellTrade, lotsByMargin, usdDeltaOfInversePerp, sellhedgeEngineCfg, shouldOpenNext,
-  rankSellLegs, shouldOpenDegraded, sellerZone, stepMtm, shouldStopOut, makeStopGate, makeStopAt,
+  rankSellLegs, shouldOpenDegraded, sellerZone, stepMtm, shouldStopOut, makeStopGate, makeStopAt, liveSellStop,
 } from "../src/engine/otmscan/sellhedge.js";
 import { markPerp } from "../src/engine/btcopt/pnl.js";
 import { effectiveDeadband } from "../src/engine/btcopt/hedge.js";
@@ -490,4 +490,26 @@ test("расчёт сделки: со стопом издержки выхода
 test("склейка: makeStopAt не строится без правила и без залога", () => {
   assert.equal(makeStopAt({ stop: null, imUsd: 100, deployPct: 0.7 }), undefined);
   assert.equal(makeStopAt({ stop: { metric: "premx", level: 1, action: "exit" }, deployPct: 0.7 }), undefined);
+});
+
+test("боевое правило выхода вооружается кодом и считается от потолка размера", () => {
+  const r = liveSellStop(C);
+  assert.equal(r.metric, "mmu", "выигравшая метрика замера это утилизация маржи, а не убыток");
+  assert.equal(r.level, 0.6, "0.75 от потолка 0.8 = уровень 0.60, замеренная клетка");
+  assert.equal(r.action, "exit");
+  assert.equal(r.hyst, "band", "два часа подряд: одиночный выброс не закрывает сделку");
+});
+
+test("правило выхода едет за потолком размера, а не живёт от него отдельно", () => {
+  assert.equal(liveSellStop({ ...C, stressCapFrac: 0.6 }).level, 0.45);
+  assert.equal(liveSellStop({ ...C, stressCapFrac: 1.0 }).level, 0.75);
+});
+
+test("явное перекрытие правила выхода побеждает: замеру нужна своя клетка", () => {
+  const mine = { metric: "premx", level: 2, action: "exit", hyst: "oneshot", fill: "same" };
+  assert.deepEqual(liveSellStop({ ...C, stop: mine }), mine);
+});
+
+test("офлайн-дефолт схемы остаётся БЕЗ правила выхода: книги сверок сняты им", () => {
+  assert.equal(C.stop, null, "выключенный дефолт - якорь пятилетних книг");
 });
