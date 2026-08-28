@@ -1279,6 +1279,10 @@ function maybeOpenNextSell() {
       stopRequested: !!chain.stopRequested,
       mode: chain.mode,
       tradesCount: chain.trades?.length ?? 0,
+      // Ожидание после сработавшего правила выхода: цепочка молчит до ИСХОДНОЙ экспирации
+      // остановленной сделки, ровно как в замере.
+      reopenAfterMs: chain.reopenAfterMs ?? null,
+      nowMs: Date.now(),
     })
   ) {
     // Цепочка завершилась: остановлена оператором И сделка дожила до конца, ЛИБО режим «одна

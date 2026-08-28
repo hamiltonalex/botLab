@@ -1086,3 +1086,97 @@ test("фолбэк пары: нет пары структурно (no-leg) - ц�
   assert.equal(st.structure.legs.length, 1);
   assert.ok(st.ledger.find((row) => row.type === "open").note.includes("продажа колла"), "леджер называет колл");
 });
+
+// ── ДОСРОЧНЫЙ ВЫХОД ПО ПРАВИЛУ (предрегистрация 2026-08-28).
+// Главное, что проверяется: правило по умолчанию ВЫКЛЮЧЕНО, его состояние переживает сериализацию
+// состояния, а сработавший выход платит вторую половину круга и помечает сделку своей причиной.
+const STOP_MNY = { metric: "mny", level: 0.03, action: "exit", hyst: "oneshot", fill: "same" };
+const sellWithStop = (nowMs, stop) => {
+  const f = sellFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  const r = engine.openStructure(st,
+    { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF, ...(stop ? { sellCfg: { stop } } : {}) },
+    f.chain, f.snapshot, nowMs);
+  assert.ok(r.ok, `структура обязана открыться: ${r.error ?? ""}`);
+  return { f, st };
+};
+// Спот ушёл за страйк на 4%: предикат mny с порогом 0.03 обязан сработать.
+const breachSnap = (f) => ({
+  ...f.snapshot, underlying: 104000, index: 104000,
+  perp: { ...f.snapshot.perp, mark: 104000, index: 104000 },
+  legs: { [f.name]: { ...f.snapshot.legs[f.name], bid: 4950, ask: 5050, mark: 5000, delta: 0.92 } },
+});
+
+test("стоп: по умолчанию правила нет и evaluate ничего не закрывает", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const { f, st } = sellWithStop(nowMs, null);
+  assert.equal(st.structure.engineCfg.stop, null, "боевой дефолт - выхода нет");
+  engine.evaluate(st, breachSnap(f), nowMs + 3600000);
+  assert.ok(st.structure, "без правила структура обязана остаться открытой");
+});
+
+test("стоп: правило замораживается на структуре при открытии", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const { st } = sellWithStop(nowMs, STOP_MNY);
+  assert.deepEqual(st.structure.engineCfg.stop, STOP_MNY, "позиция судится правилом, под которым открыта");
+  st.settings.stop = null; // оператор передумал уже после открытия
+  assert.deepEqual(st.structure.engineCfg.stop, STOP_MNY, "живая настройка не переписывает правило работающей сделки");
+});
+
+test("стоп: сработавшее правило закрывает сделку, платит выход и метит причину", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const { f, st } = sellWithStop(nowMs, STOP_MNY);
+  const expiryMs = st.structure.expiryMs;
+  engine.evaluate(st, breachSnap(f), nowMs + 3600000);
+
+  assert.equal(st.structure, null, "структура закрыта правилом");
+  const types = st.ledger.map((r) => r.type);
+  assert.ok(types.includes("close-options"), "выкуп опциона записан");
+  assert.ok(types.includes("close-cost"), "вторая половина круга записана: досрочный выход пересекает книгу");
+  const cost = st.ledger.find((r) => r.type === "close-cost");
+  assert.ok(cost.realizedUsd < 0, "издержки выхода списываются, а не начисляются");
+  const t = st.sellChain.trades.at(-1);
+  assert.equal(t.reason, "stop", "причина закрытия названа своим именем, а не «manual»");
+  assert.equal(t.preliminary, false, "выкуп не ждёт delivery-цены: она нужна только расчёту в экспирацию");
+  assert.equal(st.sellChain.reopenAfterMs, expiryMs, "цепочка ждёт ИСХОДНУЮ экспирацию остановленной сделки");
+});
+
+test("стоп: издержки выхода попадают в СВОЮ сделку, а не в следующую", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const { f, st } = sellWithStop(nowMs, STOP_MNY);
+  engine.evaluate(st, breachSnap(f), nowMs + 3600000);
+  const cost = st.ledger.find((r) => r.type === "close-cost");
+  const closeSeq = st.ledger.find((r) => r.type === "close-options").seq;
+  assert.ok(cost.seq > closeSeq, "строка издержек идёт после выкупа");
+  // Итог сделки цепочки обязан УЖЕ включать издержки выхода: они списаны до chainAppendTrade.
+  const t = st.sellChain.trades.at(-1);
+  const optRows = st.ledger.filter((r) => Number.isFinite(r.realizedUsd));
+  const sum = optRows.reduce((a, r) => a + r.realizedUsd, 0);
+  assert.ok(t.pnlUsd <= sum + 1e-6, `итог сделки не больше суммы книжных строк: ${t.pnlUsd} против ${sum}`);
+});
+
+test("стоп: состояние затвора переживает сериализацию состояния", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  // band требует ДВУХ шагов подряд за порогом: первый тик обязан только взвести счётчик.
+  const { f, st } = sellWithStop(nowMs, { ...STOP_MNY, hyst: "band" });
+  engine.evaluate(st, breachSnap(f), nowMs + 3600000);
+  assert.ok(st.structure, "одного шага за порогом мало");
+  assert.equal(st.structure.stopGate.run, 1, "счётчик подряд идущих взведён");
+
+  // Перезапуск приложения: состояние уходит в файл и поднимается обратно.
+  const revived = JSON.parse(JSON.stringify(st));
+  assert.equal(revived.structure.stopGate.run, 1, "счётчик пережил запись в файл");
+  engine.evaluate(revived, breachSnap(f), nowMs + 7200000);
+  assert.equal(revived.structure, null, "второй шаг подряд закрывает сделку и после рестарта");
+});
+
+test("стоп: действия halve и restore живой бот не принимает молча", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const f = sellFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  const r = engine.openStructure(st,
+    { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF, sellCfg: { stop: { ...STOP_MNY, action: "halve" } } },
+    f.chain, f.snapshot, nowMs);
+  assert.ok(r.error && /не реализовано/.test(r.error), `ожидался внятный отказ, получено: ${JSON.stringify(r)}`);
+  assert.equal(st.structure, null, "структура не открыта");
+});

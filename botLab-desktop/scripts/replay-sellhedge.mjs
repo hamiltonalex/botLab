@@ -35,7 +35,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { priceAt, makePriceStats, countPrice, formatPriceStats } from "../src/engine/otmscan/hist-price.js";
-import { shouldOpenNext, sellerZone } from "../src/engine/otmscan/sellhedge.js";
+import { shouldOpenNext, sellerZone, parseStopSpec } from "../src/engine/otmscan/sellhedge.js";
 import * as s1engine from "../src/engine/btcopt/engine.js";
 
 const fin = (x) => Number.isFinite(x);
@@ -63,7 +63,12 @@ if (has("--help") || !argOf("--dir")) {
   --trace-trade <n>   номер сделки для --trace (по умолчанию 1)
   --drop-rule <имя>   КОНТРОЛЬ: заглушить одно правило движка и убедиться, что сверка это заметит.
                       band-off (полосы нет) | size-off (размер 1 лот) |
-                      pick-off (целевая дельта 0.30) | settle-late (вход следующей сделки на сутки позже)`);
+                      pick-off (целевая дельта 0.30) | settle-late (вход следующей сделки на сутки позже) |
+                      stop-off (правило досрочного выхода заглушено у ДВИЖКА)
+  --stop <метрика:уровень>  правило досрочного выхода, та же форма и тот же разбор, что у эталона
+  --stop-action <a>   exit (по умолчанию) | none; halve и restore живой бот не исполняет
+  --stop-hyst <h>     band (по умолчанию) | oneshot | rearm
+  --stop-fill <f>     same (по умолчанию) | next`);
   process.exit(argOf("--dir") ? 0 : 1);
 }
 
@@ -176,10 +181,21 @@ const settings = {
 // БЛЭКАУТ РАСЧЁТА ЗДЕСЬ НАМЕРЕННО НЕ ВЫКЛЮЧЕН: в профиле он остаётся дефолтным `true`, и выключить
 // его обязан сам движок веткой продавца. Если однажды перестанет - сверка это увидит, потому что
 // экспирации Deribit наступают ровно в 08:00 UTC, то есть в самом окне блэкаута.
+// ПРАВИЛО ДОСРОЧНОГО ВЫХОДА едет в движок тем же полем, каким его получает эталон, и разбирается
+// той же функцией (parseStopSpec): сверка обязана мерить одно правило, а не два похожих.
+// КОНТРОЛЬ `stop-off` глушит правило У ДВИЖКА при включённом у эталона: сверка ОБЯЗАНА сломаться
+// на первой же остановленной сделке, иначе движок правило не исполняет и все числа сверки пусты.
+const STOP = (() => {
+  const { stop, error } = parseStopSpec(argOf("--stop"), {
+    action: argOf("--stop-action"), hyst: argOf("--stop-hyst"), fill: argOf("--stop-fill") });
+  if (error) { console.error(`--stop: ${error}`); process.exit(1); }
+  return DROP === "stop-off" ? null : stop;
+})();
 const sellCfg = {
   bandBtc: DROP === "band-off" ? 0 : BAND, // КОНТРОЛЬ band-off: полосы нет, хедж на каждом тике
   lot: LOT,
   execModel: "maker-mid",
+  stop: STOP,
 };
 // САНИТАРИЯ ВЫРОЖДЕНА НАСТРОЙКОЙ, НЕ ВЕТКОЙ. Она существует для боевого снабжения (возраст живого
 // тикера, спред, глубина книги двухступенчатого вызова биржи), а не для качества модельных
@@ -281,7 +297,8 @@ for (let i = 0; i < N; i++) {
   // `sellhedge.js`, и тот же вызов делает боевой тракт. Порядок (до `evaluate`) - часть правила:
   // на тике экспирации структура ещё открыта, поэтому расчёт делает `evaluate` этого тика, а
   // следующая сделка открывается СЛЕДУЮЩИМ тиком, как `i = endIdx + 1` у эталона.
-  if (shouldOpenNext({ hasStructure: hadStructure, chainOn: true, stopRequested: false })) {
+  if (shouldOpenNext({ hasStructure: hadStructure, chainOn: true, stopRequested: false,
+    reopenAfterMs: st.sellChain?.reopenAfterMs ?? null, nowMs: ts })) {
     const before = st.ledger.length;
     const res = s1engine.openStructure(
       st,
@@ -330,6 +347,12 @@ for (let i = 0; i < N; i++) {
     const hedges = rows.filter((r) => r.type === "hedge");
     const flat = rows.filter((r) => r.type === "close-perp");
     const settle = rows.find((r) => r.type === "settle-options");
+    // ДОСРОЧНЫЙ выход книжится другими строками: опцион не гасится сам, а выкупается, поэтому
+    // результат ноги лежит в `close-options`, а вторая половина круга в `close-cost`. Пока книга
+    // читала только расчёт в экспирацию, остановленная сделка показывала «премия-выкуп 0.00» и
+    // издержки без выхода, то есть сверка сравнивала эталон с неполной книгой.
+    const closed = rows.find((r) => r.type === "close-options");
+    const closeCost = rows.find((r) => r.type === "close-cost");
     book.push({
       // Имя сделки пары - обе ноги через «+», ровно как пишет книга eval-accel; у одной ноги
       // строка прежняя до символа.
@@ -341,9 +364,9 @@ for (let i = 0; i < N; i++) {
       imUsd: (open.sizing?.imPerContract ?? 0) * open.qtyAbs,
       rehedges: hedges.length,
       turnoverBtc: hedges.reduce((a, r) => a + Math.abs(r.deltaBtc), 0),
-      optLeg: settle?.realizedUsd ?? 0,
+      optLeg: (settle?.realizedUsd ?? 0) + (closed?.realizedUsd ?? 0),
       hedgeLeg: realPerpOf(st) - open.acc0.realPerp,
-      cost: (feesOf(st) - open.acc0.fees) + (open.entryCostUsd ?? 0),
+      cost: (feesOf(st) - open.acc0.fees) + (open.entryCostUsd ?? 0) - (closeCost?.realizedUsd ?? 0),
       funding: accOf(st) - open.acc0.fund,
       fundingRefBase: shadowFund - open.acc0.shadow,
       entrySpot: open.entrySpot,

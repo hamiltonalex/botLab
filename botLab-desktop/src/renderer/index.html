@@ -5156,7 +5156,11 @@ function renderOptChainStrip(ds, trades, st){
   for(let i=0;i<total;i++){
     if(i<done){
       const t=trades[i];
-      html += '<div class="s" data-st="'+(t.pnlUsd>0?'win':'loss')+'"'+(t.reason==='manual'?' data-mark="manual"':'')+'></div>';
+      /* Штрихуется ЛЮБОЙ досрочный выход, а не только ручной: сделка, закрытая правилом выхода,
+         это тоже не штатная экспирация, и итог цепочки обязан это показывать. Значение атрибута
+         несёт причину («manual» или «stop»), стиль у обоих один. */
+      const mark = t.reason && t.reason!=='expiry' ? ' data-mark="'+t.reason+'"' : '';
+      html += '<div class="s" data-st="'+(t.pnlUsd>0?'win':'loss')+'"'+mark+'></div>';
     } else if(i===done && st){
       const span = st.expiryMs - st.createdAt, gone = Date.now() - st.createdAt;
       const pct = span>0 ? Math.max(0, Math.min(100, gone/span*100)) : 0;

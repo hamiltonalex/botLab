@@ -23,7 +23,10 @@ import { initMetrics, foldCycle, summarize } from "./metrics.js";
 import { structureMargin, liqPriceEst } from "./margin.js";
 import { computeScenarios } from "./stress.js";
 import { computeRegime } from "./regime.js";
-import { SELLHEDGE_DEFAULTS, sellhedgeEngineCfg, shouldOpenDegraded } from "../otmscan/sellhedge.js";
+import {
+  SELLHEDGE_DEFAULTS, sellhedgeEngineCfg, shouldOpenDegraded,
+  shouldStopOut, stopGateStep, stopCostUsd,
+} from "../otmscan/sellhedge.js";
 import { SELL_SANITY_DEFAULTS } from "../otmscan/sanity.js";
 
 export const BOT_ID = "btc-options";
@@ -157,6 +160,10 @@ export function ensureSellChain(state) {
     state.sellChain = {
       on: false, stopRequested: false, armedAt: null, stoppedAt: null, params: null,
       trades: [], mark: null, mode: "continuous", sanityWaitingSince: null,
+      // Метка ожидания после сработавшего правила выхода. Поле АДДИТИВНОЕ: отсутствие читается
+      // как «ждать нечего», поэтому состояния, записанные до появления правила, поднимаются как
+      // прежде и цепочка в них не блокируется.
+      reopenAfterMs: null,
     };
   }
   return state.sellChain;
@@ -298,6 +305,12 @@ export function evaluate(state, snapshot, nowMs) {
   // Expiry settlement runs FIRST — before anything reads state.structure — so a tick that crosses the
   // expiry settles the book and the rest of the cycle computes flat (no hedging a dead structure).
   if (state.structure && nowMs >= state.structure.expiryMs) settleStructure(state, snapshot, nowMs);
+  // ПРАВИЛО ДОСРОЧНОГО ВЫХОДА спрашивается строго здесь. ПОСЛЕ расчёта - потому что экспирация
+  // имеет приоритет: на своём тике сделка уже закрыта штатно, и стоп молча не исполняется (тот же
+  // порядок, что в офлайн-протяжке, где стоп проверяется НИЖЕ ветки экспирации). ДО чтения
+  // `state.structure` - потому что весь остаток цикла обязан считаться по уже закрытой книге,
+  // иначе движок заплатит за хедж позиции, которую сам же только что снял.
+  if (state.structure) maybeStopOut(state, snapshot, nowMs);
   const structure = state.structure;
   // Engine params are FROZEN at structure open (the running structure hedges by the params it was
   // opened with; the live toolbar settings only drive the Zone-Ⅰ hypothesis until the next open).
@@ -658,6 +671,12 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   // 0.03 на контракт по НЕТТО-дельте, без триггеров и без блэкаута (eval-accel, равный хвост).
   const sellEngineCfg =
     isSellKind(built.kind) ? sellhedgeEngineCfg({ ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) }) : null;
+  // Живой бот умеет ОДНО действие правила выхода - закрыть позицию целиком. «Урезать вдвое» и
+  // «вернуть размер» требуют частичного выкупа опциона и пересчёта хеджа, которых у бота нет;
+  // молча проглотить такую настройку значило бы исполнять другое правило, чем показано оператору.
+  if (sellEngineCfg?.stop && !["exit", "none"].includes(sellEngineCfg.stop.action)) {
+    return { error: `правило выхода «${sellEngineCfg.stop.action}» в живом боте не реализовано: доступны exit и none` };
+  }
 
   const metas = Array.isArray(chain) ? chain : chain?.instruments ?? [];
   const metaByInstrument = {};
@@ -768,6 +787,99 @@ function chainMarkOpen(state, nowMs) {
 // Дописать закрытую сделку. `reason` различает штатный выход и досрочный: схема измерена ТОЛЬКО с
 // выходом в экспирацию, и сделка, закрытая руками, обязана нести это на себе постоянно, иначе итог
 // цепочки молча смешает измеренное с неизмеренным.
+// ── ДОСРОЧНЫЙ ВЫХОД ПО ПРАВИЛУ (замер и предрегистрация 2026-08-28).
+//
+// ЧЕГО ЗДЕСЬ НЕТ И ПОЧЕМУ. Правило НЕ переписано: предикат, затвор и формула цены выхода живут в
+// otmscan/sellhedge.js и зовутся отсюда теми же функциями, какими их звал офлайн-замер. Иначе
+// боевой бот и пятилетний прогон разошлись бы правилами при совпадающих названиях, а это тот самый
+// класс дефекта, ради которого модуль правил и заведён.
+//
+// СОСТОЯНИЕ ЗАТВОРА ЛЕЖИТ НА СТРУКТУРЕ, а не в замыкании: файл состояния переживает перезапуск
+// приложения, и гистерезис обязан пережить его вместе с позицией. Затвор в памяти процесса после
+// рестарта начинал бы с нуля, то есть `oneshot` стал бы многоразовым, а `band` потерял бы счётчик
+// подряд идущих часов - другое правило под тем же именем.
+//
+// Единицы: правило измерено НА ОДИН КОНТРАКТ, поэтому МтМ, премия, залог и маржа делятся на
+// `units` (то же произведение qtyAbs·contractSize, каким считает расчёт в экспирацию).
+function stopOutDecision(state, snapshot, cfg) {
+  const st = state.structure;
+  const stop = cfg?.stop ?? null;
+  if (!st || !stop || !isSellKind(st.kind)) return null;
+  const legs = st.legs ?? [];
+  const units = (legs[0]?.qtyAbs ?? 0) * (legs[0]?.contractSize ?? 1);
+  if (!(units > 0)) return null;
+  // ЖИВОЙ марк обязателен у КАЖДОЙ ноги: markStructure при его отсутствии молча подставляет марк
+  // входа, и правило либо не сработает вовсе, либо сработает по цене, которой на рынке нет.
+  const quotes = legs.map((l) => snapshot.legs?.[l.instrument] ?? null);
+  if (quotes.some((q) => !q || !Number.isFinite(q.mark))) return null;
+  const spot = snapshot.index ?? snapshot.underlying;
+  if (!Number.isFinite(spot) || !(spot > 0)) return null;
+  const m = state.sellChain?.mark;
+  if (!m) return null; // накопителя сделки нет: судить не по чему
+  const now = chainCounters(state);
+  const mtm1 = (now.opt - m.opt + (now.perp - m.perp) + (now.fund - m.fund) - (now.fees - m.fees)) / units;
+  const args = {
+    metric: stop.metric, level: stop.level, mtm1,
+    premSold: -(st.entryDebitUsd ?? 0) / units, // короткая нога даёт отрицательный дебет
+    imUsd: st.sizing?.imPerContract ?? null,
+    equityUsd: account(state, snapshot).equity,
+    qty: units,
+    mmUsd: structureMargin(st, snapshot).maintenance / units,
+    spotUsd: spot,
+    strikes: legs.map((l) => ({ type: l.type === "put" ? "P" : "C", strike: l.strike })),
+  };
+  const r = stopGateStep(st.stopGate ?? null, stop,
+    shouldStopOut(args), !shouldStopOut({ ...args, level: stop.level * 0.8 }));
+  return { gate: r.state, action: r.action };
+}
+
+// Применение решения. Возвращает true, если структура закрыта: вызывающий обязан считать остаток
+// цикла по УЖЕ закрытой книге.
+function maybeStopOut(state, snapshot, nowMs) {
+  const st = state.structure;
+  if (!st || !isSellKind(st.kind)) return false;
+  const cfg = buildCfg(st.engineCfg ?? state.settings);
+  if (!cfg.stop) return false;
+  // Гейт свежести греков заносится сюда ЯВНО: стоп на деградированном снимке это ровно тот ложный
+  // выход, ради которого гейт и заведён, а на этой точке цикла переменной gateOk ещё нет.
+  if (snapshot.fresh?.gateOk === false) return false;
+  const d = stopOutDecision(state, snapshot, cfg);
+  if (!d) return false;
+  st.stopGate = d.gate; // состояние затвора переживает и тик, и перезапуск приложения
+  if (d.action !== "exit") return false; // "none" считает срабатывания и ничего не делает
+  // Метка ожидания ставится ДО закрытия: closeStructure обнуляет структуру, и её экспирация после
+  // этого недоступна. Цепочка не откроет следующую сделку раньше этой метки (shouldOpenNext).
+  const reopenAfterMs = st.expiryMs ?? null;
+  const res = closeStructure(state, snapshot, nowMs, "stop");
+  if (res?.ok !== true) return false;
+  if (state.sellChain) state.sellChain.reopenAfterMs = reopenAfterMs;
+  return true;
+}
+
+// Вторая половина круга издержек по цене ВЫХОДА, на всю позицию. Формула та же, что у офлайн-замера
+// (stopCostUsd), и зовётся та же функция: книги эталона и движка обязаны сойтись до цента.
+function closeCostUsd(st, snapshot, cfg) {
+  const legs = st?.legs ?? [];
+  const units = (legs[0]?.qtyAbs ?? 0) * (legs[0]?.contractSize ?? 1);
+  if (!(units > 0)) return 0;
+  let mark = 0, bid = 0, ask = 0, quoted = true;
+  for (const l of legs) {
+    const q = snapshot.legs?.[l.instrument];
+    if (!q || !Number.isFinite(q.mark)) return 0;
+    mark += q.mark;
+    if (Number.isFinite(q.bid) && Number.isFinite(q.ask)) { bid += q.bid; ask += q.ask; } else quoted = false;
+  }
+  const per = stopCostUsd({
+    markUsd: mark,
+    indexPrice: snapshot.index ?? snapshot.underlying,
+    bidUsd: quoted ? bid : undefined,
+    askUsd: quoted ? ask : undefined,
+    entryHalfSpreadPct: st.costs?.halfSpreadPct,
+    cfg: { ...SELLHEDGE_DEFAULTS, spreadScale: cfg?.spreadScale ?? 1, execModel: cfg?.execModel ?? "maker-mid" },
+  });
+  return Number.isFinite(per) ? per * units : 0;
+}
+
 function chainAppendTrade(state, nowMs, reason, settleSeq = null) {
   const st = state.structure;
   const m = state.sellChain?.mark;
@@ -803,7 +915,7 @@ function chainAppendTrade(state, nowMs, reason, settleSeq = null) {
     retImPct: im > 0 ? (pnl / im) * 100 : null,
     fundingUsd: now.fund - m.fund,
     feesUsd: now.fees - m.fees,
-    reason, // "expiry" | "manual"
+    reason, // "expiry" | "manual" | "stop"
     // Пометка «ухудшенная санитария» ПОСТОЯННА: сделка, открытая на непрошедшей проверке, обязана
     // нести это рядом со своим итогом, иначе итог цепочки молча смешает измеренное с неизмеренным.
     sanity: st.sanity ?? "ok",
@@ -878,7 +990,7 @@ function snapshotRunMetrics(state, nowMs) {
 
 // ── Close the structure: flatten the perp (realize inverse P&L), lock in the option MtM, keep the
 // cumulative P&L (realizedOptionsUsd survives, so net P&L is not reset by closing).
-export function closeStructure(state, snapshot, nowMs) {
+export function closeStructure(state, snapshot, nowMs, reason = "manual") {
   if (!state.structure) return { error: "нет открытой структуры" };
   // A held perp needs a PRICED perp to flatten. Without this guard flattenPerp silently no-ops,
   // the options still close and structure goes null — orphaning an unclosable hedge position
@@ -894,10 +1006,31 @@ export function closeStructure(state, snapshot, nowMs) {
   state.realizedOptionsUsd = (state.realizedOptionsUsd || 0) + optMtm;
   appendLedger(state, { t: nowMs, type: "close-options", realizedUsd: optMtm, note: `closed ${state.structure.id}` });
 
+  // ЗЕРКАЛО СТРОКИ `open-cost`, которой здесь не было. Досрочный выход ПЕРЕСЕКАЕТ книгу второй раз
+  // (опцион выкупается), значит платит вторую половину круга. Расчёт в экспирацию её не платит и не
+  // должен: там опцион гасится сам. Без этой строки досрочное закрытие показывало результат лучше
+  // реального на стоимость выкупа. Порядок значим: строка обязана лечь ДО chainAppendTrade, иначе
+  // издержки уедут в окно накопителей СЛЕДУЮЩЕЙ сделки цепочки.
+  // Цена выхода считается ЗАМОРОЖЕННОЙ конфигурацией структуры, а не живыми настройками: вход уже
+  // оценён её множителем модельного спреда, и выход обязан считаться тем же допущением. Сверка
+  // книг это поймала числом: расходились ровно те 24 сделки из 84, где у строки выхода есть
+  // биржевые котировки, то есть где множитель вообще участвует в расчёте.
+  const exitCost = closeCostUsd(state.structure, snapshot, buildCfg(state.structure.engineCfg ?? state.settings));
+  if (Number.isFinite(exitCost) && exitCost !== 0) {
+    state.realizedOptionsUsd = (state.realizedOptionsUsd || 0) - exitCost;
+    appendLedger(state, {
+      t: nowMs,
+      type: "close-cost",
+      realizedUsd: -exitCost,
+      note: `издержки выхода ${state.structure.legs.map((l) => l.instrument).join("+")}: вторая половина круга по цене выхода`,
+    });
+  }
+
   state.lastRunMetrics = snapshotRunMetrics(state, nowMs);
   // ДОСРОЧНЫЙ выход помечается навсегда: схема измерена только с выходом в экспирацию, и цепочка,
-  // содержащая ручное закрытие, обязана говорить об этом рядом со своим итогом.
-  chainAppendTrade(state, nowMs, "manual");
+  // содержащая его, обязана говорить об этом рядом со своим итогом. Причин теперь три: "manual"
+  // это рука оператора, "stop" это сработавшее правило выхода, "expiry" ставит settleStructure.
+  chainAppendTrade(state, nowMs, reason);
   state.structure = null;
   state.lastHedgeAt = null;
   state.lastHedgeUnderlying = null;

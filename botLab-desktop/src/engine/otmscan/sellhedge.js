@@ -412,31 +412,49 @@ export function makeStopAt({
   };
 }
 
-export function makeStopGate(stop = null) {
-  if (!stop || !stop.metric || !stop.action) return null;
+// ЧИСТЫЙ шаг затвора: (состояние, вердикт) даёт (новое состояние, действие). Живёт отдельно от
+// замыкания НЕ ради стиля: в живом движке состояние обязано пережить `JSON.stringify` файла
+// состояния и перезапуск приложения. Затвор в замыкании этого не умеет, а гистерезис, начинающийся
+// с нуля после каждого рестарта, это ДРУГОЕ правило: `oneshot` становится многоразовым, `band`
+// теряет счётчик подряд идущих часов. Поэтому офлайн-прогон и бот зовут ОДНУ эту функцию, а
+// различаются лишь тем, где держат её состояние.
+export const STOP_GATE_INIT = Object.freeze({ run: 0, fired: false, waiting: false, reduced: false, pending: null });
+
+export function stopGateStep(prev, stop, breached, cleared) {
+  const s = { ...STOP_GATE_INIT, ...(prev ?? {}) };
+  if (!stop || !stop.metric || !stop.action) return { state: s, action: null };
   const hyst = stop.hyst || "oneshot";
   const fill = stop.fill || "same";
-  let run = 0;
-  let fired = false;
-  let waiting = false;
-  let reduced = false;
-  let pending = null;
-  return function gate(breached, cleared = !breached) {
-    if (pending) { const act = pending; pending = null; return act; }
-    if (hyst === "rearm") {
-      if (waiting) {
-        if (!cleared) return null;
-        waiting = false;
-        if (reduced && stop.action === "halve") { reduced = false; return "restore"; }
-        return null;
+  if (s.pending) return { state: { ...s, pending: null }, action: s.pending };
+  if (hyst === "rearm") {
+    if (s.waiting) {
+      if (!cleared) return { state: s, action: null };
+      if (s.reduced && stop.action === "halve") {
+        return { state: { ...s, waiting: false, reduced: false }, action: "restore" };
       }
-    } else if (fired) return null;
-    run = breached ? run + 1 : 0;
-    if (run < (hyst === "band" ? 2 : 1)) return null;
-    run = 0;
-    if (hyst === "rearm") { waiting = true; reduced = stop.action === "halve"; } else fired = true;
-    if (fill === "next" && stop.action !== "none") { pending = stop.action; return null; }
-    return stop.action;
+      return { state: { ...s, waiting: false }, action: null };
+    }
+  } else if (s.fired) return { state: s, action: null };
+  const run = breached ? s.run + 1 : 0;
+  if (run < (hyst === "band" ? 2 : 1)) return { state: { ...s, run }, action: null };
+  const after = hyst === "rearm"
+    ? { ...s, run: 0, waiting: true, reduced: stop.action === "halve" }
+    : { ...s, run: 0, fired: true };
+  if (fill === "next" && stop.action !== "none") {
+    return { state: { ...after, pending: stop.action }, action: null };
+  }
+  return { state: after, action: stop.action };
+}
+
+// Замыкание поверх чистого шага: удобная форма для офлайн-протяжки, где состояние живёт внутри
+// одной сделки и сериализовать его не надо.
+export function makeStopGate(stop = null) {
+  if (!stop || !stop.metric || !stop.action) return null;
+  let s = null;
+  return function gate(breached, cleared = !breached) {
+    const r = stopGateStep(s, stop, breached, cleared);
+    s = r.state;
+    return r.action;
   };
 }
 
@@ -481,6 +499,16 @@ export function sellhedgeEngineCfg(cfg = SELLHEDGE_DEFAULTS) {
     rehedgeSec: NEVER, // триггера времени у схемы нет
     lambda: 0, // гейт вырождается в «выгода > 0», то есть решает одна полоса
     settlementBlackout: false, // у схемы нет выходных: эталон хеджится и в окне расчёта
+    // Правило досрочного выхода едет в ЗАМОРОЖЕННУЮ конфигурацию структуры вместе с остальными
+    // правилами схемы. Иначе работающая позиция судилась бы правилом, которое оператор поставил
+    // ПОСЛЕ её открытия, а этого не должно быть ни в одну сторону: ни включения, ни выключения
+    // посреди сделки. По умолчанию null, то есть выхода нет.
+    stop: cfg.stop ?? null,
+    // Множитель модельного спреда едет вместе с правилом по той же причине: вход в опцион уже
+    // оценён им (structure.js зовёт computeTradeCosts с этим числом), и цена ВЫХОДА обязана
+    // считаться тем же допущением. Живой тракт ставит 1 явно: котировки там настоящие.
+    spreadScale: cfg.spreadScale,
+    execModel: cfg.execModel,
   };
 }
 
@@ -506,8 +534,22 @@ export function sellhedgeEngineCfg(cfg = SELLHEDGE_DEFAULTS) {
 //                   перевхода нет. Отсутствующее поле читается как непрерывный режим, поэтому
 //                   старые вызывающие (прогон записи) правок не требуют;
 //   tradesCount   - сколько сделок цепочка уже закрыла (нужен только режиму "once").
-export function shouldOpenNext({ hasStructure, chainOn, stopRequested, mode, tradesCount } = {}) {
+// ОЖИДАНИЕ ПОСЛЕ ДОСРОЧНОГО ВЫХОДА - часть правила, а не деталь драйвера. Замер зафиксировал
+// головным режимом «следующая сделка не раньше ИСХОДНОЙ экспирации остановленной»: при немедленном
+// перевходе то же самое правило разоряет счёт в 89 раз быстрее (вырожденный контроль дал ×0.01
+// против ×0.89), потому что капитал переразмещается раньше, чем сделка кончилась бы сама. Живой
+// бот обязан ждать по тем же часам, иначе он исполняет измеренное правило только наполовину.
+//   reopenAfterMs - метка, до которой цепочка не открывает новую сделку (null = ждать нечего);
+//   nowMs         - текущие часы; без них ожидание не проверяется вовсе.
+export function shouldOpenNext({
+  hasStructure, chainOn, stopRequested, mode, tradesCount, reopenAfterMs, nowMs,
+} = {}) {
   if (mode === "once" && Number(tradesCount) > 0) return false;
+  // Сравнение НЕСТРОГОЕ намеренно: эталон открывает следующую сделку тиком ПОСЛЕ шага экспирации
+  // (`i = expiryEndIdx + 1`), а шаг экспирации это первый тик с меткой не раньше самой экспирации.
+  // Строгое «<» открыло бы движок на час раньше эталона, и книги разошлись бы на каждой
+  // остановленной сделке.
+  if (fin(reopenAfterMs) && fin(nowMs) && nowMs <= reopenAfterMs) return false;
   return chainOn === true && stopRequested !== true && hasStructure !== true;
 }
 
