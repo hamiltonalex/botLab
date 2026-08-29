@@ -59,7 +59,7 @@
 // выключаются НАСТРОЙКОЙ sanityCfg вызывающего - идиома sanity.js, ветвлений здесь нет.
 
 import { buildSellStructure, sellRowsFromSnapshot } from "../btcopt/structure.js";
-import { SELLHEDGE_DEFAULTS, lotsByMargin, sellerZone } from "./sellhedge.js";
+import { resolveSellCfg, lotsByMargin, sellerZone } from "./sellhedge.js";
 import { SELL_SANITY_DEFAULTS, evaluateInstrumentSanity, summarizeSanityFailure } from "./sanity.js";
 import { scanBlackout } from "./scan-engine.js";
 import { SCAN_DATA_RULES, defaultScanSettings } from "./presets.js";
@@ -122,7 +122,7 @@ export function evaluateSellScan(state, inputs, nowMs) {
   const st = state ?? createSellScanState();
   const settings = { ...defaultScanSettings(), ...(inputs?.settings ?? {}) };
   const rules = SCAN_DATA_RULES;
-  const cfg = { ...SELLHEDGE_DEFAULTS, ...(inputs?.sellCfg ?? {}) };
+  const cfg = resolveSellCfg(inputs?.sellCfg);
   const sanityCfg = { ...SELL_SANITY_DEFAULTS, ...(inputs?.sanityCfg ?? {}) };
 
   const perp = inputs?.perp ?? {};

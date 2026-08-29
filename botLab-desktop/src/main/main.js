@@ -28,7 +28,7 @@ import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState,
 import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
 import { buildStructure as s1buildStructure, buildSellStructure as s1buildSellStructure, buildSellStrangleStructure as s1buildSellStrangle, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry, sellRowsFromSnapshot as s1sellRows } from "../engine/btcopt/structure.js";
-import { rankSellLegs as s1rankSellLegs, SELLHEDGE_DEFAULTS } from "../engine/otmscan/sellhedge.js";
+import { rankSellLegs as s1rankSellLegs, SELL_PRESETS, SELL_PRESET_DEFAULT_ID, isKnownSellPreset, resolveSellCfg } from "../engine/otmscan/sellhedge.js";
 import { rankStranglePairs as s1rankStranglePairs } from "../engine/otmscan/sellstrangle.js";
 import { buildS1TickRecord } from "../engine/btcopt/record.js";
 import { SELL_SANITY_DEFAULTS } from "../engine/otmscan/sanity.js";
@@ -47,8 +47,9 @@ import { selectCandidates as scnSelectCandidates, expiriesInWindow as scnExpirie
 import { createScanState, evaluateScan } from "../engine/otmscan/scan-engine.js";
 // Режим ПРОДАЖИ сканера (П1 анализа 2026-08-18): правила ноги/санитарии/размера - те же файлы,
 // что исполняет бот 2 (sellhedge/sanity через buildSellStructure); здесь только снабжение.
-// SELLHEDGE_DEFAULTS, rankSellLegs (s1rankSellLegs) и SELL_SANITY_DEFAULTS уже импортированы выше
-// трактом бота 2 - режим продажи сканера сознательно читает ТЕ ЖЕ привязки, не свои копии.
+// Реестр пресетов, resolveSellCfg, rankSellLegs (s1rankSellLegs) и SELL_SANITY_DEFAULTS уже
+// импортированы выше трактом бота 2 - режим продажи сканера сознательно читает ТЕ ЖЕ привязки,
+// не свои копии.
 import { evaluateSellScan, sanitizeRestoredSellState, SELL_SCAN_ID } from "../engine/otmscan/sell-scan.js";
 import { buildSurfaceRows, buildGreekChecks, buildLegGreekChecks, summarizeSurface } from "../engine/otmscan/surface.js";
 import { buildTickRecord } from "../engine/otmscan/tick-record.js";
@@ -678,7 +679,15 @@ async function ensureBtcOptSellSurface(nowMs) {
 // не отдала котировку найденной ноги» требуют от оператора разных действий.
 async function resolveBtcOptSellStructureLive(params) {
   const bo = state.btcOptions;
-  const cfg = { ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) };
+  // ОПЕЧАТКА В ИМЕНИ ПРЕСЕТА ОБЯЗАНА БЫТЬ ГРОМКОЙ ИМЕННО ЗДЕСЬ, и только здесь. `resolveSellCfg`
+  // разрешает неизвестное имя в боевой пресет (падать посреди живого тика и прогона записи из-за
+  // опечатки нельзя), но у вооружения есть оператор, который может исправить - значит ему и надо
+  // сказать, а не открыть сделку под именем, которого никто не определял.
+  const wantPreset = params?.sellCfg?.presetId ?? null;
+  if (wantPreset != null && !isKnownSellPreset(wantPreset)) {
+    return { error: `неизвестный пресет схемы «${wantPreset}»: есть ${Object.keys(SELL_PRESETS).join(", ")}` };
+  }
+  const cfg = s1sellhedge.resolveSellCfg(params?.sellCfg);
   const chain = await ensureBtcOptChain();
   const rows = await ensureBtcOptSellSurface(Date.now());
   if (!rows?.length) return { error: "не удалось получить срез поверхности Deribit" };
@@ -739,7 +748,7 @@ async function resolveBtcOptSellStructureLive(params) {
   // тикета, а не экраном. Офлайн-тракты сюда не заходят, поэтому эталонные книги этой строкой не
   // двигаются: у них правило по-прежнему выключено по умолчанию.
   const liveSellCfg = { ...(params?.sellCfg ?? {}), spreadScale: 1 };
-  liveSellCfg.stop = s1sellhedge.liveSellStop({ ...s1sellhedge.SELLHEDGE_DEFAULTS, ...liveSellCfg });
+  liveSellCfg.stop = s1sellhedge.liveSellStop(s1sellhedge.resolveSellCfg(liveSellCfg));
   return { chain, snap, buildSnap, params: { ...(params ?? {}), sellCfg: liveSellCfg }, legs: cands };
 }
 
@@ -1175,7 +1184,7 @@ async function previewSellStructure(params) {
     // Превью судит по ТОЙ ЖЕ замороженной конфигурации схемы, что и исполнитель (openStructure
     // кладёт её в preTradeCheck как cfgOverride). Без неё превью в окне блэкаута 08:00 UTC
     // отвечало бы «открытие запрещено», хотя цепочка и открытие в это же окно проходят.
-    const sellEngineCfg = s1sellhedge.sellhedgeEngineCfg({ ...s1sellhedge.SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) });
+    const sellEngineCfg = s1sellhedge.sellhedgeEngineCfg(s1sellhedge.resolveSellCfg(params?.sellCfg));
     const rejections = s1engine.preTradeCheck(bo.engine, built, metaByInstrument, checkSnap, Date.now(), sellEngineCfg);
     const payoff = s1payoffCurve(built, { min: res.snap.underlying * 0.75, max: res.snap.underlying * 1.25, n: 96 });
     const unit = (built.legs[0]?.qtyAbs ?? 0) * (built.legs[0]?.contractSize ?? 1);
@@ -2014,18 +2023,31 @@ function buildScanSet(spot, nowMs) {
   };
 }
 
-// ── Набор режима ПРОДАЖИ: коллы окна схемы (SELLHEDGE_DEFAULTS 336-672 ч), ближайшие к деньгам
+// ── РЕЖИМ ПРОДАЖИ СКАНЕРА ВЕДЁТ ИМЕНОВАННЫЙ ПРЕСЕТ, а не дефолты схемы напрямую. Разница не
+// косметическая: полоса опроса и оценка тика обязаны жить в ОДНОМ окне срока, иначе сканер тянет
+// тикеры одних экспираций, а правило ищет ногу в других, и «нет ноги» означало бы не рынок, а
+// расхождение двух записей одного числа. Пресет здесь один на оба места, и он же едет в
+// `evaluateSellScan` перекрытием sellCfg - тем самым механизмом, ничего нового.
+//
+// ПОЧЕМУ БОЕВОЙ, А НЕ СВОЙ. Режим продажи сканера существует, чтобы сигналить схему БОТА 2
+// (шапка sell-scan.js): сигнал по построению обязан совпадать с ногой, которую бот открыл бы в ту
+// же метку. Собственный пресет у сканера означал бы, что он сигналит не то, что торгует бот.
+const SCN_SELL_CFG_PATCH = Object.freeze({ presetId: SELL_PRESET_DEFAULT_ID });
+const scnSellCfg = () => resolveSellCfg(SCN_SELL_CFG_PATCH);
+
+// ── Набор режима ПРОДАЖИ: коллы окна пресета схемы, ближайшие к деньгам
 // первыми. Дельту до тикеров знать неоткуда (та же причина, что у сита delta-пресетов): полоса
 // 0.35-0.55 живёт у денег, поэтому сортировка по |K/S − 1| гарантирует носителям полосы место в
 // срезе. Кап - nCandidatesMax (окно несёт 1-2 экспирации по 2-4 страйка полосы). ATM-пары и
 // крылья не собираются: условий У1-У8 в этом режиме нет, IV контекста несёт сама нога.
 function buildSellScanSet(chain, spot, nowMs) {
   const sc = state.otmScanner;
+  const cfg = scnSellCfg();
   const near = [];
   for (const m of chain.instruments ?? []) {
     if (m?.option_type !== "call" || !Number.isFinite(m.expiration_timestamp) || !Number.isFinite(m.strike)) continue;
     const h = (m.expiration_timestamp - nowMs) / 3600000;
-    if (h < SELLHEDGE_DEFAULTS.expiryMinH || h > SELLHEDGE_DEFAULTS.expiryMaxH) continue;
+    if (h < cfg.expiryMinH || h > cfg.expiryMaxH) continue;
     near.push({ n: m.instrument_name, d: Math.abs(m.strike / spot - 1), e: m.expiration_timestamp });
   }
   near.sort((a, b) => a.d - b.d || a.e - b.e);
@@ -2038,7 +2060,7 @@ function buildSellScanSet(chain, spot, nowMs) {
     instruments: [...names],
     candidates,
     pinned,
-    nearExpiryMs: scnExpiriesInWindow(chain, nowMs, SELLHEDGE_DEFAULTS)[0] ?? null,
+    nearExpiryMs: scnExpiriesInWindow(chain, nowMs, cfg)[0] ?? null,
     side: null,
     presetId: SELL_SCAN_ID,
     sigmaConvention: sc.settings.sigmaConvention,
@@ -2069,7 +2091,7 @@ function refreshScanSet(spot, nowMs) {
   const pinned = mode === "sell"
     ? (sc.sellEngineState?.phase === "active" ? sc.sellEngineState.signal?.instrument ?? null : null)
     : (sc.engineState?.phase === "active" ? sc.engineState.signal?.instrument ?? null : null);
-  const nearNow = scnExpiriesInWindow(sc.chain, nowMs, mode === "sell" ? SELLHEDGE_DEFAULTS : preset)[0] ?? null;
+  const nearNow = scnExpiriesInWindow(sc.chain, nowMs, mode === "sell" ? scnSellCfg() : preset)[0] ?? null;
   const stale =
     !cur ||
     (cur.mode ?? "buy") !== mode ||
@@ -2351,7 +2373,7 @@ async function onSellScanSnapshot(snap) {
   // Книги - верху очереди по дельте ЭТОГО снапшота (не прошлого тика): у санитарии есть ось
   // глубины, и книга обязана достаться тем ногам, которые builder проверит первыми. Кандидаты
   // за booksPerTickMax остаются без книги и дают честный unknown-вето - это цена бюджета §4.1.
-  const queue = s1rankSellLegs(s1sellRows(sc.chain ?? { instruments: [] }, snapshotForRows, Date.now()), SELLHEDGE_DEFAULTS, SELL_SANITY_DEFAULTS.maxCandidates).map((r) => r.n);
+  const queue = s1rankSellLegs(s1sellRows(sc.chain ?? { instruments: [] }, snapshotForRows, Date.now()), scnSellCfg(), SELL_SANITY_DEFAULTS.maxCandidates).map((r) => r.n);
   const [booksFetched] = await Promise.all([
     queue.length ? fetchScanBooks(queue.slice(0, SCN_RULES.booksPerTickMax)) : 0,
     fetchScanPerpBook(), // стакан перпа: панель честности и запись строки D живут и в этом режиме
@@ -2360,6 +2382,8 @@ async function onSellScanSnapshot(snap) {
   const nowMs = Date.now();
   const { state: nextSell, cycle } = evaluateSellScan(sc.sellEngineState, {
     settings: sc.settings,
+    sellCfg: SCN_SELL_CFG_PATCH, // тот же пресет, что задал полосу опроса выше
+
     perp: snap.perp ? { indexPrice: snap.perp.index, markPrice: snap.perp.mark, tsMs: snap.perp.ts ?? snap.ts ?? nowMs } : null,
     chain: sc.chain ?? { instruments: [] },
     chainTsMs: sc.chain?.fetchedAt ?? null,
@@ -2694,6 +2718,22 @@ function wireIpcUi() {
     state.settings.ui = { ...(state.settings.ui || {}), locale };
     saveSettings(baseDir, state.settings);
     return { ok: true, locale };
+  });
+  // Реестр пресетов схемы продавца - тем же приёмом sendSync, и по той же причине, что тема с
+  // локалью: числа окна и дельты стоят в ПОДПИСЯХ интерфейса («колл 336-672 ч»), то есть нужны до
+  // первой отрисовки. Через датасет они пришли бы первым пушем, и до него подпись показывала бы
+  // либо шаблон, либо прибитое число - то самое второе место, где живёт окно схемы.
+  // Отдаётся ЧИСТЫМИ ДАННЫМИ и только тем, что нужно подписи: реестр заморожен, копия не
+  // мутируется, правил в renderer не появляется.
+  ipcMain.on("s1:getSellPresets", (e) => {
+    e.returnValue = {
+      defaultId: SELL_PRESET_DEFAULT_ID,
+      presets: Object.fromEntries(Object.entries(SELL_PRESETS).map(([id, p]) => [id, {
+        id, label: p.label, calibrated: p.calibrated,
+        expiryMinH: p.cfg.expiryMinH, expiryMaxH: p.cfg.expiryMaxH, deltaTarget: p.cfg.deltaTarget,
+        bandBtc: p.cfg.bandBtc,
+      }])),
+    };
   });
 }
 

@@ -6,7 +6,7 @@
 
 import { legMargin, lotsByStressMargin } from "./margin.js";
 import { computeTradeCosts } from "../otmscan/economics.js";
-import { SELLHEDGE_DEFAULTS, rankSellLegs, lotsByMargin, halfSpreadUsd, openSellTrade } from "../otmscan/sellhedge.js";
+import { resolveSellCfg, rankSellLegs, lotsByMargin, halfSpreadUsd, openSellTrade } from "../otmscan/sellhedge.js";
 import { rankStranglePairs, openStrangleTrade } from "../otmscan/sellstrangle.js";
 import { SELL_SANITY_DEFAULTS, evaluateInstrumentSanity, summarizeSanityFailure } from "../otmscan/sanity.js";
 
@@ -205,7 +205,7 @@ function sellSizingByRule({ cfg, equityUsd, imPerContract, stressLegs, indexUsd,
 export function buildSellStructure(params, chain, snapshot, nowMs) {
   const underlying = refSpot(snapshot);
   if (!Number.isFinite(underlying)) return { error: "Нет цены базового актива в снапшоте" };
-  const cfg = { ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) };
+  const cfg = resolveSellCfg(params?.sellCfg);
 
   // САНИТАРИЯ (§1.8 дизайна): вето переключает контракт, а не останавливает цепочку. Кандидаты
   // идут в порядке близости дельты; не прошла нога - берётся следующая в допуске; не прошла ни
@@ -322,7 +322,7 @@ export function buildSellStructure(params, chain, snapshot, nowMs) {
 export function buildSellStrangleStructure(params, chain, snapshot, nowMs) {
   const underlying = refSpot(snapshot);
   if (!Number.isFinite(underlying)) return { error: "Нет цены базового актива в снапшоте" };
-  const cfg = { ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) };
+  const cfg = resolveSellCfg(params?.sellCfg);
   const sanityCfg = { ...SELL_SANITY_DEFAULTS, ...(params?.sanityCfg ?? {}) };
   const pairs = rankStranglePairs(sellRowsFromSnapshot(chain, snapshot, nowMs), cfg, sanityCfg.maxCandidates);
   if (!pairs.length) {

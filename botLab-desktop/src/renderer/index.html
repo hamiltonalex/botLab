@@ -2854,6 +2854,35 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
    (осиротевшая копия index.html без соседних файлов) - тогда t() возвращает ключ ── */
 if (typeof window.t !== 'function') { window.t = function(k){ return k; }; window.applyI18n = function(){}; }
 
+/* ── ПРЕСЕТЫ СХЕМЫ ПРОДАВЦА: ИМЕНА ЗДЕСЬ, ЧИСЛА В ДВИЖКЕ ──────────────────────────────────────
+   Реестр приезжает синхронно (тот же приём, что у темы и локали) ДО первой отрисовки: числа окна
+   срока и целевой дельты стоят в шести подписях трёх вкладок, и приди они датасетом, подпись до
+   первого пуша показывала бы либо шаблон, либо прибитое число.
+
+   ЧИСЕЛ ПРАВИЛА В RENDERER НЕТ НИ ОДНОГО, и это цель правки, а не аккуратность: прежде окно
+   «336-672 ч» было вписано в оба словаря шестью строками каждый, то есть двенадцатью копиями
+   числа, которое определяет движок. Копия молчит при смене правила - интерфейс продолжал бы
+   обещать прежнее окно. Единственный литерал ниже это ИМЯ пресета на случай осиротевшей копии
+   страницы без моста; имя не правило, и вооружать им нечего - без моста нет и window.s1.       */
+const SELL_PRESETS_UI = (function(){
+  try { return (window.s1 && window.s1.getSellPresetsSync) ? window.s1.getSellPresetsSync() : null; }
+  catch(e){ console.warn('s1 getSellPresetsSync', e); return null; }
+})();
+const sellPresetDefaultId = () => (SELL_PRESETS_UI && SELL_PRESETS_UI.defaultId) || 'sell-call-336-672-v1';
+const sellPresetOf = id => (SELL_PRESETS_UI && SELL_PRESETS_UI.presets && SELL_PRESETS_UI.presets[id]) || null;
+/* Подпись пресета - из словаря по id (идиома SCN_PRESET_LABELS): реестр движка несёт машинное имя
+   для журнала и паспорта, а экран говорит на языке оператора. Неизвестный id показывается как есть:
+   молча подменить его знакомой подписью значило бы соврать про то, чем открыта сделка. */
+const SELL_PRESET_LABELS = { get 'sell-call-336-672-v1'(){return t('opt.preset.sellCall336672');},
+  get 'sell-call-168-336-v1'(){return t('opt.preset.sellCall168336');} };
+const sellPresetLabel = id => SELL_PRESET_LABELS[id] || (sellPresetOf(id) && sellPresetOf(id).label) || id || '—';
+/* Числа правила в подписи словаря. Вызывается до applyI18n и повторно не нужно: пресет схемы за
+   время сессии не меняется, а смена языка берёт те же параметры из этого же состояния. */
+(function(){
+  const p = sellPresetOf(sellPresetDefaultId());
+  if (p && window.setI18nParams) window.setI18nParams({ schemeMinH: p.expiryMinH, schemeMaxH: p.expiryMaxH, schemeDelta: p.deltaTarget });
+})();
+
 /* ── const формулы (из движка funding_spread_core.py) ── */
 const SEC_PER_HOUR = 3600, HOURS_PER_YEAR = 8760;          // annualize: factor*3600*8760 ; HL: rate*8760
 const fmtUSD = (v, dp=2) => {
@@ -5358,6 +5387,19 @@ function renderOptConform(ds){
   row(t('opt.conf.rFlat'), t('opt.conf.rFlatNow'), t('opt.conf.rFlatWant'), false,
     t('opt.conf.rFlatPrice'));
   row(t('opt.conf.rTenor'), t('opt.conf.tenorVal'), t('opt.conf.tenorVal'), true, t('opt.conf.byRule'));
+  /* ПРЕСЕТ СХЕМЫ В ПАСПОРТЕ. У ОТКРЫТОЙ структуры имя и пометка замера читаются из ЗАМОРОЖЕННОГО
+     engineCfg, а не из реестра по имени: сделка обязана отвечать «чем её открыли», а не «что
+     сейчас называется так же». Без позиции показывается пресет, которым вооружится следующая.
+     Отметка «сошлось» стоит только у ЗАМЕРЕННОГО пресета: конфигурация без подтверждений это
+     отклонение от измеренного, даже если её числа выглядят разумно, и карточка обязана называть
+     это отклонением, а не молчать. Старые структуры без поля пресета (открытые до реестра) дают
+     null и остаются без отметки - у них имени не было. */
+  const pPresetId = open && sel.presetId ? sel.presetId : sellPresetDefaultId();
+  const pCal = open && sel.presetId
+    ? sel.presetCalibrated === true
+    : !!(sellPresetOf(pPresetId) && sellPresetOf(pPresetId).calibrated);
+  row(t('opt.conf.rPreset'), sellPresetLabel(pPresetId) + (pCal ? '' : ' · ' + t('opt.conf.presetUnmeasured')),
+    sellPresetLabel(sellPresetDefaultId()), pCal && pPresetId === sellPresetDefaultId(), t('opt.conf.pPreset'));
   /* Правило размера: у ОТКРЫТОЙ структуры - то, каким она реально посчитана (sizing.rule; старые
      позиции без метки посчитаны деплоем), без позиции - то, каким вооружится следующая (стресс).
      Оба правила измерены, поэтому строка документирует, а не судит. */
@@ -6131,11 +6173,15 @@ function drawDelta(cv, data, tipEl){
 function optStructParams(){ return { expiry:optSel.expiry, callOffsetPct:optSel.wing, putOffsetPct:optSel.wing, qty:optSel.qty, execStyle:optSel.exec }; }
 /* Схема продавца НЕ передаёт ни экспирацию, ни крылья: срок и страйк выбирает правило в движке.
    qty === null означает «размер считает lotsByMargin», и это отличается от «ноль». */
-/* Размер продавца считает АВТОНОМНОЕ стресс-правило движка (MM при ±45% спота не выше 80% счёта,
-   константы зафиксированы замером 2026-08-26): операторского числа deployPct в вооружении больше
-   нет. Исторические книги сверок сняты правилом deploy - оно живёт в движке дефолтом. */
+/* ВООРУЖЕНИЕ НАЗЫВАЕТ ПРЕСЕТ, А НЕ ПЕРЕЧИСЛЯЕТ ПОЛЯ. Прежде тикет слал россыпь `{sizeRule:'stress'}`
+   и молчал про окно срока с дельтой: конфигурация без имени, по которой нельзя сказать, откуда её
+   числа и мерил ли их кто-нибудь. Теперь едет ИМЯ, а поля берутся из реестра движка - там же, где
+   их определяет правило, - и это же имя замерзает в паспорте сделки.
+   Боевой пресет несёт то же, что слала россыпь: окно 336-672 ч, дельту 0.45, полосу 0.03 и
+   АВТОНОМНОЕ стресс-правило размера (MM при ±45% спота не выше 80% счёта, замер 2026-08-26).
+   Исторические книги сверок сняты правилом deploy - оно живёт в движке дефолтом. */
 function optSellStructParams(){ return { kind: optModeActive()==='sell-strangle' ? 'sell-strangle' : 'sell-call',
-  qty:optSel.sellQty, execStyle:optSel.exec, sellCfg:{ sizeRule:'stress' } }; }
+  qty:optSel.sellQty, execStyle:optSel.exec, sellCfg:{ presetId: sellPresetDefaultId() } }; }
 let optSellPrevTimer;
 /* Тот же дебаунс, что у покупателя, но с ЧЕСТНОЙ меткой ожидания: раунд-трип объективно длиннее
    (срез всей поверхности плюс тикер выбранной ноги), и молчащий экран читался бы как поломка. */
@@ -6411,10 +6457,12 @@ async function confirmOptChain(){
   const cf=$('optChainTktConfirm'); if(cf) cf.disabled=true;
   /* Вид структуры вооружается ВМЕСТЕ с цепочкой: перевход открывает ровно то, что было выбрано
      при включении, а не то, куда позже ушёл тумблер. Старые цепочки без kind читаются коллом.
-     Размер каждой сделки цепочки считает стресс-правило движка (см. optSellStructParams). */
+     Пресет схемы вооружается вместе с ней и по той же причине: перевход обязан открывать ту же
+     конфигурацию, что оператор подтвердил, а не ту, что окажется дефолтом позже (см.
+     optSellStructParams). */
   const r=await chainSet({ on:true, params:{ kind: optModeActive()==='sell-strangle' ? 'sell-strangle' : 'sell-call',
     qty:null, execStyle:(optSel&&optSel.exec)||'limit',
-    mode:(optSel&&optSel.chainMode)||'continuous', sellCfg:{ sizeRule:'stress' } } });
+    mode:(optSel&&optSel.chainMode)||'continuous', sellCfg:{ presetId: sellPresetDefaultId() } } });
   if(r && r.error){ const err=$('optChainTktErr'); if(err){ err.hidden=false;
       err.textContent=t('opt.r.armFail',{e:r.error}); }
     if(cf) cf.disabled=false; return; }

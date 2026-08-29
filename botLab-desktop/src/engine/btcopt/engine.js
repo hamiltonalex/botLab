@@ -24,7 +24,7 @@ import { structureMargin, liqPriceEst } from "./margin.js";
 import { computeScenarios } from "./stress.js";
 import { computeRegime } from "./regime.js";
 import {
-  SELLHEDGE_DEFAULTS, sellhedgeEngineCfg, shouldOpenDegraded,
+  SELLHEDGE_DEFAULTS, resolveSellCfg, sellhedgeEngineCfg, shouldOpenDegraded,
   shouldStopOut, stopGateStep, stopCostUsd,
 } from "../otmscan/sellhedge.js";
 import { SELL_SANITY_DEFAULTS } from "../otmscan/sanity.js";
@@ -670,7 +670,7 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   // У стрэнгла конфигурация та же и это ИЗМЕРЕНО, а не предположено: пара мерена той же полосой
   // 0.03 на контракт по НЕТТО-дельте, без триггеров и без блэкаута (eval-accel, равный хвост).
   const sellEngineCfg =
-    isSellKind(built.kind) ? sellhedgeEngineCfg({ ...SELLHEDGE_DEFAULTS, ...(params?.sellCfg ?? {}) }) : null;
+    isSellKind(built.kind) ? sellhedgeEngineCfg(resolveSellCfg(params?.sellCfg)) : null;
   // Живой бот умеет ОДНО действие правила выхода - закрыть позицию целиком. «Урезать вдвое» и
   // «вернуть размер» требуют частичного выкупа опциона и пересчёта хеджа, которых у бота нет;
   // молча проглотить такую настройку значило бы исполнять другое правило, чем показано оператору.

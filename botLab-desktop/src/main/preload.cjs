@@ -50,6 +50,9 @@ contextBridge.exposeInMainWorld("ui", {
 // ── Bot 2 «BTC-опционы» (Strategy One) — a PARALLEL bridge, fully isolated from `fa` above ──
 // Live Deribit public data + paper execution (no keys, no orders). The `fa` block is untouched.
 contextBridge.exposeInMainWorld("s1", {
+  // Реестр пресетов схемы продавца: sendSync, как тема и локаль - подписи с окном срока рисуются
+  // до первого пуша датасета.
+  getSellPresetsSync: () => ipcRenderer.sendSync("s1:getSellPresets"),
   getState: () => ipcRenderer.invoke("s1:getState"),
   setSettings: (s) => ipcRenderer.invoke("s1:setSettings", s),
   previewStructure: (params) => ipcRenderer.invoke("s1:previewStructure", params), // hypothesis: debit/payoff/gate, no open
