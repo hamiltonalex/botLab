@@ -50,6 +50,30 @@ reproduces the audited numbers (APT config A **53.39% mean / 47.24% median**, P&
 verifies the forward accrual engine + persistence. (APT is retained here only as a **historical
 golden fixture** for the math port; it is no longer a live tradable instrument - see above.)
 
+### Pre-merge guard
+
+`npm test` is the fast loop (15 s) and stays that way. The **behavioural** guard - the one that
+notices when a trading rule moved - is a separate, slower command:
+
+```
+npm run guard
+```
+
+It runs the unit tests, replays the five-year record twice (once through the offline reference
+`hist-sellhedge.mjs`, once through bot 2's live engine via `replay-sellhedge.mjs`), checks the
+sha256 of both trade books against the frozen sums in `test/baselines/books.sha256`, and prints the
+column-by-column comparison. It fails on the first discrepancy and names what to look at. Around a
+minute on a warm cache; it needs the 2.4 GB record in `data/hist-records/rec-5y-maxdays30-logm045`
+and says so plainly if it is missing.
+
+The books are byte-comparable because they are printed with `toFixed`: a rule change moves a
+printed digit, float noise below that digit does not. To confirm the guard can still fail, silence
+one engine rule and watch the engine book's sum break:
+
+```
+npm run guard -- --drop-rule band-off
+```
+
 The renderer selector/state oracle runs the production DOM against a fixed 400-day frame and
 checks all strategy/instrument/config/window/mode/capital/leverage combinations plus stale-push fuzz:
 
