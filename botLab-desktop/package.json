@@ -29,6 +29,7 @@
     "margin:path": "node --max-old-space-size=12000 scripts/margin-path.mjs",
     "parity:sellhedge": "node --max-old-space-size=12000 scripts/parity-sellhedge.mjs",
     "replay:sellhedge": "node --max-old-space-size=12000 scripts/replay-sellhedge.mjs",
+    "replay:funding": "node scripts/replay-funding.mjs",
     "compare:books": "node --max-old-space-size=12000 scripts/compare-books.mjs",
     "hist:repack": "node scripts/hist-repack.mjs",
     "e2e:ui": "node scripts/e2e-ui.mjs",

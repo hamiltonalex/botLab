@@ -115,8 +115,8 @@ export function formatVerdict(steps, advice = []) {
   out.push("");
   const failed = list.filter((s) => s.ok === false);
   if (!failed.length) {
-    out.push("ВСЁ СОШЛОСЬ. Обе пятилетние книги побайтово те же, что в test/baselines/books.sha256,");
-    out.push("то есть поведение боевой схемы не сдвинулось.");
+    out.push("ВСЁ СОШЛОСЬ. Все книги побайтово те же, что в test/baselines/books.sha256, то есть");
+    out.push("поведение обоих боевых трактов не сдвинулось.");
   } else {
     out.push(`РАСХОЖДЕНИЕ: ${failed.map((s) => s.name).join(", ")}.`);
     for (const line of advice) out.push(line);

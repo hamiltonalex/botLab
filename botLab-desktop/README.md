@@ -59,20 +59,34 @@ notices when a trading rule moved - is a separate, slower command:
 npm run guard
 ```
 
-It runs the unit tests, replays the five-year record twice (once through the offline reference
-`hist-sellhedge.mjs`, once through bot 2's live engine via `replay-sellhedge.mjs`), checks the
-sha256 of both trade books against the frozen sums in `test/baselines/books.sha256`, and prints the
-column-by-column comparison. It fails on the first discrepancy and names what to look at. Around a
-minute on a warm cache; it needs the 2.4 GB record in `data/hist-records/rec-5y-maxdays30-logm045`
-and says so plainly if it is missing.
+It runs the unit tests, then takes **three** trade books and checks the sha256 of each against the
+frozen sums in `test/baselines/books.sha256`:
+
+- `base-ref.tsv` - the seller scheme through the offline reference (`hist-sellhedge.mjs`), five
+  years of recorded market;
+- `base-eng.tsv` - the same five years through bot 2's live engine (`replay-sellhedge.mjs`);
+- `base-fa.tsv` - bot 1's paper ledger over the year of cached funding fixtures
+  (`replay-funding.mjs`), three instruments on three leg models, one row per day.
+
+It finishes with the column-by-column comparison of the two seller books, fails on the first
+discrepancy and names what to look at. Around a minute on a warm cache; the two seller books need
+the 2.4 GB record in `data/hist-records/rec-5y-maxdays30-logm045` and the command says so plainly
+if it is missing. Bot 1's book needs nothing beyond the repo and takes a fifth of a second.
 
 The books are byte-comparable because they are printed with `toFixed`: a rule change moves a
 printed digit, float noise below that digit does not. To confirm the guard can still fail, silence
-one engine rule and watch the engine book's sum break:
+one rule and watch that bot's book break - `band-off` for bot 2, `config-flip` for bot 1:
 
 ```
 npm run guard -- --drop-rule band-off
 ```
+
+Note what the seller comparison does *not* claim. The two seller books legitimately disagree on
+funding, perp turnover and totals: the engine accrues funding on position notional the way the
+exchange does, while the reference approximates it by delta, and the reference does not model whole
+inverse perp contracts at all. Instrument, entry, exit, lot count and margin match on all 84 trades.
+The gate is each book against **its own** frozen sum; the column table exists to name which rule
+moved when a sum breaks.
 
 The renderer selector/state oracle runs the production DOM against a fixed 400-day frame and
 checks all strategy/instrument/config/window/mode/capital/leverage combinations plus stale-push fuzz:

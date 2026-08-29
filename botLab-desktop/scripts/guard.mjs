@@ -10,10 +10,16 @@
 //
 // ЧТО ЗДЕСЬ ГЕЙТ, А ЧТО ДИАГНОСТИКА - разделение принципиальное:
 //   ГЕЙТ        - код возврата `npm test` и sha256 КАЖДОЙ книги против своей эталонной суммы;
-//   ДИАГНОСТИКА - отчёт `compare-books.mjs` столбец за столбцом. Книги двух реализаций построчно
-//                 НЕ совпадают и совпадать не обязаны (см. test/baselines/books.sha256); таблица
-//                 нужна, чтобы при упавшей сумме НАЗВАТЬ сдвинувшееся правило, а не чтобы требовать
-//                 равенства.
+//   ДИАГНОСТИКА - отчёт `compare-books.mjs` столбец за столбцом. Книги двух реализаций схемы
+//                 продавца построчно НЕ совпадают и совпадать не обязаны (см.
+//                 test/baselines/books.sha256); таблица нужна, чтобы при упавшей сумме НАЗВАТЬ
+//                 сдвинувшееся правило, а не чтобы требовать равенства.
+//
+// КНИГ ТРИ, И ТРЕТЬЯ ПРО ДРУГОГО БОТА. Две книги схемы продавца (эталон и живой движок бота 2)
+// снимаются с пятилетней записи, третья - с годовых фикстур репозитория и описывает бумажный
+// леджер БОТА 1. Своей сквозной сверки у бота 1 не было вовсе: его охрана состояла из
+// аналитических golden-тестов, а слой, который и есть «результат бота», под охраной не стоял.
+// Она дешёвая (доли секунды, записи не требует), поэтому идёт последней и ничего не удорожает.
 //
 // ПОРЯДОК ШАГОВ ЗНАЧИМ: сначала быстрый цикл, потом дорогие книги. Падение юнит-теста почти всегда
 // объясняет и расхождение книги, а обратное неверно, поэтому тратить минуту на книги после красных
@@ -43,8 +49,9 @@ if (args.includes("--help")) {
   --dir <каталог>      пятилетняя запись (по умолчанию ../data/hist-records/rec-5y-maxdays30-logm045)
   --baselines <файл>   файл эталонных сумм (по умолчанию test/baselines/books.sha256)
   --keep               не удалять временный каталог с книгами даже при успехе
-  --drop-rule <имя>    КОНТРОЛЬ: заглушить правило движка и убедиться, что охрана это заметит
-                       (band-off | size-off | pick-off | settle-late | stop-off)`);
+  --drop-rule <имя>    КОНТРОЛЬ: заглушить одно правило и убедиться, что охрана это заметит.
+                       бот 2: band-off | size-off | pick-off | settle-late | stop-off
+                       бот 1: cost-off | config-flip | hl-off | rows-half`);
   process.exit(0);
 }
 
@@ -54,6 +61,9 @@ const REC = resolve(APP, argOf("--dir", "../data/hist-records/rec-5y-maxdays30-l
 const BASELINES = resolve(APP, argOf("--baselines", "test/baselines/books.sha256"));
 const KEEP = args.includes("--keep");
 const DROP_RULE = argOf("--drop-rule");
+// Контроли бота 1 живут своим набором: у леджера фандинг-арбитража нет ни полосы хеджа, ни гейта
+// размера, и подсунуть ему чужое имя правила значило бы молча ничего не заглушить.
+const FA_DROPS = ["cost-off", "config-flip", "hl-off", "rows-half"];
 
 const fail = (...lines) => { console.error(`\n${lines.join("\n")}`); process.exit(1); };
 
@@ -101,8 +111,9 @@ const cleanup = (ok) => { if (ok && !KEEP) rmSync(TMP, { recursive: true, force:
 console.log(`# Охрана от регрессий\n`);
 console.log(`Это ДОЛГАЯ команда, и она предназначена для пред-мержа, а не для каждого сохранения:`);
 console.log(`  юнит-тесты                около 15 с;`);
-console.log(`  две книги по пятилетней записи (2.4 ГБ): на тёплом кэше около 40 с, на холодном диске`);
-console.log(`  до нескольких минут - читается вся запись целиком, дважды.`);
+console.log(`  две книги схемы продавца по пятилетней записи (2.4 ГБ): на тёплом кэше около 40 с,`);
+console.log(`  на холодном диске до нескольких минут - читается вся запись целиком, дважды;`);
+console.log(`  книга бота 1 по годовым фикстурам: доли секунды.`);
 console.log(`Быстрый цикл остаётся быстрым: ${NPM} test не изменён.\n`);
 console.log(`запись:  ${REC}`);
 console.log(`эталоны: ${BASELINES}`);
@@ -119,8 +130,23 @@ const stop = () => {
   process.exit(1);
 };
 
+// ── КНИГИ. Команды те же, что в шапке test/baselines/books.sha256, и это не совпадение:
+// второе место, где живут флаги прогона, означало бы два разных прогона под одним именем.
+const BOOKS = [
+  { file: "base-ref.tsv", title: `книга эталона`, script: "scripts/hist-sellhedge.mjs",
+    heap: true, rec: true, argv: ["--book-lots", "100"] },
+  { file: "base-eng.tsv", title: `книга движка`, script: "scripts/replay-sellhedge.mjs",
+    heap: true, rec: true,
+    argv: ["--qty", "1.0", ...(DROP_RULE && !FA_DROPS.includes(DROP_RULE) ? ["--drop-rule", DROP_RULE] : [])] },
+  // Книга бота 1 читает фикстуры репозитория, а не запись: ни `--dir`, ни расширенной кучи ей не
+  // надо. Контроли у неё свои: правила у ботов разные, и глушить у леджера «полосу хеджа» нечего.
+  { file: "base-fa.tsv", title: `книга бота 1`, script: "scripts/replay-funding.mjs",
+    heap: false, rec: false, argv: FA_DROPS.includes(DROP_RULE) ? ["--drop-rule", DROP_RULE] : [] },
+];
+const STEPS = 2 + BOOKS.length; // тесты + книги + сверка книг продавца
+
 // ── шаг 1: быстрый цикл.
-console.log(`\n## 1/4 юнит-тесты (${NPM} test)`);
+console.log(`\n## 1/${STEPS} юнит-тесты (${NPM} test)`);
 {
   const r = run(NPM, ["test"]);
   const pass = Number(r.out.match(/^# pass (\d+)$/m)?.[1] ?? NaN);
@@ -137,20 +163,14 @@ console.log(`\n## 1/4 юнит-тесты (${NPM} test)`);
   }
 }
 
-// ── шаги 2 и 3: книги. Команды те же, что в шапке test/baselines/books.sha256, и это не совпадение:
-// второе место, где живут флаги прогона, означало бы два разных прогона под одним именем.
-const BOOKS = [
-  { file: "base-ref.tsv", title: `книга эталона`, script: "scripts/hist-sellhedge.mjs",
-    argv: ["--book-lots", "100"] },
-  { file: "base-eng.tsv", title: `книга движка`, script: "scripts/replay-sellhedge.mjs",
-    argv: ["--qty", "1.0", ...(DROP_RULE ? ["--drop-rule", DROP_RULE] : [])] },
-];
 const actual = new Map();
 for (let i = 0; i < BOOKS.length; i += 1) {
   const b = BOOKS[i];
   const path = join(TMP, b.file);
-  console.log(`\n## ${i + 2}/4 ${b.title} (${b.script})`);
-  const r = run(process.execPath, [...NODE_BIG, b.script, "--dir", REC, ...b.argv, "--book", path]);
+  console.log(`\n## ${i + 2}/${STEPS} ${b.title} (${b.script})`);
+  const r = run(process.execPath, [
+    ...(b.heap ? NODE_BIG : []), b.script, ...(b.rec ? ["--dir", REC] : []), ...b.argv, "--book", path,
+  ]);
   if (r.status !== 0 || !existsSync(path)) {
     console.log(r.out.split("\n").slice(-30).join("\n"));
     report(b.title, false, `прогон упал (код ${r.status})`, r.ms);
@@ -176,19 +196,35 @@ for (const b of BOOKS) {
   steps[i] = { ...steps[i], ok: row?.state === "сошлась", detail: `sha ${row?.state ?? "не сверена"}` };
 }
 
-// ── шаг 4: сверка книг столбец за столбцом. Печатается ВСЕГДА, в том числе при сошедшихся суммах:
+// ── последний шаг: сверка книг схемы продавца столбец за столбцом. Печатается ВСЕГДА, в том числе при сошедшихся суммах:
 // это единственное место, где видно, чем именно две реализации схемы отличаются друг от друга.
-console.log(`\n## 4/4 сверка книг (scripts/compare-books.mjs)\n`);
+console.log(`\n## ${STEPS}/${STEPS} сверка книг схемы продавца (scripts/compare-books.mjs)\n`);
 const cmp = run(process.execPath, ["scripts/compare-books.mjs", "--a", join(TMP, "base-ref.tsv"), "--b", join(TMP, "base-eng.tsv")]);
 console.log(cmp.out.trim());
 const cols = summarizeColumns(parseColumnTable(cmp.out));
-report(`сверка книг`, cmp.status === 0 && cols.total > 0 ? null : false, cols.text, cmp.ms);
+report(`сверка книг продавца`, cmp.status === 0 && cols.total > 0 ? null : false, cols.text, cmp.ms);
 
 if (!digest.ok) {
-  advice.push(`Книга разошлась с эталонной суммой, то есть ПОВЕДЕНИЕ БОЕВОЙ СХЕМЫ сдвинулось.`);
-  advice.push(`Смотреть таблицу «Столбец за столбцом» выше: порядок столбцов там - порядок разбора,`);
-  advice.push(`и ПЕРВЫЙ разошедшийся столбец называет сдвинувшееся правило (инструмент и момент`);
-  advice.push(`входа - выбор ноги, лоты и залог - гейт размера, хедж и оборот - полоса перекладки).`);
+  // СОВЕТ АДРЕСУЕТСЯ ТОЙ КНИГЕ, КОТОРАЯ РАЗОШЛАСЬ. У книг разные тракты и разные способы разбора:
+  // посылать оператора к таблице столбцов схемы продавца, когда сдвинулся леджер бота 1, значит
+  // отправить его читать сверку, которая про эту книгу вообще ничего не говорит.
+  const bad = new Set(digest.rows.filter((r) => r.state !== "сошлась").map((r) => r.name));
+  advice.push(`Книга разошлась с эталонной суммой, то есть ПОВЕДЕНИЕ БОЕВОГО ТРАКТА сдвинулось.`);
+  if (bad.has("base-ref.tsv") || bad.has("base-eng.tsv")) {
+    advice.push(``);
+    advice.push(`Схема продавца: смотреть таблицу «Столбец за столбцом» выше. Порядок столбцов там -`);
+    advice.push(`порядок разбора, и ПЕРВЫЙ разошедшийся столбец называет сдвинувшееся правило`);
+    advice.push(`(инструмент и момент входа - выбор ноги, лоты и залог - гейт размера, хедж и оборот`);
+    advice.push(`- полоса перекладки). Разошлась ОДНА из двух книг - сдвинулась именно её сторона.`);
+  }
+  if (bad.has("base-fa.tsv")) {
+    advice.push(``);
+    advice.push(`Бот 1: книга посуточная, поэтому адрес ищется дифом. Сними её рядом с эталонной`);
+    advice.push(`(npm run replay:funding -- --book /tmp/fa.tsv) и сравни строки: первый разошедшийся`);
+    advice.push(`день называет момент, а столбцы фандинг/борроу/HL - слой начисления. Разошлась ОДНА`);
+    advice.push(`схема из трёх - сдвинулась её ветка legModel, все три - общая арифметика начисления.`);
+  }
+  advice.push(``);
   advice.push(`Если правило менялось намеренно, эталонные суммы обновляются В ТОМ ЖЕ коммите,`);
   advice.push(`с объяснением в CHANGELOG.md, что именно сдвинулось.`);
 }

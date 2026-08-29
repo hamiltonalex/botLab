@@ -21,13 +21,17 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const A = "976a03f769541c904b2f56acc97c649896199815a9e52879ed13d555e099bf56";
 const B = "70d2fa2c98026572e8b6725b511b56765b7a2be4636957c0a48799a32dea0f3e";
 
-test("файл эталонов репозитория разбирается и описывает ровно две книги", () => {
+// СОСТАВ ФАЙЛА ЗАКРЕПЛЁН СПИСКОМ, а не размером: книга, снимаемая охраной без эталонной строки,
+// сверяется ни с чем (см. checkDigests ниже), а эталонная строка без книги молча не проверяется.
+// Список ловит обе стороны, поэтому его правка обязана быть осознанной.
+test("файл эталонов репозитория разбирается и описывает три книги: две продавца и бота 1", () => {
   const text = readFileSync(join(HERE, "baselines", "books.sha256"), "utf8");
   const { entries, errors } = parseBaselines(text);
   assert.deepEqual(errors, [], "файл эталонов обязан разбираться без ошибок");
-  assert.deepEqual([...entries.keys()].sort(), ["base-eng.tsv", "base-ref.tsv"]);
+  assert.deepEqual([...entries.keys()].sort(), ["base-eng.tsv", "base-fa.tsv", "base-ref.tsv"]);
   assert.equal(entries.get("base-ref.tsv"), A);
   assert.equal(entries.get("base-eng.tsv"), B);
+  assert.equal(entries.get("base-fa.tsv").length, 64);
 });
 
 test("parseBaselines пропускает комментарии и пустые строки", () => {
@@ -135,6 +139,7 @@ test("formatVerdict при успехе называет побайтовое с
     { name: "книга эталона", ok: true, detail: "sha сошлась", ms: 16000 },
   ]);
   assert.match(v, /ВСЁ СОШЛОСЬ/);
+  assert.match(v, /побайтово/);
   assert.match(v, /15\.0 с/);
   assert.doesNotMatch(v, /РАСХОЖДЕНИЕ/);
 });
