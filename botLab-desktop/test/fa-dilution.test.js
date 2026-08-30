@@ -11,11 +11,29 @@
 // ЧИСЛА В ПРОВЕРКАХ НЕ ВЫДУМАНЫ. Опорная пара взята из разбора прогона: у BTC `f_short` равна
 // 2.4e-8 в секунду при базе `B_short` = $2.11e7, и при входе $1000 верный множитель равен
 // 0.999953, а опровергнутый `S/(B+S)` равен 4.7e-5, то есть в 21 тысячу раз меньше.
+//
+// ПРИЁМ, КОТОРЫЙ СТОИТ ПЕРЕНОСИТЬ В СЛЕДУЮЩИЕ ФАЗЫ: неверные данные не запрещаются проверкой, они
+// делаются НЕВЫРАЗИМЫМИ. Строки здесь строит `hour({ pot, bShort, bLong, recv })`, то есть от
+// потока рынка, и тождество выполняется по построению. Причина конкретная: три первых варианта
+// этих тестов задавали ставки независимо от баз, то есть описывали рынок, где обе стороны котируют
+// одну ставку при разных базах. Такого рынка нет, и один из трёх тестов проверял на нём именно
+// запрет 1, то есть не проверял ничего.
+//
+// ПРОВЕРКА ПО АБСОЛЮТНОЙ ВЕЛИЧИНЕ ВНИЗУ ФАЙЛА обязательна и закрывает слепое пятно тождества:
+// тождество сверяет ОТНОШЕНИЕ сторон и пропускает любую ошибку, масштабирующую обе стороны разом.
+// Опасно именно ЗАВЫШЕНИЕ базы: множитель уходит к единице, разбавление исчезает, и леджер
+// бесшумно возвращается к фантому.
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseSpreadCsv } from "../src/engine/format.js";
 import {
-  FA_IDENTITY_MAX_REL_ERR, NO_DILUTION, baseUsd, dilutedFundingRate, dilutionFactor, potOf, resolveBase,
+  FA_DILUTION_REASONS, FA_FLOW_REASONS, FA_IDENTITY_MAX_REL_ERR, NO_DILUTION,
+  baseUsd, dilutedFundingRate, dilutionFactor, potOf, resolveBase,
 } from "../src/engine/fa/dilution.js";
 import { openPosition, accrue, accrueFromRows, closePosition, positionSummary, accountSummary } from "../src/engine/paper.js";
 import { buildLedger, ledgerReconciles } from "../src/engine/ledger.js";
@@ -363,4 +381,67 @@ test("живой снимок несёт базы фандинга обеих с
   // Отсутствие баз НЕ обязано останавливать начисление: разбавление это отдельный слой, и его
   // деградация называется своей причиной, а не гасит всю позицию.
   assert.equal(snap.accrualOk, true);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. Абсолютная величина на настоящих данных репозитория
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("APT за год: разбавление даёт $713.00 из аудированных $1067.95, удержано 67.0%", () => {
+  // ЕДИНСТВЕННАЯ проверка, которая смотрит на АБСОЛЮТНУЮ величину, а не на отношение. Ошибка,
+  // масштабирующая обе базы разом (единицы, множитель 1e30, поле другой размерности), тождество
+  // проходит насквозь, и поймать её можно только сравнением с известным числом.
+  //
+  // $1067.9539 это число аудита питоновского движка, на котором стоит golden.test.js, то есть
+  // неразбавленная ветка привязана к уже ратифицированной величине, а разбавленная к ней же минус
+  // измеренная цена входа.
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const rows = parseSpreadCsv(readFileSync(join(HERE, "fixtures", "APT.csv"), "utf8"));
+  const oiPath = join(HERE, "..", "..", "data", "funding-arb", "gmx-oi-snapshots", "APT.json.gz");
+  const oi = JSON.parse(gunzipSync(readFileSync(oiPath)).toString("utf8")).oi;
+  const bases = new Map(oi.map((r) => [Number(r.snapshotTimestamp), r]));
+  assert.equal(rows.length, 8761, "фикстура обязана быть полным годом");
+
+  const withBases = (scale = 1, field = "usd") => rows.map((r) => {
+    const o = bases.get(r.tsHour);
+    if (!o) return r;
+    return field === "usd"
+      ? { ...r, fbase_long: baseUsd(o.longFundingBalanceOiUsd) * scale, fbase_short: baseUsd(o.shortFundingBalanceOiUsd) * scale }
+      : { ...r, fbase_long: Number(o.longOpenInterestInTokens), fbase_short: Number(o.shortOpenInterestInTokens) };
+  });
+  const runYear = (src, dilute) => {
+    const t0 = rows[0].tsHour * 1000;
+    const end = rows[rows.length - 1].tsHour * 1000 + HOUR;
+    const p = openPosition({ strategy: "two", instrumentKey: "APT", config: "A", capital: 2000, leverage: 1, nowMs: t0, dilute });
+    accrueFromRows(p, src, end);
+    closePosition(p, end);
+    return positionSummary(p);
+  };
+
+  near(runYear(rows, false).grossPnl, 1067.9539, 5e-4, "год без разбавления равен числу аудита");
+  const on = runYear(withBases(), true);
+  near(on.grossPnl, 712.9962, 5e-4, "год с разбавлением");
+  near(on.flowQuoted, 1075.7287, 5e-4, "котируемый поток часов получения");
+  near(on.dilutionRetained, 0.67003, 1e-5, "доля удержания");
+  assert.equal(on.noBaseSec, 0, "базы покрывают все 8761 час");
+  assert.equal(on.badBaseSec, 0, "тождество сходится во всех часах");
+
+  // Обе стороны слепого пятна обязаны двигать число, и в разные стороны.
+  const inflated = runYear(withBases(1000), true);
+  near(inflated.dilutionRetained, 0.97772, 1e-5, "завышенная база стирает разбавление");
+  assert.ok(inflated.grossPnl > 1000, `завышение обязано вернуть счёт к фантому, получено ${inflated.grossPnl}`);
+  const inTokens = runYear(withBases(1, "tokens"), true);
+  assert.ok(inTokens.badBaseSec > 0, "подмена поля обязана ломать тождество");
+  assert.ok(inTokens.grossPnl < 700, `подмена поля обязана обрушить счёт, получено ${inTokens.grossPnl}`);
+});
+
+test("каждая причина разбавления отнесена к часам получения или нет, без умолчаний", () => {
+  // Новая причина, забытая в FA_FLOW_REASONS, молча выпала бы из доли удержания: ровно так
+  // `base_identity_broken` давал «удержано 100.000%» при потерянной половине брутто.
+  const flow = new Set(FA_FLOW_REASONS);
+  const notFlow = new Set(["off", "no_size", "we_pay"]);
+  for (const r of FA_DILUTION_REASONS) {
+    assert.ok(flow.has(r) !== notFlow.has(r), `причина «${r}» не отнесена ни к одной группе или отнесена к обеим`);
+  }
+  assert.equal(flow.size + notFlow.size, FA_DILUTION_REASONS.length, "группы обязаны покрывать реестр целиком");
 });

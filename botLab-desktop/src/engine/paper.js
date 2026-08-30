@@ -17,7 +17,7 @@
 // числа не двигаются даже в последнем разряде.
 
 import { SEC_PER_HOUR, HOURS_PER_YEAR } from "./math.js";
-import { NO_DILUTION, dilutedFundingRate, resolveBase } from "./fa/dilution.js";
+import { NO_DILUTION, dilutedFundingRate, isFlowHour, resolveBase } from "./fa/dilution.js";
 
 const HOUR_MS = SEC_PER_HOUR * 1000;
 let idCounter = 0;
@@ -298,13 +298,15 @@ export function positionSummary(position) {
   // страдает: в часы уплаты она ровно ноль, и цена фантома одинакова при обоих способах счёта.
   let flowQuoted = 0; // сколько обещала КОТИРУЕМАЯ ставка в часы получения
   let flowReceived = 0; // сколько досталось после разбавления собственным входом
-  let noBaseSec = 0; // время, где базы не было и доход обнулён (издержки ноги остались)
+  let noBaseSec = 0; // время, где базы не было вовсе и доход обнулён (издержки ноги остались)
+  let badBaseSec = 0; // время, где база пришла не та (тождество не сошлось) и доход обнулён
   for (const a of position.accruals || []) {
     gapSkippedSec += a.gapSkippedSec || 0;
-    if (a.dilutionReason !== "diluted" && a.dilutionReason !== "no_base") continue;
+    if (!isFlowHour(a.dilutionReason)) continue;
     flowQuoted += a.fundingQuotedUsd || 0;
     flowReceived += a.fundingUsd || 0;
     if (a.dilutionReason === "no_base") noBaseSec += a.dtSec || 0;
+    if (a.dilutionReason === "base_identity_broken") badBaseSec += a.dtSec || 0;
   }
   // Доля удержания это ГЛАВНОЕ число карточки честности: при $2000 на рынок рынок отдаёт около
   // 8.8% котируемого потока, при $10 000 уже 6.3%. У позиции без разбавления числа нет вовсе, и
@@ -326,6 +328,7 @@ export function positionSummary(position) {
     flowReceived,
     dilutionRetained, // null у позиции без разбавления
     noBaseSec,
+    badBaseSec,
     maxDrawdown: position.maxDrawdown, // $, <= 0
     // drawdown as a fraction of NOTIONAL (the base the excursion actually scales with); the UI
     // multiplies by leverage when a capital-relative % is wanted. (audit: was /capital, leverage-inflated)
@@ -375,6 +378,7 @@ export function accountSummary(positions) {
   let flowQuoted = 0;
   let flowReceived = 0;
   let noBaseSec = 0;
+  let badBaseSec = 0;
   let firstT0 = Infinity;
   let lastT = 0;
   let open = 0;
@@ -388,6 +392,7 @@ export function accountSummary(positions) {
     flowQuoted += s.flowQuoted;
     flowReceived += s.flowReceived;
     noBaseSec += s.noBaseSec;
+    badBaseSec += s.badBaseSec;
     firstT0 = Math.min(firstT0, p.createdAt);
     lastT = Math.max(lastT, p.lastAccrualAt || p.createdAt);
     if (p.status === "open") open++;
@@ -418,5 +423,6 @@ export function accountSummary(positions) {
     // и на разных рынках, и среднее долей дало бы вес мелкому рынку наравне с крупным.
     dilutionRetained: flowQuoted > 0 ? flowReceived / flowQuoted : null,
     noBaseSec,
+    badBaseSec,
   };
 }
