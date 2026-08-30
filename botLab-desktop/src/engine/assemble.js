@@ -46,6 +46,14 @@ export function buildSnapshot(inst, gmxCanon, hlCanon) {
     ...f,
     hl_rate: isOneLeg ? 0 : hlCanon ? hlCanon.hl_rate : NaN,
     hl_premium: isOneLeg ? 0 : hlCanon ? hlCanon.hl_premium : NaN,
+    // Базы фандинга сторон для разбавления входа (`fa/dilution.js`). Живьём базой служит
+    // `openInterestLong/Short` из `markets/info`, а не `fundingBalanceOiUsd` индексатора: сверка
+    // со свежим снимком индексатора (возраст 21 с, 20 рынков) дала медиану расхождения потока
+    // 0.38% при совпадении плательщика 20 из 20, тогда как часовой снимок индексатора возрастом
+    // 37.6 минуты расходился уже на 14.71% и с разнобоем по сторонам. То есть свежесть здесь
+    // важнее точности поля, а Subsquid для входа не годится.
+    fbase_long: gmxCanon.oiLongUsd,
+    fbase_short: gmxCanon.oiShortUsd,
   };
   const a = annualizeRow(row);
   const oneLegNet = a.gmx_short_recv - a.gmx_borrow_short;

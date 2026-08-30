@@ -8,8 +8,16 @@
 //   * Round-trip fees (open+close) are modeled once and netted against gross funding P&L.
 //
 // No orders, no keys — this simulates the ledger a real position WOULD produce from live rates.
+//
+// РАЗБАВЛЕНИЕ ВХОДА (позиции с `dilute: true`). Котируемая ставка это ставка рынка БЕЗ нас. Наш
+// вход увеличивает базу принимающей стороны, и достаётся нам `f * B/(B+S)`, а не `f`. Правило
+// целиком живёт в `fa/dilution.js` и зовётся ПОЧАСОВО на каждом начислении обеих веток (живой и
+// исторической); здесь только подстановка размера позиции и базы нашей стороны. Позиция без флага
+// считается ровно теми же выражениями в том же порядке, что и до появления правила, поэтому её
+// числа не двигаются даже в последнем разряде.
 
 import { SEC_PER_HOUR, HOURS_PER_YEAR } from "./math.js";
+import { NO_DILUTION, dilutedFundingRate, resolveBase } from "./fa/dilution.js";
 
 const HOUR_MS = SEC_PER_HOUR * 1000;
 let idCounter = 0;
@@ -26,10 +34,31 @@ function gmxNetPerSec(snap, gmxSide) {
   return gmxSide === "short" ? snap.f_short - snap.b_short : snap.f_long - snap.b_long;
 }
 
+// Разбавление ставки нашей ноги собственным входом. Размер это НОЦИОНАЛ позиции, а не капитал:
+// в базу фандинга GMX входит размер позиции, и при плече отличном от единицы капитал дал бы
+// множитель тем ближе к единице, чем выше плечо, то есть тем меньше разбавления, чем больше мы
+// на самом деле давим на рынок.
+function accrualDilution(position, rowOrSnapshot, gmxSide) {
+  if (!position.dilute) return NO_DILUTION;
+  const f = gmxSide === "short" ? rowOrSnapshot.f_short : rowOrSnapshot.f_long;
+  return dilutedFundingRate(f, resolveBase(rowOrSnapshot, gmxSide).bOwnUsd, position.notional);
+}
+
+// Поля разбавления в журнале начисления. Пишутся ТОЛЬКО у разбавляемых позиций: у остальных запись
+// обязана остаться той же, что и раньше, и лишние три поля на каждый час начисления это ещё и
+// впустую занятый диск (позиция живёт месяцами, начисление ежечасное).
+function dilutionEntry(dil, fundingQuotedUsd) {
+  if (dil.reason === "off") return null;
+  return { fundingQuotedUsd, dilutionFactor: dil.factor, dilutionReason: dil.reason };
+}
+
 // Create a new paper position at t0. `costs` is the resolved round-trip cost in $ (see costs.js).
 // costBreakdown/openMarkPx are optional t0 snapshots for the transaction ledger: the cost model is
 // user-editable and live prices move on, so both must be frozen at open or not shown at all.
-export function openPosition({ strategy, instrumentKey, config = null, capital, leverage, nowMs, meta = {}, roundTripCost = 0, costBreakdown = null, openMarkPx = null }) {
+// `dilute` включает эмуляцию РЕАЛЬНОГО входа (см. шапку). Флаг явный, а не «включиться самому при
+// наличии баз в данных»: иначе пропажа баз молча вернула бы завышенную прибыль, то есть дефект
+// чинился бы ровно до первого сбоя снабжения.
+export function openPosition({ strategy, instrumentKey, config = null, capital, leverage, nowMs, meta = {}, roundTripCost = 0, costBreakdown = null, openMarkPx = null, dilute = false }) {
   const notional = capital * leverage;
   const t0 = nowMs;
   return {
@@ -44,6 +73,7 @@ export function openPosition({ strategy, instrumentKey, config = null, capital, 
     roundTripCost,
     costBreakdown,
     openMarkPx,
+    dilute: dilute === true,
     meta, // { gmxName, hlCoin, chain, token, ... } for display + snapshot lookup
     status: "open",
     closedAt: null,
@@ -100,11 +130,20 @@ export function accrue(position, snapshot, nowMs, opts = {}) {
 
   // GMX: continuous accrual over elapsed seconds.
   const gmxPerSec = gmxNetPerSec(snapshot, gmxSide);
-  const dPnlGmx = gmxPerSec * dtSec * position.notional;
-  // Ledger split: funding priced from its own factor; borrow as the EXACT complement so the pair
-  // always sums bit-for-bit to the dPnlGmx every existing consumer/test asserts on.
-  const fundingUsd = (gmxSide === "short" ? f_short : f_long) * dtSec * position.notional;
-  const borrowUsd = dPnlGmx - fundingUsd;
+  const dPnlGmxQuoted = gmxPerSec * dtSec * position.notional;
+  // Ledger split: funding priced from its own factor; borrow as the EXACT complement of the QUOTED
+  // funding, so the pair sums to the dPnlGmx every existing consumer/test asserts on.
+  const fundingQuotedUsd = (gmxSide === "short" ? f_short : f_long) * dtSec * position.notional;
+  // Борроу считается от КОТИРУЕМОГО фандинга и разбавлением не трогается (правило 2): наш вход
+  // меняет то, сколько нам платят, и не меняет того, сколько мы платим за заёмную ликвидность.
+  const borrowUsd = dPnlGmxQuoted - fundingQuotedUsd;
+  const dil = accrualDilution(position, snapshot, gmxSide);
+  // При factor === 1 (разбавление выключено, платим мы, нулевой размер) исполняются те же
+  // выражения в том же порядке, что и до появления правила. Пересобрать сумму «эквивалентно», как
+  // fundingUsd + borrowUsd, было бы нельзя: (f-b)*dt*N и f*dt*N + (-b)*dt*N дают разный последний
+  // бит, и три замороженные книги охраны перестали бы совпадать побайтово.
+  const fundingUsd = dil.factor === 1 ? fundingQuotedUsd : dil.rate * dtSec * position.notional;
+  const dPnlGmx = dil.factor === 1 ? dPnlGmxQuoted : fundingUsd + borrowUsd;
 
   // HL: one discrete settlement per crossed top-of-hour boundary, using the current rate estimate.
   let hlSettlements = 0;
@@ -127,6 +166,7 @@ export function accrue(position, snapshot, nowMs, opts = {}) {
     dPnlHl,
     dPnl: dPnlGmx + dPnlHl,
     markPx: Number.isFinite(opts.markPx) ? opts.markPx : null, // best-effort mark at accrual time
+    ...dilutionEntry(dil, fundingQuotedUsd),
   });
 }
 
@@ -156,10 +196,16 @@ export function accrueFromRows(position, rows, nowMs) {
     gapSkippedSec += uncoveredSec;
     const dtSec = (end - start) / 1000;
     const gmxPerSec = gmxNetPerSec(r, gmxSide);
-    const dPnlGmx = gmxPerSec * dtSec * position.notional;
+    const dPnlGmxQuoted = gmxPerSec * dtSec * position.notional;
     // Ledger split (see accrue): borrow is the exact complement of the funding part.
-    const fundingUsd = (gmxSide === "short" ? r.f_short : r.f_long) * dtSec * position.notional;
-    const borrowUsd = dPnlGmx - fundingUsd;
+    const fundingQuotedUsd = (gmxSide === "short" ? r.f_short : r.f_long) * dtSec * position.notional;
+    const borrowUsd = dPnlGmxQuoted - fundingQuotedUsd;
+    // Разбавление берётся из базы ЭТОГО часа: правило почасовое, и среднего множителя по окну здесь
+    // не существует нигде. Деньги сидят в часах с самой малой базой, то есть с наибольшим весом,
+    // и усреднение множителя завышало доход именно там, где он весь и находится.
+    const dil = accrualDilution(position, r, gmxSide);
+    const fundingUsd = dil.factor === 1 ? fundingQuotedUsd : dil.rate * dtSec * position.notional;
+    const dPnlGmx = dil.factor === 1 ? dPnlGmxQuoted : fundingUsd + borrowUsd;
     // The hour's settlement lands on its closing boundary; count it only if we crossed it.
     const hlSettlements = hlPerHourSign !== 0 && end === hourEndMs ? 1 : 0;
     const dPnlHl = hlSettlements * hlPerHourSign * (r.hl_rate || 0) * position.notional;
@@ -174,6 +220,7 @@ export function accrueFromRows(position, rows, nowMs) {
       hlSettlements,
       dPnlHl,
       dPnl: dPnlGmx + dPnlHl,
+      ...dilutionEntry(dil, fundingQuotedUsd),
     });
     hoursApplied++;
     if (end >= nowMs) break;
@@ -241,7 +288,28 @@ export function positionSummary(position) {
   // amortizes the one-off round-trip cost — reliable only once enough hours have passed.
   const aprGross = hoursElapsed > 0 ? (grossPnl / position.capital) * (HOURS_PER_YEAR / hoursElapsed) : 0;
   const apr = hoursElapsed > 0 ? (netPnl / position.capital) * (HOURS_PER_YEAR / hoursElapsed) : 0;
-  const gapSkippedSec = (position.accruals || []).reduce((s, a) => s + (a.gapSkippedSec || 0), 0);
+  // Один проход по журналу: пропущенное время и честность ставки. Порядок сложения тот же, что был
+  // у reduce, иначе плавающая точка дала бы другой последний разряд у уже застывших книг.
+  let gapSkippedSec = 0;
+  // ПОТОК это часы, когда фандинг ПОЛУЧАЕМ мы, и только они. Часы собственной уплаты в обе суммы
+  // входить не имеют права: разбавление их не трогает (правило 3), значит они добавляют одно и то
+  // же отрицательное число и в числитель, и в знаменатель. На APT конфигурации B это давало долю
+  // удержания -283.5%, то есть число, которое ничего не измеряет. Разница сумм при этом не
+  // страдает: в часы уплаты она ровно ноль, и цена фантома одинакова при обоих способах счёта.
+  let flowQuoted = 0; // сколько обещала КОТИРУЕМАЯ ставка в часы получения
+  let flowReceived = 0; // сколько досталось после разбавления собственным входом
+  let noBaseSec = 0; // время, где базы не было и доход обнулён (издержки ноги остались)
+  for (const a of position.accruals || []) {
+    gapSkippedSec += a.gapSkippedSec || 0;
+    if (a.dilutionReason !== "diluted" && a.dilutionReason !== "no_base") continue;
+    flowQuoted += a.fundingQuotedUsd || 0;
+    flowReceived += a.fundingUsd || 0;
+    if (a.dilutionReason === "no_base") noBaseSec += a.dtSec || 0;
+  }
+  // Доля удержания это ГЛАВНОЕ число карточки честности: при $2000 на рынок рынок отдаёт около
+  // 8.8% котируемого потока, при $10 000 уже 6.3%. У позиции без разбавления числа нет вовсе, и
+  // показывать вместо него 100% нельзя: это ровно тот фантом, ради которого правило и заведено.
+  const dilutionRetained = flowQuoted > 0 ? flowReceived / flowQuoted : null;
   return {
     grossPnl,
     netPnl,
@@ -254,6 +322,10 @@ export function positionSummary(position) {
     aprReliable: hoursElapsed >= APR_MIN_HOURS,
     hoursElapsed,
     gapSkippedSec, // seconds of history that could NOT be priced (no data) — honesty marker
+    flowQuoted, // 0 у позиции без разбавления; разница с flowReceived это цена фантома
+    flowReceived,
+    dilutionRetained, // null у позиции без разбавления
+    noBaseSec,
     maxDrawdown: position.maxDrawdown, // $, <= 0
     // drawdown as a fraction of NOTIONAL (the base the excursion actually scales with); the UI
     // multiplies by leverage when a capital-relative % is wanted. (audit: was /capital, leverage-inflated)
@@ -300,6 +372,9 @@ export function accountSummary(positions) {
   let capitalAll = 0;
   let notionalAll = 0;
   let gapSkippedSec = 0;
+  let flowQuoted = 0;
+  let flowReceived = 0;
+  let noBaseSec = 0;
   let firstT0 = Infinity;
   let lastT = 0;
   let open = 0;
@@ -310,6 +385,9 @@ export function accountSummary(positions) {
     capitalAll += p.capital;
     notionalAll += p.notional;
     gapSkippedSec += s.gapSkippedSec;
+    flowQuoted += s.flowQuoted;
+    flowReceived += s.flowReceived;
+    noBaseSec += s.noBaseSec;
     firstT0 = Math.min(firstT0, p.createdAt);
     lastT = Math.max(lastT, p.lastAccrualAt || p.createdAt);
     if (p.status === "open") open++;
@@ -334,5 +412,11 @@ export function accountSummary(positions) {
     firstT0,
     maxDrawdown: combinedMaxDrawdown(ps),
     gapSkippedSec,
+    flowQuoted,
+    flowReceived,
+    // Доля удержания по счёту считается от СУММ, а не средним по позициям: позиции разного размера
+    // и на разных рынках, и среднее долей дало бы вес мелкому рынку наравне с крупным.
+    dilutionRetained: flowQuoted > 0 ? flowReceived / flowQuoted : null,
+    noBaseSec,
   };
 }
