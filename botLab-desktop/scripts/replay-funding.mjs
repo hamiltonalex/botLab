@@ -28,13 +28,22 @@
 // против +$60.43, ETH A $59.3568 против +$59.36. То есть два слоя бота 1, аналитический и
 // леджерный, считают одно и то же на одних данных. Раньше это не проверял никто.
 //
+// ДВА РЕЖИМА, И ЭТО ДВЕ РАЗНЫЕ КНИГИ. Без `--bases` леджер начисляет по КОТИРУЕМОЙ ставке: так он
+// считал до появления правила разбавления, и эта книга стережёт, что правка ничего не сдвинула там,
+// где сдвигать не собиралась. С `--bases` тот же леджер эмулирует РЕАЛЬНЫЙ вход: котируемая ставка
+// умножается на `B/(B+S)` по базе фандинга нашей стороны в этот час (`fa/dilution.js`). Разница
+// между книгами и есть измеренная цена фантома, из-за которого четыре прогона исследования подряд
+// считали несуществующую прибыль.
+//
 // ГРАНИЦЫ - в конце отчёта, и читать их обязательно: прогон по фикстурам не проверяет живую ветку
 // начисления, снабжение сетью и вообще ничего про исполнение.
 
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSpreadCsv } from "../src/engine/format.js";
+import { baseUsd, potOf } from "../src/engine/fa/dilution.js";
 import { scanTwoLeg, scanOneLeg } from "../src/engine/math.js";
 import { DEFAULT_COSTS, roundTripCost } from "../src/engine/costs.js";
 import {
@@ -49,6 +58,7 @@ if (args.includes("--help")) {
   console.log(`replay-funding.mjs - прогон годовых фикстур через бумажный леджер бота 1
 
   --fixtures <каталог>  каталог с CSV кэша ставок (по умолчанию test/fixtures)
+  --bases <каталог>     почасовые базы фандинга GMX (<токен>.json[.gz]); включает разбавление входа
   --tokens <A,B,C>      какие инструменты гонять (по умолчанию APT,BTC,ETH)
   --capital <$>         капитал позиции (по умолчанию 2000, как в golden.test.js)
   --leverage <x>        плечо (по умолчанию 1)
@@ -57,19 +67,30 @@ if (args.includes("--help")) {
                         cost-off    - издержки круга обнулены;
                         config-flip - держится конфигурация, которую scanTwoLeg НЕ выбрал;
                         hl-off      - двуногие позиции ведутся как однуногие (ноги HL нет);
-                        rows-half   - леджеру достаётся каждая вторая строка истории`);
+                        rows-half   - леджеру достаётся каждая вторая строка истории;
+                        только с --bases:
+                        dilution-off   - разбавление выключено (книга возвращается к фантому);
+                        dilution-wrong - подставлен опровергнутый множитель S/(B+S)`);
   process.exit(0);
 }
 
 const FIXTURES = resolve(APP, argOf("--fixtures", "test/fixtures"));
+const BASES_ARG = argOf("--bases");
+const BASES = BASES_ARG == null ? null : resolve(APP, BASES_ARG);
 const TOKENS = String(argOf("--tokens", "APT,BTC,ETH")).split(",").map((s) => s.trim()).filter(Boolean);
 const CAPITAL = Number(argOf("--capital", "2000"));
 const LEVERAGE = Number(argOf("--leverage", "1"));
 const BOOK = argOf("--book");
 const DROP = argOf("--drop-rule");
 const DROPS = ["cost-off", "config-flip", "hl-off", "rows-half"];
-if (DROP != null && !DROPS.includes(DROP)) {
-  console.error(`--drop-rule: ${DROPS.join(" | ")}, получено «${DROP}»`); process.exit(1);
+const DIL_DROPS = ["dilution-off", "dilution-wrong"];
+if (DROP != null && !DROPS.includes(DROP) && !DIL_DROPS.includes(DROP)) {
+  console.error(`--drop-rule: ${[...DROPS, ...DIL_DROPS].join(" | ")}, получено «${DROP}»`); process.exit(1);
+}
+// Контроль разбавления без баз заглушил бы правило, которого в прогоне нет вовсе, и книга сошлась
+// бы с эталонной. Проверка, которая не может упасть, не проверка, поэтому это ошибка вызова.
+if (DIL_DROPS.includes(DROP) && !BASES) {
+  console.error(`--drop-rule ${DROP} требует --bases: без баз разбавления в прогоне нет`); process.exit(1);
 }
 if (!(CAPITAL > 0) || !(LEVERAGE > 0)) { console.error("--capital и --leverage: положительные числа"); process.exit(1); }
 
@@ -98,6 +119,49 @@ for (const token of TOKENS) {
   frames.set(token, rows);
 }
 
+// ── Базы фандинга. Тот же каталог, что читало исследование: почасовые снимки
+// `fundingBalanceOiSnapshots` первоисточника, поля в неподвижной точке 1e30. Строки фикстуры и
+// снимки выровнены по tsHour, а не по порядку: пропуск часа в одном из рядов иначе сдвинул бы
+// весь остаток года на час и дал бы правдоподобную неверную книгу.
+const notional = CAPITAL * LEVERAGE;
+const identity = { hours: 0, bad: 0, errs: [] };
+function loadBases(token) {
+  const gz = join(BASES, `${token}.json.gz`);
+  const plain = join(BASES, `${token}.json`);
+  let text;
+  try { text = gunzipSync(readFileSync(gz)).toString("utf8"); }
+  catch {
+    try { text = readFileSync(plain, "utf8"); }
+    catch { console.error(`нет баз для ${token}: ни ${gz}, ни ${plain}`); process.exit(1); }
+  }
+  const m = new Map();
+  for (const r of JSON.parse(text).oi || []) {
+    m.set(Number(r.snapshotTimestamp), { L: baseUsd(r.longFundingBalanceOiUsd), S: baseUsd(r.shortFundingBalanceOiUsd) });
+  }
+  if (!m.size) { console.error(`базы ${token} пусты`); process.exit(1); }
+  return m;
+}
+// Контроль `dilution-wrong` подставляет базу S*S/B. Это НЕ вторая реализация правила: множитель
+// B/(B+S) от такой базы равен ровно S/(B+S), то есть опровергнутой форме, и контроль меняет ВХОД
+// леджера, а не его код, как и все остальные контроли этого прогона. Нулевая база даёт
+// бесконечность и множитель 1, что тоже совпадает с опровергнутой формой (S/(0+S) = 1) - именно
+// этим она и сохраняла фантазию рынков с крошечной базой.
+const wrongBase = (b) => (b > 0 ? (notional * notional) / b : Infinity);
+function withBases(token, rows) {
+  if (!BASES) return rows;
+  const m = loadBases(token);
+  return rows.map((r) => {
+    const o = m.get(r.tsHour);
+    if (!o) return r; // база на этот час не пришла: леджер обнулит доход и назовёт причину no_base
+    const id = potOf(r.f_long, o.L, r.f_short, o.S);
+    if (Number.isFinite(id.relErr)) { identity.hours += 1; identity.errs.push(id.relErr); if (!id.ok) identity.bad += 1; }
+    return DROP === "dilution-wrong"
+      ? { ...r, fbase_long: wrongBase(o.L), fbase_short: wrongBase(o.S) }
+      : { ...r, fbase_long: o.L, fbase_short: o.S };
+  });
+}
+const DILUTE = !!BASES && DROP !== "dilution-off";
+
 // ── Матрица позиций. ТРИ ВАРИАНТА НА ИНСТРУМЕНТ, и это не щедрость: `legModel` (paper.js) ветвится
 // по стороне GMX и по знаку расчёта HL, и книга обязана держать под охраной ВСЕ его ветки.
 // Конфигурация A это шорт GMX плюс лонг HL, B это лонг GMX плюс шорт HL, однуногая обходится без
@@ -110,13 +174,12 @@ const VARIANTS = [
   { key: "one", strategy: "one", config: null },
 ];
 
-const notional = CAPITAL * LEVERAGE;
 const positions = [];
 const bookRows = [];
 const chosenBy = new Map();
 
 for (const token of TOKENS) {
-  const rows = frames.get(token);
+  const rows = withBases(token, frames.get(token));
   // Выбор конфигурации делает ПРАВИЛО (`scanTwoLeg`), а не прогон: какую сторону держать - решение
   // стратегии, и повторить его здесь значило бы завести вторую реализацию того же выбора.
   const scan = scanTwoLeg(rows, { token });
@@ -138,7 +201,7 @@ for (const token of TOKENS) {
     const p = openPosition({
       strategy, instrumentKey: token, config,
       capital: CAPITAL, leverage: LEVERAGE, nowMs: t0,
-      roundTripCost: cost, meta: { token, variant: v.key },
+      roundTripCost: cost, dilute: DILUTE, meta: { token, variant: v.key },
     });
     const applied = accrueFromRows(p, fed, tEnd);
     closePosition(p, tEnd);
@@ -154,7 +217,7 @@ for (const token of TOKENS) {
     for (const a of p.accruals) {
       const d = dayOf(a.t);
       let acc = byDay.get(d);
-      if (!acc) { acc = { hours: 0, funding: 0, borrow: 0, hl: 0, d: 0, skipped: 0, cum: 0, t: a.t }; byDay.set(d, acc); }
+      if (!acc) { acc = { hours: 0, funding: 0, borrow: 0, hl: 0, d: 0, skipped: 0, cum: 0, t: a.t, quoted: 0, mul: 0, mulN: 0, noBase: 0 }; byDay.set(d, acc); }
       acc.hours += 1;
       acc.funding += a.fundingUsd ?? 0;
       acc.borrow += a.borrowUsd ?? 0;
@@ -163,19 +226,30 @@ for (const token of TOKENS) {
       acc.skipped += a.gapSkippedSec ?? 0;
       acc.cum = a.cum; // накопленное на конец последнего начисления дня
       acc.t = a.t;
+      // Столбцы разбавления. Множитель усредняется ТОЛЬКО по часам, где он вообще применялся:
+      // подмешать сюда часы «платим мы» с их множителем 1 значило бы напечатать день удержания
+      // тем ближе к единице, чем больше мы в этот день платили сами.
+      acc.quoted += a.fundingQuotedUsd ?? 0;
+      if (a.dilutionReason === "diluted") { acc.mul += a.dilutionFactor; acc.mulN += 1; }
+      if (a.dilutionReason === "no_base") acc.noBase += 1;
     }
     for (const [day, acc] of byDay) {
       bookRows.push([
         bookRows.length + 1, token, v.key, config ?? "-", day, acc.hours,
         f6(acc.funding), f6(acc.borrow), f6(acc.hl), f6(acc.d), f6(acc.cum),
         f6(CAPITAL + acc.cum - p.roundTripCost), f6(p.maxDrawdown), f2(acc.skipped),
+        // Столбцы разбавления добавляются ТОЛЬКО в режиме разбавления. Дописать их в книгу без
+        // баз значило бы сломать её сумму, не сдвинув ни одного правила, а эта книга существует
+        // ровно для того, чтобы поймать сдвиг правила и ничего кроме.
+        ...(DILUTE ? [f6(acc.quoted), acc.mulN ? f6(acc.mul / acc.mulN) : "н-д", acc.noBase] : []),
       ]);
     }
   }
 }
 
 const HEAD = ["#", "инструмент", "схема", "конфиг", "день", "часов", "фандинг", "борроу",
-  "HL", "за день", "накоплено", "equityNet", "просадка", "пропущено"];
+  "HL", "за день", "накоплено", "equityNet", "просадка", "пропущено",
+  ...(DILUTE ? ["фандинг котир.", "множитель", "без базы"] : [])];
 if (BOOK) {
   writeFileSync(BOOK, `${[HEAD.join("\t"), ...bookRows.map((r) => r.join("\t"))].join("\n")}\n`);
 }
@@ -188,17 +262,33 @@ for (const token of TOKENS) {
   console.log(`  ${token}: ${rows.length} часовых строк, ${rows[0].ts} .. ${rows[rows.length - 1].ts}` +
     `; scanTwoLeg выбрал ${chosenBy.get(token)}`);
 }
+if (BASES) {
+  // Тождество |f_long|*B_long == |f_short|*B_short это ЕДИНСТВЕННОЕ, чем можно проверить, что базы
+  // те самые: подставь соседнее поле с похожим именем, и невязка перестанет быть шумом плавающей
+  // точки. Ожидание по годовой выборке 245 308 часов: медиана 1.3e-14%, p99 4.3e-14%.
+  const e = identity.errs.slice().sort((a, b) => a - b);
+  const q = (f) => (e.length ? e[Math.min(e.length - 1, Math.floor(e.length * f))] : NaN);
+  console.log(`\nБазы фандинга ${BASES}: сверено ${identity.hours} часов, невязка тождества `
+    + `медиана ${(q(0.5) * 100).toExponential(2)}%, p99 ${(q(0.99) * 100).toExponential(2)}%, `
+    + `не сошлось ${identity.bad}.`);
+  console.log(`Разбавление входа ${DILUTE ? "ВКЛЮЧЕНО" : "выключено контролем"}: размер $${notional} на ногу.`);
+}
 if (DROP) console.log(`\nКОНТРОЛЬ: заглушено правило «${DROP}». Книга ОБЯЗАНА разойтись с эталонной.`);
 
 console.log(`\n## Позиции\n`);
-console.log(`| инструмент | схема | часов | пропущено с | брутто $ | нетто $ | доходность | APR | просадка $ |`);
-console.log(`|---|---|---|---|---|---|---|---|---|`);
+const dilHead = DILUTE ? ` поток котир. $ | удержано |` : "";
+const dilBar = DILUTE ? "---|---|" : "";
+console.log(`| инструмент | схема | часов | пропущено с | брутто $ | нетто $ | доходность | APR | просадка $ |${dilHead}`);
+console.log(`|---|---|---|---|---|---|---|---|---|${dilBar}`);
 for (const p of positions) {
   const s = positionSummary(p);
   const mark = p.strategy === "two" && p.config === chosenBy.get(p.instrumentKey) ? " *" : "";
+  const dilCells = DILUTE
+    ? ` ${f2(s.flowQuoted)} | ${s.dilutionRetained == null ? "н-д" : `${(s.dilutionRetained * 100).toFixed(1)}%`} |`
+    : "";
   console.log(`| ${p.instrumentKey} | ${p.meta.variant}${mark} | ${p.meta.applied.hoursApplied} | `
     + `${p.meta.applied.gapSkippedSec.toFixed(0)} | ${f2(s.grossPnl)} | ${f2(s.netPnl)} | `
-    + `${(s.ret * 100).toFixed(2)}% | ${Number.isFinite(s.apr) ? `${(s.apr * 100).toFixed(2)}%` : "н-д"} | ${f2(p.maxDrawdown)} |`);
+    + `${(s.ret * 100).toFixed(2)}% | ${Number.isFinite(s.apr) ? `${(s.apr * 100).toFixed(2)}%` : "н-д"} | ${f2(p.maxDrawdown)} |${dilCells}`);
 }
 console.log(`\n\\* конфигурация, которую выбрал бы сканер бота 1 на этих данных.`);
 
@@ -207,6 +297,13 @@ console.log(`\n## Счёт целиком\n`);
 console.log(`позиций ${acc.count}; капитал $${acc.capitalAll}; брутто $${f2(acc.grossPnl)}; нетто $${f2(acc.netPnl)};`);
 console.log(`доходность ${(acc.ret * 100).toFixed(2)}%; APR ${(acc.apr * 100).toFixed(2)}%; общая просадка $${f2(acc.maxDrawdown)};`);
 console.log(`не оценённого времени ${acc.gapSkippedSec.toFixed(0)} с.`);
+if (DILUTE) {
+  // Цена фантома одной строкой. Котируемый фандинг это то, что леджер начислял себе ДО правки;
+  // разница с полученным и есть прибыль, которой не существует.
+  console.log(`поток котируемый $${f2(acc.flowQuoted)}; полученный $${f2(acc.flowReceived)}; `
+    + `удержано ${acc.dilutionRetained == null ? "н-д" : `${(acc.dilutionRetained * 100).toFixed(1)}%`}; `
+    + `часов без базы ${(acc.noBaseSec / 3600).toFixed(0)}.`);
+}
 console.log(`\nКнига: ${bookRows.length} посуточных строк${BOOK ? ` записана в ${BOOK}` : " (не записана: нет --book)"}.`);
 
 console.log(`\n## Границы: чего этот прогон НЕ проверяет\n`);
