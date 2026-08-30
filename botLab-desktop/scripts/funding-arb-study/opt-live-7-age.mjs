@@ -1,0 +1,11 @@
+import { DATA as STUDY_DATA } from "./paths.mjs";
+import fs from "node:fs";
+const S = STUDY_DATA;
+const SQ = "https://gmx.squids.live/gmx-synthetics-arbitrum:prod/api/graphql";
+const A = JSON.parse(fs.readFileSync(`${S}/truth-a-anomalies.json`, "utf8"));
+const addr = A.mkt.ETH.market;
+const r = await fetch(SQ, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: `{ b: fundingBalanceOiSnapshots(limit:4, orderBy:snapshotTimestamp_DESC, where:{marketAddress_eq:"${addr}"}){ snapshotTimestamp } }` }) });
+const j = await r.json();
+const now = Math.floor(Date.now() / 1000);
+console.log("сейчас UTC", new Date().toISOString());
+for (const x of j.data.b) console.log("снимок", new Date(x.snapshotTimestamp * 1000).toISOString(), "возраст", now - x.snapshotTimestamp, "с");
