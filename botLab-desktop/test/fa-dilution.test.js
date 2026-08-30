@@ -37,6 +37,18 @@ const row = (h, { fs = 0, fl = 0, bs = 0, bl = 0, hl = 0, fbS, fbL } = {}) => ({
   ...(fbL === undefined ? null : { fbase_long: fbL }),
 });
 
+// Строка, построенная ПО ТОЖДЕСТВУ `|f_long| * B_long = |f_short| * B_short = pot`. Ставки нельзя
+// назначать независимо от баз: рынка, где обе стороны котируют одну ставку при разных базах, не
+// существует, и правило справедливо откажется такую строку разбавлять. Отсюда же следует главное
+// свойство задачи: МЕНЬШАЯ сторона всегда котирует БОЛЬШУЮ ставку по модулю.
+const hour = (h, { pot, bShort, bLong, recv = "short", bs = 0, bl = 0, hl = 0, bases = true }) => {
+  const sign = recv === "short" ? 1 : -1;
+  return row(h, {
+    fs: sign * (pot / bShort), fl: -sign * (pot / bLong), bs, bl, hl,
+    ...(bases ? { fbS: bShort, fbL: bLong } : null),
+  });
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Формула
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,18 +95,49 @@ test("тождество GMX: сходится на согласованных �
 });
 
 test("база стороны читается из своего поля и не путается с борроу", () => {
-  const r = row(0, { fs: 1e-8, fl: -1e-8, bs: 5e-9, bl: 5e-9, fbS: 111, fbL: 222 });
-  assert.deepEqual(resolveBase(r, "short"), { bOwnUsd: 111, bOtherUsd: 222, ok: true, reason: null });
-  assert.deepEqual(resolveBase(r, "long"), { bOwnUsd: 222, bOtherUsd: 111, ok: true, reason: null });
+  const r = hour(0, { pot: 1e-3, bShort: 111, bLong: 222, bs: 5e-9, bl: 5e-9 });
+  const short = resolveBase(r, "short");
+  assert.equal(short.bOwnUsd, 111);
+  assert.equal(short.bOtherUsd, 222);
+  assert.equal(short.ok, true);
+  const long = resolveBase(r, "long");
+  assert.equal(long.bOwnUsd, 222);
+  assert.equal(long.bOtherUsd, 111);
   const bare = row(0, { fs: 1e-8 });
   assert.equal(resolveBase(bare, "short").ok, false, "строки без баз это норма, а не ошибка формата");
   assert.equal(resolveBase(bare, "short").reason, "no_base");
+  assert.equal(resolveBase(bare, "short").relErr, null, "непроверенное тождество это null, а не ноль");
+});
+
+test("база пришла НЕ ТА: тождество не сходится, доход обнулён, причина названа", () => {
+  // Замер на снимках репозитория: подстановка открытого интереса в токенах вместо базы фандинга
+  // даёт невязку 0.92% у BTC, 1.68% у APT и 20.6% у ETH, и порог отвергает такой час в 4448 из
+  // 4448 часов режима, где база считается по интересу в долларах. Общий ценовой множитель эта
+  // проверка не ловит и не должна: он сокращается в отношении сторон.
+  const good = hour(0, { pot: 1e-3, bShort: 20000, bLong: 50000 });
+  const bad = { ...good, fbase_long: good.fbase_long * 1.2 }; // отношение сторон уехало на 20%
+  const scaled = { ...good, fbase_long: good.fbase_long * 3, fbase_short: good.fbase_short * 3 };
+  assert.equal(resolveBase(good, "short").ok, true);
+  const v = resolveBase(bad, "short");
+  assert.equal(v.ok, false);
+  assert.equal(v.reason, "base_identity_broken");
+  near(v.relErr, 1 / 6, 1e-9, "невязка 20% отношения");
+  assert.equal(resolveBase(scaled, "short").ok, true, "общий множитель сокращается и проверку проходит");
+  // Отказ доходит до ставки: доход обнулён, а не начислен по котировке.
+  const p = openPosition({ strategy: "two", instrumentKey: "T", config: "A", capital: 1000, leverage: 1, nowMs: BASE_MS, dilute: true });
+  accrueFromRows(p, [bad], BASE_MS + HOUR);
+  assert.equal(p.accruals[0].dilutionReason, "base_identity_broken");
+  assert.equal(p.accruals[0].fundingUsd, 0);
 });
 
 test("ставка после разбавления: четыре причины и ни одной молчаливой", () => {
   assert.deepEqual(dilutedFundingRate(1e-8, 1e6, 0), { rate: 1e-8, factor: 1, reason: "no_size" });
   assert.deepEqual(dilutedFundingRate(-1e-8, 1e6, 1000), { rate: -1e-8, factor: 1, reason: "we_pay" });
   assert.deepEqual(dilutedFundingRate(1e-8, NaN, 1000), { rate: 0, factor: 0, reason: "no_base" });
+  assert.deepEqual(dilutedFundingRate(1e-8, { bOwnUsd: 1e6, ok: false, reason: "base_identity_broken" }, 1000),
+    { rate: 0, factor: 0, reason: "base_identity_broken" });
+  assert.deepEqual(dilutedFundingRate(1e-8, { bOwnUsd: 1e6 }, 0), { rate: 1e-8, factor: 1, reason: "no_size" },
+    "объект без вердикта это «не проверялось», а не «отказано»");
   const d = dilutedFundingRate(1e-8, 1e6, 1e6);
   assert.equal(d.reason, "diluted");
   near(d.factor, 0.5, 1e-15, "множитель");
@@ -130,8 +173,8 @@ test("правило 1: множитель применяется ПОЧАСОВ
   const pot = 1e-3; // доллар в секунду, один и тот же в обоих часах
   const bBig = 1e6, bSmall = 1e3;
   const rows = [
-    row(0, { fs: pot / bBig, fl: -pot / bBig, fbS: bBig, fbL: bBig }),
-    row(1, { fs: pot / bSmall, fl: -pot / bSmall, fbS: bSmall, fbL: bSmall }),
+    hour(0, { pot, bShort: bBig, bLong: bBig }),
+    hour(1, { pot, bShort: bSmall, bLong: bSmall }),
   ];
   const { on, off } = pair(rows, { capital: 1000 });
   const perHour = on.accruals.reduce((s, a) => s + a.fundingUsd, 0);
@@ -146,8 +189,8 @@ test("правило 1: множитель применяется ПОЧАСОВ
 
 test("правило 2: борроу и нога Hyperliquid не трогаются, побитово", () => {
   const rows = [
-    row(0, { fs: 2e-8, fl: -2e-8, bs: 3e-9, bl: 4e-9, hl: 1e-5, fbS: 5000, fbL: 9000 }),
-    row(1, { fs: 1e-8, fl: -1e-8, bs: 3e-9, bl: 4e-9, hl: 2e-5, fbS: 4000, fbL: 9000 }),
+    hour(0, { pot: 1e-4, bShort: 5000, bLong: 9000, bs: 3e-9, bl: 4e-9, hl: 1e-5 }),
+    hour(1, { pot: 8e-5, bShort: 4000, bLong: 9000, bs: 3e-9, bl: 4e-9, hl: 2e-5 }),
   ];
   const { on, off } = pair(rows, { capital: 5000 });
   for (let i = 0; i < rows.length; i++) {
@@ -161,7 +204,7 @@ test("правило 2: борроу и нога Hyperliquid не трогают
 
 test("правило 3: часы собственной уплаты не масштабируются вовсе", () => {
   // Конфигурация A держит короткую ногу GMX. f_short < 0 значит платим мы.
-  const rows = [row(0, { fs: -4e-7, fl: 4e-7, fbS: 100, fbL: 1e6 })];
+  const rows = [hour(0, { pot: 4e-5, bShort: 100, bLong: 1e6, recv: "long" })];
   const { on, off } = pair(rows, { capital: 10000 });
   assert.equal(on.accruals[0].fundingUsd, off.accruals[0].fundingUsd, "убыток обязан остаться прежним побитово");
   assert.equal(on.accruals[0].dilutionReason, "we_pay");
@@ -178,8 +221,8 @@ test("запрет 1: плательщика определяет ЗНАК ст�
   // Час 1: наша сторона БОЛЬШАЯ и при этом ПОЛУЧАЕТ. То же неверное правило оставило бы час
   // неразбавленным, то есть завысило бы доход.
   const rows = [
-    row(0, { fs: -3e-7, fl: 3e-7, fbS: 1000, fbL: 900000 }),
-    row(1, { fs: 3e-7, fl: -3e-7, fbS: 900000, fbL: 1000 }),
+    hour(0, { pot: 0.3, bShort: 1000, bLong: 900000, recv: "long" }), // наша короткая нога мала и ПЛАТИТ
+    hour(1, { pot: 0.3, bShort: 900000, bLong: 1000, recv: "short" }), // наша короткая нога велика и ПОЛУЧАЕТ
   ];
   const { on, off } = pair(rows, { capital: 100000 });
   assert.equal(on.accruals[0].dilutionReason, "we_pay", "меньшая сторона тоже платит, и разбавления тут нет");
@@ -192,7 +235,7 @@ test("запрет 1: плательщика определяет ЗНАК ст�
 test("запрет 3: доход растёт СУБлинейно по размеру, опровергнутая форма даёт квадрат", () => {
   // Признак перевёрнутого множителя виден прямо в таблице: прибыль растёт квадратично по капиталу.
   // `S/(B+S) * S` это и есть квадрат, `B/(B+S) * S` насыщается.
-  const rows = [row(0, { fs: 1e-6, fl: -1e-6, fbS: 20000, fbL: 20000 })];
+  const rows = [hour(0, { pot: 2e-2, bShort: 20000, bLong: 20000 })];
   const grossAt = (cap) => {
     const { on } = pair(rows, { capital: cap });
     return on.accruals[0].fundingUsd;
@@ -201,15 +244,16 @@ test("запрет 3: доход растёт СУБлинейно по разм
   const g2 = grossAt(20000);
   assert.ok(g2 < 2 * g1, `верная форма обязана насыщаться: ${g2} против ${2 * g1}`);
   assert.ok(g2 > g1, "доход всё же обязан расти по размеру");
-  const w1 = 1e-6 * 3600 * 10000 * refuted(20000, 10000);
-  const w2 = 1e-6 * 3600 * 20000 * refuted(20000, 20000);
+  const f0 = rows[0].f_short;
+  const w1 = f0 * 3600 * 10000 * refuted(20000, 10000);
+  const w2 = f0 * 3600 * 20000 * refuted(20000, 20000);
   assert.ok(w2 > 2 * w1, `опровергнутая форма обязана расти сверхлинейно: ${w2} против ${2 * w1}`);
 });
 
 test("базы на час нет: доход обнулён, издержки ноги остались, время названо", () => {
   const rows = [
-    row(0, { fs: 2e-8, fl: -2e-8, bs: 5e-9, bl: 0, hl: 1e-5 }), // баз нет вовсе
-    row(1, { fs: 2e-8, fl: -2e-8, bs: 5e-9, bl: 0, hl: 1e-5, fbS: 50000, fbL: 50000 }),
+    hour(0, { pot: 1e-3, bShort: 50000, bLong: 50000, bs: 5e-9, hl: 1e-5, bases: false }), // баз нет вовсе
+    hour(1, { pot: 1e-3, bShort: 50000, bLong: 50000, bs: 5e-9, hl: 1e-5 }),
   ];
   const { on, off } = pair(rows, { capital: 1000 });
   assert.equal(on.accruals[0].dilutionReason, "no_base");
@@ -224,8 +268,8 @@ test("базы на час нет: доход обнулён, издержки �
 
 test("позиция без флага разбавления считается ровно как раньше, побитово", () => {
   const rows = [
-    row(0, { fs: 2e-8, fl: -2e-8, bs: 3e-9, bl: 4e-9, hl: 1e-5, fbS: 1000, fbL: 2000 }),
-    row(1, { fs: -1e-8, fl: 1e-8, bs: 3e-9, bl: 4e-9, hl: 1e-5, fbS: 1000, fbL: 2000 }),
+    hour(0, { pot: 2e-5, bShort: 1000, bLong: 2000, bs: 3e-9, bl: 4e-9, hl: 1e-5 }),
+    hour(1, { pot: 1e-5, bShort: 1000, bLong: 2000, recv: "long", bs: 3e-9, bl: 4e-9, hl: 1e-5 }),
   ];
   const p = openPosition({ strategy: "two", instrumentKey: "T", config: "A", capital: 1000, leverage: 1, nowMs: BASE_MS });
   accrueFromRows(p, rows, BASE_MS + 2 * HOUR);
@@ -245,11 +289,12 @@ test("позиция без флага разбавления считается
 });
 
 test("живая ветка начисления разбавляет так же, как историческая", () => {
-  const snap = { f_long: -1e-8, f_short: 1e-8, b_long: 0, b_short: 0, hl_rate: 0, fbase_short: 3000, fbase_long: 9000 };
+  const r = hour(0, { pot: 3e-5, bShort: 3000, bLong: 9000, hl: 0 });
+  const snap = { f_long: r.f_long, f_short: r.f_short, b_long: 0, b_short: 0, hl_rate: 0, fbase_short: 3000, fbase_long: 9000 };
   const live = openPosition({ strategy: "two", instrumentKey: "T", config: "A", capital: 1000, leverage: 1, nowMs: BASE_MS, dilute: true });
   accrue(live, snap, BASE_MS + HOUR);
   const hist = openPosition({ strategy: "two", instrumentKey: "T", config: "A", capital: 1000, leverage: 1, nowMs: BASE_MS, dilute: true });
-  accrueFromRows(hist, [row(0, { fs: 1e-8, fl: -1e-8, fbS: 3000, fbL: 9000 })], BASE_MS + HOUR);
+  accrueFromRows(hist, [r], BASE_MS + HOUR);
   assert.equal(live.accruals[0].fundingUsd, hist.accruals[0].fundingUsd, "два пути обязаны дать одно число");
   assert.equal(live.accruals[0].dilutionFactor, hist.accruals[0].dilutionFactor);
   near(live.accruals[0].dilutionFactor, 3000 / 4000, 1e-15, "множитель живой ветки");
@@ -258,7 +303,7 @@ test("живая ветка начисления разбавляет так ж�
 test("размер разбавления это НОЦИОНАЛ, а не капитал", () => {
   // При плече 5 в базу рынка входит $5000, а не $1000: считать по капиталу значило бы тем меньше
   // разбавления, чем сильнее мы на самом деле давим на рынок.
-  const rows = [row(0, { fs: 1e-8, fl: -1e-8, fbS: 5000, fbL: 5000 })];
+  const rows = [hour(0, { pot: 5e-5, bShort: 5000, bLong: 5000 })];
   const p = openPosition({ strategy: "two", instrumentKey: "T", config: "A", capital: 1000, leverage: 5, nowMs: BASE_MS, dilute: true });
   accrueFromRows(p, rows, BASE_MS + HOUR);
   near(p.accruals[0].dilutionFactor, dilutionFactor(5000, 5000), 1e-15, "множитель по ноционалу");
@@ -267,7 +312,7 @@ test("размер разбавления это НОЦИОНАЛ, а не ка�
 test("сводка счёта складывает потоки, а не усредняет доли", () => {
   const mk = (fbS, capital) => {
     const p = openPosition({ strategy: "two", instrumentKey: `T${fbS}`, config: "A", capital, leverage: 1, nowMs: BASE_MS, dilute: true });
-    accrueFromRows(p, [row(0, { fs: 1e-6, fl: -1e-6, fbS, fbL: fbS })], BASE_MS + HOUR);
+    accrueFromRows(p, [hour(0, { pot: 1e-6 * fbS, bShort: fbS, bLong: fbS })], BASE_MS + HOUR);
     closePosition(p, BASE_MS + HOUR);
     return p;
   };
@@ -287,8 +332,8 @@ test("журнал операций сходится с P&L и у разбавл
   // своих частей. Разбавление меняет фандинг и не трогает борроу, поэтому сумму надо пересобирать
   // заново, а не наследовать от котируемой: ошибка тут разошлась бы между экраном и итогом счёта.
   const rows = [
-    row(0, { fs: 3e-7, fl: -3e-7, bs: 4e-9, bl: 2e-9, hl: 1e-5, fbS: 8000, fbL: 20000 }),
-    row(1, { fs: -2e-7, fl: 2e-7, bs: 4e-9, bl: 2e-9, hl: -2e-5, fbS: 8000, fbL: 20000 }),
+    hour(0, { pot: 2.4e-3, bShort: 8000, bLong: 20000, bs: 4e-9, bl: 2e-9, hl: 1e-5 }),
+    hour(1, { pot: 1.6e-3, bShort: 8000, bLong: 20000, recv: "long", bs: 4e-9, bl: 2e-9, hl: -2e-5 }),
   ];
   const p = openPosition({ strategy: "two", instrumentKey: "T", config: "A", capital: 4000, leverage: 1,
     nowMs: BASE_MS, roundTripCost: 12.5, dilute: true });

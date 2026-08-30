@@ -55,6 +55,7 @@ export const FA_DILUTION_REASONS = Object.freeze([
   "no_size", // размер нулевой: рынок нас не заметил
   "we_pay", // платим мы, правило 3
   "no_base", // базы на этот час нет: доход обнулён, издержки ноги остаются
+  "base_identity_broken", // база пришла НЕ ТА: тождество не сошлось, доход обнулён
   "diluted", // применён множитель B/(B+S)
 ]);
 
@@ -87,6 +88,14 @@ export function dilutionFactor(bOwnUsd, sizeUsd) {
 // Проверка тождества GMX и величина потока рынка. НЕ используется для вычисления ставки (см. шапку):
 // нужна там, где надо убедиться, что база пришла та самая, а не соседнее поле с похожим именем.
 // Возвращает поток в долларах за секунду, относительную невязку и вердикт.
+//
+// ЧТО ЭТА ПРОВЕРКА ЛОВИТ И ЧЕГО НЕ ЛОВИТ, замерено на снимках репозитория (три фикстуры, 8761 час
+// каждая). Ловит НЕВЕРНОЕ ОТНОШЕНИЕ сторон: подстановка открытого интереса в токенах вместо базы
+// фандинга даёт невязку 0.92% у BTC, 1.68% у APT и 20.6% у ETH, и порог отвергает такой час в
+// 4448 случаях из 4448. НЕ ловит ОБЩИЙ МНОЖИТЕЛЬ у обеих сторон: цена сокращается в отношении, и
+// база, отличающаяся общим ценовым коэффициентом, проходит проверку насквозь. Величина этой слепой
+// зоны на живых данных измерена отдельно: сверка `markets/info` со свежим снимком индексатора дала
+// медиану 0.38% и максимум 3.36%, то есть на множитель B/(B+S) она влияет незначимо.
 export function potOf(fLong, bLongUsd, fShort, bShortUsd) {
   const a = Math.abs(fLong) * bLongUsd;
   const b = Math.abs(fShort) * bShortUsd;
@@ -105,8 +114,16 @@ export function resolveBase(rowOrSnapshot, gmxSide) {
   const r = rowOrSnapshot || {};
   const bOwnUsd = gmxSide === "short" ? r.fbase_short : r.fbase_long;
   const bOtherUsd = gmxSide === "short" ? r.fbase_long : r.fbase_short;
-  const ok = Number.isFinite(bOwnUsd) && bOwnUsd > 0;
-  return { bOwnUsd, bOtherUsd, ok, reason: ok ? null : "no_base" };
+  if (!Number.isFinite(bOwnUsd) || bOwnUsd <= 0) return { bOwnUsd, bOtherUsd, relErr: null, ok: false, reason: "no_base" };
+  // Тождество сверяется, КОГДА ЕСТЬ ЧЕМ: нужны обе базы и обе ставки. Одной базы для проверки не
+  // хватает, и молчаливое «сошлось» тут было бы хуже честного «не проверялось», поэтому relErr
+  // остаётся null, а не нулём.
+  const bLong = gmxSide === "short" ? bOtherUsd : bOwnUsd;
+  const bShort = gmxSide === "short" ? bOwnUsd : bOtherUsd;
+  const checkable = Number.isFinite(bOtherUsd) && bOtherUsd > 0 && Number.isFinite(r.f_long) && Number.isFinite(r.f_short);
+  if (!checkable) return { bOwnUsd, bOtherUsd, relErr: null, ok: true, reason: null };
+  const id = potOf(r.f_long, bLong, r.f_short, bShort);
+  return { bOwnUsd, bOtherUsd, relErr: id.relErr, ok: id.ok, reason: id.ok ? null : "base_identity_broken" };
 }
 
 // ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ЖИВУТ ВСЕ ТРИ ПРАВИЛА ПРИМЕНЕНИЯ. Возвращает ставку после разбавления,
@@ -119,11 +136,16 @@ export function resolveBase(rowOrSnapshot, gmxSide) {
 // БАЗЫ НЕТ ЗНАЧИТ ДОХОД НОЛЬ, а не «начислим как раньше». Это консервативный выбор: на годовой
 // выборке таких часов 288 из 551 943, то есть 0.052%, и цена выбора мала, а цена обратного выбора
 // это молчаливый возврат к фантому ровно в тот момент, когда данные пропали.
-export function dilutedFundingRate(f, bOwnUsd, sizeUsd) {
+// `base` это результат `resolveBase` либо просто `{ bOwnUsd }`, когда сверять тождество нечем.
+// Отказ базы уважается ТОЛЬКО при явном `ok === false`: объект без вердикта означает «не
+// проверялось», а не «проверено и сошлось».
+export function dilutedFundingRate(f, base, sizeUsd) {
+  const bOwnUsd = base && typeof base === "object" ? base.bOwnUsd : base;
   if (!Number.isFinite(f)) return { rate: f, factor: 1, reason: "off" };
   if (!Number.isFinite(sizeUsd) || sizeUsd <= 0) return { rate: f, factor: 1, reason: "no_size" };
   if (!(f > 0)) return { rate: f, factor: 1, reason: "we_pay" }; // правило 3
   if (!Number.isFinite(bOwnUsd) || bOwnUsd <= 0) return { rate: 0, factor: 0, reason: "no_base" };
+  if (base && base.ok === false) return { rate: 0, factor: 0, reason: base.reason || "no_base" };
   const factor = dilutionFactor(bOwnUsd, sizeUsd);
   return { rate: f * factor, factor, reason: "diluted" };
 }

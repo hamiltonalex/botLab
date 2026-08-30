@@ -41,7 +41,7 @@ function gmxNetPerSec(snap, gmxSide) {
 function accrualDilution(position, rowOrSnapshot, gmxSide) {
   if (!position.dilute) return NO_DILUTION;
   const f = gmxSide === "short" ? rowOrSnapshot.f_short : rowOrSnapshot.f_long;
-  return dilutedFundingRate(f, resolveBase(rowOrSnapshot, gmxSide).bOwnUsd, position.notional);
+  return dilutedFundingRate(f, resolveBase(rowOrSnapshot, gmxSide), position.notional);
 }
 
 // Поля разбавления в журнале начисления. Пишутся ТОЛЬКО у разбавляемых позиций: у остальных запись
