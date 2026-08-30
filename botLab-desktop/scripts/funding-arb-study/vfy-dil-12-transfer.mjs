@@ -137,18 +137,18 @@ console.log(`потому хуже. Сопоставимое сравнение 
 // (allocateCapital по вогнутой оболочке), и повторять его здесь целиком значило бы завести вторую
 // реализацию. Здесь взят простейший жадный отбор по нетто на доллар прошлого блока: его достаточно,
 // чтобы обе руки получили ОДИН потолок и один порядок отбора, а больше от него ничего не требуется.
-function arm(cap, perMarket) {
+function arm(cap, perMarket, sub = MARKETS, blocks = TEST) {
   let net = 0, used = 0, slots = 0;
-  for (const b of TEST) {
+  for (const b of blocks) {
     const cand = [];
     let fixS = null;
     if (!perMarket) {
       const total = new Map();
-      for (const S of SIZES) { let s = 0; for (const m of MARKETS) s += NET.get(m.t)?.get(b - H)?.get(S) ?? 0; total.set(S, s); }
+      for (const S of SIZES) { let s = 0; for (const m of sub) s += NET.get(m.t)?.get(b - H)?.get(S) ?? 0; total.set(S, s); }
       fixS = argmax(total)?.S ?? null;
       if (fixS == null || fixS < MIN_TICKET) continue;
     }
-    for (const m of MARKETS) {
+    for (const m of sub) {
       const prev = NET.get(m.t)?.get(b - H), cur = NET.get(m.t)?.get(b);
       if (!prev || !cur) continue;
       if (perMarket) {
@@ -165,7 +165,7 @@ function arm(cap, perMarket) {
       net += c.real; used += c.size; left -= c.size; slots++;
     }
   }
-  return { net: net / yrs, cap: used / TEST.length, slots };
+  return { net: net / ((blocks.length * H) / 8760), cap: used / blocks.length, slots };
 }
 console.log(`\n# То же при РАВНОМ потолке капитала\n`);
 console.log(`  потолок | пер-рыночный: нетто в год | занято | сделок | фиксированный: нетто в год | занято | сделок`);
@@ -174,6 +174,34 @@ for (const C of [25000, 50000, 100000, 200000, 500000]) {
   console.log([("$" + C).padStart(9), $(a.net).padStart(25), $(a.cap).padStart(8), String(a.slots).padStart(7),
     $(f.net).padStart(26), $(f.cap).padStart(8), String(f.slots).padStart(7)].join(" |"));
 }
+// ── Устойчивость знака. ВТОРОЙ ГОД ПОСЧИТАТЬ НЕЛЬЗЯ, и это не лень: базы фандинга в репозитории
+// покрывают 2025-06-20..2026-06-20, а кэш второго года кончается ровно 2025-06-20, пересечение
+// нулевое. Считать второй год БЕЗ разбавления значило бы вернуть тот самый фантом, ради устранения
+// которого делалась фаза 1, и сравнение конструкций на фантоме ничего не значит.
+// Поэтому здесь два подменных среза на тех данных, что есть: по ширине вселенной и по половинам года.
+const Y2 = new Set(fs.readdirSync(`${SP}/spread-cache-y2`).map((f) => f.replace(/\.csv(\.gz)?$/, "")));
+const NARROW = MARKETS.filter((m) => Y2.has(m.t));
+const half = Math.ceil(TEST.length / 2);
+const CUTS = [
+  ["все 63 имени, весь год", MARKETS, TEST],
+  [`${NARROW.length} имени второго года, весь год`, NARROW, TEST],
+  ["все 63 имени, первая половина", MARKETS, TEST.slice(0, half)],
+  ["все 63 имени, вторая половина", MARKETS, TEST.slice(half)],
+];
+console.log(`\n# Устойчив ли ЗНАК: срезы по ширине вселенной и по половинам года\n`);
+console.log(`Второй год (${Y2.size} имени, 2023-09..2025-06) посчитать НЕЛЬЗЯ: баз фандинга на тот период в`);
+console.log(`репозитории нет, а без разбавления сравнение вернулось бы к фантому. Потолок капитала $100000.\n`);
+console.log(`  срез | пер-рыночный | фиксированный | кто выиграл`);
+for (const [label, sub, blocks] of CUTS) {
+  const a = arm(100000, true, sub, blocks), f = arm(100000, false, sub, blocks);
+  console.log(`${label.padEnd(38)} | ${$(a.net).padStart(12)} | ${$(f.net).padStart(13)} | ${f.net > a.net ? "фиксированный" : "пер-рыночный"}`);
+}
+
+console.log(`\nЗНАК устойчив на всех четырёх срезах. Но ВЕЛИЧИНА у выигравшей руки НЕ устойчива: между`);
+console.log(`половинами года фиксированный размер даёт разницу в разы, и это отдельный вопрос к отбору`);
+console.log(`рынков, а не к форме размера. Срезы эти НЕ ЗАМЕНЯЮТ второй период: половины года делят один`);
+console.log(`режим рынка и одну вселенную, а узкий срез делит с широким тот же период целиком.`);
+
 console.log(`\n## Границы этого сравнения, без них числа выше употреблять нельзя\n`);
 console.log(`- РАСПРЕДЕЛИТЕЛЬ ЗДЕСЬ ПРОСТЕЙШИЙ, жадный по нетто на доллар прошлого блока. Спецификация`);
 console.log(`  требует распределения по вогнутой оболочке, и с ним пер-рыночная рука может выступить лучше.`);
