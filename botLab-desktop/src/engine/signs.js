@@ -52,6 +52,13 @@ export function gmxMarketToCanonical(m) {
     factors: { f_long, f_short, b_long, b_short },
     oiLongUsd: Number(m.openInterestLong) / GMX_OI_SCALE,
     oiShortUsd: Number(m.openInterestShort) / GMX_OI_SCALE,
+    // Свободная ликвидность стороны, тот же масштаб 1e30. Нужна ограничению О1 правила размера
+    // входа бота 1 (`fa/sizing.js`): без потолка места оптимизатор упирается в потолок сетки
+    // $10 млн при годовом котле фандинга рынка $42 204 и свободном месте $25 528 (замер, BERA).
+    // Приводится ЗДЕСЬ, а не у потребителя: масштаб открытого интереса живёт в одном месте, и
+    // вторая точка деления на 1e30 это второй способ ошибиться в нём.
+    availLongUsd: Number(m.availableLiquidityLong) / GMX_OI_SCALE,
+    availShortUsd: Number(m.availableLiquidityShort) / GMX_OI_SCALE,
     gate: {
       ok: shortId.ok && longId.ok,
       shortRelErr: shortId.relErr,
