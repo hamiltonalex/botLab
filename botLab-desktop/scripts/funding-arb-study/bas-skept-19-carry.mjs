@@ -1,7 +1,7 @@
 import { DATA as STUDY_DATA } from "./paths.mjs";
 import fs from "node:fs";
 const SP=STUDY_DATA;
-const ENG="/Users/alexhamilton/GITFILES/hamiltonalex/botLab/.claude/worktrees/angry-bassi-af7631/botLab-desktop/src/engine";
+const ENG="../../src/engine";
 const {parseSpreadCsv}=await import(`${ENG}/format.js`);
 const {openPosition,accrueFromRows,closePosition,positionSummary}=await import(`${ENG}/paper.js`);
 const CACHE="/Users/alexhamilton/GITFILES/hamiltonalex/funding-rate-arbitrage-backtesting/gmx_carry_backtest/spread_cache";

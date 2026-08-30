@@ -1,6 +1,6 @@
 import { DATA as STUDY_DATA } from "./paths.mjs";
 import fs from "node:fs"; import path from "node:path";
-const ENG = "/Users/alexhamilton/GITFILES/hamiltonalex/botLab/.claude/worktrees/angry-bassi-af7631/botLab-desktop/src/engine";
+const ENG = "../../src/engine";
 export const { parseSpreadCsv } = await import(`${ENG}/format.js`);
 export const { scanTwoLeg, annualizeRow, mean, median } = await import(`${ENG}/math.js`);
 export const { DEFAULT_COSTS, roundTripCost } = await import(`${ENG}/costs.js`);
