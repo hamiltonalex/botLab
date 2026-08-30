@@ -1,0 +1,16 @@
+import { run } from "./skept4-model-5-grid.mjs";
+import { hlRtBps } from "./skept4-model-5-lib.mjs";
+import { DEFAULT_COSTS, roundTripCost } from "./run4-lib.mjs";
+const f=x=>"$"+Math.round(x).toLocaleString("en-US");
+const NOIMP={...DEFAULT_COSTS,gmxImpact:0};
+const mk=bps=>(t,cfg,S,o)=>{const base=roundTripCost(NOIMP,S,false);
+  const g=-(bps/1e4)*S,h=(hlRtBps(t,o.hlVariant,S)/1e4)*S;
+  return {total:base+g+h,base,gmxImpactUsd:g,hlSlipUsd:h,gmxBps:bps};};
+const out=[];
+for(let b=0;b>=-200;b-=10) out.push([b,run({capital:1000000,cf:mk(b)}).usd]);
+console.log("постоянный impact GMX (бп) -> чистыми $/год при $1M:");
+console.log(out.map(([b,v])=>`${String(b).padStart(5)}: ${f(v)}`).join("\n"));
+const vals=out.map(x=>x[1]);
+let up=0; for(let i=1;i<vals.length;i++) if(vals[i]>vals[i-1])up++;
+console.log(`\nшагов, где РОСТ издержки поднял доход: ${up} из ${vals.length-1}`);
+console.log(`минимум ${f(Math.min(...vals))}, максимум ${f(Math.max(...vals))}, размах ${(100*(Math.max(...vals)/Math.min(...vals)-1)).toFixed(0)}%`);
