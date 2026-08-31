@@ -1,4 +1,4 @@
-// preload.cjs — the ONLY bridge between the sandboxed renderer and the Node main process.
+// preload.cjs - the ONLY bridge between the sandboxed renderer and the Node main process.
 // Exposes a minimal, explicit API. No Node, no fs, no keys reach the renderer.
 const { contextBridge, ipcRenderer } = require("electron");
 
@@ -20,7 +20,7 @@ contextBridge.exposeInMainWorld("fa", {
     ipcRenderer.on("fa:push", h);
     return () => ipcRenderer.removeListener("fa:push", h);
   },
-  // OTA updates (§5.2). The renderer only ever sees updater STATES — never the network or the FS.
+  // OTA updates (§5.2). The renderer only ever sees updater STATES - never the network or the FS.
   updates: {
     status: () => ipcRenderer.invoke("fa:update:status"),
     check: () => ipcRenderer.invoke("fa:update:check"),
@@ -38,7 +38,7 @@ contextBridge.exposeInMainWorld("fa", {
 });
 
 // ── UI chrome bridge (shell-level, bot-agnostic): the dark/light theme. getThemeSync is
-// intentionally sendSync — the inline <head> script must know the theme BEFORE first paint (no FOUC).
+// intentionally sendSync - the inline <head> script must know the theme BEFORE first paint (no FOUC).
 contextBridge.exposeInMainWorld("ui", {
   getThemeSync: () => ipcRenderer.sendSync("ui:getTheme"),
   setTheme: (t) => ipcRenderer.invoke("ui:setTheme", t),
@@ -47,7 +47,7 @@ contextBridge.exposeInMainWorld("ui", {
   setLocale: (l) => ipcRenderer.invoke("ui:setLocale", l),
 });
 
-// ── Bot 2 «BTC-опционы» (Strategy One) — a PARALLEL bridge, fully isolated from `fa` above ──
+// ── Bot 2 «BTC-опционы» (Strategy One) - a PARALLEL bridge, fully isolated from `fa` above ──
 // Live Deribit public data + paper execution (no keys, no orders). The `fa` block is untouched.
 contextBridge.exposeInMainWorld("s1", {
   // Реестр пресетов схемы продавца: sendSync, как тема и локаль - подписи с окном срока рисуются
@@ -76,10 +76,10 @@ contextBridge.exposeInMainWorld("s1", {
   },
 });
 
-// ── OTM-сканер (S2) — ПАРАЛЛЕЛЬНЫЙ мост, полностью изолирован от `fa` и `s1` выше ──
+// ── OTM-сканер (S2) - ПАРАЛЛЕЛЬНЫЙ мост, полностью изолирован от `fa` и `s1` выше ──
 // Только чтение публичных данных Deribit и сигналы; исполнения нет вообще. Сделки ведёт схема
 // продавца в боте 2; сканеру остаётся санитария инструмента, а не запуск сделок (решение 2026-08-16).
-// Источник опроса живёт строго между start() и stop() — в простое ноль трафика.
+// Источник опроса живёт строго между start() и stop() - в простое ноль трафика.
 contextBridge.exposeInMainWorld("scn", {
   getState: () => ipcRenderer.invoke("scn:getState"),
   start: () => ipcRenderer.invoke("scn:start"),
