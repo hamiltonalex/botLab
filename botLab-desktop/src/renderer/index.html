@@ -554,8 +554,16 @@ button.botcard:hover .bc-open .arw{ transform:translateX(2px); }
    `.zone.idle .trade-grid`). Правила привязаны к ИДЕНТИФИКАТОРУ, а не к классу `.zone-analysis`:
    тот же класс носят зоны бота 2 и OTM-сканера, и общий селектор дотянулся бы до них.
    Показ полосы прописан явно: базовое `.trade-empty{display:none}` открывается только под
-   `.zone.idle`, а у этой зоны свой признак пустоты. */
-#zoneAnalysis.nomarket > .grid{ display:none; }
+   `.zone.idle`, а у этой зоны свой признак пустоты.
+
+   КАРТОЧКА ИЗДЕРЖЕК ИЗ ЭТОГО ПРАВИЛА ИСКЛЮЧЕНА, И ЭТО НЕ ПОСЛАБЛЕНИЕ. Гасится то, что описывает
+   РЫНОК: без рынка панели рисовали бы чужие часы. Модель издержек к рынку не привязана вовсе -
+   она глобальна, лежит в `settings.costs`, и ИМЕННО ЕЮ правило входа считает свои нетто. Пока
+   автомат не назвал рынок (то есть всегда при выключенном боте и до первого цикла после старта),
+   общее правило прятало единственный редактор этой модели: настройку, от которой зависит решение,
+   нельзя было ни увидеть, ни поправить. Числа самой карточки при этом честно стоят прочерками -
+   ноционала без сделки и без кандидата нет. */
+#zoneAnalysis.nomarket > .grid:not(#zaCosts){ display:none; }
 #zoneAnalysis.nomarket > #zaEmpty{ display:flex; }
 .why-box{ background:var(--inset); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:7px; padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--txt-dim); }
 .why-box b{ color:var(--txt); }
@@ -1689,7 +1697,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
       <span class="tag" data-i18n="fa.za.tag">рынок выбирает бот · переключателей нет</span>
       <span class="cfg-pill" id="zaMarketPill">-</span>
       <span class="rule"></span>
-      <span class="hint" data-i18n="fa.za.hint">окно 30 суток - горизонт правила входа</span>
+      <span class="hint" id="zaWinHint"></span>
     </div>
   <!-- ЧЕСТНОЕ ПУСТОЕ СОСТОЯНИЕ, А НЕ НОЛЬ. Пока нет ни сделки, ни ЦИКЛА РЕШЕНИЯ, рынка у зоны нет,
        и панели гасятся целиком: серия «загружается» на месте, где грузить нечего, читается как
@@ -1701,7 +1709,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
   <!-- ПЕРЕКЛЮЧАТЕЛЕЙ ЗДЕСЬ БОЛЬШЕ НЕТ, И ЗАВОДИТЬ ИХ НЕЛЬЗЯ. Стоял тулбар из пяти органов
        (инструмент, стратегия, конфигурация, период, режим P&L) и кнопки полного пересчёта. Все
        шесть отвечали на вопрос «что показать», которого у полного автомата не существует: рынок и
-       конфигурацию выбирает правило входа, окно задано горизонтом правила (720 ч = 30 суток), а
+       конфигурацию выбирает правило входа, окно задано горизонтом правила входа, а
        режим «до/после издержек» описывал гипотезу, которой в этой зоне больше нет.
        Выбор приходит ОДНИМ путём - из главного процесса, `faViewSelection()`, полем `selection`
        датасета. Второго правила выбора в отрисовщике нет и быть не должно. -->
@@ -1818,7 +1826,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
        КАРТОЧКА ИЗДЕРЖЕК ОСТАЛАСЬ, потому что объясняет КРУГ, а не гипотезу: сколько стоит вход и
        выход. Её поля редактируемы и уезжают в `settings.costs`, то есть в тот самый набор, которым
        правило входа считает свои нетто, - это модель, а не переключатель вида. ══════════════════ -->
-  <section class="grid reveal" style="animation-delay:.2s">
+  <section class="grid reveal" id="zaCosts" style="animation-delay:.2s">
 
       <!-- cost model -->
       <div class="card">
@@ -1845,6 +1853,9 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
           <span class="k" data-i18n="fa.costs.netEng"></span>
           <span class="v" id="costAfter">-</span>
         </div>
+        <!-- Расхождение размеров называется здесь и только здесь: пересчитывать нетто на ноционал
+             сделки интерфейсу нечем и не положено. -->
+        <div class="cost-note neg" id="costAfterNote" hidden></div>
         <div class="blue-hint"><span class="sw"></span><span data-i18n="fa.costs.blueHint">синие поля редактируемы · мгновенный пересчёт</span></div>
         <div class="cost-note" data-i18n="fa.costs.note">
           Позиция удерживается весь горизонт, поэтому торговые комиссии - РАЗОВЫЕ (один вход и выход на ногу),
@@ -1897,7 +1908,10 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
       <div class="d"><span class="i r">P</span><span><b data-i18n="fa.foot.d1b">Режим PAPER (симуляция).</b> <span data-i18n="fa.foot.d1">Модель рассчитывает доходность гипотетического капитала на фактических исторических данных бирж; ордера не исполняются, реальный капитал и API-ключи не задействованы.</span></span></div>
       <div class="d"><span class="i r">L</span><span><b data-i18n="fa.foot.d2b">Риск ликвидации.</b> <span data-i18n="fa.foot.d2">Ноционал ноги = капитал × плечо, и оба числа заморожены при взводе автомата (они в тикете и на пульте). Риск ликвидации carry-модель фандинга не учитывает: за ним отдельно следит сторож залога, его запас показан на карточке честности счёта.</span></span></div>
       <div class="d"><span class="i a">M</span><span><b data-i18n="fa.foot.d3b">Рынок выбирает правило входа, а не рейтинг ставок.</b> <span data-i18n="fa.foot.d3">Выбор идёт по НЕТТО ЗА ГОРИЗОНТ при том размере, которым бот реально войдёт, с учётом свободного места на площадке, стакана и разбавления собственным входом. Средние и медианы исторических ставок в этот выбор не входят.</span></span></div>
-      <div class="d"><span class="i b">B</span><span><b data-i18n="fa.foot.d4b">Горизонт правила - 720 часов.</b> <span data-i18n="fa.foot.d4">Панели рынка показывают ровно те 30 суток, на которых бот принимает решение. Более коротких окон здесь нет намеренно: сравнивать нетто на окнах разной длины значит сравнивать разные единицы.</span></span></div>
+      <!-- ЧИСЛА ГОРИЗОНТА И ОКНА СЮДА НЕ ВПИСАНЫ. Они приезжают из движка полем `selection` и
+           подставляются в шаблон словаря отрисовщиком (`renderRuleWindowText`): вписанная копия
+           молчала бы при смене горизонта правила, и подпись продолжала бы обещать прежнее окно. -->
+      <div class="d"><span class="i b">B</span><span><b id="faFootD4b"></b> <span id="faFootD4"></span></span></div>
       <div class="d"><span class="i a">D</span><span><b data-i18n="fa.foot.d5b">Актуальность данных.</b> <span data-i18n="fa.foot.d5">Историческое окно подтягивается с бирж и дополняется каждый час; текущие ставки опрашиваются каждые несколько минут; вселенную бот пересчитывает раз в сутки. Свежесть данных - в отметке «данные по состоянию на &lt;UTC&gt;» вверху, время последней оценки - в её карточке.</span></span></div>
       <div class="d"><span class="i b">F</span><span><b data-i18n="fa.foot.d6b">Точность исполнения ограничена.</b> <span data-i18n="fa.foot.d6">Paper-ledger использует живые ставки, но не моделирует ликвидацию, динамический price impact, фактическое проскальзывание и кросс-биржевой ценовой базис. Эти риски нельзя выводить из показанного funding P&amp;L.</span></span></div>
       <div class="d"><span class="i a">Z</span><span><b data-i18n="fa.foot.d7b">Две зоны - два вопроса.</b> <span data-i18n="fa.foot.d7">«Ⅱ · Торговля» отвечает, что бот сделал: реализованный результат позиций счёта с момента запуска (t0), всегда нетто. «Ⅰ · Рынок бота» отвечает, на что он смотрит: первичные данные рынка, который выбрало правило входа. Переключателей нет ни в той, ни в другой.</span></span></div>
@@ -3262,6 +3276,7 @@ function applyDataset(ds){
     state.asset   = ds.selection.asset  ?? null;
     state.cfg     = ds.selection.cfg    ?? null;
     state.win     = Number.isFinite(Number(ds.selection.win)) ? Number(ds.selection.win) : state.win;
+    state.horizonH = Number.isFinite(Number(ds.selection.horizonH)) ? Number(ds.selection.horizonH) : state.horizonH;
     state.selFrom = ds.selection.from   ?? null;
   }
   LIVE.series    = ds.series || null;   // null очищает: чужая серия не показывается
@@ -3290,7 +3305,12 @@ const state = {
   strat: null,        // two | one            из ds.selection
   asset: null,        // ETH|BTC | ETH-Arb…   из ds.selection
   cfg:   null,        // A | B                из ds.selection
-  win:   30,          // горизонт правила входа, 720 ч = 30 суток; из ds.selection.win
+  /* Окно и горизонт ПРИЕЗЖАЮТ ИЗ ДВИЖКА (`ds.selection`), своего значения здесь нет ни одного.
+     Стояла инициализация `win: 30` с комментарием «это 720 часов»: вторая копия числа, которое
+     определяет правило входа, молчащая при смене горизонта. `null` до первого пуша честен -
+     рынка в этот момент тоже нет, и зона стоит пустой. */
+  win:   null,        // суток в окне панелей; из ds.selection.win
+  horizonH: null,     // горизонт правила в часах; из ds.selection.horizonH
   selFrom: null,      // position | candidate | null - ЧЕМ обоснован выбор рынка
   live:  false,
   view:  'home',      // активный вид оболочки: home | funding-arb | btc-options
@@ -3699,7 +3719,30 @@ function renderHlPanel(){
    Осталось ровно то, что у сводки было общим с прочими панелями: подпись рынка и конфигурации.
 
    НИЧЕГО НЕ ВЫБИРАЕТ И НЕ ВЫВОДИТ. Читает `state`, который целиком приехал из `ds.selection`. */
+/* ЧИСЛА ПРАВИЛА ДЛЯ ПОДПИСЕЙ. Одна точка, из которой окно и горизонт попадают в словарные шаблоны:
+   и в статические подписи ниже, и в статьи справки (`openHelp`). Своего значения тут нет - только
+   то, что приехало в `ds.selection` от `faViewSelection()` главного процесса, а туда из движка. */
+const faRuleParams = () => ({
+  faWinD: Number.isFinite(state.win) ? state.win : '-',
+  faHorizonH: Number.isFinite(state.horizonH) ? state.horizonH : '-',
+});
+
+/* ТРИ ПОДПИСИ, В КОТОРЫХ ЧИСЛО ОКНА СТОЯЛО ЛИТЕРАЛОМ В ОБОИХ СЛОВАРЯХ. Теперь это шаблоны, а
+   число одно и приходит из движка. `data-i18n` с них снят намеренно: `applyI18n` записал бы в них
+   шаблон с нераскрытыми скобками, а смена языка и без него доходит - `setLocale` зовёт `render()`
+   следом за `applyI18n`. */
+function renderRuleWindowText(){
+  const p = faRuleParams();
+  // Ключи вызываются ЯВНО, а не подстановкой в помощник: подстановки не видит ни проверка ссылочной
+  // целостности словарей, ни проверка мёртвых ключей (та же причина, что у таблицы `FA_CODE_TEXT`).
+  const put = (el, txt) => { if(el){ el.removeAttribute('data-i18n'); el.textContent = txt; } };
+  put($('zaWinHint'), t('fa.za.hint', p));
+  put($('faFootD4b'), t('fa.foot.d4b', p));
+  put($('faFootD4'),  t('fa.foot.d4', p));
+}
+
 function renderMarketHead(){
+  renderRuleWindowText();
   const has = !!state.asset;
   const zone = $('zoneAnalysis'); if(zone) zone.classList.toggle('nomarket', !has);
   const empty = $('zaEmpty'); if(empty) empty.hidden = has;
@@ -3718,21 +3761,30 @@ function renderMarketHead(){
    сценарием оператора. Теперь это РАЗМЕР БОТА: ноционал открытой сделки, а без сделки - размер,
    который правило входа назначило лучшему кандидату последней оценки. Ни того, ни другого нет -
    размера НЕТ, и карточка ставит прочерк: круг по выдуманному размеру это выдуманное число.
-   Нетто за горизонт берётся из той же строки оценки ГОТОВЫМ - его считает движок. */
+   Нетто за горизонт берётся из той же строки оценки ГОТОВЫМ - его считает движок.
+
+   ДВА РАЗНЫХ РАЗМЕРА В ОДНОЙ КАРТОЧКЕ, И ТЕПЕРЬ ОНИ НАЗВАНЫ. У ОТКРЫТОЙ сделки ноционал заморожен
+   моментом входа, а `netUsd` приезжает из СВЕЖЕЙ строки оценки, где правило входа заново
+   оптимизировало размер (`sizeUsd`) на сегодняшних данных. Совпадают эти два числа только в момент
+   открытия и расходятся с первого же цикла. Пересчитать нетто на ноционал сделки нельзя - нетто
+   считает движок, и своей формулы у интерфейса быть не должно, - поэтому размер нетто едет рядом
+   полем `netSizeUsd`, и карточка говорит вслух, когда он не тот. Молчащее расхождение это то же
+   правдоподобное неверное объяснение, только про деньги. */
 function costBasis(){
   const rows = (LIVE.auto && LIVE.auto.lastEval && LIVE.auto.lastEval.markets) || [];
   const open = (LIVE.positions||[]).find(x=>x.status==='open');
   if(open){
     const row = rows.find(m=>m.token===open.instrumentKey) || null;
     return { notional:open.notional, isOne:open.strategy==='one', src:'position',
-             netUsd:(row && Number.isFinite(row.netUsd)) ? row.netUsd : null };
+             netUsd:(row && Number.isFinite(row.netUsd)) ? row.netUsd : null,
+             netSizeUsd:(row && Number.isFinite(row.sizeUsd)) ? row.sizeUsd : null };
   }
   const best = rows.find(m=>m.rank===1);
   if(best && Number.isFinite(best.sizeUsd)){
     return { notional:best.sizeUsd, isOne:best.strategy==='one', src:'candidate',
-             netUsd:Number.isFinite(best.netUsd) ? best.netUsd : null };
+             netUsd:Number.isFinite(best.netUsd) ? best.netUsd : null, netSizeUsd:best.sizeUsd };
   }
-  return { notional:null, isOne:activeProfile().isOne, src:null, netUsd:null };
+  return { notional:null, isOne:activeProfile().isOne, src:null, netUsd:null, netSizeUsd:null };
 }
 
 let costWired=false;
@@ -3819,6 +3871,16 @@ function updateCostDerived(){
   } else {
     after.textContent='-';
     after.className='v faint';
+  }
+  /* РАЗМЕР НЕТТО НАЗЫВАЕТСЯ ВСЛУХ, КОГДА ОН НЕ РАВЕН НОЦИОНАЛУ НАД НИМ. Круг издержек посчитан на
+     ноционале сделки, нетто - на размере, которым правило вошло бы СЕГОДНЯ. Оба числа верны, но
+     относятся к разным размерам, и без этой строки карточка читалась бы как одно измерение. */
+  const note=$('costAfterNote');
+  if(note){
+    const mixed = Number.isFinite(b.netUsd) && Number.isFinite(b.netSizeUsd) && has
+      && Math.abs(b.netSizeUsd - notional) > 0.005;
+    note.hidden = !mixed;
+    note.textContent = mixed ? t('fa.costs.netOtherSize', { s:fmtUSD(b.netSizeUsd,0) }) : '';
   }
 }
 
@@ -4908,32 +4970,71 @@ function renderFaJournals(){
 function renderFaEval(){
   const body=$('faEvalBody'), empty=$('faEvalEmpty'), stamp=$('faEvalStampTxt');
   if(!body) return;
-  const ev = (LIVE.auto && LIVE.auto.lastEval) || null;
+  const a = LIVE.auto || null;
+  const ev = (a && a.lastEval) || null;
   const rows = (ev && Array.isArray(ev.markets)) ? ev.markets : [];
+  /* ЧЕТЫРЕ РАЗНЫХ ПУСТОТЫ, И РАНЬШЕ ВСЕ ЧЕТЫРЕ ГОВОРИЛИ ОДНО. Сводка есть; цикла не было вовсе;
+     автомат выключен, и следующей оценки не будет; автомат работает, решение было, а данных о нём
+     не осталось (сводка не поднялась с диска).
+
+     ПОРЯДОК ВЕТОК ЗНАЧИМ ДВАЖДЫ. «Цикла не было» проверяется ПЕРВЫМ: на свежем профиле автомат
+     тоже выключен, но сказать там «сводка снята вместе с ним» значило бы сослаться на оценку,
+     которой никогда не существовало. А «выключен» проверяется РАНЬШЕ «данные потеряны», потому что
+     после остановки сводка гасится НАРОЧНО, а `lastDecisionAt` остаётся в состоянии движка, и
+     обратный порядок объявлял бы штатное гашение потерей данных. */
+  const evState = (ev && Number.isFinite(ev.at)) ? 'live'
+    : !(a && Number.isFinite(a.lastDecisionAt)) ? 'never'
+    : !a.on ? 'off'
+    : 'lost';
   if(stamp){
     // ДВА ВРЕМЕНИ, А НЕ «СЕЙЧАС». Следующая оценка считается из каданса движка (`cadenceH`),
-    // своего периода интерфейс не заводит.
-    if(!ev || !Number.isFinite(ev.at)) stamp.textContent = t('fa.ev.stamp0');
-    else {
+    // своего периода интерфейс не заводит. Потолок капитала стоит рядом с ними: ранг посчитан
+    // ПРОТИВ НЕГО (`bestAlternative(capitalUsd)`), и без него строку ранга не с чем сверить.
+    stamp.removeAttribute('data-i18n');
+    if(evState === 'live'){
       const next = Number.isFinite(ev.cadenceH) ? ev.at + ev.cadenceH*3600*1000 : null;
-      stamp.textContent = t('fa.ev.stamp', { at:faAutoDate(ev.at), next:next!=null?faAutoDate(next):'-' });
+      stamp.textContent = t('fa.ev.stamp', { at:faAutoDate(ev.at),
+        cap:Number.isFinite(ev.capitalUsd) ? fmtUSDfull(ev.capitalUsd) : '-',
+        next:next!=null?faAutoDate(next):'-' });
     }
+    else if(evState === 'off')  stamp.textContent = t('fa.ev.stampOff');
+    else if(evState === 'lost') stamp.textContent = t('fa.ev.stampLost', { at:faAutoDate(a.lastDecisionAt) });
+    else stamp.textContent = t('fa.ev.stamp0');
   }
-  if(!rows.length){ body.innerHTML=''; if(empty) empty.hidden=false; return; }
+  if(!rows.length){
+    body.innerHTML='';
+    if(empty){
+      empty.hidden=false;
+      empty.removeAttribute('data-i18n');
+      empty.textContent = evState === 'off' ? t('fa.ev.emptyOff')
+        : evState === 'lost' ? t('fa.ev.emptyLost', { at:faAutoDate(a.lastDecisionAt) })
+        : t('fa.ev.empty');
+    }
+    return;
+  }
   if(empty) empty.hidden=true;
   const held = ((LIVE.positions||[]).find(x=>x.status==='open')||{}).instrumentKey || null;
   let html='';
   for(const m of rows){
     const funded = !!m.funded;
     const mine = held ? m.token===held : m.rank===1;
-    const state = funded
+    /* ИСХОДОВ ТРИ, И ТРЕТИЙ ЗАВЕДЁН НАРОЧНО. `funded` - правило профинансировало; код ворот или
+       код кривой - суждение ОБ ЭТОМ рынке; а `refusalFrom === 'slice'` значит, что правило не
+       считало НИЧЕГО (источник лежит, потолок капитала или горизонт не назван), и код описывает
+       весь срез, а не строку. Показывать его тем же чипом, что и вывод правила, значило бы выдать
+       отказ снабжения за вывод - ровно тот дефект, ради которого движок завёл это поле. */
+    const outcome = funded
       ? '<span class="chip trad">'+ledgerEsc(faCodeText('funded'))+'</span>'
-      : '<span class="chip thin">'+ledgerEsc(faCodeText(m.refusal))+'</span>';
+      : m.refusalFrom === 'slice'
+        ? '<span class="chip thin">'+ledgerEsc(t('fa.ev.notRated', { why:faCodeText(m.refusal) }))+'</span>'
+        : m.refusal
+          ? '<span class="chip thin">'+ledgerEsc(faCodeText(m.refusal))+'</span>'
+          : '<span class="chip thin">'+ledgerEsc(t('fa.ev.notRatedBare'))+'</span>';
     html += '<tr class="'+(mine?'me':'')+'">'+
       '<td class="lft sym">'+ledgerEsc(m.token)+'</td>'+
       '<td class="lft">'+(m.config?('<span class="chip '+ledgerEsc(m.config)+'">'+ledgerEsc(m.config)+'</span>'):'<span class="faint">-</span>')+'</td>'+
       '<td class="n">'+(Number.isFinite(m.rank)?m.rank:'<span class="faint">-</span>')+'</td>'+
-      '<td class="lft">'+state+'</td>'+
+      '<td class="lft">'+outcome+'</td>'+
       '<td class="lft dim">'+(funded?ledgerEsc(faBindText(m.binding)):'<span class="faint">-</span>')+'</td>'+
       '<td class="n dim">'+(Number.isFinite(m.sizeUsd)?fmtUSD(m.sizeUsd,0):'<span class="faint">-</span>')+'</td>'+
       '<td class="n '+(Number.isFinite(m.netUsd)?clsSign(m.netUsd):'')+'">'+(Number.isFinite(m.netUsd)?fmtUSDfull(m.netUsd):'<span class="faint">-</span>')+'</td>'+
@@ -5210,7 +5311,9 @@ function closeHelp(){
 }
 function openHelp(btn){
   const h0 = HELP[btn.dataset.help]; if(!h0) return;
-  const h = h0.tk ? { t: t(h0.tk), b: t(h0.bk) } : h0; // мигрированные записи держат ключи словаря
+  // Числа правила подставляются и в статьи: «окно в 720 часов» жило в них литералом в обеих
+  // локалях. Ключам без таких скобок параметры безразличны, поэтому передаются всем.
+  const h = h0.tk ? { t: t(h0.tk), b: t(h0.bk, faRuleParams()) } : h0; // мигрированные записи держат ключи словаря
   if(helpBtnActive===btn){ closeHelp(); return; }   // повторный клик по тому же «?» - закрыть
   if(helpPop){ helpPop.remove(); helpPop=null; if(helpBtnActive) helpBtnActive.setAttribute('aria-expanded','false'); }
   helpBtnActive = btn; btn.setAttribute('aria-expanded','true');

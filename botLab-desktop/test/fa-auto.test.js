@@ -20,13 +20,13 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_COSTS } from "../src/engine/costs.js";
-import { FA_SIZING_DEFAULTS, FA_SIZING_REFUSALS } from "../src/engine/fa/sizing.js";
+import { FA_SIZING_DEFAULTS, FA_SIZING_REFUSALS, faSizingPreset } from "../src/engine/fa/sizing.js";
 import { FA_EXIT_REASONS } from "../src/engine/fa/exit.js";
 import { FA_MARGIN_REFUSALS } from "../src/engine/fa/margin.js";
 import {
   AUTO_SCHEMA_VERSION, FA_AUTO_BOT_ID, FA_AUTO_INTENTS, FA_AUTO_OUTCOMES, FA_AUTO_PRECEDENCE,
-  FA_AUTO_REFUSALS, armAuto, autoTick, createAutoState, defaultAutoParams, ensureAutoState,
-  explainAuto, legSpreadApr, stopAuto,
+  FA_AUTO_REFUSALS, armAuto, autoHorizonH, autoTick, autoViewWindowDays, createAutoState,
+  defaultAutoParams, ensureAutoState, explainAuto, legSpreadApr, stopAuto,
 } from "../src/engine/fa/auto.js";
 import { annualizeRow } from "../src/engine/math.js";
 import { bestAlternative } from "../src/engine/fa/exit.js";
@@ -524,6 +524,67 @@ test("сводка оценки: строка на КАЖДЫЙ рынок вс�
   assert.ok(byToken.POOR.refusal && byToken.POOR.funded === false, "убыточный назван кодом ПРАВИЛА, а не ворот");
 });
 
+/* ══ ОТКАЗ СНАБЖЕНИЯ НЕ ИМЕЕТ ПРАВА ВЫГЛЯДЕТЬ КАК ВЫВОД ПРАВИЛА ═════════════════════════════════
+   Здесь стояла подстановка `gate.code ?? (cur ? cur.refusal : "hist_short")`. У рынка, ПРОШЕДШЕГО
+   ворота, `gate.code` равен null, `??` проваливался вправо, и когда правило входа выходило ранним
+   возвратом без кривых вовсе, КАЖДАЯ строка получала «истории меньше горизонта» рядом с покрытием
+   100%. Это худший класс дефекта проекта: правдоподобное неверное объяснение, живущее сутки, - тик
+   при этом всё равно ставит `lastDecisionAt`.
+
+   ПРОВЕРКА УМЕЕТ ПАДАТЬ: вернуть подстановку - и `hist_short` появится там, где истории 720 часов.
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
+test("сводка оценки: отказ ИСТОЧНИКА называется своим кодом, а не занимает чужой", () => {
+  for (const [flag, code] of [["gmxDown", "src_gmx_down"], ["hlDown", "src_hl_down"]]) {
+    const t = run({ markets: [rich("RICH"), poor("POOR")], sources: { [flag]: true } });
+    assert.equal(t.why, code, "решающий код тика это отказ снабжения");
+    assert.equal(t.evalMarkets.length, 2);
+    for (const m of t.evalMarkets) {
+      assert.equal(m.refusal, code, `${m.token}: строка обязана назвать ТОТ отказ, который случился`);
+      assert.equal(m.refusalFrom, "slice", `${m.token}: код накрыл весь срез, а не этот рынок`);
+      assert.equal(m.funded, false);
+      assert.notEqual(m.refusal, "hist_short",
+        `${m.token}: истории у него 720 часов, и говорить обратное значит объяснять неверно`);
+      assert.equal(m.coverage, 1, "ворота рынок ПРОШЁЛ, и покрытие у него измерено");
+    }
+  }
+});
+
+test("сводка оценки: происхождение кода различает суждение о рынке и отказ всего среза", () => {
+  const short = market("SHORTHIST", flat({ P: 4000, bShort: 1e5, hours: 100 }));
+  const t = run({ markets: [rich("RICH"), poor("POOR"), short] });
+  const by = Object.fromEntries(t.evalMarkets.map((m) => [m.token, m]));
+  assert.equal(by.RICH.refusalFrom, null, "профинансированный рынок отказа не имеет вовсе");
+  assert.equal(by.POOR.refusalFrom, "curve", "убыточный рынок это суждение ПРАВИЛА о нём");
+  assert.equal(by.SHORTHIST.refusalFrom, "gate", "короткая история это суждение ВОРОТ о нём");
+  // Ворота отсеяли рынок, а срез при этом жив: чужого кода в его строке быть не может.
+  assert.equal(by.SHORTHIST.refusal, "hist_short");
+});
+
+test("сводка оценки: на удержании отказ правила выхода тоже не подменяется чужим кодом", () => {
+  // Правило выхода откладывает решение целиком (`defer`) и кривых не возвращает НИ ОДНОЙ.
+  const t = run({
+    markets: [market("HELD", flat({ P: 4000, bShort: 1e5 })), rich("RICH")],
+    position: held(), sources: { gmxDown: true },
+  });
+  assert.equal(t.why, "src_gmx_down");
+  for (const m of t.evalMarkets) {
+    assert.equal(m.refusal, "src_gmx_down", `${m.token}: причина названа кодом САМОГО правила`);
+    assert.equal(m.refusalFrom, "slice");
+  }
+});
+
+test("сводка оценки: рынок без токена не забирает исход ворот у соседа", () => {
+  // Ворота хранились Map-ой по токену, и рынок без токена в неё не попадал: его строка молча брала
+  // код соседа или выдуманный `hist_short`. Теперь исход ворот идёт ПО МЕСТУ в списке.
+  const nameless = { ...rich("RICH"), token: null, rows: flat({ P: 4000, bShort: 1e5, hours: 100 }) };
+  const t = run({ markets: [rich("RICH"), nameless] });
+  const row = t.evalMarkets[1];
+  assert.equal(row.token, null);
+  assert.equal(row.refusal, "hist_short", "у него истории 100 часов, и это его собственный отказ");
+  assert.equal(row.refusalFrom, "gate");
+  assert.equal(t.evalMarkets[0].refusalFrom, null, "у соседа исход свой и не тронут");
+});
+
 test("сводка оценки: ранг ставит тот же предикат, что и выбор рынка входа", () => {
   const t = run({ markets: [poor("POOR"), rich("RICH"), rich("RICH2")] });
   const best = bestAlternative(t.universe.curves, t.params.capitalUsd);
@@ -564,4 +625,55 @@ test("сводка оценки: ставка ног сведена ДВИЖКО
   // И то же число доезжает в строке сводки.
   const t = run({ markets: [rich("RICH", { rates })] });
   assert.equal(t.evalMarkets[0].legApr, a.net_A, "строка сводки несёт ту же величину, что и таблица");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ГОРИЗОНТ ПРАВИЛА И ОКНО ПАНЕЛЕЙ: ОДНО ЧИСЛО, А НЕ ПЯТЬ РУКОПИСНЫХ КОПИЙ
+//
+// 720 часов (и их пересчёт в 30 суток) были вписаны руками в главном процессе, в отрисовщике, в
+// оракуле и по два раза в каждом из двух словарей. Ни одна копия не выводилась из движка, и ни один
+// тест их не сверял: смена горизонта правила развела бы их МОЛЧА, а шапка зоны продолжала бы
+// обещать прежнее окно. Тест держит обе стороны - число выводится отсюда, и снаружи его копий нет.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("горизонт и окно панелей выводятся из движка тем же выражением, что и cfg тика", () => {
+  assert.equal(autoHorizonH(), H, "по умолчанию горизонт это горизонт правила размера");
+  assert.equal(autoViewWindowDays(), H / 24, "окно панелей это горизонт в сутках, и ничего больше");
+  // Замороженный пресет взвода перебивает умолчание: автомат работает ТЕМ горизонтом, который
+  // заморожен, и панели обязаны показывать те же часы.
+  const st = armAuto(createAutoState({ nowMs: T }), { nowMs: T, params: { presetId: "fa-uniform-v1" } });
+  assert.equal(autoHorizonH(st), (faSizingPreset("fa-uniform-v1") || {}).horizonH);
+  // Тик считает свой горизонт САМ, и два числа обязаны совпасть - иначе панели показали бы часы,
+  // которых решение не видело.
+  const t = run({ state: armed() });
+  assert.equal(t.cfg.horizonH, autoHorizonH(armed()), "горизонт тика и горизонт панелей это одно число");
+  assert.equal(t.gate.horizonH, autoViewWindowDays(armed()) * 24);
+  // Неизвестный пресет не выдумывает горизонта: падать назад можно только на умолчание правила.
+  const bad = armAuto(createAutoState({ nowMs: T }), { nowMs: T, params: { presetId: "нет-такого" } });
+  assert.equal(autoHorizonH(bad), FA_SIZING_DEFAULTS.horizonH);
+});
+
+test("окна и горизонта нет рукописной копией ни в главном процессе, ни в отрисовщике, ни в оракуле", () => {
+  const read = (...p) => readFileSync(join(HERE, "..", ...p), "utf8");
+  const main = read("src", "main", "main.js");
+  assert.match(main, /faauto\.autoViewWindowDays\(/, "окно панелей главный процесс обязан брать у движка");
+  assert.ok(!/FA_VIEW_WINDOW_DAYS\s*=\s*\d/.test(main), "рукописного окна в главном процессе быть не должно");
+  const oracle = read("scripts", "selector-oracle.mjs");
+  assert.match(oracle, /VIEW_WINDOW\s*=\s*autoViewWindowDays\(\)/, "оракул обязан брать окно у движка");
+  const html = read("src", "renderer", "index.html");
+  const stateBlock = html.match(/^const state = \{[\s\S]*?\n\};/m);
+  assert.ok(stateBlock, "состояние вкладки бота 1 в отрисовщике не найдено - сломался разбор, а не код");
+  assert.match(stateBlock[0], /win:\s*null/, "окно в отрисовщике обязано приезжать из движка, а не стоять числом");
+  assert.match(stateBlock[0], /horizonH:\s*null/, "горизонт туда же и на тех же основаниях");
+  // Подписи, в которых число стояло литералом в обеих локалях, стали шаблонами.
+  for (const loc of ["ru", "en"]) {
+    const dict = read("src", "renderer", "locales", `${loc}.js`);
+    const lines = dict.split("\n").filter((l) => /'(fa\.za\.hint|fa\.foot\.d4b?|help\.spread\.b|help\.fa-auto\.b)':/.test(l));
+    assert.equal(lines.length, 5, `${loc}: пять подписей, в которых число окна стояло литералом`);
+    for (const l of lines) {
+      assert.ok(/\{faWinD\}|\{faHorizonH\}/.test(l), `${loc}: подпись обязана быть шаблоном: ${l.slice(0, 60)}`);
+      assert.ok(!new RegExp(`\\b${H}\\b`).test(l) && !new RegExp(`\\b${H / 24}[\\s-]`).test(l),
+        `${loc}: числа окна в подписи быть не должно: ${l.slice(0, 60)}`);
+    }
+  }
 });

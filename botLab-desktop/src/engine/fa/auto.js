@@ -167,6 +167,33 @@ export function defaultAutoParams() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ГОРИЗОНТ, КОТОРЫМ АВТОМАТ ДЕЙСТВИТЕЛЬНО РАБОТАЕТ, И ОКНО ПАНЕЛЕЙ, ВЫВЕДЕННОЕ ИЗ НЕГО.
+//
+// ЗАЧЕМ ЭТИ ДВЕ СТРОКИ СУЩЕСТВУЮТ. Число 720 (и его пересчёт в 30 суток) было ВПИСАНО РУКАМИ в
+// пяти местах снаружи движка: потолок окна панелей в главном процессе, начальное значение в
+// отрисовщике, окно оракула и две подписи в каждом из двух словарей. Ни одно из них не выводилось
+// отсюда, и ни один тест их не сверял. Смена горизонта правила развела бы их МОЛЧА, а шапка зоны
+// продолжала бы обещать прежнее окно - ровно тот класс дефекта, от которого её только что чинили.
+//
+// СЧИТАЕТСЯ ТЕМ ЖЕ ВЫРАЖЕНИЕМ, ЧТО И `cfg` ТИКА: замороженный пресет взвода поверх умолчаний
+// правила размера. Второго правила выбора горизонта здесь нет ни строки.
+// ─────────────────────────────────────────────────────────────────────────────
+export function autoHorizonH(state = null) {
+  const params = state && state.params ? { ...defaultAutoParams(), ...state.params } : defaultAutoParams();
+  const preset = faSizingPreset(params.presetId) || {};
+  const h = preset.horizonH ?? FA_SIZING_DEFAULTS.horizonH;
+  return Number.isFinite(h) && h > 0 ? h : FA_SIZING_DEFAULTS.horizonH;
+}
+
+// Окно панелей рынка в СУТКАХ. Не выбор оператора и не второе число: панели обязаны показывать те
+// же часы, на которых бот принимает решение, поэтому окно это горизонт, делённый на 24, и ничего
+// больше. Дробный результат не округляется: горизонт, не кратный суткам, обязан быть виден таким,
+// какой он есть, а не подогнанным под красивую подпись.
+export function autoViewWindowDays(state = null) {
+  return autoHorizonH(state) / 24;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // РЕЕСТРЫ. Дисциплина та же, что у `FA_SIZING_REFUSALS` и `FA_EXIT_REASONS`: замороженный список,
 // тест достижимости в ОБЕ стороны, русский текст отдельной таблицей.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -322,6 +349,15 @@ function sizingDecider(codes) {
   return best ?? unknown;
 }
 
+// ОТКАЗ, НАКРЫВШИЙ ВЕСЬ СРЕЗ. Правило входа помечает такой отказ пустым токеном (`token: null`):
+// без источника, без потолка капитала и без горизонта размеров не возвращается НИ НА ОДНОМ рынке.
+// Нужен сводке: строка рынка, до правила не дошедшего, обязана назвать причину, а не занять чужой
+// код соседа.
+function sliceRefusalOf(refusals) {
+  for (const r of refusals || []) if (r && r.token == null && r.refusal) return r.refusal;
+  return null;
+}
+
 // Решающий код среди СОБСТВЕННЫХ кодов автомата. Кода вне реестра приоритетов здесь быть не может:
 // в `refusals[]` его кладёт только этот модуль, и тест сверяет множества в обе стороны.
 function precedenceDecider(codes) {
@@ -359,23 +395,43 @@ export function legSpreadApr(rates, strategy, config) {
 // РАНГ СЧИТАЕТСЯ ТЕМ ЖЕ ПРЕДИКАТОМ, ЧТО И ВЫБОР: годная это профинансированная кривая, ВЛЕЗАЮЩАЯ в
 // доступный капитал (`bestAlternative`). Рынок профинансированный, но не влезающий, ранга не
 // получает, и его размер стоит рядом, чтобы причина была видна числом.
+//
+// ЧУЖОЙ КОД НЕ ПОДСТАВЛЯЕТСЯ НИ РАЗУ, И ЭТО ГЛАВНОЕ СВОЙСТВО ЭТОЙ ФУНКЦИИ. Здесь стояло
+// `gate.code ?? (cur ? cur.refusal : "hist_short")`, и у рынка, ПРОШЕДШЕГО ворота, `gate.code`
+// равен `null`, то есть `??` проваливался вправо. Когда правило входа выходит ранним возвратом
+// без кривых вовсе (`src_gmx_down`, `src_hl_down`, `no_capital_cap`, `horizon_missing`), кривой
+// нет ни у одного рынка, и КАЖДАЯ строка получала «истории меньше горизонта» рядом с покрытием
+// 100%. Это ровно тот класс дефекта, который проекту уже стоил целого вывода: отказ СНАБЖЕНИЯ,
+// показанный как вывод ПРАВИЛА, то есть правдоподобное неверное объяснение.
+//
+// Поэтому у строки едет ещё одно поле - `refusalFrom`, ОТКУДА код взялся, и различает оно ровно то,
+// что путалось: `gate` и `curve` это суждение ОБ ЭТОМ рынке, а `slice` это отказ, накрывший весь
+// срез и о самом рынке не говорящий НИЧЕГО. Читателю нужны разные слова, и без этого поля он их не
+// получит. Своего кода на случай `slice` не заводится: `src_gmx_down` и его соседи уже есть в
+// реестрах правил, а копия чужого реестра расходится с оригиналом на первой правке.
 // ─────────────────────────────────────────────────────────────────────────────
-function evalSummary({ markets, gateByToken, curves, capitalUsd }) {
+function evalSummary({ markets, gates, curves, capitalUsd, sliceRefusal = null }) {
   const byToken = new Map();
   for (const c of curves || []) if (c && c.token) byToken.set(c.token, c);
   const ranked = (curves || [])
     .filter((c) => c && !c.refusal && c.sizeUsd > 0 && c.sizeUsd <= capitalUsd)
     .sort((a, b) => b.netUsd - a.netUsd);
   const rankOf = new Map(ranked.map((c, i) => [c.token, i + 1]));
-  return (markets || []).map((m) => {
-    const gate = gateByToken.get(m.token) || {};
-    const cur = byToken.get(m.token) || null;
-    const refusal = gate.code ?? (cur ? cur.refusal : "hist_short");
+  return (markets || []).map((m, i) => {
+    // Исход ворот берётся ПО МЕСТУ рынка в списке, а не по токену: рынок без токена ключа не имеет
+    // и молча получал бы чужую строку ворот.
+    const gate = (gates && gates[i]) || {};
+    const cur = m && m.token != null ? byToken.get(m.token) || null : null;
+    const refusal = gate.code ?? (cur ? cur.refusal ?? null : sliceRefusal);
+    const refusalFrom = refusal == null ? null : (gate.code != null ? "gate" : (cur ? "curve" : "slice"));
     return {
       token: m.token,
       strategy: m.strategy ?? (m.config ? "two" : "one"),
       config: m.config ?? null,
       refusal: refusal ?? null,
+      // ОТКУДА КОД. "gate" - ворота снабжения автомата, "curve" - правило размера по этому рынку,
+      // "slice" - отказ, накрывший срез целиком (об этом рынке он не говорит ничего).
+      refusalFrom,
       funded: !!(cur && !cur.refusal),
       binding: cur ? cur.binding ?? null : null,
       sizeUsd: cur && Number.isFinite(cur.sizeUsd) ? cur.sizeUsd : null,
@@ -490,7 +546,11 @@ export function autoTick({
   // выбывает: правило входа не проверяет длину окна само и посчитало бы нетто на 100 часах против
   // 720 у соседа, то есть сравнило бы разные единицы.
   const usable = [];
-  const heldToken = position?.token ?? null;
+  // ТОКЕН УДЕРЖИВАЕМОГО РЫНКА, И ОН СУЩЕСТВУЕТ ТОЛЬКО ПРИ ОТКРЫТОЙ СДЕЛКЕ. Без этого признака
+  // рынок без токена совпадал бы с `null` пустого слота и объявлял бы себя удерживаемым, то есть
+  // блокировал бы тик кодом ворот «на рынке, на котором мы стоим», стоя ни на чём.
+  const heldToken = position ? position.token ?? null : null;
+  const isHeld = (token) => !!position && token === heldToken;
   let heldGate = null;
   let anyShort = false;
   // Лучшее наблюдённое покрытие баз на окне. Нужно ИНТЕРФЕЙСУ: отказ `hist_no_base` это штатное
@@ -500,15 +560,16 @@ export function autoTick({
   // Исход ворот ПО КАЖДОМУ рынку, для сводки последней оценки. Пер-рыночные отказы уезжают в
   // журнал общим списком и наружу режутся решающим кодом, поэтому рынок, отсеянный воротами, из
   // кривых правила пропадает целиком: без этой пометки его строка в сводке была бы пустой без
-  // причины.
-  const gateByToken = new Map();
+  // причины. Список идёт СТРОГО В ПОРЯДКЕ `markets` и заполняется на каждой ветке цикла: ключ по
+  // токену терял бы рынок без токена, а потерянный исход ворот и есть та пустота.
+  const gates = [];
   for (const m of markets || []) {
     const rows = m?.rows || [];
     if (rows.length < H) {
       anyShort = true;
       note("hist_short", { token: m?.token ?? null, rows: rows.length, need: H });
-      if (m?.token != null) gateByToken.set(m.token, { code: "hist_short", coverage: null });
-      if (m?.token === heldToken) heldGate = "hist_short";
+      gates.push({ code: "hist_short", coverage: null });
+      if (isHeld(m?.token ?? null)) heldGate = "hist_short";
       continue;
     }
     const win = rows.slice(rows.length - H);
@@ -518,11 +579,11 @@ export function autoTick({
     if (covBest == null || cov.fraction > covBest) covBest = cov.fraction;
     if (cov.fraction < params.baseCoverageMin) {
       note("hist_no_base", { token: m.token, covered: cov.covered, hours: cov.hours, need: params.baseCoverageMin });
-      gateByToken.set(m.token, { code: "hist_no_base", coverage: cov.fraction });
-      if (m.token === heldToken) heldGate = "hist_no_base";
+      gates.push({ code: "hist_no_base", coverage: cov.fraction });
+      if (isHeld(m.token)) heldGate = "hist_no_base";
       continue;
     }
-    gateByToken.set(m.token, { code: null, coverage: cov.fraction });
+    gates.push({ code: null, coverage: cov.fraction });
     usable.push({ ...m, rows: win, coverage: cov });
   }
   // ТИКОВЫЙ ГЕЙТ, а не пер-рыночный. Блокирует ровно два состояния: рынок, на котором мы СТОИМ,
@@ -603,7 +664,13 @@ export function autoTick({
     // позвало правило входа по всем рынкам, и второй вызов дал бы другие кривые тем же данным.
     const base = {
       decided: true, exit: ex, universe: { curves: ex.curves, refusals: ex.refusals, cfg: ex.cfg }, window: windowOf(held),
-      evalMarkets: evalSummary({ markets, gateByToken, curves: ex.curves, capitalUsd: params.capitalUsd }),
+      // Правило выхода, отложившее решение (`defer`), кривых не возвращает ВООБЩЕ, и своего списка
+      // отказов у него в этом случае нет: причину оно называет одним полем `reason`. Она и едет в
+      // сводку как отказ всего среза - в отличие от прежней подстановки, это код САМОГО правила.
+      evalMarkets: evalSummary({
+        markets, gates, curves: ex.curves, capitalUsd: params.capitalUsd,
+        sliceRefusal: sliceRefusalOf(ex.refusals) ?? (ex.action === "defer" ? ex.reason : null),
+      }),
     };
     for (const r of ex.refusals || []) note(r.refusal, { token: r.token, from: "sizing" });
     if (ex.action === "close") return out("close", ex.reason, { ...base, intent: closeIntent(position, ex.reason) });
@@ -623,7 +690,10 @@ export function autoTick({
   st.lastDecisionAt = now;
   const base = {
     decided: true, universe: uni, window: windowOf(usable[0]),
-    evalMarkets: evalSummary({ markets, gateByToken, curves: uni.curves, capitalUsd: params.capitalUsd }),
+    evalMarkets: evalSummary({
+      markets, gates, curves: uni.curves, capitalUsd: params.capitalUsd,
+      sliceRefusal: sliceRefusalOf(uni.refusals),
+    }),
   };
   const best = bestAlternative(uni.curves, params.capitalUsd);
   for (const r of uni.refusals || []) note(r.refusal, { token: r.token, from: "sizing" });

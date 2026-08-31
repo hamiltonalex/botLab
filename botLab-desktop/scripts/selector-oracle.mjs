@@ -25,11 +25,16 @@ import { HOURS_PER_YEAR } from "../src/engine/math.js";
 import { TWO_LEG, ONE_LEG } from "../src/engine/universe.js";
 import { openPosition, accrue, recordUnpricedGap, positionSummary } from "../src/engine/paper.js";
 import { buildLedger, ledgerView, ledgerReconciles, ledgerTotals } from "../src/engine/ledger.js";
+import { autoHorizonH, autoViewWindowDays } from "../src/engine/fa/auto.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-// ОКНО ОДНО, и это не упрощение оракула: горизонт правила входа равен 720 часам, то есть ровно
-// 30 суткам, и панели рынка обязаны показывать те же часы. Второго окна в приложении нет.
-const VIEW_WINDOW = 30;
+// ОКНО ОДНО, и это не упрощение оракула: панели рынка обязаны показывать те же часы, на которых
+// решает правило входа. Второго окна в приложении нет, и ЧИСЛА ЗДЕСЬ ТОЖЕ НЕТ - оно приходит из
+// движка, как и в главный процесс. Стояла константа `30`, то есть третья по счёту рукописная копия
+// горизонта: смена горизонта правила развела бы оракул с приложением молча, и оракул перестал бы
+// стеречь то, ради чего написан.
+const VIEW_WINDOW = autoViewWindowDays();
+const RULE_HORIZON_H = autoHorizonH();
 const HOUR = 3600;
 const END = Math.floor(Date.UTC(2026, 0, 1) / 1000 / HOUR) * HOUR;
 
@@ -63,7 +68,7 @@ function makeDataset(strat, asset, cfg, from = "candidate") {
   return {
     // Выбор приезжает ГОТОВЫМ, ровно как из `faViewSelection()` главного процесса: отрисовщик его
     // не выводит и не имеет права переписать.
-    selection: { strat, asset, cfg, win, from },
+    selection: { strat, asset, cfg, win, horizonH: RULE_HORIZON_H, from },
     twoLeg,
     oneLeg,
     series,
@@ -78,7 +83,7 @@ function makeDataset(strat, asset, cfg, from = "candidate") {
 // Пустой датасет: ни сделки, ни цикла решения. Рынка НЕТ, и это законное состояние первых часов.
 function emptyDataset() {
   const ds = makeDataset("two", TWO_LEG[0].key, "A");
-  ds.selection = { strat: null, asset: null, cfg: null, win: VIEW_WINDOW, from: null };
+  ds.selection = { strat: null, asset: null, cfg: null, win: VIEW_WINDOW, horizonH: RULE_HORIZON_H, from: null };
   ds.series = null;
   return ds;
 }
@@ -209,6 +214,15 @@ async function run() {
       evalRows: document.querySelectorAll('#faEvalBody tr').length,
       evalEmptyShown: getComputedStyle(document.getElementById('faEvalEmpty')).display !== 'none',
       evalStamp: document.getElementById('faEvalStampTxt').textContent,
+      // Редактор модели издержек ГЛОБАЛЕН и к рынку не привязан: им правило входа считает свои
+      // нетто. Общее правило пустоты зоны пряталo его вместе с панелями рынка, то есть при
+      // выключенном боте и до первого цикла настройку, от которой зависит решение, нельзя было
+      // ни увидеть, ни поправить.
+      costsShown: getComputedStyle(document.getElementById('zaCosts')).display !== 'none',
+      costInputs: document.querySelectorAll('#costRows input[data-cost]').length,
+      // Окно панелей в подписи зоны приезжает из движка, а не из словаря.
+      winHint: document.getElementById('zaWinHint').textContent,
+      footD4b: document.getElementById('faFootD4b').textContent,
     };
   })()`);
   if (noMarket.stateKey !== null || noMarket.series) throw new Error("noMarket: selection must be empty, not sticky");
@@ -218,6 +232,27 @@ async function run() {
     throw new Error(`noMarket: the cost card must dash, not zero: ${JSON.stringify(noMarket)}`);
   if (noMarket.evalRows !== 0 || !noMarket.evalEmptyShown) throw new Error("noMarket: the evaluation card must show its empty state");
   if (!noMarket.evalStamp.includes("не было")) throw new Error(`noMarket: the stamp must not promise a time, got ${noMarket.evalStamp}`);
+  // РЕДАКТОР ИЗДЕРЖЕК ПЕРЕЖИВАЕТ ПУСТУЮ ЗОНУ. Гасится то, что описывает РЫНОК; модель издержек
+  // глобальна, лежит в settings.costs и участвует в решении правила входа.
+  if (!noMarket.costsShown || noMarket.costInputs === 0)
+    throw new Error(`noMarket: the cost model editor must stay reachable (shown=${noMarket.costsShown}, inputs=${noMarket.costInputs})`);
+  // ОКНО И ГОРИЗОНТ - ИЗ ДВИЖКА. Числа в подписях не вписаны ни в разметку, ни в словари.
+  if (!noMarket.winHint.includes(String(VIEW_WINDOW)) || !noMarket.footD4b.includes(String(RULE_HORIZON_H)))
+    throw new Error(`window labels must carry the engine numbers: ${noMarket.winHint} / ${noMarket.footD4b}`);
+  if (noMarket.winHint.includes("{") || noMarket.footD4b.includes("{"))
+    throw new Error(`window labels must be filled, not templated: ${noMarket.winHint} / ${noMarket.footD4b}`);
+  // И ТО ЖЕ НА ВТОРОЙ ЛОКАЛИ: шаблон заведён в обоих словарях, значит заполняться обязан в обоих.
+  const en = await win.webContents.executeJavaScript(`(() => {
+    setLocale('en');
+    const r = { winHint: document.getElementById('zaWinHint').textContent,
+                footD4b: document.getElementById('faFootD4b').textContent,
+                footD4: document.getElementById('faFootD4').textContent };
+    setLocale('ru');
+    return r;
+  })()`);
+  if (!en.winHint.includes(String(VIEW_WINDOW)) || !en.footD4b.includes(String(RULE_HORIZON_H)) || !en.footD4.includes(String(VIEW_WINDOW)))
+    throw new Error(`english window labels must carry the engine numbers: ${JSON.stringify(en)}`);
+  for (const v of Object.values(en)) if (v.includes("{")) throw new Error(`english window label left templated: ${v}`);
 
   // ФУЗЗИНГ ГАРДА СЕРИИ. Стал СТРОЖЕ прежнего, а не слабее: раньше выбор менял только оператор, и
   // спутать серии можно было лишь внутри 50 мс дебаунса. Теперь рынок называет бот и меняет его сам,
@@ -307,6 +342,78 @@ async function run() {
     if (r4[2] !== "-" || r4[6] !== "-" || r4[7] !== "-") throw new Error(`gated market must dash, not vanish: ${JSON.stringify(r4)}`);
     if (r4[3].includes("профинансировало")) throw new Error("gated market must not read as funded");
   }
+
+  // ── ОТКАЗ СНАБЖЕНИЯ НЕ ВЫГЛЯДИТ КАК ВЫВОД ПРАВИЛА. Строка, до правила размера не дошедшая
+  // (движок помечает её `refusalFrom:'slice'`), обязана читаться «не оценивался: <причина>», а не
+  // тем же чипом, что и суждение правила о рынке. Прежняя сводка подставляла сюда чужой код.
+  const sliceDs = structuredClone(posDs);
+  sliceDs.auto = { ...posDs.auto, lastEval: { at: EVAL_AT, cadenceH: 24, capitalUsd: 2500, markets:
+    posDs.auto.lastEval.markets.map((m) => ({ ...m, refusal: "src_gmx_down", refusalFrom: "slice",
+      funded: false, rank: null, sizeUsd: null, netUsd: null })) } };
+  const sliceObserved = await win.webContents.executeJavaScript(`(() => {
+    applyDataset(${JSON.stringify(sliceDs)});
+    return { cells: [...document.querySelectorAll('#faEvalBody tr')].map(tr => tr.children[3].textContent),
+             stamp: document.getElementById('faEvalStampTxt').textContent };
+  })()`);
+  for (const c of sliceObserved.cells) {
+    if (!c.includes("не оценивался")) throw new Error(`slice refusal must not read as a rule verdict: ${c}`);
+    if (!c.includes("GMX")) throw new Error(`slice refusal must still name its cause: ${c}`);
+  }
+  // Потолок капитала стоит в штампе рядом с временами: ранг посчитан ПРОТИВ него.
+  if (!sliceObserved.stamp.includes("$2,500.00")) throw new Error(`stamp must name the capital ceiling: ${sliceObserved.stamp}`);
+
+  // ── ЧЕТЫРЕ РАЗНЫЕ ПУСТОТЫ. Сводки нет - и причины у этого разные, а раньше слова были одни.
+  const evalStamps = await win.webContents.executeJavaScript(`(() => {
+    const base = ${JSON.stringify(sliceDs)};
+    const out = {};
+    const shot = (auto) => { applyDataset({ ...base, auto }); return {
+      stamp: document.getElementById('faEvalStampTxt').textContent,
+      empty: document.getElementById('faEvalEmpty').textContent }; };
+    out.never = shot({ on:true, corrupt:false, params:null, records:{snap:0,gap:0,dec:0,trade:0,bytes:0}, last:null, lastEval:null, lastDecisionAt:null });
+    out.lost  = shot({ on:true, corrupt:false, params:null, records:{snap:0,gap:0,dec:0,trade:0,bytes:0}, last:null, lastEval:null, lastDecisionAt:${EVAL_AT} });
+    out.off   = shot({ on:false, corrupt:false, params:null, records:{snap:0,gap:0,dec:0,trade:0,bytes:0}, last:null, lastEval:null, lastDecisionAt:${EVAL_AT} });
+    // Свежий профиль: автомат выключен и решений НЕ БЫЛО НИ ОДНОГО. Сослаться здесь на погашенную
+    // сводку значило бы сослаться на оценку, которой никогда не существовало.
+    out.fresh = shot({ on:false, corrupt:false, params:null, records:{snap:0,gap:0,dec:0,trade:0,bytes:0}, last:null, lastEval:null, lastDecisionAt:null });
+    return out;
+  })()`);
+  if (!evalStamps.never.stamp.includes("не было")) throw new Error(`no cycle yet must say so: ${evalStamps.never.stamp}`);
+  // РЕСТАРТ БЕЗ ПОДНЯВШЕЙСЯ СВОДКИ: решение было, и молчать об этом нельзя.
+  if (!evalStamps.lost.stamp.includes("2026-01-01 06:00 UTC") || !evalStamps.lost.stamp.includes("не сохранились"))
+    throw new Error(`a decision without its summary must be named, not denied: ${evalStamps.lost.stamp}`);
+  if (evalStamps.lost.stamp.includes("не было")) throw new Error("a made decision must never read as «never happened»");
+  if (!evalStamps.lost.empty.includes("2026-01-01 06:00 UTC")) throw new Error(`empty state must name the decision too: ${evalStamps.lost.empty}`);
+  // ОСТАНОВЛЕННЫЙ АВТОМАТ: следующей оценки не будет, и обещать её нечем.
+  if (!evalStamps.off.stamp.includes("выключен")) throw new Error(`a stopped automaton must say so: ${evalStamps.off.stamp}`);
+  if (evalStamps.off.stamp.includes("не раньше")) throw new Error("a stopped automaton must not promise a next evaluation");
+  if (evalStamps.off.stamp.includes("не сохранились")) throw new Error("deliberate clearing must not read as lost data");
+  // СВЕЖИЙ ПРОФИЛЬ: выключен, но оценки не было НИКОГДА - и говорить надо именно это.
+  if (!evalStamps.fresh.stamp.includes("не было")) throw new Error(`a never-decided automaton must say so: ${evalStamps.fresh.stamp}`);
+  if (evalStamps.fresh.empty.includes("снята вместе с ним"))
+    throw new Error(`a never-decided automaton must not refer to a summary that never existed: ${evalStamps.fresh.empty}`);
+
+  // ── КАРТОЧКА ИЗДЕРЖЕК НЕ СМЕШИВАЕТ ДВА РАЗМЕРА МОЛЧА. Ноционал сделки заморожен входом, а нетто
+  // приезжает из свежей строки оценки, где правило переоптимизировало размер. Совпадают они только
+  // в момент открытия; расхождение обязано быть названо.
+  const mixedDs = structuredClone(posDs);
+  mixedDs.auto = { ...posDs.auto, lastEval: { ...posDs.auto.lastEval,
+    markets: posDs.auto.lastEval.markets.map((m, i) => (i === 0 ? { ...m, sizeUsd: 1600 } : m)) } };
+  const mixed = await win.webContents.executeJavaScript(`(() => {
+    applyDataset(${JSON.stringify(mixedDs)});
+    const n = document.getElementById('costAfterNote');
+    return { notional: document.getElementById('costNotional').textContent,
+             after: document.getElementById('costAfter').textContent,
+             noteHidden: n.hidden, note: n.textContent };
+  })()`);
+  if (mixed.notional !== "$1,000") throw new Error(`the notional must stay the trade's own: ${mixed.notional}`);
+  if (mixed.after !== "$37.50") throw new Error(`the net must stay the engine's number verbatim: ${mixed.after}`);
+  if (mixed.noteHidden || !mixed.note.includes("$1,600")) throw new Error(`a net computed on another size must be named: ${JSON.stringify(mixed)}`);
+  // А при совпадении размеров пометки быть не должно: постоянная пометка перестаёт читаться.
+  const sameSize = await win.webContents.executeJavaScript(`(() => {
+    applyDataset(${JSON.stringify(posDs)});
+    return document.getElementById('costAfterNote').hidden;
+  })()`);
+  if (!sameSize) throw new Error("the size note must be silent when both numbers are the same size");
 
   const closedDs = structuredClone(posDs);
   closedDs.positions = [
@@ -559,7 +666,7 @@ async function run() {
   if (upd.xssRan) throw new Error("updaterStates: release-notes payload EXECUTED - critical XSS failure");
 
   await win.close();
-  console.log(JSON.stringify({ marketChecks, selectionDatasets: cases.length, fuzzSteps: fuzz.steps, violations: 0, rendererWarnings: rendererWarnings.length, noMarket: "pass", evaluationCard: "pass", costBasis: "pass", newestClosed: "pass", zoneSemantics: "pass", costValidation: "pass", costPersistence: "pass", ledgerReconciliation: "pass", ledgerZoneIsolation: "pass", ledgerClosedRetention: "pass", ledgerMismatchAlarm: "pass", helpCoverage: help.entries + " entries", updaterStates: "pass" }));
+  console.log(JSON.stringify({ marketChecks, selectionDatasets: cases.length, fuzzSteps: fuzz.steps, violations: 0, rendererWarnings: rendererWarnings.length, noMarket: "pass", costsAlwaysReachable: "pass", ruleWindowLabels: "pass (ru+en)", evaluationCard: "pass", sliceRefusal: "pass", evalEmptyStates: "pass", costBasis: "pass", costSizeMismatch: "pass", newestClosed: "pass", zoneSemantics: "pass", costValidation: "pass", costPersistence: "pass", ledgerReconciliation: "pass", ledgerZoneIsolation: "pass", ledgerClosedRetention: "pass", ledgerMismatchAlarm: "pass", helpCoverage: help.entries + " entries", updaterStates: "pass" }));
 }
 
 app.whenReady().then(async () => {

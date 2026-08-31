@@ -33,6 +33,7 @@ import { FA_BOOK_NODES_USD, bookSlippageNodes } from "../engine/fa/sizing.js";
 import { marginGuard as faMarginGuard, positionLegs as faPositionLegs } from "../engine/fa/margin.js";
 import { applyObservedBases, emptyBaseJournal, observeBases } from "../engine/fa/bases.js";
 import { FA_RECORD_PREFIX, buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord, faDecisionsFromRecords, faRecordDayKey, faTradesFromRecords } from "../engine/fa/record.js";
+import { faEvalClears, faEvalFromDisk, faEvalOfTick, faEvalToDisk } from "./fa-eval.js";
 import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
 import { buildStructure as s1buildStructure, buildSellStructure as s1buildSellStructure, buildSellStrangleStructure as s1buildSellStrangle, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry, sellRowsFromSnapshot as s1sellRows } from "../engine/btcopt/structure.js";
@@ -109,11 +110,17 @@ const MAX_CURVE_POINTS = 1200; // IPC payload cap; full resolution stays on disk
 // ограничение: вселенная сегодня пять рынков (`ALL_MARKETS`), отказы уже отфильтрованы решающим
 // кодом, и до потолка список не доходит. Стоит на случай роста вселенной.
 const FA_LAST_REFUSALS_CAP = 8;
-// ОКНО ПАНЕЛЕЙ РЫНКА, СУТКИ. Не выбор оператора, а ГОРИЗОНТ ПРАВИЛА: `FA_SIZING_DEFAULTS.horizonH`
-// равен 720 часам, то есть ровно 30 суткам. Панели зоны «Рынок бота» обязаны показывать те же
-// часы, на которых бот принимает решение; любое другое окно рисовало бы рядом с решением данные,
-// которых решение не видело.
-const FA_VIEW_WINDOW_DAYS = 30;
+// ОКНО ПАНЕЛЕЙ РЫНКА, СУТКИ. Не выбор оператора, а ГОРИЗОНТ ПРАВИЛА: панели зоны «Рынок бота»
+// обязаны показывать те же часы, на которых бот принимает решение; любое другое окно рисовало бы
+// рядом с решением данные, которых решение не видело.
+//
+// ЧИСЛА ЗДЕСЬ БОЛЬШЕ НЕТ, И ЭТО ГЛАВНОЕ. Стояла константа `30` с комментарием «это 720 часов
+// горизонта», но ничто её оттуда не выводило и ни один тест их не сверял: смена горизонта правила
+// развела бы их молча, а шапка зоны продолжала бы обещать прежнее окно. Теперь окно СЧИТАЕТ
+// ДВИЖОК (`autoViewWindowDays`) из того же выражения, каким тик собирает свой `cfg`, а горизонт
+// уезжает на экран рядом с окном, чтобы подписи не хранили своей копии.
+const faViewWindowDays = () => faauto.autoViewWindowDays(state.auto.engine);
+const faHorizonH = () => faauto.autoHorizonH(state.auto.engine);
 // Anti-FOUC window background per theme - must equal each theme's --bg in the renderer CSS.
 const THEME_BG = { dark: "#07090d", light: "#eef1f6" };
 const uiTheme = () => (state.settings.ui && state.settings.ui.theme === "light" ? "light" : "dark");
@@ -365,6 +372,27 @@ async function gapBackfillPositions() {
 // пользуется, а средств посмотреть или подрезать эти файлы у него до фазы 6 нет.
 // ---------------------------------------------------------------------------
 const FA_AUTO_ID = faauto.FA_AUTO_BOT_ID;
+// СВОДКА ОЦЕНКИ ЛЕЖИТ В СВОЁМ ФАЙЛЕ, А НЕ В СОСТОЯНИИ ДВИЖКА, И ЭТО ВЫБОР С НАЗВАННОЙ ЦЕНОЙ.
+//
+// ЧТО БЫЛО. `lastEval` жила ТОЛЬКО в памяти главного процесса, а `lastDecisionAt` персистилась
+// вместе с состоянием движка. После перезапуска каданс был уже отсчитан, следующая оценка
+// приходила через сутки, и всё это время карточка говорила «оценки ещё не было», гасила зону Ⅰ
+// полосой «ни сделки, ни цикла» и противоречила стоящему строкой выше времени последнего решения.
+// Подпись самой карточки требует, чтобы эти два показа совпадали.
+//
+// ПОЧЕМУ ОТДЕЛЬНЫЙ ФАЙЛ, А НЕ ПОЛЕ В `funding-arb-auto.json`. Состояние движка это в точности то,
+// что читает и пишет `autoTick`; сводка ему не нужна ни на одной ветке, и `ensureAutoState`
+// пришлось бы поднимать поле, которого редьюсер не знает. Дороже другое: битый
+// `funding-arb-auto.json` уходит в карантин, а автомат поднимается ВЫКЛЮЧЕННЫМ. Потерять тумблер
+// из-за оборванной на записи сводки для экрана - несоразмерный размен, а два файла разъезжаются
+// каждый в свой карантин независимо.
+//
+// ПОЧЕМУ НЕ ПОДНИМАТЬ ИЗ ЗАПИСЕЙ ФАЗЫ 5. Запись решения (`dec`) несёт кривые правила и его отказы,
+// а не сводку: ранг, исход ворот и покрытие пришлось бы собирать заново в главном процессе, то
+// есть завести ВТОРУЮ реализацию `evalSummary` рядом с движковой. Плюс записи режутся по суткам и
+// пишутся только под взведённым автоматом, а `lastDecisionAt` живёт дольше: сводка исчезала бы
+// раньше отметки, которую обязана объяснять.
+const FA_EVAL_ID = `${FA_AUTO_ID}-eval`;
 
 function loadOrInitFaAuto() {
   // Битый JSON КАРАНТИНИТСЯ (.corrupt-<ts>), а не перезаписывается молча: молча подменённое
@@ -387,6 +415,41 @@ function loadOrInitFaAuto() {
     }
   }
   state.auto.engine = st;
+  loadFaEval();
+}
+
+// ПОДЪЁМ СВОДКИ. Правила формы живут в `fa-eval.js` и оттуда же берутся тестом: битую и НЕПОЛНУЮ
+// запись поднимать одинаково нельзя, потому что карточка показывает строки как всю вселенную.
+function loadFaEval() {
+  state.auto.lastEval = null;
+  let res;
+  try {
+    res = loadBotStateQuarantine(baseDir, FA_EVAL_ID);
+  } catch (e) {
+    console.error("[fa-auto] подъём сводки оценки:", e);
+    return;
+  }
+  if (res.corrupt) {
+    console.warn(`[fa-auto] ${FA_EVAL_ID}.json битый - карантин .corrupt-*, сводка оценки не поднята`);
+    return;
+  }
+  state.auto.lastEval = faEvalFromDisk(res.state);
+}
+
+// ЗАПИСЬ СВОДКИ. Зовётся на ЦИКЛЕ РЕШЕНИЯ (раз в каданс, то есть раз в сутки) и на гашении, а не
+// каждый тик: пятиминутный тик сводку не меняет, и переписывать из-за него файл незачем.
+function persistFaEval() {
+  try {
+    saveBotState(baseDir, FA_EVAL_ID, faEvalToDisk(FA_AUTO_ID, state.auto.lastEval));
+  } catch (e) {
+    console.error("[fa-auto] персист сводки оценки:", e);
+  }
+}
+
+// ГАШЕНИЕ СВОДКИ. Когда именно - решает `faEvalClears`, и там же названо почему.
+function clearFaEval() {
+  state.auto.lastEval = null;
+  persistFaEval();
 }
 
 function persistFaAuto() {
@@ -735,8 +798,13 @@ async function faAutoStep(sources) {
   // СВОДКА ОЦЕНКИ ПЕРЕЖИВАЕТ ТИКИ БЕЗ РЕШЕНИЯ. Между решениями `tick.evalMarkets` пуст (каданс 24 ч),
   // и класть пустоту поверх последней снятой оценки значило бы гасить единственный честный ответ на
   // вопрос «что бот видел по каждому рынку» на 287 тиков из 288.
-  if (tick.decided && tick.evalMarkets) {
-    state.auto.lastEval = { at: nowMs, cadenceH: params.cadenceH, capitalUsd: params.capitalUsd, markets: tick.evalMarkets };
+  const ev = faEvalOfTick(tick, { nowMs, cadenceH: params.cadenceH, capitalUsd: params.capitalUsd });
+  if (ev) {
+    state.auto.lastEval = ev;
+    // НА ДИСК ВМЕСТЕ С ПАМЯТЬЮ. `lastDecisionAt` переживает перезапуск в состоянии движка, и сводка
+    // обязана переживать его наравне: иначе после рестарта карточка сутки говорит «оценки не
+    // было» рядом с фактическим временем этой самой оценки.
+    persistFaEval();
   }
   // Лог пишется на СМЕНЕ исхода, а не каждый тик: при опросе раз в пять минут одинаковая строка
   // 288 раз в сутки прячет ту единственную, которая изменилась. Смена исхода это и есть событие.
@@ -918,15 +986,15 @@ function faViewSelection() {
   // позиция, заведённая до перехода на автомат, это те же деньги.
   const open = state.positions.find((p) => p.status === "open");
   if (open && instFor(open.strategy, open.instrumentKey)) {
-    return { strat: open.strategy, asset: open.instrumentKey, cfg: open.config || "A", win: FA_VIEW_WINDOW_DAYS, from: "position" };
+    return { strat: open.strategy, asset: open.instrumentKey, cfg: open.config || "A", win: faViewWindowDays(), horizonH: faHorizonH(), from: "position" };
   }
   // Лучший кандидат последней оценки. Ранг 1 проставлен ТЕМ ЖЕ предикатом, каким автомат выбирает
   // рынок входа (`bestAlternative`), и считается в движке.
   const best = (state.auto.lastEval?.markets || []).find((m) => m.rank === 1);
   if (best && instFor(best.strategy, best.token)) {
-    return { strat: best.strategy, asset: best.token, cfg: best.config || "A", win: FA_VIEW_WINDOW_DAYS, from: "candidate" };
+    return { strat: best.strategy, asset: best.token, cfg: best.config || "A", win: faViewWindowDays(), horizonH: faHorizonH(), from: "candidate" };
   }
-  return { strat: null, asset: null, cfg: null, win: FA_VIEW_WINDOW_DAYS, from: null };
+  return { strat: null, asset: null, cfg: null, win: faViewWindowDays(), horizonH: faHorizonH(), from: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -934,7 +1002,7 @@ function faViewSelection() {
 // ---------------------------------------------------------------------------
 function assembleDataset() {
   const s = faViewSelection();
-  // Окно ОДНО и равно горизонту правила (см. FA_VIEW_WINDOW_DAYS): панели рынка показывают ровно
+  // Окно ОДНО и равно горизонту правила (см. `faViewWindowDays`): панели рынка показывают ровно
   // те часы, на которых бот принимает решение.
   const twoLeg = {};
   for (const inst of TWO_LEG) {
@@ -988,7 +1056,7 @@ function assembleDataset() {
   }));
 
   return {
-    selection: { strat: s.strat, asset: s.asset, cfg: s.cfg, win: s.win, from: s.from },
+    selection: { strat: s.strat, asset: s.asset, cfg: s.cfg, win: s.win, horizonH: s.horizonH, from: s.from },
     twoLeg,
     oneLeg,
     series,
@@ -3365,6 +3433,11 @@ function wireIpc() {
     } else {
       return { error: "ожидается { on: true | false }" };
     }
+    // ГАСИТЬ ИЛИ НЕТ - РЕШАЕТ ОДНО ВЫРАЖЕНИЕ, И ОНО ПОД ТЕСТОМ. Взвод гасит всегда (капитал в
+    // замороженных параметрах бывает другой, а ранг посчитан против прежнего потолка); остановка -
+    // только когда автомат ДЕЙСТВИТЕЛЬНО выключился, потому что при открытой сделке он остаётся
+    // включённым, ведёт её правилом выхода и продолжает решать каждый каданс.
+    if (faEvalClears({ arming: req.on === true, on: !!state.auto.engine.on })) clearFaEval();
     persistFaAuto();
     push();
     return { ok: true, state: state.auto.engine };
@@ -3531,6 +3604,7 @@ app.whenReady().then(async () => {
   if (FA_AUTO_ARM && state.auto.engine && !state.auto.engine.on) {
     faauto.armAuto(state.auto.engine, { nowMs: Date.now() });
     persistFaAuto();
+    clearFaEval(); // взвод есть взвод: сводка прошлого автомата ранжирована против прежнего потолка
     console.log("[fa-auto] FA_AUTO=1: автомат взведён на буте, параметры заморожены значениями по умолчанию");
   }
   // An OPEN paper position whose instrument was removed/delisted can no longer be tracked or closed
@@ -3606,7 +3680,7 @@ app.whenReady().then(async () => {
     console.log("[smoke] snapshots:", keys.length, keys.join(","));
     console.log("[smoke] freshness:", JSON.stringify(ds.fresh));
     console.log(`[smoke] ${smokeKey} live now netA/netB:`, state.snapshots.byKey[smokeKey]?.netA?.toFixed(4), state.snapshots.byKey[smokeKey]?.netB?.toFixed(4));
-    console.log(`[smoke] ${smokeKey} win=${FA_VIEW_WINDOW_DAYS}d A.netMean/median:`, inst?.A?.netMean?.toFixed?.(4), inst?.A?.netMedian?.toFixed?.(4), "chosen:", inst?.chosen);
+    console.log(`[smoke] ${smokeKey} win=${faViewWindowDays()}d A.netMean/median:`, inst?.A?.netMean?.toFixed?.(4), inst?.A?.netMedian?.toFixed?.(4), "chosen:", inst?.chosen);
     console.log("[smoke] series lens:", ds.series ? `eq=${ds.series.equityBaseCum.length} spread=${ds.series.spreadDaily.length} legs=${ds.series.legsMonthly.length} raw=${ds.series.rawRows.length} key=${ds.series.forKey}` : "none");
     console.log("[smoke] selection:", JSON.stringify(ds.selection));
 
