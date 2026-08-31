@@ -56,6 +56,7 @@ registerLocale('ru', {
   'home.agg.noOpen': 'нет открытых позиций',
   'home.card.open': 'Открыть',
   'home.tag.run': 'ЗАПУЩЕН',
+  'home.tag.pos': 'ОТКРЫТА ПОЗИЦИЯ',
   'home.tag.idle': 'НЕ ЗАПУЩЕН',
   'home.tag.prep': 'ГОТОВИТСЯ',
   'home.tag.scan': 'СКАНИРУЕТ',

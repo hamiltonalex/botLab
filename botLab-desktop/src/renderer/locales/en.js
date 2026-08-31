@@ -56,6 +56,7 @@ registerLocale('en', {
   'home.agg.noOpen': 'no open positions',
   'home.card.open': 'Open',
   'home.tag.run': 'RUNNING',
+  'home.tag.pos': 'POSITION OPEN',
   'home.tag.idle': 'NOT RUNNING',
   'home.tag.prep': 'IN PREP',
   'home.tag.scan': 'SCANNING',

@@ -5824,11 +5824,21 @@ function refreshOverview(){
     if(pnls.length){ const s=pnls.reduce((a,b)=>a+b,0); aggPnl.textContent = fmtUSDfull(s); aggPnl.className = 'v '+clsSign(s); }
     else { aggPnl.textContent = t('home.agg.noOpen'); aggPnl.className = 'v faint'; }
   }
+  /* ЖЕТОН БОТА 1 РАЗЛИЧАЕТ ДВА РАЗНЫХ «ЗАПУЩЕН». У бота 2 и сканера движок один, и «ЗАПУЩЕН»
+     однозначно. У бота 1 их два: ручная позиция и автомат. Пока автомат выключен, а ручная позиция
+     открыта, слово «ЗАПУЩЕН» рядом с пультом, где написано ВЫКЛ, читается как «бот работает», и
+     владелец на это напоролся. Поэтому здесь жетон называет ФАКТ (позиция открыта), а состояние
+     автомата поверх него пишет `faOverviewAuto`, когда автомату есть что сказать. */
+  const faAutoOn = !!(LIVE.auto && LIVE.auto.on);
   // - карточка/точка funding-arb -
   overviewCard('funding-arb', faRun, faPnl,
     faRun ? t('home.openOf',{open:faOpen,total:acc.count})+' · '+t('home.pnlNet')+' <span class="'+clsSign(faPnl)+'">'+fmtUSDfull(faPnl)+'</span>'
       : (acc && acc.count>0 ? t('home.fa.closed',{n:acc.count}) : t('home.fa.idle')));
   // - карточка/точка btc-options -
+  if(faRun && !faAutoOn){
+    const faTag = $('card-tag-funding-arb');
+    if(faTag){ faTag.textContent = t('home.tag.pos'); faTag.className = 'bc-tag run'; }
+  }
   overviewCard('btc-options', s1Run, s1Pnl,
     s1Open ? t('home.opt.open')+' · '+optDecisionWord(s1cyc&&s1cyc.decision)+' · '+t('home.pnlNet')+' <span class="'+clsSign(s1Pnl)+'">'+fmtUSDfull(s1Pnl)+'</span>'
       : (s1ch && s1ch.on) ? t('home.opt.chain')
