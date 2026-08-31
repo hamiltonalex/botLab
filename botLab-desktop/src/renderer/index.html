@@ -5054,8 +5054,13 @@ function renderFaAuto(){
   if(ud) ud.textContent = !a ? '-' : (Number.isFinite(a.lastDecisionAt) ? faAutoDate(a.lastDecisionAt) : t('fa.auto.decNever'));
   if(us){
     const p = a && a.positionId ? (LIVE.positions || []).find(x => x.id === a.positionId) : null;
-    us.textContent = !a ? '-' : !a.positionId ? t('fa.auto.slotFree')
-      : p ? ((p.meta && p.meta.label) || p.instrumentKey || '-') : t('fa.auto.slotOrphan');
+    /* ПОРЯДОК ВЕТОК ЗДЕСЬ СОДЕРЖАТЕЛЕН. «Свободен» имеет право стоять, только когда слот свободен
+       И У АВТОМАТА, И ВООБЩЕ. Пока в леджере лежит ручная позиция, движок отказывает кодом
+       `no_slot`, и карточка обязана говорить то же самое, иначе она противоречит движку. */
+    us.textContent = !a ? '-'
+      : a.positionId ? (p ? ((p.meta && p.meta.label) || p.instrumentKey || '-') : t('fa.auto.slotOrphan'))
+      : a.foreignOpen ? t('fa.auto.slotManual')
+      : t('fa.auto.slotFree');
   }
   const pill = $('faAutoPollPill'), pb = pill && pill.querySelector('b');
   if(pb) pb.textContent = u && Number.isFinite(u.ticks)

@@ -1635,6 +1635,7 @@ registerLocale('en', {
   'fa.auto.noGap': 'no gaps so far',
   'fa.auto.decNever': 'no decisions yet',
   'fa.auto.slotFree': 'free',
+  'fa.auto.slotManual': 'held by your manual position',
   'fa.auto.slotOrphan': 'held by a trade the ledger does not have',
   'fa.auto.pollPillV': '{n} ticks · step {s}',
   'fa.auto.cadenceNote': 'Decision cadence {h}. There is deliberately no countdown to the next decision here: the cadence predicate lives in the engine, and a second count in the UI would drift from it on the first edit.',

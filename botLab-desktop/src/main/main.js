@@ -960,6 +960,11 @@ function assembleDataset(sel) {
       stoppedAt: state.auto.engine.stoppedAt,
       params: state.auto.engine.params,
       positionId: state.auto.engine.positionId,
+      // ЧУЖАЯ ОТКРЫТАЯ ПОЗИЦИЯ. Признак считается тем же выражением, что уходит в `autoTick`
+      // (см. вызов ниже), и обязан доходить до интерфейса. Без него пульт показывал слот
+      // свободным, пока в леджере лежала ручная позиция, а движок в это же время отказывал
+      // кодом `no_slot`: карточка противоречила движку, и владелец это увидел.
+      foreignOpen: state.positions.some((x) => x.status === "open" && x.id !== state.auto.engine.positionId),
       lastTickAt: state.auto.engine.lastTickAt,
       lastDecisionAt: state.auto.engine.lastDecisionAt,
       lastRefusals: state.auto.engine.lastRefusals,
