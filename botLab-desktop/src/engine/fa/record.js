@@ -123,6 +123,7 @@
 // знаков, возрасты до десятой доли секунды.
 
 import { FA_SIZING_REFUSALS, FA_SIZING_BINDINGS, FA_SIZING_DEFAULTS } from "./sizing.js";
+import { legModel } from "../paper.js";
 import { FA_EXIT_REASONS, FA_EXIT_ACTIONS } from "./exit.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -231,7 +232,14 @@ export const FA_RECORD_PREFIX = Object.freeze({ snap: "fa-snap", dec: "fa-dec", 
 // кто цену ликвидации назвал.
 // Имени стороны в блоке НЕТ намеренно: она уже названа ключом (`g` это нога GMX, `h` это нога
 // Hyperliquid), а поле "side" в каждой строке каждого опроса это те же 26 байт на опрос ни за что.
-function legBlock(leg, missing) {
+function legBlock(leg, missing, present = true) {
+  // НОГИ, КОТОРОЙ У СХЕМЫ НЕТ, не существует, и это НЕ «данных по ней не пришло». Признак берётся
+  // у `legModel` леджера, а не назначается здесь: разбор схемы на ноги знает он один.
+  //
+  // Без развилки одноногая схема помечала бы КАЖДУЮ свою строку четырьмя кодами `leg_*`, то есть
+  // канал честности говорил бы «наблюдение неполное» на всех записях подряд, а автомат входит
+  // одной ногой чаще, чем двумя. Сигнал, который горит всегда, не сигнал.
+  if (!present) return null;
   const out = {
     ntl: usd(leg?.notionalUsd),
     col: usd(leg?.collateralUsd),
@@ -251,8 +259,9 @@ function legBlock(leg, missing) {
 // null (без метки времени писать нечего, закон записи бота 2).
 //
 //   markets  - массив наблюдений по рынкам В СЫРОМ ВИДЕ, как их отдали `signs.js` и `l2Book`;
-//   position - открытая позиция с ОБЕИМИ НОГАМИ либо null. Пусто когда сделки нет, и это НЕ
-//              пропуск наблюдения: кодов `leg_*` в такой строке не появляется.
+//   position - открытая позиция со всеми ногами СВОЕЙ схемы либо null. Пусто когда сделки нет, и
+//              это НЕ пропуск наблюдения: кодов `leg_*` в такой строке не появляется. У одноногой
+//              схемы ноги `h` не существует, и в строке она null по той же причине.
 export function buildFaSnapRecord({ t, source = "live", gmxAgeSec, hlAgeSec, markets = [], position = null } = {}) {
   if (!fin(t)) return null;
   const m = {};
@@ -318,7 +327,7 @@ export function buildFaSnapRecord({ t, source = "live", gmxAgeSec, hlAgeSec, mar
       c: position.config ?? null,
       st: position.strategy ?? null,
       g: legBlock(position.gmx, xp),
-      h: legBlock(position.hl, xp),
+      h: legBlock(position.hl, xp, legModel(position.strategy, position.config).hlPerHourSign !== 0),
     };
   } else {
     row.p = null;
@@ -495,7 +504,7 @@ function tradeSide(p) {
     got: usd(p.gotUsd),
     lev: rate(p.leverage),
     g: legBlock(p.gmx, missing),
-    h: legBlock(p.hl, missing),
+    h: legBlock(p.hl, missing, legModel(p.strategy, p.config).hlPerHourSign !== 0),
   };
   if (fin(p.realizedUsd)) out.real = usd(p.realizedUsd);
   if (missing.length) out.x = missing;

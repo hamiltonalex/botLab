@@ -534,6 +534,28 @@ test("паспорт входа: ОБА размера, обе ноги с за�
   assert.equal(row.prev, null);
 });
 
+test("одноногая схема: ноги Hyperliquid НЕ СУЩЕСТВУЕТ, и это не пропуск наблюдения", () => {
+  // Автомат входит одной ногой чаще, чем двумя. Пока блок ноги строился на обе стороны безусловно,
+  // каждый паспорт и каждый снимок одноногой сделки нёс четыре кода `leg_*`: канал честности горел
+  // на всех записях подряд и переставал значить хоть что-нибудь.
+  const row = note(buildFaTradeRecord({
+    t: T0, event: "open", ageSec: 1, decisionAt: T0,
+    opened: tradeSide("ETH-Arb", { strategy: "one", config: null, hl: undefined }), costs: COSTS,
+  }));
+  assert.equal(row.pos.st, "one");
+  assert.equal(row.pos.h, null, "ноги нет: null это не объект из пяти null с кодами нехватки");
+  assert.equal(row.pos.x, undefined, "кодов нехватки по несуществующей ноге не бывает");
+  assert.equal(row.pos.g.col, 1995.26, "нога GMX при этом наблюдена полностью");
+
+  const one = note(snap({ position: position({ strategy: "one", config: null, hl: undefined }) }));
+  assert.equal(one.p.h, null, "то же в снимке");
+  assert.equal(one.xp, undefined);
+
+  // РАЗВИЛКА НЕ ОСЛАБИЛА ПРОВЕРКУ: у двуногой схемы пропавшая нога по-прежнему пропуск наблюдения.
+  const two = note(snap({ position: position({ hl: undefined }) }));
+  assert.deepEqual(two.xp, ["leg_notional", "leg_collateral", "leg_mark", "leg_liq"]);
+});
+
 test("перекладка это ОДНА строка с обеими сторонами и причиной из реестра выхода", () => {
   const row = note(buildFaTradeRecord({
     t: T0, event: "switch", why: "alt_beats_hold", ageSec: 1.5, decisionAt: T0 - 500,
