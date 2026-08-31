@@ -24,7 +24,7 @@
 
 import fs from "node:fs";
 import zlib from "node:zlib";
-import { loadUniverse, loadCapacity, H, q, $, iso } from "./exit-lib.mjs";
+import { loadUniverse, loadCapacity, makeWalk, H, q, $, iso } from "./exit-lib.mjs";
 import { netAtSize } from "../../src/engine/fa/sizing.js";
 import { DEFAULT_COSTS } from "../../src/engine/costs.js";
 
@@ -63,101 +63,22 @@ const grossOn = (token, config, sizeUsd, from, len) => {
   return r ? r.gross : NaN;
 };
 
+// ОБХОД ЖИВЁТ В БИБЛИОТЕКЕ, А НЕ ЗДЕСЬ. Замеров, которым он нужен, стало два (каданс и вопрос
+// «КУДА уходить»), и две копии цепочки решений означали бы две её реализации. Здесь остаётся только
+// вооружение: снабжение, капитал и горизонт.
+//
 // ОКНО ВЕТКИ КЭША отдельным параметром, и это не украшение. Ветка кэша сравнивает брутто с нулём,
 // то есть пользуется только ЗНАКОМ, а знак инвариантен к длине окна; ветка перекладки сравнивает
 // брутто с НЕТТО альтернативы, посчитанным правилом входа на его горизонте, и там длина окна
-// связана. Поэтому у кэша окно может быть своим, и здесь оно меряется ДЕНЬГАМИ: замер З4 сравнивал
-// доли верных и неверных выходов, а цена выхода это круг, и доли её не выражают.
+// связана. Поэтому у кэша окно может быть своим, и здесь оно меряется ДЕНЬГАМИ.
+//
 // `endAt` держит ВСЕ прогоны ОДНОЙ ДЛИНЫ. Без него старт со смещением идёт короче на величину
 // смещения, и размах итога получает механическую добавку от длины: при 12 стартах с шагом 60 ч
 // последний прогон был бы на 660 ч (8.2%) короче первого, и около 42% размаха у правила создавала
 // бы разная длина, а не поведение.
-function walk(cadence, cashWindow = H, startOffset = 0, mode = "rule", endAt = YEAR) {
-  const first = scan.from + startOffset;
-  const hours = [...byHour.keys()].filter((h) => h >= first && h <= endAt && (h - first) % cadence === 0).sort((a, b) => a - b);
-  let pos = null; // { token, config, sizeUsd, since }
-  let realized = 0;
-  let costs = 0;
-  const log = [];
-  const tally = { hold: 0, cash: 0, switch: 0, open: 0, idle: 0, sameToken: 0, sameTokenSameConfig: 0, configFlip: 0 };
-  const probes = []; // для рабочей версии З3: решение против того, что случилось
-
-  const accrueTo = (t) => {
-    if (!pos || t <= pos.at) return;
-    const g = grossOn(pos.token, pos.config, pos.sizeUsd, pos.at, t - pos.at);
-    if (Number.isFinite(g)) realized += g;
-    pos.at = t;
-  };
-
-  for (let i = 0; i < hours.length; i += 1) {
-    const t = hours[i];
-    const snap = byHour.get(t);
-    if (!snap) continue;
-    accrueTo(t);
-
-    // Альтернативы: решения правила входа, влезающие в доступный капитал. Отсечение по капиталу
-    // называется своим кодом и в «альтернатив нет» не сваливается.
-    const alts = snap.ok.filter((o) => o[2] <= CAPITAL);
-    let best = null;
-    for (const o of alts) if (!best || o[3] > best[3]) best = o;
-
-    if (!pos) {
-      if (best && best[3] > 0) {
-        pos = { token: best[0], config: best[1], sizeUsd: best[2], at: t, since: t };
-        costs += best[5];
-        tally.open += 1;
-        log.push({ t, act: "open", token: best[0], config: best[1], size: best[2], net: best[3] });
-      } else tally.idle += 1;
-      continue;
-    }
-
-    const holdUsd = grossOn(pos.token, pos.config, pos.sizeUsd, t - H, H);
-    // Знак для ветки кэша берётся со СВОЕГО окна; при cashWindow = H это то же самое число.
-    const cashSignUsd = cashWindow === H ? holdUsd : grossOn(pos.token, pos.config, pos.sizeUsd, t - cashWindow, cashWindow);
-    const switchUsd = best ? best[3] : -Infinity;
-    // Ничьи в пользу бездействия: сравнения строгие, потому что бездействие бесплатно, а действие
-    // стоит круга. Режим `never` это БАЗА СРАВНЕНИЯ: вошли один раз и держим до конца, правило
-    // выхода выключено целиком. Без неё числа правила не с чем сопоставить.
-    let act = "hold";
-    if (mode !== "never") {
-      if (0 > cashSignUsd && 0 >= switchUsd) act = "cash";
-      else if (switchUsd > holdUsd && switchUsd > 0) act = "switch";
-    }
-
-    // Рабочая версия З3: что случилось бы, если держать дальше. В решение НЕ входит.
-    const fwd = grossOn(pos.token, pos.config, pos.sizeUsd, t, H);
-    // КАЧЕСТВО ПЕРЕКЛАДКИ проверяется контрфактически: реализованное брутто НОВОЙ позиции против
-    // того, что дала бы СТАРАЯ на том же отрезке вперёд, минус оплаченный круг. Иначе «перекладка»
-    // и «выход из убытка» слились бы в одну метрику, а это разные утверждения.
-    if (act === "switch") {
-      const fwdNew = grossOn(best[0], best[1], best[2], t, H);
-      // ФЛАГ `same` ОБЯЗАТЕЛЕН, и его отсутствие уже дало неверное число. Без него доли качества
-      // считались по СМЕШАННОЙ популяции, где больше половины строк это храповиковые шаги смены
-      // размера (25 из 46 при кадансе 1 ч), то есть операция, отдельно показанная как жгущая
-      // деньги. «Окупились 52% перекладок» было тогда не утверждением про выбор рынка, а в
-      // основном арифметикой храповика.
-      const same = best[0] === pos.token && best[1] === pos.config;
-      if (Number.isFinite(fwd) && Number.isFinite(fwdNew)) probes.push({ act, same, holdUsd, fwd, fwdNew, cost: best[5] });
-    } else if (Number.isFinite(fwd) && Number.isFinite(holdUsd)) probes.push({ act, holdUsd, fwd });
-
-    if (act === "cash") {
-      tally.cash += 1;
-      log.push({ t, act: "cash", token: pos.token, hold: holdUsd });
-      pos = null;
-    } else if (act === "switch") {
-      tally.switch += 1;
-      if (best[0] === pos.token) {
-        tally.sameToken += 1;
-        if (best[1] === pos.config) tally.sameTokenSameConfig += 1; else tally.configFlip += 1;
-      }
-      log.push({ t, act: "switch", from: `${pos.token}/${pos.config}/${pos.sizeUsd}`, token: best[0], config: best[1], size: best[2], hold: holdUsd, net: best[3] });
-      pos = { token: best[0], config: best[1], sizeUsd: best[2], at: t, since: t };
-      costs += best[5];
-    } else tally.hold += 1;
-  }
-  accrueTo(endAt);
-  return { cadence, cashWindow, mode, startOffset, endAt, decisions: hours.length, realized, costs, net: realized - costs, tally, log, probes };
-}
+const walkRaw = makeWalk({ byHour, scanFrom: scan.from, grossOn, capital: CAPITAL, horizonH: H, yearEnd: YEAR });
+const walk = (cadence, cashWindow = H, startOffset = 0, mode = "rule", endAt = YEAR) =>
+  walkRaw({ cadence, cashWindow, startOffset, mode, endAt });
 
 console.log(`# З1 и З2: каданс решений и достижимость веток\n`);
 console.log(`Часы решений ${scan.from}..${scan.to}, вселенная ${markets.length} рынков, горизонт ${H} ч,`);
@@ -310,7 +231,10 @@ for (const r of runs) {
 const PAIRED = Number(argOf("--paired", 0));
 const PAIRED_STEP = Number(argOf("--paired-step", 12));
 if (PAIRED > 1) {
-  const END2 = YEAR - (PAIRED - 1) * PAIRED_STEP;
+  // КОНЕЦ ФИКСИРУЕТСЯ ЯВНО, а не выводится из числа стартов. Иначе сравнение РАЗНЫХ сеток стартов
+  // мешало бы смену сетки со сменой длины прогона: при 30 стартах конец был бы на часе 8413, при
+  // 80 на 7813, и «неустойчивость к сетке» частично оказалась бы неустойчивостью к длине.
+  const END2 = Number(argOf("--paired-end", YEAR - (PAIRED - 1) * PAIRED_STEP));
   const CAD = Number(argOf("--paired-cadence", 24));
   const diffs = [];
   const picks = new Map();

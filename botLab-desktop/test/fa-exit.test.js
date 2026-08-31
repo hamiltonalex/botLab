@@ -278,8 +278,8 @@ test("каданс: первое решение разрешено всегда,
   assert.equal(shouldDecideNow(1e12, 1e12 + 25 * HOURMS, 24), true);
   assert.equal(shouldDecideNow(1e12, NaN, 24), false, "без времени решать нельзя");
   assert.equal(shouldDecideNow(1e12, 1e12 + HOURMS, 0), true, "нулевой интервал это решать всегда");
-  // Значение по умолчанию замерено, а не назначено: 24 ч дают то же нетто, что 1 ч, за 29 кругов
-  // вместо 46.
+  // Значение по умолчанию замерено, а не назначено: 24 ч дают то же нетто, что 1 ч, за 27 кругов
+  // вместо 44 (медиана по 12 стартам, прогоны равной длины).
   assert.equal(FA_EXIT_DEFAULTS.decisionIntervalHours, 24);
   assert.equal(shouldDecideNow(1e12, 1e12 + 24 * HOURMS), true, "интервал по умолчанию");
 });

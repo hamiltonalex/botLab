@@ -144,3 +144,137 @@ export const $ = (x) => {
 };
 
 export const iso = (tsHour) => new Date(tsHour * 1000).toISOString().slice(0, 13).replace("T", " ");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ОБХОД ЦЕПОЧКИ РЕШЕНИЙ. Один на все замеры, и это не удобство сигнатуры.
+//
+// Замеров, которым нужен обход, теперь два: каданс (З1) и вопрос «КУДА уходить» (З5). Две копии
+// обхода означали бы, что цепочку решений исполняют две реализации, а класс дефекта «две части
+// системы решают одну задачу разными правилами» проект ловил уже четырежды. Поэтому обход здесь, а
+// вызывающие отличаются только политикой назначения.
+//
+// ГЛАВНОЕ РАЗДЕЛЕНИЕ, РАДИ КОТОРОГО ВСЁ ПЕРЕПИСАНО: «КОГДА уходить» и «КУДА уходить» это РАЗНЫЕ
+// решения, и смешивать их нельзя. Если подставить случайный рынок в САМ критерий, изменится не
+// только место назначения, но и тайминг: критерий это `нетто_альт > брутто_тек`, а случайный рынок
+// его обычно не проходит, поэтому рука станет реже уходить. Замер тогда смешает два эффекта ровно
+// так же, как сравнение распределений смешивало эффект руки с эффектом того, какой рынок выпал.
+//
+// Поэтому здесь ТАЙМИНГ ВСЕГДА РЕШАЕТ ARGMAX (критерий не тронут ни строкой), а политика выбирает
+// только МЕСТО НАЗНАЧЕНИЯ уже случившейся перекладки. Первый вход тоже всегда argmax: иначе руки
+// разошлись бы стартовой позицией и сравнивали бы не то.
+
+// Детерминированный генератор (mulberry32). Своё семя вместо Math.random потому, что прогон обязан
+// воспроизводиться: случайная рука, которую нельзя повторить, не доказательство, а анекдот.
+export function rng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Политики выбора МЕСТА НАЗНАЧЕНИЯ среди годных кандидатов, отсортированных по нетто убыванию.
+// `best` воспроизводит прежнее поведение ПОБИТОВО: это и есть проверка, что вынос обхода в
+// библиотеку ничего не сдвинул.
+export const WHERE_POLICIES = Object.freeze(["best", "rank2", "rank3", "random", "worst"]);
+
+export function makeWalk({ byHour, scanFrom, grossOn, capital, horizonH, yearEnd }) {
+  const H = horizonH;
+  return function walk({
+    cadence, cashWindow = H, startOffset = 0, mode = "rule", endAt = yearEnd,
+    where = "best", seed = 1,
+  }) {
+    const first = scanFrom + startOffset;
+    const hours = [...byHour.keys()].filter((h) => h >= first && h <= endAt && (h - first) % cadence === 0).sort((a, b) => a - b);
+    const rand = rng(seed);
+    let pos = null;
+    let realized = 0;
+    let costs = 0;
+    const log = [];
+    const tally = { hold: 0, cash: 0, switch: 0, open: 0, idle: 0, sameToken: 0, sameTokenSameConfig: 0, configFlip: 0, clamped: 0 };
+    const probes = [];
+
+    const accrueTo = (t) => {
+      if (!pos || t <= pos.at) return;
+      const g = grossOn(pos.token, pos.config, pos.sizeUsd, pos.at, t - pos.at);
+      if (Number.isFinite(g)) realized += g;
+      pos.at = t;
+    };
+
+    // Выбор места назначения. Ранг, которого нет (годных меньше, чем требует политика), ЗАЖИМАЕТСЯ
+    // к последнему и СЧИТАЕТСЯ отдельно: без этого счётчика rank2 при единственном годном рынке
+    // молча превратился бы в rank1, и две руки выглядели бы одинаково не потому, что выбор не
+    // важен, а потому, что выбора не было.
+    const pick = (sorted) => {
+      if (!sorted.length) return null;
+      if (where === "best") return sorted[0];
+      if (where === "worst") return sorted[sorted.length - 1];
+      if (where === "random") return sorted[Math.floor(rand() * sorted.length)];
+      const want = where === "rank2" ? 1 : 2;
+      if (want >= sorted.length) { tally.clamped += 1; return sorted[sorted.length - 1]; }
+      return sorted[want];
+    };
+
+    for (let i = 0; i < hours.length; i += 1) {
+      const t = hours[i];
+      const snap = byHour.get(t);
+      if (!snap) continue;
+      accrueTo(t);
+
+      const alts = snap.ok.filter((o) => o[2] <= capital);
+      const sorted = [...alts].sort((a, b) => (b[3] - a[3]) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+      const best = sorted.length ? sorted[0] : null;
+
+      if (!pos) {
+        // ПЕРВЫЙ ВХОД ВСЕГДА ARGMAX, при любой политике: руки обязаны стартовать в одной позиции,
+        // иначе разность мерила бы ещё и разный старт.
+        if (best && best[3] > 0) {
+          pos = { token: best[0], config: best[1], sizeUsd: best[2], at: t, since: t };
+          costs += best[5];
+          tally.open += 1;
+          log.push({ t, act: "open", token: best[0], config: best[1], size: best[2], net: best[3] });
+        } else tally.idle += 1;
+        continue;
+      }
+
+      const holdUsd = grossOn(pos.token, pos.config, pos.sizeUsd, t - H, H);
+      const cashSignUsd = cashWindow === H ? holdUsd : grossOn(pos.token, pos.config, pos.sizeUsd, t - cashWindow, cashWindow);
+      const switchUsd = best ? best[3] : -Infinity;
+      let act = "hold";
+      if (mode !== "never") {
+        if (0 > cashSignUsd && 0 >= switchUsd) act = "cash";
+        else if (switchUsd > holdUsd && switchUsd > 0) act = "switch";
+      }
+
+      // МЕСТО НАЗНАЧЕНИЯ выбирается ТОЛЬКО после того, как решение уйти уже принято по argmax.
+      const dest = act === "switch" ? pick(sorted) : null;
+
+      const fwd = grossOn(pos.token, pos.config, pos.sizeUsd, t, H);
+      if (act === "switch" && dest) {
+        const fwdNew = grossOn(dest[0], dest[1], dest[2], t, H);
+        const same = dest[0] === pos.token && dest[1] === pos.config;
+        if (Number.isFinite(fwd) && Number.isFinite(fwdNew)) probes.push({ act, same, holdUsd, fwd, fwdNew, cost: dest[5] });
+      } else if (Number.isFinite(fwd) && Number.isFinite(holdUsd)) probes.push({ act, holdUsd, fwd });
+
+      if (act === "cash") {
+        tally.cash += 1;
+        log.push({ t, act: "cash", token: pos.token, hold: holdUsd });
+        pos = null;
+      } else if (act === "switch" && dest) {
+        tally.switch += 1;
+        if (dest[0] === pos.token) {
+          tally.sameToken += 1;
+          if (dest[1] === pos.config) tally.sameTokenSameConfig += 1; else tally.configFlip += 1;
+        }
+        log.push({ t, act: "switch", from: `${pos.token}/${pos.config}/${pos.sizeUsd}`, token: dest[0], config: dest[1], size: dest[2], hold: holdUsd, net: dest[3] });
+        pos = { token: dest[0], config: dest[1], sizeUsd: dest[2], at: t, since: t };
+        costs += dest[5];
+      } else tally.hold += 1;
+    }
+    accrueTo(endAt);
+    return { cadence, cashWindow, mode, where, seed, startOffset, endAt, decisions: hours.length, realized, costs, net: realized - costs, tally, log, probes };
+  };
+}
