@@ -1470,6 +1470,7 @@ registerLocale('en', {
   'fa.bind.capital': 'capital',
   'fa.bind.none': 'nothing binds it: the optimum is interior',
   // Polling gap cause (bot 1 FA_GAP_CAUSES registry).
+  'fa.gap.off': 'the automaton was switched off',
   'fa.gap.sleep': 'the machine was asleep',
   'fa.gap.appDown': 'the app was restarting',
   'fa.gap.noResponse': 'the source was not responding',

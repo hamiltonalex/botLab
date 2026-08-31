@@ -132,6 +132,24 @@ test("взвод ЗАМОРАЖИВАЕТ параметры, остановка
   assert.equal(stopAuto({ ...st, positionId: "p1" }, { nowMs: T, immediate: true }).on, false);
 });
 
+test("метка ленты и начало перерыва ПЕРЕЖИВАЮТ перезапуск, иначе дыру нечем объяснить", () => {
+  const st = ensureAutoState({});
+  assert.equal(st.lastSnapAt, null, "ленты ещё нет");
+  assert.equal(st.offSince, null);
+  // Перерыв меряется по ленте, а не по таймеру сессии: таймер рестарт обнуляет, и тогда причина
+  // `app-down` недостижима, то есть реестр причин обещает то, чего писатель выдать не может.
+  const kept = ensureAutoState({ lastSnapAt: 111, offSince: 222 });
+  assert.equal(kept.lastSnapAt, 111);
+  assert.equal(kept.offSince, 222);
+  // Останов открывает дыру. `stoppedAt` для этого не годится: взвод его обнуляет, а объяснять дыру
+  // приходится уже ПОСЛЕ взвода, на первом же тике.
+  const armed = armAuto(createAutoState({ nowMs: T }), { nowMs: T });
+  const off = stopAuto({ ...armed, positionId: null }, { nowMs: T + 60000 });
+  assert.equal(off.offSince, T + 60000);
+  assert.equal(armAuto({ ...off }, { nowMs: T + 120000 }).offSince, T + 60000,
+    "взвод НЕ стирает начало перерыва: иначе объяснять будет нечем");
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. Реестр приоритетов это ДАННЫЕ
 // ─────────────────────────────────────────────────────────────────────────────

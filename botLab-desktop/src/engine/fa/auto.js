@@ -288,6 +288,12 @@ export function ensureAutoState(st) {
   if (s.mode !== "once") s.mode = "continuous";
   if (s.armedAt === undefined) s.armedAt = null;
   if (s.stoppedAt === undefined) s.stoppedAt = null;
+  // МЕТКА ПОСЛЕДНЕЙ СТРОКИ, ЛЁГШЕЙ В ЛЕНТУ, и начало перерыва в записи. Обе ПЕРЕЖИВАЮТ перезапуск
+  // намеренно: перерыв обязан меряться по самой ленте, а не по таймеру сессии. Пока он мерился по
+  // таймеру, рестарт стирал собственный след, и код `app-down` был недостижим - реестр причин
+  // обещал то, чего писатель выдать не мог.
+  if (s.lastSnapAt === undefined) s.lastSnapAt = null;
+  if (s.offSince === undefined) s.offSince = null;
   if (s.params === undefined) s.params = null;
   if (s.positionId === undefined) s.positionId = null;
   if (s.lastTickAt === undefined) s.lastTickAt = null;
@@ -325,6 +331,9 @@ export function stopAuto(st, { nowMs, immediate = false } = {}) {
     s.on = false;
     s.stopRequested = false;
     s.stoppedAt = nowMs ?? null;
+    // Начало дыры в ленте. Живёт отдельно от `stoppedAt`, потому что взвод его обнуляет, а дыру
+    // объяснять надо уже ПОСЛЕ взвода, на первом же тике.
+    s.offSince = nowMs ?? null;
   } else {
     s.stopRequested = true;
   }

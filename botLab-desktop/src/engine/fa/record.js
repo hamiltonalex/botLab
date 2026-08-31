@@ -177,6 +177,7 @@ export const FA_LIQ_SOURCES = Object.freeze(["venue", "model"]);
 // недостижимый код делает проверку полноты реестра лживой (тот же урок, что развод реестров
 // отказов и связывающих в `sizing.js`).
 export const FA_GAP_CAUSES = Object.freeze([
+  "off", // автомат был выключен оператором: перерыв накрыт окном между остановом и взводом
   "sleep", // машина спала: перерыв накрыт объявленным окном засыпания
   "app-down", // приложение перезапускалось: метка бута попала внутрь перерыва
   "no-response", // источник не отвечал к моменту перерыва
@@ -351,6 +352,12 @@ export function buildFaSnapRecord({ t, source = "live", gmxAgeSec, hlAgeSec, mar
 // приложения по метке бута, затем молчание источника.
 export function classifyFaGap({ fromMs, toMs, hints = {} } = {}) {
   const h = hints ?? {};
+  // ВЫКЛЮЧЕННЫЙ АВТОМАТ ПРОВЕРЯЕТСЯ ПЕРВЫМ, и это не вкусовщина порядка. Он причина ДОСТАТОЧНАЯ:
+  // на бодрствующей машине с отвечающими источниками выключенный автомат всё равно не пишет ни
+  // строки. Он же и самая точная метка: окно останова известно с точностью до тика, тогда как сон
+  // и молчание источника это наблюдения со стороны.
+  if (h.offWindow && fin(h.offWindow.start) && fin(h.offWindow.end)
+    && fromMs <= h.offWindow.end && h.offWindow.start <= toMs) return "off";
   if (h.sleepWindow && fin(h.sleepWindow.start) && fin(h.sleepWindow.end)
     && fromMs <= h.sleepWindow.end && h.sleepWindow.start <= toMs) return "sleep";
   if (fin(h.bootAt) && fromMs < h.bootAt && h.bootAt <= toMs) return "app-down";

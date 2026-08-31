@@ -4590,6 +4590,7 @@ const faBindText = c => (c == null ? t('fa.bind.none') : (FA_BIND_TEXT[c] ? FA_B
 /* Причина перерыва опроса (реестр `FA_GAP_CAUSES` бота 1). «Причина не установлена» это честный код,
    а не заглушка, поэтому и у него есть своя строка. */
 const FA_GAP_CAUSE_TEXT = {
+  'off':         () => t('fa.gap.off'),
   'sleep':       () => t('fa.gap.sleep'),
   'app-down':    () => t('fa.gap.appDown'),
   'no-response': () => t('fa.gap.noResponse'),

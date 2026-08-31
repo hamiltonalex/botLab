@@ -330,6 +330,15 @@ test("причина перерыва НЕ ВЫДУМЫВАЕТСЯ: не пок
   // молчания источника.
   assert.equal(g({ sleepWindow: { start: T0, end: T0 + MIN }, bootAt: T0 + 30 * MIN, sourceErrorSince: T0 }), "sleep");
   assert.equal(g({ bootAt: T0 + 30 * MIN, sourceErrorSince: T0 }), "app-down");
+  // ВЫКЛЮЧЕННЫЙ АВТОМАТ ПЕРЕБИВАЕТ ВСЁ: он причина достаточная, а не одно из наблюдений. Пока
+  // причины не было, собственный останов оператора уходил в `unexplained` наравне с потерей связи
+  // (замер: 9 минут выключенного бота дали 540 с необъяснённого перерыва и покрытие 42.9%).
+  assert.equal(g({ offWindow: { start: T0, end: T0 + 30 * MIN } }), "off");
+  assert.equal(g({ offWindow: { start: T0, end: T0 + 30 * MIN }, sleepWindow: { start: T0, end: T0 + MIN },
+    bootAt: T0 + 30 * MIN, sourceErrorSince: T0 }), "off", "останов известен точнее, чем сон и молчание");
+  assert.equal(g({ offWindow: { start: T0 - 90 * MIN, end: T0 - 30 * MIN } }), "unknown",
+    "окно останова ВНЕ перерыва его не объясняет");
+  assert.equal(g({ offWindow: { start: T0, end: null } }), "unknown", "полуоткрытое окно не объясняет ничего");
   for (const c of FA_GAP_CAUSES) SEEN_GAP.add(c);
 });
 

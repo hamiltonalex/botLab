@@ -157,7 +157,7 @@ const state = {
   //   lastEval - сводка ПОСЛЕДНЕЙ ОЦЕНКИ по рынкам. Живёт отдельно от `lastTick` нарочно: тик идёт
   //              раз в пять минут, а оценка раз в сутки, и складывать их в одно поле значило бы
   //              стирать оценку 287 раз между решениями.
-  auto: { engine: null, corrupt: false, bases: new Map(), books: new Map(), lastPollAt: null,
+  auto: { engine: null, corrupt: false, bases: new Map(), books: new Map(),
     lastTick: null, lastEval: null, records: { snap: 0, gap: 0, dec: 0, trade: 0 }, busy: false },
   // Bot 2 «BTC-опционы» (Strategy One) - isolated paper engine + live Deribit source (Phase 1).
   // Read only by the s1:* handlers / assembleDataset1(); never leaks into assembleDataset()/fa:push.
@@ -611,11 +611,14 @@ function faLegsOf(pos, params) {
 // ── ЗАПИСЬ. Ошибка записи НЕ имеет права уронить тик (закон бота 2), поэтому try/catch и
 // console.warn; счётчик строк за сессию нужен панели честности фазы 6.
 function faAppendRecord(kind, ts, row) {
-  if (!row) return;
+  if (!row) return 0;
   try {
-    state.auto.records[kind] += appendScanRecords(baseDir, FA_RECORD_PREFIX[kind] ?? FA_RECORD_PREFIX.snap, faRecordDayKey(ts), [row]);
+    const n = appendScanRecords(baseDir, FA_RECORD_PREFIX[kind] ?? FA_RECORD_PREFIX.snap, faRecordDayKey(ts), [row]);
+    state.auto.records[kind] += n;
+    return n;
   } catch (e) {
     console.warn(`[fa-auto] запись ${kind}: ${String(e.message || e).slice(0, 80)}`);
+    return 0;
   }
 }
 
@@ -733,12 +736,19 @@ async function faAutoStep(sources) {
   const armed = !!st.on;
   // Перерыв опроса это СОБЫТИЕ потока снимков, а не отсутствие строки: только так лента остаётся
   // непрерывной и каждый слот либо наблюдён, либо объяснён.
-  if (armed && state.auto.lastPollAt) {
+  if (armed && st.lastSnapAt) {
     faAppendRecord("gap", nowMs, buildFaGapRecord({
-      fromMs: state.auto.lastPollAt, toMs: nowMs, nominalSec: pollSec(),
-      hints: { sleepWindow: lastSleepWindow, bootAt: APP_BOOT_MS, sourceErrorSince: sourceErrorFirstAt },
+      fromMs: st.lastSnapAt, toMs: nowMs, nominalSec: pollSec(),
+      hints: {
+        // ОКНО ВЫКЛЮЧЕННОГО АВТОМАТА. Без него собственный останов оператора неотличим от потери
+        // данных: замер даёт 540 с необъяснённого перерыва там, где бот был просто выключен.
+        offWindow: Number.isFinite(st.offSince) ? { start: st.offSince, end: nowMs } : null,
+        sleepWindow: lastSleepWindow, bootAt: APP_BOOT_MS, sourceErrorSince: sourceErrorFirstAt,
+      },
     }));
   }
+  // Начало перерыва потреблено: следующая дыра меряется от строки, которая ляжет ниже.
+  if (armed) st.offSince = null;
   if (armed) await faFetchBooks();
 
   const f = state.snapshots.fresh;
@@ -748,10 +758,12 @@ async function faAutoStep(sources) {
   const posBefore = faAutoPosition();
 
   if (armed) {
-    faAppendRecord("snap", nowMs, buildFaSnapRecord({
+    const wrote = faAppendRecord("snap", nowMs, buildFaSnapRecord({
       t: nowMs, source: "live", gmxAgeSec, hlAgeSec, markets: faSnapMarkets(),
       position: posBefore ? { ...posBefore, ...faLegsOf(posBefore, params) } : null,
     }));
+    // Сдвигать метку на НЕудавшейся записи значит прятать дыру, которую сами же и оставили.
+    if (wrote) st.lastSnapAt = nowMs;
   }
 
   const tick = faauto.autoTick({
@@ -809,7 +821,6 @@ async function faAutoStep(sources) {
   // Лог пишется на СМЕНЕ исхода, а не каждый тик: при опросе раз в пять минут одинаковая строка
   // 288 раз в сутки прячет ту единственную, которая изменилась. Смена исхода это и есть событие.
   if (!prev || prev.kind !== tick.kind || prev.why !== tick.why) console.log(`[fa-auto] ${state.auto.lastTick.line}`);
-  state.auto.lastPollAt = nowMs;
 
   if (armed && tick.decided) {
     faAppendRecord("dec", nowMs, buildFaDecisionRecord({
@@ -865,6 +876,7 @@ async function faAutoStep(sources) {
     stNow.on = false;
     stNow.stopRequested = false;
     stNow.stoppedAt = nowMs;
+    stNow.offSince = nowMs;
   }
   persistFaAuto();
 }
