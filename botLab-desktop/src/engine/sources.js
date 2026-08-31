@@ -190,6 +190,19 @@ export async function fetchHlCurrent() {
   return { byCoin, fetchedAt: Date.now() };
 }
 
+// СТАКАН ОДНОЙ МОНЕТЫ Hyperliquid. Нужен правилу входа бота 1: без стакана проскальзывание
+// неизвестно, а константа это выдуманные издержки, поэтому `dataGate` отказывает кодом `no_book`.
+//
+// УРОВНИ ЗАПРАШИВАЮТСЯ БЕЗ АГРЕГАЦИИ `nSigFigs`, и это не мелочь: агрегация округляет цену верхнего
+// уровня, и проходка даёт мусор (замер: ETH 20.28 базисного пункта против 0.20 на полной точности).
+//
+// ЗОВЁТСЯ ТОЛЬКО КОГДА АВТОМАТ ВЗВЕДЁН. В простое трафика нет вовсе, это тот же закон, по которому
+// живут источники бота 2 и сканера.
+export async function fetchHlBook(coin) {
+  const d = await postJson(HYPERLIQUID_URL, { type: "l2Book", coin }, { hl: true, retries: 1, timeoutMs: 10000 });
+  return { coin, bids: d?.levels?.[0] || [], asks: d?.levels?.[1] || [], fetchedAt: Date.now() };
+}
+
 // Latest single Subsquid snapshot for one market - used as the reconciliation reference.
 export async function fetchSubsquidLatest(market, chain = "arbitrum") {
   const q = `{ fundingRateSnapshots(limit:1, orderBy: snapshotTimestamp_DESC, where:{ marketAddress_eq:"${market}" }) { snapshotTimestamp fundingFactorPerSecondLong fundingFactorPerSecondShort } borrowingRateSnapshots(limit:1, orderBy: snapshotTimestamp_DESC, where:{ address_eq:"${market}" }) { snapshotTimestamp borrowingFactorPerSecondLong borrowingFactorPerSecondShort } }`;

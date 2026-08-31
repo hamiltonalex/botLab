@@ -193,6 +193,28 @@ export function scanRecordsBytes(baseDir, prefix) {
   return total;
 }
 
+// ---- журнал наблюдённых баз фандинга бота 1 (fa/bases.js) ----
+// ПОЧЕМУ ОТДЕЛЬНЫЙ ФАЙЛ, А НЕ КОЛОНКА В КАДРЕ. Кадр приходит из ИСТОРИЧЕСКОГО запроса и отстаёт на
+// час-два, поэтому строки текущего часа в нём ещё нет, а дописать её частичной нельзя: долив
+// стартует с «последний час кадра плюс час» и ставки этого часа не были бы получены никогда, а
+// проверка свежести считала бы кадр вечно свежим. Наблюдение живёт здесь и переносится в строку
+// тогда, когда строка появилась.
+//
+// Файл крошечный (неделя часов на инструмент) и меняется не чаще раза в час: первое наблюдение
+// часа выигрывает, значит писать нечего, пока час не сменился.
+const BASES_DIR = "fa-bases";
+const basesDir = (b) => ensureDir(join(b, BASES_DIR));
+const basesPath = (b, key) => join(basesDir(b), `${key}.json`);
+
+export function loadFaBases(baseDir, key) {
+  ensureDir(baseDir);
+  return readJson(basesPath(baseDir, key), null); // null = наблюдений ещё не было
+}
+export function saveFaBases(baseDir, key, journal) {
+  ensureDir(baseDir);
+  atomicWrite(basesPath(baseDir, key), JSON.stringify(journal));
+}
+
 // ---- trailing-history CSV cache (per instrument key) ----
 export function readCache(baseDir, key) {
   let p = cachePath(baseDir, key);

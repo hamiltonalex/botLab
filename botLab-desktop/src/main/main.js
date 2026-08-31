@@ -16,15 +16,23 @@ import { dirname, join } from "node:path";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
-import { fetchGmxCurrent, fetchHlCurrent, fetchBinancePrices } from "../engine/sources.js";
+import { fetchGmxCurrent, fetchHlCurrent, fetchHlBook, fetchBinancePrices } from "../engine/sources.js";
 import { getTwoLegFrame, getOneLegFrame, nowHourTs, WINDOW_DAYS, STALE_AFTER_SEC } from "../engine/backfill.js";
 import { buildSnapshot, buildTwoLegEntry, buildOneLegEntry, buildScanner, buildSeries } from "../engine/assemble.js";
-import { openPosition, accrue, accrueFromRows, settlePosition, recordUnpricedGap, closePosition, positionSummary, accountSummary } from "../engine/paper.js";
+import { openPosition, accrue, accrueFromRows, settlePosition, recordUnpricedGap, closePosition, positionSummary, accountSummary, legModel } from "../engine/paper.js";
 import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts } from "../engine/costs.js";
 import { ledgerView, buildLedger } from "../engine/ledger.js";
 import { toLedgerCsv, toLedgerSheet, toLedgerJson, ledgerFileName, dialogFiltersFor } from "./export.js";
 import { buildXlsxBuffer } from "./xlsx-writer.js";
-import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes } from "../engine/store.js";
+import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes, writeCache, loadFaBases, saveFaBases } from "../engine/store.js";
+// Бот 1, автомат (фаза 4): чистые правила живут в src/engine/fa/, здесь только снабжение,
+// исполнение намерения и диск. Ни одной строки решения в главном процессе нет намеренно - иначе
+// книга охраны прогоняла бы не ту систему, которая работает живьём.
+import * as faauto from "../engine/fa/auto.js";
+import { FA_BOOK_NODES_USD, bookSlippageNodes } from "../engine/fa/sizing.js";
+import { marginGuard as faMarginGuard, positionLegs as faPositionLegs } from "../engine/fa/margin.js";
+import { applyObservedBases, emptyBaseJournal, observeBases } from "../engine/fa/bases.js";
+import { FA_RECORD_PREFIX, buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord, faRecordDayKey } from "../engine/fa/record.js";
 import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
 import { buildStructure as s1buildStructure, buildSellStructure as s1buildSellStructure, buildSellStrangleStructure as s1buildSellStrangle, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry, sellRowsFromSnapshot as s1sellRows } from "../engine/btcopt/structure.js";
@@ -69,6 +77,12 @@ let sourceErrorFirstAt = null; // метка первой ошибки теку�
 const SCN_SMOKE = process.env.SCN_SMOKE === "1"; // S2 self-test сканера: живой scanCycle через реальный scn-IPC
 const SCN_AUTOSTART = process.env.SCN_AUTOSTART === "1"; // обкатка: завести опрос сканера на буте, без показа вкладки
 const S1_AUTOSTART = process.env.S1_AUTOSTART === "1"; // прогон бота 2: завести опрос на буте, без показа вкладки
+// FA_AUTO=1 - взвести автомат бота 1 на буте, если он ещё не взведён. Нужен потому, что интерфейс
+// автомата это ФАЗА 6, и до неё позвать `fa:auto:set` неоткуда: канал есть, кнопки нет. Тот же
+// приём и та же причина, что у S1_AUTOSTART и SCN_AUTOSTART на удалённой машине. Уже взведённый
+// автомат флаг НЕ трогает: повторный взвод обнулил бы накопитель непрерывности и заморозил бы
+// параметры заново под работающей сделкой.
+const FA_AUTO_ARM = process.env.FA_AUTO === "1";
 const SMOKE = process.env.FA_SMOKE === "1" || S1_SMOKE || SCN_SMOKE; // isolate profile + hidden window + skip updater
 isolateSmokeProfile(app, { enabled: SMOKE });
 // А6 (fault-tolerance, находка C1): один профиль - один процесс. Без лока второй `npm start` на том
@@ -122,6 +136,13 @@ const state = {
   backfilling: new Set(), // cacheKeys currently fetching - surfaced to the UI
   prices: new Map(), // token -> { daily: number[], fetchedAt: ms }
   bootNotes: [],
+  // АВТОМАТ БОТА 1 (фаза 4). `engine` это персистентное состояние редьюсера (тумблер, замороженные
+  // параметры, слот, непрерывность); всё остальное живёт только в памяти сессии.
+  //   bases  - журналы наблюдённых баз фандинга по ключу кадра (fa/bases.js), ленивое чтение с диска;
+  //   books  - стаканы Hyperliquid по монете, тянутся ТОЛЬКО пока автомат взведён (в простое ноль трафика);
+  //   records- сколько строк записано за сессию по каждому потоку, для панели честности фазы 6.
+  auto: { engine: null, corrupt: false, bases: new Map(), books: new Map(), lastPollAt: null,
+    lastTick: null, records: { snap: 0, gap: 0, dec: 0, trade: 0 }, busy: false },
   // Bot 2 «BTC-опционы» (Strategy One) - isolated paper engine + live Deribit source (Phase 1).
   // Read only by the s1:* handlers / assembleDataset1(); never leaks into assembleDataset()/fa:push.
   // Phase 3b: bounded history RINGS live HERE (never in the persisted engine state - it re-serializes
@@ -176,6 +197,10 @@ async function pollLive() {
   const gmxFetched = Object.values(gmxByChain);
   if (!gmxFetched.length) {
     state.snapshots.fresh = { ...state.snapshots.fresh, gateOk: false, accrualOk: false, notes };
+    // Начислять нечем (нет свежего интервала биржи), но МОЛЧАТЬ НЕЛЬЗЯ: тик автомата обязан
+    // состояться и назвать отказ снабжения. Ранний выход без тика был бы ровно тем молчаливым
+    // пропуском, который запрещён: оператор не отличил бы «биржа молчит» от «бот не работает».
+    await faAutoStep({ gmxDown: true, hlDown: !hl.fetchedAt });
     return; // keep last-known snapshots; no exchange-fresh interval exists to accrue
   }
 
@@ -219,6 +244,13 @@ async function pollLive() {
   // Settle open paper positions: gaps beyond the capped live step are priced from the HISTORICAL
   // frame first (refreshed on over-cap gaps - R2), the remainder from the current factors.
   await settleOpenPositions(pollSec() * 3);
+
+  // Базы наблюдаются КАЖДЫЙ опрос и независимо от тумблера: окно правила входа 720 часов, и
+  // журнал, начинающийся с момента взвода, обрёк бы взведённый автомат на месяц отказов.
+  faObserveBases();
+  // Автомат зовётся ПОСЛЕ начисления и после наблюдения баз. Порядок значим в обе стороны:
+  // решение по недоначисленному счёту это решение по другим данным.
+  await faAutoStep({ gmxDown: false, hlDown: !hl.fetchedAt });
 }
 
 // Settle every open position up to now with the given live-step cap: history for the whole-hour
@@ -296,6 +328,415 @@ async function gapBackfillPositions() {
 }
 
 // ---------------------------------------------------------------------------
+// АВТОМАТ БОТА 1 (фаза 4). СНАБЖЕНИЕ, ИСПОЛНЕНИЕ И ДИСК; НИ ОДНОЙ СТРОКИ РЕШЕНИЯ.
+//
+// Решает `fa/auto.js`: он чистый, возвращает НАМЕРЕНИЕ и ничего не исполняет. Здесь собирается
+// срез, зовётся тик, исполняется намерение (`openPosition` / `closePosition` - та же бухгалтерия,
+// что у ручной сделки) и пишется архив (`fa/record.js`, фаза 5). Раскладка выбрана потому, что
+// решение, часть которого живёт в главном процессе, нельзя прогнать книгой охраны без Electron, и
+// книга проверяла бы НЕ ТУ систему, которая работает живьём.
+//
+// ИДЕНТИЧНОСТЬ РЫНКА ЭТО КЛЮЧ ИНСТРУМЕНТА, А НЕ ТОКЕН, и это не косметика: во вселенной приложения
+// токен ETH носят ТРИ инструмента (двуногий ETH, однуногие ETH-Arb и ETH-Avax), а распределитель
+// капитала `sizeUniverse` кладёт решения в отображение по токену. На токенах два из трёх молча
+// затёрли бы третий, и рынок исчез бы из среза без единого кода отказа.
+//
+// ЧЕГО В ЖИВОМ ТРАКТЕ НЕТ, И ЭТО НАЗЫВАЕТСЯ, А НЕ ПРЯЧЕТСЯ. Измеренной кривой ценового удара GMX в
+// приложении нет: живьём GMX её не отдаёт (в REST нет ни одного поля impact, проверены
+// /markets, /tokens, /apy, /prices/*, /signed_prices/latest, /incentives), а таблица замеров лежит в
+// данных исследования и в сборку не входит. Поэтому удар GMX считается плоскими 0.1% модели
+// издержек, и это ровно то поведение, которое `costAtSize` описывает как «без кривой». Замер цены
+// подмены: базовый оптимум двигается с $3162/$9507 на $3057/$9574, то есть на доли процента.
+//
+// ОБЪЁМ ЗАПИСИ НАЗВАН ЧИСЛОМ (замер `faVolumePerDay`, шапка `fa/record.js`): пять рынков при опросе
+// раз в пять минут дают 0.63 МБ в сутки и 0.23 ГБ в год, снимки составляют 99.5% объёма. Пишется
+// архив ТОЛЬКО пока автомат взведён, и это решение исполнителя с названной ценой: смертность
+// рынков (первый вопрос, ради которого запись заведена) копится тоже только в это время. Обратное
+// решение стоило бы 0.23 ГБ в год КАЖДОМУ пользователю приложения, который автоматом не
+// пользуется, а средств посмотреть или подрезать эти файлы у него до фазы 6 нет.
+// ---------------------------------------------------------------------------
+const FA_AUTO_ID = faauto.FA_AUTO_BOT_ID;
+
+function loadOrInitFaAuto() {
+  // Битый JSON КАРАНТИНИТСЯ (.corrupt-<ts>), а не перезаписывается молча: молча подменённое
+  // состояние автомата это молча включённый или выключенный бот (закон positions.json, аудит M32).
+  const res = loadBotStateQuarantine(baseDir, FA_AUTO_ID);
+  state.auto.corrupt = res.corrupt;
+  if (res.corrupt) {
+    console.warn(`[fa-auto] ${FA_AUTO_ID}.json битый - карантин .corrupt-*, автомат поднят ВЫКЛЮЧЕННЫМ`);
+    state.bootNotes.push("состояние автомата бота 1 было битым: файл в карантине, автомат выключен");
+  }
+  let st = res.state;
+  if (!st || typeof st !== "object") {
+    st = faauto.createAutoState({ nowMs: Date.now() });
+    saveBotState(baseDir, FA_AUTO_ID, st);
+  } else {
+    faauto.ensureAutoState(st); // аддитивный подъём формы, записанной прошлой версией
+    if ((st.schemaVersion || 0) < faauto.AUTO_SCHEMA_VERSION) {
+      st.schemaVersion = faauto.AUTO_SCHEMA_VERSION;
+      saveBotState(baseDir, FA_AUTO_ID, st);
+    }
+  }
+  state.auto.engine = st;
+}
+
+function persistFaAuto() {
+  if (!state.auto.engine) return;
+  try {
+    saveBotState(baseDir, FA_AUTO_ID, state.auto.engine);
+  } catch (e) {
+    console.error("[fa-auto] персист состояния:", e);
+  }
+}
+
+// ── ЖУРНАЛ НАБЛЮДЁННЫХ БАЗ. Копится ВСЕГДА, а не только под взведённым автоматом, и это тоже
+// решение с ценой: окно правила входа 720 часов, то есть 30 суток накопления, и если бы журнал
+// начинался с момента взвода, взведённый автомат месяц отказывал бы кодом `hist_no_base`. Цена
+// обратного выбора мала: файл на инструмент это неделя часов, меняется он не чаще раза в час.
+function faBaseJournal(cacheKey) {
+  let j = state.auto.bases.get(cacheKey);
+  if (!j) {
+    j = loadFaBases(baseDir, cacheKey) || emptyBaseJournal();
+    state.auto.bases.set(cacheKey, j);
+  }
+  return j;
+}
+
+function faObserveBases() {
+  const tsHour = nowHourTs();
+  for (const inst of ALL_MARKETS) {
+    const snap = state.snapshots.byKey[inst.key];
+    // ГЕЙТ ЗНАКОВ УВАЖАЕТСЯ. Рынок, не прошедший тождество netRate, не начисляется вовсе, и
+    // копить его базу в летописи значило бы записывать подозрительные данные под видом наблюдения.
+    if (!snap || snap.gateOk === false) continue;
+    const key = cacheKeyFor(inst.hlCoin ? "two" : "one", inst.key);
+    const r = observeBases(faBaseJournal(key), {
+      tsHour, fbaseLongUsd: snap.raw.fbase_long, fbaseShortUsd: snap.raw.fbase_short,
+    });
+    if (!r.changed) continue;
+    state.auto.bases.set(key, r.journal);
+    try {
+      saveFaBases(baseDir, key, r.journal);
+    } catch (e) {
+      console.warn(`[fa-auto] журнал баз ${key}: ${String(e.message || e).slice(0, 80)}`);
+    }
+  }
+}
+
+// Перенести наблюдения в строки кадра и вернуть кадр с базами. Зовётся из единственного места, где
+// кадр попадает в память (`ensureFrame`), поэтому расхождения кадра на диске и в памяти нет.
+function faApplyBases(cacheKey, rows) {
+  if (!rows || !rows.length) return rows;
+  const r = applyObservedBases(rows, faBaseJournal(cacheKey));
+  if (r.applied) {
+    try {
+      writeCache(baseDir, cacheKey, r.rows);
+    } catch (e) {
+      console.warn(`[fa-auto] кадр ${cacheKey} с базами не записан: ${String(e.message || e).slice(0, 80)}`);
+    }
+  }
+  return r.rows;
+}
+
+// ── СТАКАНЫ. Тянутся ТОЛЬКО под взведённым автоматом: без стакана правило входа отказывает кодом
+// `no_book` (проскальзывание неизвестно, а константа это выдуманные издержки), а в простое лишний
+// трафик приложению не нужен. Монет две на пять инструментов, поэтому и запросов два.
+async function faFetchBooks() {
+  const coins = [...new Set(ALL_MARKETS.map((i) => i.hlCoin || i.token))];
+  await Promise.allSettled(coins.map(async (coin) => {
+    try {
+      const b = await fetchHlBook(coin);
+      state.auto.books.set(coin, {
+        at: b.fetchedAt,
+        slip: bookSlippageNodes({ bids: b.bids, asks: b.asks, nodesUsd: FA_BOOK_NODES_USD }),
+      });
+    } catch {
+      // Стакана нет значит его НЕТ: старый стакан в срезе выглядел бы как наблюдение и прошёл бы
+      // ворота свежести чужим возрастом.
+      state.auto.books.delete(coin);
+    }
+  }));
+}
+
+// ── СРЕЗ ДЛЯ ПРАВИЛ. Форма ровно та, которую принимает `sizeUniverse`, плюс марка и предельное
+// плечо биржи для сторожа залога.
+function faAutoMarkets() {
+  const nowMs = Date.now();
+  const f = state.snapshots.fresh;
+  const out = [];
+  for (const inst of ALL_MARKETS) {
+    const strategy = inst.hlCoin ? "two" : "one";
+    const snap = state.snapshots.byKey[inst.key];
+    const raw = snap?.raw || {};
+    // Конфигурацию (какая нога GMX) выбирает тот же расчёт, что и в панели: у однуногой её нет.
+    const config = strategy === "two" ? (snap?.chosen ?? "A") : null;
+    const { gmxSide } = legModel(strategy, config);
+    const coin = inst.hlCoin || inst.token;
+    const bk = state.auto.books.get(coin) || null;
+    out.push({
+      token: inst.key,
+      config,
+      strategy,
+      rows: state.frames.get(cacheKeyFor(strategy, inst.key)) || [],
+      markPx: Number.isFinite(snap?.price) ? snap.price : null,
+      hlMaxLev: snap?.hlMaxLev ?? inst.hlMaxLev ?? null,
+      live: {
+        bOwnUsd: gmxSide === "short" ? raw.fbase_short : raw.fbase_long,
+        bOtherUsd: gmxSide === "short" ? raw.fbase_long : raw.fbase_short,
+        baseAgeSec: f.gmxAt ? (nowMs - f.gmxAt) / 1000 : undefined,
+        baseIdentityOk: snap ? snap.gateOk !== false : undefined,
+        bookMissing: !bk,
+        bookAgeSec: bk ? (nowMs - bk.at) / 1000 : undefined,
+        gmxAvailOwnUsd: gmxSide === "short" ? snap?.avail?.shortUsd : snap?.avail?.longUsd,
+        hlVisibleNtl: bk?.slip?.visibleNtl,
+        hlExhaustedFrom: bk?.slip?.exhaustedFrom ?? undefined,
+      },
+      // Кривая удара GMX в приложении отсутствует (см. шапку раздела); стакан Hyperliquid живой.
+      impact: { gmxNodes: [], hlNodes: bk?.slip?.nodes || [] },
+    });
+  }
+  return out;
+}
+
+// Открытая сделка АВТОМАТА в форме правила выхода. Чужая (открытая руками) сюда не попадает: слот
+// один, и автомат не имеет права вести сделку, которую не открывал.
+function faAutoPosition() {
+  const st = state.auto.engine;
+  if (!st?.positionId) return null;
+  const p = state.positions.find((x) => x.id === st.positionId && x.status === "open");
+  if (!p) return null;
+  const snap = state.snapshots.byKey[p.instrumentKey];
+  return {
+    id: p.id,
+    token: p.instrumentKey,
+    config: p.config,
+    strategy: p.strategy,
+    sizeUsd: p.notional,
+    entryPx: p.openMarkPx,
+    markPx: Number.isFinite(snap?.price) ? snap.price : null,
+    hlMaxLev: snap?.hlMaxLev ?? instFor(p.strategy, p.instrumentKey)?.hlMaxLev ?? null,
+  };
+}
+
+// Ноги сделки для записи и для сторожа. ОДНО наблюдение на оба употребления: паспорт сделки и вход
+// сторожа обязаны быть одним и тем же числом, иначе архив и решение разъедутся.
+function faLegsOf(pos, params) {
+  if (!pos) return { gmx: null, hl: null };
+  const v = faMarginGuard({
+    legs: faPositionLegs({
+      strategy: pos.strategy, config: pos.config, sizeUsd: pos.sizeUsd, leverage: params.leverage,
+      entryPx: pos.entryPx, markPx: pos.markPx, hlMaxLev: pos.hlMaxLev,
+    }),
+    minRoomFraction: params.minRoomFraction,
+  });
+  return { gmx: v.legs[0] || null, hl: v.legs[1] || null };
+}
+
+// ── ЗАПИСЬ. Ошибка записи НЕ имеет права уронить тик (закон бота 2), поэтому try/catch и
+// console.warn; счётчик строк за сессию нужен панели честности фазы 6.
+function faAppendRecord(kind, ts, row) {
+  if (!row) return;
+  try {
+    state.auto.records[kind] += appendScanRecords(baseDir, FA_RECORD_PREFIX[kind] ?? FA_RECORD_PREFIX.snap, faRecordDayKey(ts), [row]);
+  } catch (e) {
+    console.warn(`[fa-auto] запись ${kind}: ${String(e.message || e).slice(0, 80)}`);
+  }
+}
+
+// Сырые наблюдения по рынкам ДО любой обработки: правило записи это «пишется наблюдение, а не
+// вывод», и всё считаемое (годовых, ранг, запас) читатель архива считает сам.
+function faSnapMarkets() {
+  const nowMs = Date.now();
+  return ALL_MARKETS.map((inst) => {
+    const snap = state.snapshots.byKey[inst.key];
+    const raw = snap?.raw || {};
+    const bk = state.auto.books.get(inst.hlCoin || inst.token) || null;
+    return {
+      token: inst.key,
+      chain: inst.chain,
+      gateOk: snap ? snap.gateOk : undefined,
+      factors: snap ? { f_long: raw.f_long, f_short: raw.f_short, b_long: raw.b_long, b_short: raw.b_short } : null,
+      hlRate: raw.hl_rate,
+      hlPremium: raw.hl_premium,
+      fbaseLongUsd: raw.fbase_long,
+      fbaseShortUsd: raw.fbase_short,
+      availLongUsd: snap?.avail?.longUsd,
+      availShortUsd: snap?.avail?.shortUsd,
+      markPx: snap?.price,
+      maxLev: snap?.hlMaxLev ?? inst.hlMaxLev,
+      book: bk ? { visibleNtl: bk.slip.visibleNtl, exhaustedFrom: bk.slip.exhaustedFrom, nodes: bk.slip.nodes } : null,
+      bookAgeSec: bk ? (nowMs - bk.at) / 1000 : undefined,
+    };
+  });
+}
+
+// ── ИСПОЛНЕНИЕ. Единственное место, где намерение автомата становится сделкой. Бухгалтерия та же,
+// что у ручного входа, и это принципиально: две бухгалтерии разошлись бы на первом же исправлении.
+function faOpenFromIntent(intent, nowMs) {
+  const inst = instFor(intent.strategy, intent.token);
+  if (!inst) return null;
+  const snap = state.snapshots.byKey[intent.token];
+  const notional = intent.gotUsd;
+  const isOne = intent.strategy === "one";
+  const p = openPosition({
+    strategy: intent.strategy,
+    instrumentKey: intent.token,
+    config: isOne ? null : intent.config,
+    // Правило возвращает НОЦИОНАЛ, а `openPosition` умножает капитал на плечо, поэтому капитал
+    // получается делением: при плече 1 это одно и то же число, при другом плече - нет.
+    capital: intent.gotUsd / intent.leverage,
+    leverage: intent.leverage,
+    nowMs,
+    roundTripCost: roundTripCost(state.settings.costs, notional, isOne),
+    costBreakdown: roundTripCostBreakdown(state.settings.costs, notional, isOne),
+    openMarkPx: Number.isFinite(snap?.price) ? snap.price : null,
+    // РАЗБАВЛЕНИЕ ВКЛЮЧЕНО, и без этого флага вся фаза бессмысленна. Правило выбрало размер С
+    // УЧЁТОМ множителя B/(B+S); леджер без разбавления начислил бы котируемую ставку целиком, то
+    // есть написал бы доход, которого у настоящего входа не было бы. Это ровно дефект фазы 1
+    // (MOODENG $651 526 против $6 812), и повторить его тем же файлом было бы обидно.
+    dilute: true,
+    meta: {
+      gmxName: inst.gmxName, gmxAddr: inst.gmxAddr, chain: inst.chain, token: inst.token,
+      hlCoin: inst.hlCoin || null, label: inst.label || intent.token,
+      auto: true, wantUsd: intent.wantUsd, binding: intent.binding,
+    },
+  });
+  state.positions.push(p);
+  return p;
+}
+
+// Закрытие с ДОСЧЁТОМ хвоста, тот же порядок, что у ручного закрытия: последний интервал не
+// теряется, а разрыв сверх капа сначала дозабирается историей.
+async function faClosePaperPosition(p, nowMs) {
+  const snap = state.snapshots.byKey[p.instrumentKey];
+  let rows = state.frames.get(cacheKeyFor(p.strategy, p.instrumentKey));
+  if (p.status === "open" && (nowMs - p.lastAccrualAt) / 1000 > pollSec() * 3) {
+    try {
+      rows = await ensureFrame(p.strategy, p.instrumentKey);
+    } catch {
+      /* стейл-фрейм как фолбэк: хвост запишется честно */
+    }
+  }
+  if (p.status === "open" && snap && snap.accrualOk !== false) {
+    settlePosition(p, rows, snap.raw, nowMs, pollSec() * 3, { markPx: snap.price });
+  } else if (p.status === "open") {
+    accrueFromRows(p, rows, nowMs);
+    recordUnpricedGap(p, nowMs, "автомат закрыл сделку без полного живого снимка");
+  }
+  closePosition(p, nowMs);
+  return p;
+}
+
+// ── ТИК. Зовётся в конце каждого опроса, ПОСЛЕ начисления: решение по недоначисленному счёту это
+// решение по другим данным.
+async function faAutoStep(sources) {
+  const st = state.auto.engine;
+  if (!st) return;
+  const nowMs = Date.now();
+  const armed = !!st.on;
+  // Перерыв опроса это СОБЫТИЕ потока снимков, а не отсутствие строки: только так лента остаётся
+  // непрерывной и каждый слот либо наблюдён, либо объяснён.
+  if (armed && state.auto.lastPollAt) {
+    faAppendRecord("gap", nowMs, buildFaGapRecord({
+      fromMs: state.auto.lastPollAt, toMs: nowMs, nominalSec: pollSec(),
+      hints: { sleepWindow: lastSleepWindow, bootAt: APP_BOOT_MS, sourceErrorSince: sourceErrorFirstAt },
+    }));
+  }
+  if (armed) await faFetchBooks();
+
+  const f = state.snapshots.fresh;
+  const gmxAgeSec = f.gmxAt ? (nowMs - f.gmxAt) / 1000 : undefined;
+  const hlAgeSec = f.hlAt ? (nowMs - f.hlAt) / 1000 : undefined;
+  const params = st.params ? { ...faauto.defaultAutoParams(), ...st.params } : faauto.defaultAutoParams();
+  const posBefore = faAutoPosition();
+
+  if (armed) {
+    faAppendRecord("snap", nowMs, buildFaSnapRecord({
+      t: nowMs, source: "live", gmxAgeSec, hlAgeSec, markets: faSnapMarkets(),
+      position: posBefore ? { ...posBefore, ...faLegsOf(posBefore, params) } : null,
+    }));
+  }
+
+  const tick = faauto.autoTick({
+    now: nowMs,
+    bootAt: APP_BOOT_MS,
+    state: st,
+    corrupt: state.auto.corrupt,
+    markets: faAutoMarkets(),
+    sources,
+    costs: state.settings.costs,
+    position: posBefore,
+    foreignOpen: state.positions.some((x) => x.status === "open" && x.id !== st.positionId),
+    nominalSec: pollSec(),
+    gapHints: { sleepWindow: lastSleepWindow, bootAt: APP_BOOT_MS, sourceErrorSince: sourceErrorFirstAt },
+  });
+  const prev = state.auto.lastTick;
+  state.auto.engine = tick.state;
+  state.auto.lastTick = { at: nowMs, kind: tick.kind, why: tick.why, line: faauto.explainAuto(tick) };
+  // Лог пишется на СМЕНЕ исхода, а не каждый тик: при опросе раз в пять минут одинаковая строка
+  // 288 раз в сутки прячет ту единственную, которая изменилась. Смена исхода это и есть событие.
+  if (!prev || prev.kind !== tick.kind || prev.why !== tick.why) console.log(`[fa-auto] ${state.auto.lastTick.line}`);
+  state.auto.lastPollAt = nowMs;
+
+  if (armed && tick.decided) {
+    faAppendRecord("dec", nowMs, buildFaDecisionRecord({
+      t: nowMs, source: "live", ageSec: gmxAgeSec, capitalUsd: params.capitalUsd,
+      presetId: params.presetId, cfg: tick.cfg, universe: tick.universe, exit: tick.exit,
+      hold: posBefore?.token ?? null, window: tick.window,
+    }));
+  }
+
+  // ИСПОЛНЕНИЕ. Только здесь, и только по намерению.
+  let closed = null;
+  let opened = null;
+  if (armed && (tick.kind === "close" || tick.kind === "switch") && posBefore) {
+    const p = state.positions.find((x) => x.id === posBefore.id);
+    if (p) {
+      await faClosePaperPosition(p, nowMs);
+      // Паспорт снимается ПОСЛЕ досчёта хвоста: реализованный итог до него это другое число.
+      closed = {
+        ...posBefore, ...faLegsOf(posBefore, params),
+        wantUsd: p.meta?.wantUsd ?? null, gotUsd: p.notional, leverage: p.leverage,
+        realizedUsd: positionSummary(p).netPnl,
+      };
+    }
+    state.auto.engine.positionId = null;
+  }
+  if (armed && (tick.kind === "open" || tick.kind === "switch") && tick.intent) {
+    const p = faOpenFromIntent(tick.intent, nowMs);
+    if (p) {
+      state.auto.engine.positionId = p.id;
+      const pos = faAutoPosition();
+      opened = { ...pos, ...faLegsOf(pos, params), wantUsd: tick.intent.wantUsd, gotUsd: tick.intent.gotUsd, leverage: tick.intent.leverage };
+    }
+  }
+  if (armed && (closed || opened)) {
+    savePositions(baseDir, state.positions);
+    const ev = tick.kind === "switch" ? "switch" : tick.kind;
+    faAppendRecord("trade", nowMs, buildFaTradeRecord({
+      t: nowMs, source: "live", event: ev,
+      // У ВХОДА причина живёт в строке решения, на которую указывает `d`, и здесь она null: код
+      // `funded` это исход автомата, а не причина из реестра правила выхода, и подставлять его в
+      // поле чужого словаря значило бы сделать чтение архива двусмысленным.
+      why: ev === "open" ? null : tick.why,
+      ageSec: gmxAgeSec, decisionAt: tick.decided ? nowMs : null,
+      opened, closed,
+      costs: opened ? roundTripCostBreakdown(state.settings.costs, opened.gotUsd, opened.strategy === "one") : null,
+    }));
+  }
+  // РЕЖИМ ОДНОЙ СДЕЛКИ И ЗАПРОШЕННАЯ ОСТАНОВКА гасят тумблер РОВНО когда слот освободился: бросать
+  // открытую сделку без присмотра нельзя, у неё есть сторож залога, и он работает только пока
+  // автомат тикает.
+  const stNow = state.auto.engine;
+  if (stNow.on && !stNow.positionId && (stNow.stopRequested || (stNow.mode === "once" && closed))) {
+    stNow.on = false;
+    stNow.stopRequested = false;
+    stNow.stoppedAt = nowMs;
+  }
+  persistFaAuto();
+}
+
+// ---------------------------------------------------------------------------
 // Trailing frames (incrementally refreshed) + price context
 // ---------------------------------------------------------------------------
 function frameIsFresh(rows) {
@@ -319,7 +760,10 @@ async function ensureFrame(strat, key) {
   const job = (async () => {
     state.backfilling.add(cacheKey);
     try {
-      const rows = strat === "one" ? await getOneLegFrame(baseDir, inst) : await getTwoLegFrame(baseDir, inst);
+      const fetched = strat === "one" ? await getOneLegFrame(baseDir, inst) : await getTwoLegFrame(baseDir, inst);
+      // ЕДИНСТВЕННАЯ ТОЧКА, ГДЕ НАБЛЮДЁННЫЕ БАЗЫ ПОПАДАЮТ В КАДР. Здесь, а не в `backfill.js`:
+      // журнал наблюдений это состояние приложения, а модуль истории обязан оставаться про историю.
+      const rows = faApplyBases(cacheKey, fetched);
       if (rows && rows.length) state.frames.set(cacheKey, rows); // never cache an empty result
       await ensurePrices(inst);
       return rows || [];
@@ -464,6 +908,25 @@ function assembleDataset(sel) {
     positions,
     account: accountSummary(state.positions),
     settings: state.settings,
+    // АВТОМАТ (фаза 4). Наружу идёт только состояние и последний названный исход: интерфейс это
+    // фаза 6, и рисовать здесь нечего. Отказы едут списком кодов, а не текстом: перевод живёт в
+    // словарях локализации, а не в главном процессе.
+    auto: state.auto.engine ? {
+      on: !!state.auto.engine.on,
+      stopRequested: !!state.auto.engine.stopRequested,
+      mode: state.auto.engine.mode,
+      armedAt: state.auto.engine.armedAt,
+      stoppedAt: state.auto.engine.stoppedAt,
+      params: state.auto.engine.params,
+      positionId: state.auto.engine.positionId,
+      lastTickAt: state.auto.engine.lastTickAt,
+      lastDecisionAt: state.auto.engine.lastDecisionAt,
+      lastRefusals: state.auto.engine.lastRefusals,
+      uptime: state.auto.engine.uptime,
+      corrupt: state.auto.corrupt,
+      last: state.auto.lastTick,
+      records: { ...state.auto.records, bytes: scanRecordsBytes(baseDir, FA_RECORD_PREFIX.snap) },
+    } : null,
   };
 }
 
@@ -2823,6 +3286,33 @@ function wireIpc() {
     return { ok: !!p };
   });
 
+  // ── АВТОМАТ БОТА 1. Наружу идут ТОЛЬКО эти два канала плюс блок `auto` в датасете: интерфейс
+  // это фаза 6, и всё, что она получит, обязана получать через них.
+  ipcMain.handle("fa:auto:get", async () => ({
+    state: state.auto.engine, corrupt: state.auto.corrupt,
+    defaults: faauto.defaultAutoParams(), last: state.auto.lastTick,
+    refusals: faauto.FA_AUTO_REFUSALS, precedence: faauto.FA_AUTO_PRECEDENCE,
+  }));
+
+  ipcMain.handle("fa:auto:set", async (_e, req) => {
+    if (!state.auto.engine) return { error: "состояние автомата не поднято" };
+    const nowMs = Date.now();
+    if (req && req.on === true) {
+      // ВЗВОД ЗАМОРАЖИВАЕТ ПАРАМЕТРЫ. Правка значений по умолчанию после взвода уже не догонит
+      // работающую сделку, и это закон заморозки при открытии, а не забывчивость.
+      faauto.armAuto(state.auto.engine, { nowMs, params: req.params || null, mode: req.mode });
+      // Битое состояние поднято выключенным; ручной взвод это и есть подтверждение оператора.
+      state.auto.corrupt = false;
+    } else if (req && req.on === false) {
+      faauto.stopAuto(state.auto.engine, { nowMs, immediate: req.immediate === true });
+    } else {
+      return { error: "ожидается { on: true | false }" };
+    }
+    persistFaAuto();
+    push();
+    return { ok: true, state: state.auto.engine };
+  });
+
   ipcMain.handle("fa:setCosts", async (_e, costs) => {
     state.settings.costs = normalizeCosts({ ...state.settings.costs, ...costs });
     saveSettings(baseDir, state.settings);
@@ -2967,6 +3457,14 @@ app.whenReady().then(async () => {
     saveSettings(baseDir, state.settings);
   }
   state.positions = loadPositions(baseDir);
+  // Автомат бота 1: состояние поднимается ДО первого опроса, потому что первый же тик обязан
+  // знать, включён он или нет, и обязан назвать исход.
+  loadOrInitFaAuto();
+  if (FA_AUTO_ARM && state.auto.engine && !state.auto.engine.on) {
+    faauto.armAuto(state.auto.engine, { nowMs: Date.now() });
+    persistFaAuto();
+    console.log("[fa-auto] FA_AUTO=1: автомат взведён на буте, параметры заморожены значениями по умолчанию");
+  }
   // An OPEN paper position whose instrument was removed/delisted can no longer be tracked or closed
   // from the UI. Close it on boot (P&L accrued so far is preserved as realized) so it does not sit as
   // a phantom open forever; the closure is surfaced as a boot note.

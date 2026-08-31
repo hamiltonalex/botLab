@@ -30,7 +30,7 @@ import { hlCtxToCanonical } from "../src/engine/signs.js";
 import { annualizeRow, HOURS_PER_YEAR, SEC_PER_HOUR } from "../src/engine/math.js";
 import { DEFAULT_COSTS } from "../src/engine/costs.js";
 import {
-  FA_SIZING_DEFAULTS, bookSlippageNodes, explainSize, sizeUniverse,
+  FA_BOOK_NODES_USD, FA_SIZING_DEFAULTS, bookSlippageNodes, explainSize, sizeUniverse,
 } from "../src/engine/fa/sizing.js";
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -130,7 +130,7 @@ for (const u of universe) {
   const gmxSide = config === "A" ? "short" : "long";
   const bOwnUsd = g ? (gmxSide === "short" ? g.oiShortUsd : g.oiLongUsd) : NaN;
   const bOtherUsd = g ? (gmxSide === "short" ? g.oiLongUsd : g.oiShortUsd) : NaN;
-  const slip = book ? bookSlippageNodes({ bids: book.levels?.[0], asks: book.levels?.[1], nodesUsd: [1000, 5000, 10000, 25000, 50000, 100000, 250000, 500000] }) : null;
+  const slip = book ? bookSlippageNodes({ bids: book.levels?.[0], asks: book.levels?.[1], nodesUsd: FA_BOOK_NODES_USD }) : null;
   const rows = Array.from({ length: H }, (_, i) => ({
     ...base, tsHour: nowSec - (H - 1 - i) * SEC_PER_HOUR,
     fbase_long: g ? g.oiLongUsd : NaN, fbase_short: g ? g.oiShortUsd : NaN,

@@ -81,6 +81,10 @@ export function buildSnapshot(inst, gmxCanon, hlCanon) {
     price: hlCanon ? hlCanon.markPx : null,
     raw: row,
     oi: { longUsd: gmxCanon.oiLongUsd, shortUsd: gmxCanon.oiShortUsd },
+    // Свободная ликвидность сторон. Нужна ограничению О1 правила размера входа: без потолка места
+    // оптимизатор упирается в потолок сетки $10 млн при свободном месте $25 528 (замер, BERA).
+    // Приводится к долларам в `signs.js`, здесь только переносится.
+    avail: { longUsd: gmxCanon.availLongUsd, shortUsd: gmxCanon.availShortUsd },
     hlMaxLev: !isOneLeg && hlCanon ? hlCanon.maxLev : null,
     ann: a,
     netA: a.net_A,
