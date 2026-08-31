@@ -5,7 +5,7 @@
 // All writes are atomic (write tmp -> rename) to avoid corruption on crash/quit. baseDir is
 // app.getPath('userData') in production; a temp dir in tests.
 
-import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, appendFileSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, appendFileSync, readdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { parseSpreadCsv, toSpreadCsv } from "./format.js";
 
@@ -139,9 +139,31 @@ const recordPath = (b, prefix, dayKey) => join(recordsDir(b), `${prefix}-${dayKe
 // оставлять следов, по которым отчёт решит, что данные были). Возвращает число записанных строк.
 export function appendScanRecords(baseDir, prefix, dayKey, rows) {
   if (!Array.isArray(rows) || rows.length === 0) return 0;
-  const text = rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
-  appendFileSync(recordPath(baseDir, prefix, dayKey), text);
+  const path = recordPath(baseDir, prefix, dayKey);
+  // ОБОРВАННЫЙ ХВОСТ НЕ ИМЕЕТ ПРАВА СЪЕСТЬ СЛЕДУЮЩУЮ ЗАПИСЬ. Читатель терпит рваную строку в конце
+  // файла и считает её в `broken`, но дописывание вплотную склеивает огрызок с НОВОЙ строкой, и
+  // тогда падение уносит две записи вместо одной: рваную и первую после перезапуска. Именно она
+  // чаще всего и есть самая нужная - паспорт сделки, открытой сразу после восстановления.
+  // Стоит это один байт и один вопрос к последнему байту файла.
+  const text = (endsUnterminated(path) ? "\n" : "") + rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
+  appendFileSync(path, text);
   return rows.length;
+}
+
+// Кончается ли файл НЕ переводом строки. Пустого и отсутствующего файла это не касается: дописывать
+// туда нечего и склеивать не с чем.
+function endsUnterminated(path) {
+  if (!existsSync(path)) return false;
+  const size = statSync(path).size;
+  if (size === 0) return false;
+  const fd = openSync(path, "r");
+  try {
+    const buf = Buffer.alloc(1);
+    readSync(fd, buf, 0, 1, size - 1);
+    return buf[0] !== 0x0a;
+  } finally {
+    closeSync(fd);
+  }
 }
 
 // Прочитать записи за перечисленные сутки. Возвращает { rows, broken, files } - broken это число
