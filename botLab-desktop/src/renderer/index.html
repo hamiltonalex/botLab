@@ -726,6 +726,39 @@ table.scan tr:hover td{ background:color-mix(in srgb, var(--slate) 5%, transpare
 .rowpick{ font:600 12px var(--f-mono); color:var(--txt); background:none; border:none;
   cursor:pointer; padding:0; letter-spacing:.3px; }
 .rowpick:focus-visible, .trade-empty .goto:focus-visible{ outline:1px solid var(--accent); outline-offset:2px; }
+
+/* ДВА ПУТИ ЗАПУСКА БОТА 1 РАЗВЕДЕНЫ ЦВЕТОМ, ГЛИФОМ И СТРОКОЙ ПОД КНОПКОЙ.
+   Было три кнопки одного синего с глифом ▶, и человек, читающий кнопку, а не абзац над ней,
+   не мог узнать ГЛАВНОГО: кто выбирает рынок и кто закрывает сделку. Разница между путями
+   максимальна (ручной читает селекторы оператора и ждёт его же кнопки закрытия; автомат
+   селекторы НЕ читает вовсе, берёт рынок правилом входа из пяти, закрывает правилом выхода и
+   тут же ищет следующий вход), и на подписях от неё не было ни слова.
+     `#paperBtn`     - единственный НАСТОЯЩИЙ ручной запуск: залитый accent, самый тяжёлый
+                       элемент вкладки, глиф ▶ («делаю сейчас, сам»);
+     `#faAutoArmBtn` - передача управления боту: амбер пульта (цвет верхней полосы карточки и её
+                       жетона) и глиф ⏻ («включаю режим»). Другой режим = другой цвет и глиф.
+   Обе кнопки несут строку-уточнение ВПЛОТНУЮ под собой, одинаково размеченную в три сегмента
+   «рынок и размер · закрытие · что после», чтобы их можно было сличить по одной оси. Строка
+   привязана к кнопке через aria-describedby: незрячему разница обязана достаться той же.
+   ПРАВИЛА АДРЕСУЮТСЯ ПО id НАМЕРЕННО: классы `.goto` и `.paperbtn.open` бот 1 делит с ботом 2
+   (`#optTradeGoto`, `#optOpenBtn`, кнопки тикетов), у которого идёт живой прогон. Правка класса
+   поехала бы на его вкладку молча. */
+#faAutoArmBtn{ color:var(--neu); background:var(--neu-bg);
+  border-color:color-mix(in srgb, var(--neu) 45%, transparent); }
+#faAutoArmBtn:hover{ border-color:var(--neu); }
+#paperBtn{ font-size:12.5px; padding:9px 18px; color:var(--on-accent);
+  background:var(--accent); border-color:var(--accent); }
+#paperBtn:hover{ box-shadow:0 2px 16px color-mix(in srgb, var(--accent) 30%, transparent); }
+#paperBtn[aria-expanded="true"]{ box-shadow:none; }
+/* Строка-уточнение читаемее обычной подсказки намеренно: на ней держится ответ «кто действует».
+   Своя строка целиком - иначе она встаёт справа от кнопки и теряет с ней связь на узком окне. */
+#launchHint, #faAutoArmHint{ flex:1 0 100%; margin-top:2px; color:var(--txt-dim);
+  font-size:11.5px; line-height:1.5; white-space:normal; }
+/* ПУЛЬТ РАСКЛАДЫВАЕТСЯ В СТОЛБЕЦ, а не строкой, как остальные `.trade-empty`. Причина ровно одна:
+   строка уносит кнопку к правому краю, а её уточнение начинается у левого, и связь между ними
+   рвётся - читается как продолжение абзаца сверху. В столбце уточнение стоит прямо под кнопкой. */
+#faAutoEmpty{ flex-direction:column; align-items:flex-start; gap:8px; }
+#faAutoEmpty #faAutoArmHint{ margin-top:0; }
 table.scan tr.me .rowpick{ color:var(--accent); }
 .paperbtn.mini{ font-size:10.5px; padding:3px 8px; }
 /* запуск стратегии: CTA + инлайн-тикет подтверждения (зона Ⅰ) */
@@ -1162,7 +1195,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
   <section id="view-home" role="tabpanel" aria-labelledby="tab-home" tabindex="-1" class="view reveal">
     <div class="home-head">
       <h1 data-i18n="home.title">Обзор</h1>
-      <span class="sub" data-i18n="home.sub">Модули стратегий и их состояние · бумажный тест, без реального капитала</span>
+      <span class="sub" data-i18n="home.sub">Модули стратегий и их состояние</span>
     </div>
 
     <div class="card agg" aria-live="polite">
@@ -1187,7 +1220,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
         <div class="bc-foot">
           <span id="card-status-funding-arb" data-i18n="home.fa.idle">○ не запущен - нет открытых позиций</span>
           <span class="bc-acts">
-            <button class="bc-power" type="button" id="faPowerBtn" aria-pressed="false" data-i18n="home.fa.powerOn"></button>
+            <button class="bc-power" type="button" id="faPowerBtn" aria-pressed="false" data-i18n="home.fa.powerOn" data-i18n-title="home.fa.powerOnTitle"></button>
             <button class="bc-open" type="button" data-open="funding-arb"><span data-i18n="home.card.open">Открыть</span> <span class="arw">→</span></button>
           </span>
         </div>
@@ -1227,7 +1260,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
   <!-- ══════════════════ ЗОНА Ⅱ · ТОРГОВЛЯ · PAPER TRADING (форвард, с t0) ══════════════════ -->
   <section id="zoneTrade" class="zone zone-trade reveal" style="animation-delay:.03s" aria-labelledby="zoneTradeHead" tabindex="-1">
     <div class="zone-head">
-      <span class="zn" id="zoneTradeHead" data-i18n="fa.zt.title">Ⅱ · Торговля · Paper Trading</span>
+      <span class="zn" id="zoneTradeHead" data-i18n="fa.zt.title">Ⅱ · Торговля</span>
       <span class="tag" data-i18n="fa.zt.tag">форвард · с t0 · нетто</span>
       <button class="help-btn" data-help="paper">?</button>
       <span class="rule"></span>
@@ -1235,8 +1268,12 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
       <span class="hint" data-i18n="fa.zt.hint">не зависит от периода и режима P&amp;L в анализе</span>
     </div>
   <div class="trade-empty" id="tradeEmpty" role="status">
-    <span data-i18n="fa.zt.emptyText">○ стратегия не запущена - выберите инструмент, конфигурацию, период и плечо в зоне «Анализ стратегий» ниже и запустите бумажную торговлю. Реализованный P&amp;L появится здесь.</span>
-    <button class="goto" id="tradeGoto" data-i18n="fa.zt.goto">▶ Запустить стратегию (Paper Trading)</button>
+    <span data-i18n="fa.zt.emptyText">○ стратегия не запущена - выберите инструмент, конфигурацию и плечо в зоне «Анализ стратегий» ниже и нажмите там «▶ Открыть позицию вручную». Реализованный P&amp;L появится здесь.</span>
+    <!-- ТРЕТЬЕЙ КНОПКИ ЗДЕСЬ БОЛЬШЕ НЕТ, И ВЕРНУТЬ ЕЁ НЕЛЬЗЯ. Стояла кнопка «▶ Запустить стратегию»,
+         которая НИЧЕГО НЕ ЗАПУСКАЛА: она прокручивала к настоящему запуску в зоне анализа. Тем же
+         синим, тем же глифом и в сорока пикселях от «включить автомат» она читалась как третий,
+         несуществующий режим. Куда идти, говорит текст слева; путей запуска на вкладке ровно два,
+         и у каждого своя кнопка. -->
   </div>
   <!-- ПУЛЬТ И ЧЕСТНОСТЬ ЖИВУТ В СВОЕЙ СЕТКЕ, А НЕ В `.trade-grid`, И ЭТО НЕ КОСМЕТИКА.
        Правило `.zone.idle .trade-grid{display:none}` гасит сетку результата, пока на счёте нет ни
@@ -1274,7 +1311,8 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
 
       <div class="trade-empty" id="faAutoEmpty" role="status">
         <span data-i18n="fa.auto.emptyText"></span>
-        <button class="goto" id="faAutoArmBtn" aria-expanded="false" aria-controls="faAutoArmTicket" data-i18n="fa.auto.armBtn"></button>
+        <button class="goto" id="faAutoArmBtn" aria-expanded="false" aria-controls="faAutoArmTicket" aria-describedby="faAutoArmHint" data-i18n="fa.auto.armBtn"></button>
+        <span class="hint" id="faAutoArmHint" data-i18n="fa.auto.armHint"></span>
       </div>
 
       <!-- ТЕЛО ВИДНО И В ВЫКЛЮЧЕННОМ СОСТОЯНИИ, в отличие от цепочки бота 2. Причина в данных:
@@ -1519,7 +1557,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
       </div>
       <div class="table-scroll" style="max-height:240px">
         <table class="scan" id="tradeTable">
-          <caption class="sr-only" data-i18n="fa.pos.caption">Бумажные позиции счёта</caption>
+          <caption class="sr-only" data-i18n="fa.pos.caption">Позиции счёта</caption>
           <thead><tr>
             <th class="lft" scope="col" data-i18n="fa.pos.thInstr">Инструмент</th>
             <th class="lft" scope="col" data-i18n="fa.pos.thCfg">Конфиг</th>
@@ -1549,7 +1587,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
     </div>
     <div class="legend span2">
       <div class="it"><span class="sw line" style="background:var(--pos)"></span><span data-i18n="fa.legend.real">реальная накопленная equity (нетто) с t0 · GMX-фандинг посекундно + расчёты HL почасово</span></div>
-      <div class="it faint" data-i18n="fa.legend.paper">бумажно · funding/borrow из live-данных · без execution effects и реального капитала</div>
+      <div class="it faint" data-i18n="fa.legend.paper">funding/borrow из live-данных · без execution effects</div>
     </div>
     <!-- ЖУРНАЛ ОПЕРАЦИЙ выбранной позиции: каждая финансовая операция отдельной строкой,
          доход/расход раздельно (двойная бухгалтерия форвард-теста). Данные - fa:getLedger
@@ -1604,7 +1642,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
       <div class="table-scroll" id="ledgerScroll" style="max-height:420px" tabindex="0" role="region"
            aria-label="Журнал операций выбранной позиции, прокручиваемая таблица" data-i18n-aria="ledger.scrollAria">
         <table class="raw ledger" id="ledgerTable">
-          <caption class="sr-only" data-i18n="ledger.caption">Журнал операций выбранной бумажной позиции</caption>
+          <caption class="sr-only" data-i18n="ledger.caption">Журнал операций выбранной позиции</caption>
           <thead><tr>
             <th aria-label="Детали" data-i18n-aria="ledger.thDetails"></th>
             <th class="lft" scope="col" data-i18n="ledger.thTime">Время UTC</th>
@@ -1714,11 +1752,11 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
           <div class="it"><span class="k" data-i18n="fa.hero.hours">часов в периоде</span><span class="num" id="heroHours">-</span></div>
         </div>
         <div class="launch-row">
-          <button id="paperBtn" class="paperbtn open" aria-expanded="false" aria-controls="launchTicket" data-i18n="fa.zt.goto">▶ Запустить стратегию (Paper Trading)</button>
+          <button id="paperBtn" class="paperbtn open" aria-expanded="false" aria-controls="launchTicket" aria-describedby="launchHint" data-i18n="fa.hero.launchBtn">▶ Открыть позицию вручную</button>
           <button class="help-btn" data-help="launch">?</button>
-          <span class="hint" data-i18n="fa.hero.launchHint">откроет бумажную позицию по текущему выбору · результат - в зоне «Торговля» вверху</span>
+          <span class="hint" id="launchHint" data-i18n="fa.hero.launchHint">рынок и размер - из ваших селекторов выше · закрываете вы, сторожа залога нет · одна позиция, следующую бот не ищет</span>
         </div>
-        <div id="launchTicket" class="ticket" role="group" aria-label="Подтверждение запуска стратегии (Paper Trading)" data-i18n-aria="fa.ticket.aria" hidden>
+        <div id="launchTicket" class="ticket" role="group" aria-label="Подтверждение ручного запуска позиции (Paper Trading)" data-i18n-aria="fa.ticket.aria" hidden>
           <div class="trow"><span class="k" data-i18n="fa.ticket.inst">инструмент</span><span class="num" id="ticketInst">-</span></div>
           <div class="trow"><span class="k" data-i18n="fa.ticket.stratCfg">стратегия · конфигурация</span><span class="num" id="ticketCfg">-</span></div>
           <div class="trow"><label class="k" for="ticketCap" data-i18n="fa.ticket.cap">капитал, $</label><input id="ticketCap" type="number" min="1" step="any" inputmode="decimal" aria-invalid="false"></div>
@@ -1728,7 +1766,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
           <div class="trow"><span class="k" data-i18n="fa.ticket.gate">готовность данных</span><span class="num" id="ticketGate">-</span></div>
           <div id="ticketErr" class="ticket-err" role="alert" hidden></div>
           <div class="ticket-actions">
-            <button id="ticketConfirm" class="paperbtn open" data-i18n="fa.ticket.confirm">Подтвердить · запустить</button>
+            <button id="ticketConfirm" class="paperbtn open" data-i18n="fa.ticket.confirm">Подтвердить · открыть вручную</button>
             <button id="ticketCancel" class="paperbtn" data-i18n="fa.ticket.cancel">Отмена</button>
           </div>
         </div>
@@ -1974,7 +2012,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
       <div class="d"><span class="i b">B</span><span><b data-i18n="fa.foot.d4b">Короткие окна шумны.</b> <span data-i18n="fa.foot.d4">Годовая оценка по 1–7 дням чувствительна к отдельным часам и не является прогнозом. Проверяйте медиану, долю положительных часов, смены знака и ликвидность вместе.</span></span></div>
       <div class="d"><span class="i a">D</span><span><b data-i18n="fa.foot.d5b">Актуальность данных.</b> <span data-i18n="fa.foot.d5">Историческое окно (до 365 дней) подтягивается с бирж и дополняется каждый час; текущие ставки опрашиваются каждые несколько минут. Фактическая свежесть - в отметке «данные по состоянию на &lt;UTC&gt;» вверху.</span></span></div>
       <div class="d"><span class="i b">F</span><span><b data-i18n="fa.foot.d6b">Точность исполнения ограничена.</b> <span data-i18n="fa.foot.d6">Paper-ledger использует живые ставки, но не моделирует ликвидацию, динамический price impact, фактическое проскальзывание и кросс-биржевой ценовой базис. Эти риски нельзя выводить из показанного funding P&amp;L.</span></span></div>
-      <div class="d"><span class="i a">Z</span><span><b data-i18n="fa.foot.d7b">Две зоны - два смысла P&amp;L.</b> <span data-i18n="fa.foot.d7">«Ⅱ · Торговля» показывает реализованный результат бумажных позиций с момента запуска (t0), всегда нетто. «Ⅰ · Анализ» - историческую гипотезу за выбранное окно (знак «≈»). Период, режим брутто/нетто и плечо анализа на торговый счёт не влияют.</span></span></div>
+      <div class="d"><span class="i a">Z</span><span><b data-i18n="fa.foot.d7b">Две зоны - два смысла P&amp;L.</b> <span data-i18n="fa.foot.d7">«Ⅱ · Торговля» показывает реализованный результат позиций счёта с момента запуска (t0), всегда нетто. «Ⅰ · Анализ» - историческую гипотезу за выбранное окно (знак «≈»). Период, режим брутто/нетто и плечо анализа на торговый счёт не влияют.</span></span></div>
     </div>
     <div class="foot-src">
       <span data-i18n="fa.foot.src">Источники: GMX Subsquid (gmx-synthetics) · Hyperliquid info API · Binance 1h klines</span>
@@ -4808,13 +4846,12 @@ if($('tradeBody')) $('tradeBody').addEventListener('click', (e)=>{
   const tr = e.target.closest('tr[data-pos-id]');
   if(tr){ tradeUi.selectedId = tr.dataset.posId; renderTrade(); }
 });
-// путь к запуску из зоны Ⅱ (полоса-заглушка И шапка зоны): скролл к CTA + открыть тикет
+// путь к ручному запуску из шапки зоны Ⅱ: скролл к настоящему CTA + открыть его тикет
 function gotoLaunch(){
   const b=$('paperBtn'); if(!b) return;
   b.scrollIntoView({behavior:smoothOk()?'smooth':'auto', block:'center'});
   openTicket();
 }
-if($('tradeGoto')) $('tradeGoto').onclick = gotoLaunch;
 if($('tradeNewBtn')) $('tradeNewBtn').onclick = gotoLaunch;
 
 /* ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -5356,10 +5393,17 @@ function faOverviewAuto(){
   const a = LIVE.auto || null, btn = $('faPowerBtn');
   const on = !!(a && a.on);
   if(btn){
-    btn.removeAttribute('data-i18n');
+    btn.removeAttribute('data-i18n'); btn.removeAttribute('data-i18n-title');
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     if(!on && FA_AUTO_UI.powerArmed) faDisarmPower();
-    if(!FA_AUTO_UI.powerArmed) btn.textContent = on ? t('home.fa.powerOff') : t('home.fa.powerOn');
+    /* ПОДПИСЬ ВЫКЛЮЧЕННОГО СОСТОЯНИЯ НАЗЫВАЕТ ПУНКТ НАЗНАЧЕНИЯ, А НЕ ДЕЙСТВИЕ, и это исправление
+       вранья, а не стиль: клик отсюда НЕ включает автомат, он переносит на вкладку бота, к пульту
+       и открывает тикет (см. `faPowerClick`). Включённое состояние наоборот останавливает прямо
+       здесь, поэтому пара подписей асимметрична намеренно. Заголовок объясняет оба шага. */
+    if(!FA_AUTO_UI.powerArmed){
+      btn.textContent = on ? t('home.fa.powerOff') : t('home.fa.powerOn');
+      btn.title = on ? t('home.fa.powerOffTitle') : t('home.fa.powerOnTitle');
+    }
   }
   if(!a || !(on || a.corrupt)) return;
   const s = faAutoState(LIVE);
