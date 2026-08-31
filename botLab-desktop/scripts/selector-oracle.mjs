@@ -115,7 +115,7 @@ async function run() {
 
   // BotLab shell: the app now boots into the "Обзор" (home) view with the funding-arb view hidden.
   // This oracle drives the funding-arb DOM directly (computed-style + help-popover visibility checks),
-  // so make every view (and the funding-arb-only #botTools) visible up front — restoring the
+  // so make every view (and the funding-arb-only #botTools) visible up front - restoring the
   // single-page visibility the checks below rely on.
   await win.webContents.executeJavaScript(`(() => {
     document.querySelectorAll('section.view').forEach(v => { v.hidden = false; });
@@ -188,7 +188,7 @@ async function run() {
   const posDs = structuredClone(datasets[`two|${TWO_LEG[0].key}|B|7`]);
   posDs.positions = [{ id:"oracle-pos", strategy:"two", instrumentKey:TWO_LEG[0].key, config:"A", capital:1000, leverage:1, notional:1000, createdAt:Date.UTC(2025,11,31), status:"open", roundTripCost:4.1, summary:{grossPnl:2,netPnl:-2.1,roundTripCost:4.1,apr:0,aprGross:0.1,aprReliable:false,hoursElapsed:2,gapSkippedSec:0,maxDrawdown:-1}, equityCurve:[] }];
   // Двухзонный редизайн: герой анализа ВСЕГДА гипотеза и описывает селектор; собственный конфиг
-  // позиции пинуется в деталях зоны Ⅱ (#paperBox), реализованный P&L — в её кокпите.
+  // позиции пинуется в деталях зоны Ⅱ (#paperBox), реализованный P&L - в её кокпите.
   const posObserved = await win.webContents.executeJavaScript(`(() => { Object.assign(state,${JSON.stringify(posCase)},{mode:'net'}); applyDataset(${JSON.stringify(posDs)}); render(); return {heroLbl:document.getElementById('heroLbl').textContent, heroCfg:document.getElementById('heroCfg').textContent, paper:document.getElementById('paperBox').textContent, tradeStatus:document.getElementById('tradeStatus').textContent, tradePnl:document.getElementById('tradePnl').textContent}; })()`);
   if (!posObserved.heroLbl.includes("гипотеза")) throw new Error("hero must stay hypothesis-only with a position present");
   if (!posObserved.heroCfg.includes("Конфигурация B") || posObserved.heroCfg.includes("селектор")) throw new Error("hero cfg pill must describe the selector, not the position");
@@ -206,7 +206,7 @@ async function run() {
   if (!closedObserved.heroLbl.includes("гипотеза")) throw new Error("hero regressed to position mode");
 
   // ZONE SEMANTICS (двухзонный редизайн, регрессия к «застывшим −$373»): герой анализа обязан
-  // следовать окну (гипотеза), кокпит торговли — игнорировать его (t0-числа), пустой счёт —
+  // следовать окну (гипотеза), кокпит торговли - игнорировать его (t0-числа), пустой счёт -
   // тихая полоса-заглушка вместо кокпита.
   const zsKey = TWO_LEG[0].key;
   const zds1 = structuredClone(datasets[`two|${zsKey}|A|1`]);     zds1.positions = [posDs.positions[0]];
@@ -225,7 +225,7 @@ async function run() {
   })()`);
   if (zs.a.h === zs.b.h) throw new Error("zoneSemantics: analysis hero must respond to win 1→365");
   if (zs.a.t !== zs.b.t) throw new Error("zoneSemantics: trade cockpit must ignore the win toggle");
-  if (!zs.empty.idle || !zs.empty.emptyShown || !zs.empty.pnl.includes("—")) throw new Error("zoneSemantics: empty state failed");
+  if (!zs.empty.idle || !zs.empty.emptyShown || !zs.empty.pnl.includes("-")) throw new Error("zoneSemantics: empty state failed");
 
   // ЖУРНАЛ ОПЕРАЦИЙ: реальная позиция движка → buildLedger → DOM-итоги виджета обязаны
   // сходиться и с движком, и с netPnl позиции (двойная сверка), страница ≤ 200 строк,
@@ -240,14 +240,14 @@ async function run() {
   const LSNAP = { f_long: -1e-8, f_short: 1e-8, b_long: 0, b_short: 2e-9, hl_rate: 1e-5 };
   for (let i = 1; i <= 300; i++) accrue(lp, LSNAP, LT0 + i * 10 * 60 * 1000, { markPx: 3000 + i }); // 300 тиков по 10 мин
   recordUnpricedGap(lp, LT0 + 301 * 10 * 60 * 1000, "oracle outage");
-  delete lp.accruals[0].fundingUsd; // первый тик — «легаси»-запись без сплита (fallback-путь)
+  delete lp.accruals[0].fundingUsd; // первый тик - «легаси»-запись без сплита (fallback-путь)
   delete lp.accruals[0].borrowUsd;
   const lpEvents = buildLedger(lp);
   const lpRecon = ledgerReconciles(lp, lpEvents);
   if (!lpRecon.ok) throw new Error(`ledger engine reconciliation failed: ${JSON.stringify(lpRecon)}`);
   const lpViewDesc = ledgerView(lp, { offset: 0, limit: 200, order: "desc", types: [] });
   const lpTot = ledgerTotals(lpEvents);
-  // итоги журнала рендерятся с 4 знаками (та же точность, что строки) — суб-центовые тики
+  // итоги журнала рендерятся с 4 знаками (та же точность, что строки) - суб-центовые тики
   // при 2 знаках показывали «$0.00» при непустой колонке дохода
   const usd4 = (v) => (v < 0 ? "−" : "") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
   const lpProj = {
@@ -339,7 +339,7 @@ async function run() {
     throw new Error(`focusout flush missing (DEV-07): ${JSON.stringify(costPersist)}`);
 
   // ── helpCoverage (§16.4): every .help-btn[data-help] ⇄ HELP entry, and each popover opens VISIBLE
-  // with a non-empty h4 + body (computed styles, not a bare DOM assert — our lesson). Regression-locks
+  // with a non-empty h4 + body (computed styles, not a bare DOM assert - our lesson). Regression-locks
   // "every feature ships its Help entry" now that HELP is split into namespaces (§16.2).
   const help = await win.webContents.executeJavaScript(`(() => {
     const keys = Object.keys(HELP);
@@ -377,8 +377,8 @@ async function run() {
   if (!help.hasUpdater) throw new Error("helpCoverage: the 'updater' Help entry is missing");
 
   // ── updaterStates (§17.2): drive all 8 pill states through the renderer's presentation layer and
-  // assert labels, classes, clickability, computed color for tonal states, popover contents, and — the
-  // security-critical one — that untrusted release notes / error text stay INERT (textContent, §8.4).
+  // assert labels, classes, clickability, computed color for tonal states, popover contents, and - the
+  // security-critical one - that untrusted release notes / error text stay INERT (textContent, §8.4).
   // The oracle window has no main process, so we drive UPD/renderVerpill directly (the same seam the
   // mock IPC feeds in the packaged app); window.fa stays undefined so the action buttons are no-ops.
   const upd = await win.webContents.executeJavaScript(`(() => {
@@ -391,7 +391,7 @@ async function run() {
     set({ ...base, state:'upToDate' });    out.upToDate = { txt: txt.textContent, cls: pill.className };
     set({ ...base, state:'downloading', next:'0.3.0', percent:42 }); out.downloading = { txt: txt.textContent, bg: pill.style.background, clickable: pill.classList.contains('clickable') };
     set({ ...base, state:'installing' });  out.installing = { txt: txt.textContent, clickable: pill.classList.contains('clickable') };
-    // available: popover + escaping — inject BOTH a <script> and an <img onerror> (the latter fires via
+    // available: popover + escaping - inject BOTH a <script> and an <img onerror> (the latter fires via
     // innerHTML but must NOT via textContent). Neither may run or become a DOM node.
     window.__updXss = false;
     set({ ...base, state:'available', next:'0.3.0', notes:'<img src=x onerror="window.__updXss=true">\\n<script>window.__updXss=true</script>\\nRELEASE NOTES' });
@@ -436,13 +436,13 @@ async function run() {
   if (upd.available.txt !== "Доступна v0.3.0" || !upd.available.popVisible || upd.available.role !== "dialog") throw new Error("updaterStates: available pill/popover wrong: " + JSON.stringify(upd.available));
   if (!uEq(upd.available.buttons, ["Скачать", "Что нового"])) throw new Error("updaterStates: available buttons wrong: " + JSON.stringify(upd.available.buttons));
   if (!upd.available.notesText.includes("RELEASE NOTES") || !upd.available.notesText.includes("<script>")) throw new Error("updaterStates: notes must carry the LITERAL escaped markup: " + JSON.stringify(upd.available.notesText));
-  if (upd.available.liveNodes !== 0) throw new Error("updaterStates: release notes injected LIVE nodes — XSS boundary breached");
+  if (upd.available.liveNodes !== 0) throw new Error("updaterStates: release notes injected LIVE nodes - XSS boundary breached");
   if (upd.downloaded.txt !== "Перезапустить для v0.3.0" || !upd.downloaded.reassure || !upd.downloaded.reassure.includes("сохраняются")) throw new Error("updaterStates: downloaded reassurance wrong: " + JSON.stringify(upd.downloaded));
   if (!uEq(upd.downloaded.buttons, ["Перезапустить", "Что нового"])) throw new Error("updaterStates: downloaded buttons wrong: " + JSON.stringify(upd.downloaded.buttons));
-  if (!upd.error.cls.includes("error") || upd.error.headline !== "Файл повреждён — установка не начата") throw new Error("updaterStates: error headline wrong: " + JSON.stringify(upd.error));
+  if (!upd.error.cls.includes("error") || upd.error.headline !== "Файл повреждён - установка не начата") throw new Error("updaterStates: error headline wrong: " + JSON.stringify(upd.error));
   if (!uEq(upd.error.buttons, ["Повторить", "Скачать вручную", "Показать лог"])) throw new Error("updaterStates: error three-exits wrong: " + JSON.stringify(upd.error.buttons));
   if (upd.error.msgLiveNodes !== 0 || !upd.error.msgText.includes("<b>")) throw new Error("updaterStates: error message must be inert text (textContent)");
-  if (upd.xssRan) throw new Error("updaterStates: release-notes payload EXECUTED — critical XSS failure");
+  if (upd.xssRan) throw new Error("updaterStates: release-notes payload EXECUTED - critical XSS failure");
 
   await win.close();
   console.log(JSON.stringify({ selectorCombinations: comboChecks, selectionDatasets: cases.length, fuzzSteps: fuzz.steps, violations: 0, rendererWarnings: rendererWarnings.length, positionConfig: "pass", newestClosed: "pass", zoneSemantics: "pass", costValidation: "pass", costPersistence: "pass", ledgerReconciliation: "pass", ledgerZoneIsolation: "pass", ledgerClosedRetention: "pass", ledgerMismatchAlarm: "pass", helpCoverage: help.entries + " entries", updaterStates: "pass" }));

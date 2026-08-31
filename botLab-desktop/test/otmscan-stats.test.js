@@ -1,4 +1,4 @@
-// otmscan-stats.test.js — S3b суточная статистика обкатки (src/main/scn-stats.js).
+// otmscan-stats.test.js - S3b суточная статистика обкатки (src/main/scn-stats.js).
 // Доказывает: (1) бины/клампы линейных и edges-спек; (2) квантили из sparse-гистограммы;
 // (3) фолд scanCycle: счётчики (тики/Д8/блэкаут/деградация/фазы), значения условий по unit,
 // экономика лучшего (rtc/minCap/capOverEq); (4) редьюсер не мутирует вход (deepFreeze);
@@ -24,7 +24,7 @@ const deepFreeze = (o) => {
   return Object.freeze(o);
 };
 
-// Синтетический scanCycle — только поля, которые читает фолд (моки легальны: это тест).
+// Синтетический scanCycle - только поля, которые читает фолд (моки легальны: это тест).
 const mkCycle = (over = {}) => ({
   preset: { id: "dmitri-v1" },
   score: { verdict: "none" },
@@ -56,7 +56,7 @@ test("binIndexOf: линейные спеки с клампами в крайн�
 
 test("binIndexOf/binBounds: edges-спеки (глубина, minCapital)", () => {
   const spec = SCN_STATS_BINS.minCapUsd;
-  assert.equal(binIndexOf(spec, 10), 0); // ниже первой грани — первый бин
+  assert.equal(binIndexOf(spec, 10), 0); // ниже первой грани - первый бин
   assert.equal(binIndexOf(spec, 99.99), 3); // [75, 100)
   assert.equal(binIndexOf(spec, 100), 4); // грань 100 = дефолт-депозит открывает свой бин
   assert.equal(binIndexOf(spec, 1e9), spec.edges.length - 1); // последний открыт вверх

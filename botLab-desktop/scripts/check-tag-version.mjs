@@ -1,9 +1,9 @@
-// check-tag-version.mjs — release gate (OTA plan §7.3, §7.5).
+// check-tag-version.mjs - release gate (OTA plan §7.3, §7.5).
 //
 // The version lives in exactly ONE place: package.json "version". The git tag that triggers a
 // release must be "v<that version>". This script makes that invariant enforceable in CI: if a tag
 // is pushed whose name disagrees with package.json, the release job fails BEFORE anything is built,
-// signed, or published — so a mistagged release can never reach users.
+// signed, or published - so a mistagged release can never reach users.
 //
 // Tag source, in priority order:
 //   1. an explicit CLI arg          → `node scripts/check-tag-version.mjs v0.2.0` (local check)
@@ -30,10 +30,10 @@ if (!tag) {
 
 if (tag !== expected) {
   console.error(
-    `check-tag-version: FAIL — git tag "${tag}" does not match package.json version "${expected}".\n` +
+    `check-tag-version: FAIL - git tag "${tag}" does not match package.json version "${expected}".\n` +
       `  Fix: set package.json "version" to ${tag.replace(/^v/, "")} (or retag as ${expected}).`,
   );
   process.exit(1);
 }
 
-console.log(`check-tag-version: OK — tag "${tag}" matches package.json version.`);
+console.log(`check-tag-version: OK - tag "${tag}" matches package.json version.`);

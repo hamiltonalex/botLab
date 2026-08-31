@@ -1,4 +1,4 @@
-// btcopt-stress.test.js — golden what-if stress scenarios (Phase 2d): IV via net_vega·ΔIV, ±10% tail
+// btcopt-stress.test.js - golden what-if stress scenarios (Phase 2d): IV via net_vega·ΔIV, ±10% tail
 // pinned to the wing cap (terminal payoff), the instant/terminal hybrid crossover, and funding stress.
 // PURE, inline fixtures. Uses the btcopt-engine worked example (net_vega 4.2, net_gamma 0.006, D 777).
 import test from "node:test";

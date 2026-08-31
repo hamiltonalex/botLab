@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// eval-relax.mjs — «сколько сделок мы получили бы, если ослабить требования». READ-ONLY, без сети.
+// eval-relax.mjs - «сколько сделок мы получили бы, если ослабить требования». READ-ONLY, без сети.
 //
 // ЗАЧЕМ. За 72 часа сканер не выдал ни одного сигнала. Вопрос «какой порог и на сколько надо
 // отпустить, чтобы вход открылся» нельзя решать вслепую: у нас есть запись всех значений на каждом
@@ -63,7 +63,7 @@ const byId = Object.fromEntries(COND.map((c) => [c.id, c]));
 function passOne(c, t, thr) {
   if (c.cmp === "state") return (t.St || "")[c.i] === "p";
   const v = (t.V || {})[c.id];
-  if (!fin(v)) return (t.St || "")[c.i] === "p"; // значения нет — доверяем записанному состоянию
+  if (!fin(v)) return (t.St || "")[c.i] === "p"; // значения нет - доверяем записанному состоянию
   if (c.cmp === "ge") return v >= thr;
   if (c.cmp === "le") return v <= thr;
   if (c.cmp === "band") return v >= thr[0] && v <= thr[1];
@@ -72,7 +72,7 @@ function passOne(c, t, thr) {
 const verdict = (t, cfg) => COND.every((c) => passOne(c, t, cfg[c.id] ?? c.base));
 
 // Сделки: DWELL тиков подряд рождают сигнал, дальше кулдаун. Возвращает список входов с тем,
-// ЧТО именно было бы куплено — иначе «много сделок» ничего не значит.
+// ЧТО именно было бы куплено - иначе «много сделок» ничего не значит.
 function trades(cfg) {
   const out = [];
   let run = 0, until = 0;
@@ -98,7 +98,7 @@ const what = (tr) => {
 
 console.log(`# Сколько сделок дало бы ослабление требований\n`);
 console.log(`Запись: ${ticks.length} тиков, ${f(spanH,1)} ч. Сделка = ${DWELL} тика подряд + кулдаун ${COOLDOWN_S/60} мин.`);
-console.log(`Базовый набор порогов — пресет «${P.label}», тот же, на котором шла обкатка.\n`);
+console.log(`Базовый набор порогов - пресет «${P.label}», тот же, на котором шла обкатка.\n`);
 
 console.log(`## 1. Ослабляем ПО ОДНОМУ, остальное не трогаем\n`);
 console.log(`| требование | порог | сделок |`);
@@ -112,7 +112,7 @@ for (const c of COND) {
 }
 
 console.log(`\n## 2. Двумерная сетка: два условия, которые не выполнялись\n`);
-console.log(`Строки — запас недооценки воли (сейчас ${P.dIvPts} п.п.), столбцы — насколько ближняя воля`);
+console.log(`Строки - запас недооценки воли (сейчас ${P.dIvPts} п.п.), столбцы - насколько ближняя воля`);
 console.log(`может быть НИЖЕ дальней (сейчас требуется выше на ${P.fivMinPts}). Остальное не трогаем.\n`);
 const U2 = [5, 4, 3, 2, 1, 0];
 const U6 = [0.5, 0, -1, -2, -3, -4, -5];
@@ -124,7 +124,7 @@ for (const a of U2) {
 }
 console.log(`\n(· означает ноль сделок)`);
 
-console.log(`\n## 3. Добавляем третье условие — импульс\n`);
+console.log(`\n## 3. Добавляем третье условие - импульс\n`);
 console.log(`| импульс | запас 3 / ближняя-дальняя −3 | запас 1 / −4 | запас 0 / −5 |`);
 console.log(`|---|---|---|---|`);
 for (const imp of [0.7, 0.6, 0.5, 0.4, 0.3]) {
@@ -148,7 +148,7 @@ for (const [name, cfg] of [
   const tr = trades(cfg);
   const B = tr.map((t) => t.B).filter(Boolean);
   const days = tr.filter((t) => t.B).map((t) => (t.B.e - t.ts) / 86400000);
-  console.log(`| ${name} | **${tr.length}** | ${B.length ? f(med(B.map((b) => b.pr))) : "—"} | ${B.length ? f(med(B.map((b) => b.th)),1) : "—"} | ${B.length ? f(med(B.map((b) => b.rtc)),1) : "—"} | ${days.length ? f(med(days),1) + "д" : "—"} |`);
+  console.log(`| ${name} | **${tr.length}** | ${B.length ? f(med(B.map((b) => b.pr))) : "-"} | ${B.length ? f(med(B.map((b) => b.th)),1) : "-"} | ${B.length ? f(med(B.map((b) => b.rtc)),1) : "-"} | ${days.length ? f(med(days),1) + "д" : "-"} |`);
 }
 
 console.log(`\n## 5. Ни одно требование в одиночку не открывает вход\n`);

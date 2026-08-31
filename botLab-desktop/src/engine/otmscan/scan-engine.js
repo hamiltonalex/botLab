@@ -1,30 +1,30 @@
-// scan-engine.js — «OTM-сканер» ядро оценки и жизненного цикла сигнала (S1, план §3.2/§5.3-§5.6).
-// PURE: nowMs всегда аргумент, ни Date.now, ни fetch, ни fs — одинаковые (state, inputs, preset,
+// scan-engine.js - «OTM-сканер» ядро оценки и жизненного цикла сигнала (S1, план §3.2/§5.3-§5.6).
+// PURE: nowMs всегда аргумент, ни Date.now, ни fetch, ни fs - одинаковые (state, inputs, preset,
 // nowMs) дают одинаковый scanCycle (acceptance §12-S1). Кольца и кэши живут в main (S2); движок
 // получает подготовленный inputs-объект и остаётся O(1) на тик (паттерн snapshot.ivContext бота 2).
 //
-// ── Контракт inputs (собирает main в S2; в тестах — фикстуры):
-//   settings        — defaultScanSettings()-форма (dwell/ttl/cooldown/hyst/equity/риск/σ-конвенция);
-//   perp            — { indexPrice, markPrice, tsMs } тикер BTC-PERPETUAL (S = indexPrice);
-//   candlesBundle   — computeRvBundle() из rv.js (main пересчитывает при обновлении свечей);
-//   candlesTsMs     — момент последнего обновления свечей;
-//   ivRef           — { nearPct, nearExpiryMs, farPct, farExpiryMs, source: "atm"|"dvol", tsMs, farTsMs };
-//   ivRefByExpiry   — { [expiryMs]: ivPct } для σ-горизонта кандидатных экспираций;
-//   dvol            — { baselineIvPct, tsMs } среднее дневных закрытий DVOL за 90д;
-//   wings           — { putIvPct, callIvPct, tsMs } крылья ±1σ (У7);
-//   chain           — { instruments: [...] } кэш get_instruments (USDC);  chainTsMs;
-//   instruments     — { [name]: { mark, bid, ask, markIv, theta, delta, tsMs,
+// ── Контракт inputs (собирает main в S2; в тестах - фикстуры):
+//   settings        - defaultScanSettings()-форма (dwell/ttl/cooldown/hyst/equity/риск/σ-конвенция);
+//   perp            - { indexPrice, markPrice, tsMs } тикер BTC-PERPETUAL (S = indexPrice);
+//   candlesBundle   - computeRvBundle() из rv.js (main пересчитывает при обновлении свечей);
+//   candlesTsMs     - момент последнего обновления свечей;
+//   ivRef           - { nearPct, nearExpiryMs, farPct, farExpiryMs, source: "atm"|"dvol", tsMs, farTsMs };
+//   ivRefByExpiry   - { [expiryMs]: ivPct } для σ-горизонта кандидатных экспираций;
+//   dvol            - { baselineIvPct, tsMs } среднее дневных закрытий DVOL за 90д;
+//   wings           - { putIvPct, callIvPct, tsMs } крылья ±1σ (У7);
+//   chain           - { instruments: [...] } кэш get_instruments (USDC);  chainTsMs;
+//   instruments     - { [name]: { mark, bid, ask, markIv, theta, delta, tsMs,
 //                                 book: { bidDepthUsd, askDepthUsd, tsMs } } } тикеры кандидатов;
-//   event           — { flagged, note, untilTs } ручной флаг события (тулбар);
-//   usDiffMs        — рассинхрон часов с биржей (health warn).
+//   event           - { flagged, note, untilTs } ручной флаг события (тулбар);
+//   usDiffMs        - рассинхрон часов с биржей (health warn).
 //
-// ── Контракт сигнала §8.1 — ЗАМОРОЖЕН в S1 (фикстура-пример test/fixtures/otmscan/signal-example.json):
+// ── Контракт сигнала §8.1 - ЗАМОРОЖЕН в S1 (фикстура-пример test/fixtures/otmscan/signal-example.json):
 //   { id: "scn-<ts>-<instrument>", ts, asset: "BTC", instrument, direction: "call"|"put",
 //     expiryMs, strike, sigmaDist, qtySuggested, premiumAtSignal, spotAtSignal,
 //     presetId, thresholds: <полный снапшот пресета>, conditionsSnapshot: [{ key, idx, value,
 //     threshold, state, mode }], ttlSec, mode: "AND"|"score", score: "12/13" }
-//   Служебное дополнение v1 (аддитивно к §8.1): eventNote — пометка события на момент рождения.
-//   Сигнал — СНИМОК: после рождения не переоценивается (оценка живая — сигнал снимок).
+//   Служебное дополнение v1 (аддитивно к §8.1): eventNote - пометка события на момент рождения.
+//   Сигнал - СНИМОК: после рождения не переоценивается (оценка живая - сигнал снимок).
 
 import { SCAN_DATA_RULES, defaultScanSettings } from "./presets.js";
 import { selectCandidates, sigmaHorizonPct, sigmaDistOf } from "./candidates.js";
@@ -37,14 +37,14 @@ const YEAR_MS = 365 * 86400000;
 const HOUR_MS = 3600000;
 const snapLot = (q, lot) => Math.round(Math.round(q / lot) * lot * 1e8) / 1e8; // гигиена float на лот-сетке
 
-// Персистентное состояние редьюсера — JSON-round-trip чистый (активный сигнал переживает рестарт,
-// §7 случай 14). Телеметрия — накопители §5.6 (сессия + суточные вёдра UTC).
+// Персистентное состояние редьюсера - JSON-round-trip чистый (активный сигнал переживает рестарт,
+// §7 случай 14). Телеметрия - накопители §5.6 (сессия + суточные вёдра UTC).
 export function createScanState() {
   return {
     schemaVersion: 1,
     phase: "idle", // idle | forming | active
     dwellCount: 0,
-    dwellKey: null, // `${instrument}|${side}|${presetId}` — сигнал зреет на одном инструменте и пресете
+    dwellKey: null, // `${instrument}|${side}|${presetId}` - сигнал зреет на одном инструменте и пресете
     failCount: 0, // подряд none-вердиктов при ACTIVE (порог failTicks)
     signal: null, // замороженный контракт §8.1, пока phase === "active"
     cooldowns: {}, // `${instrument}|${side}` → untilTs (план §5.5)
@@ -55,7 +55,7 @@ export function createScanState() {
 }
 
 // Блэкаут §5.5: окно расчёта 08:00 UTC (±blackoutDailyWindowSec) и преэкспирация кандидата.
-// В отличие от бота 2 возвращает untilTs — контракт UI требует обратный отсчёт (ui-spec §1.4).
+// В отличие от бота 2 возвращает untilTs - контракт UI требует обратный отсчёт (ui-spec §1.4).
 export function scanBlackout(nowMs, expiryMs, rules = SCAN_DATA_RULES) {
   const secOfDay = (((nowMs / 1000) % 86400) + 86400) % 86400;
   const dailyActive = Math.abs(secOfDay - 28800) <= rules.blackoutDailyWindowSec;
@@ -68,7 +68,7 @@ export function scanBlackout(nowMs, expiryMs, rules = SCAN_DATA_RULES) {
 }
 
 // Sizing §5.3: бюджет риска, лот-гранулярность, кэп qtyMax и кэп глубины (А5). Честный отказ
-// min_lot_exceeds_risk вместо тихого округления вверх; отдельно qtyBudget (до кэпа глубины) —
+// min_lot_exceeds_risk вместо тихого округления вверх; отдельно qtyBudget (до кэпа глубины) -
 // его премия служит порогом У12 в режиме xPremium.
 export function computeSizing({ markUsd, lot, equityUsd, riskPerTradePct, qtyMax, entryDepthUsd, maxQtyDepthPct } = {}) {
   const base = {
@@ -131,7 +131,7 @@ export function aggregateVerdict(rows, preset) {
   return { verdict, passed, applicable: applicable.length, unknown: unknownIdx.length, need, coreOk, failedIdx, unknownIdx };
 }
 
-// Телеметрия-фолд §5.6: инкремент {evals, pass, fail, unknown} на условие — за сессию и в
+// Телеметрия-фолд §5.6: инкремент {evals, pass, fail, unknown} на условие - за сессию и в
 // суточное ведро UTC (кольцо telemetryDays). off не учитывается. Возвращает НОВЫЙ объект.
 export function foldTelemetry(telemetry, rows, nowMs, rules = SCAN_DATA_RULES) {
   const t = { session: { ...(telemetry?.session ?? {}) }, days: { ...(telemetry?.days ?? {}) } };
@@ -154,7 +154,7 @@ export function foldTelemetry(telemetry, rows, nowMs, rules = SCAN_DATA_RULES) {
   return t;
 }
 
-// Окна телеметрии для dataset-контракта UI: сессия + «24ч». Гранулярность вёдер — сутки UTC,
+// Окна телеметрии для dataset-контракта UI: сессия + «24ч». Гранулярность вёдер - сутки UTC,
 // поэтому h24 = сегодняшнее + вчерашнее ведро (честная аппроксимация до S6-градуации).
 export function telemetryWindows(telemetry, nowMs) {
   const keys = [new Date(nowMs).toISOString().slice(0, 10), new Date(nowMs - 86400000).toISOString().slice(0, 10)];
@@ -175,8 +175,8 @@ export function telemetryWindows(telemetry, nowMs) {
 
 const asMetas = (chain) => (Array.isArray(chain) ? chain : chain?.instruments ?? []);
 
-// ── Главный вход: один тик оценки. Возвращает { state, cycle }; state — НОВЫЙ объект
-// (редьюсер не мутирует вход), cycle — полный dataset-контракт UI (§9 плана + правки ui-spec
+// ── Главный вход: один тик оценки. Возвращает { state, cycle }; state - НОВЫЙ объект
+// (редьюсер не мутирует вход), cycle - полный dataset-контракт UI (§9 плана + правки ui-spec
 // §1.4: conditions[].mode, score.{need,coreOk}, telemetry.{session,h24}, blackout.untilTs).
 export function evaluateScan(state, inputs, preset, nowMs) {
   const st = state ?? createScanState();
@@ -196,7 +196,7 @@ export function evaluateScan(state, inputs, preset, nowMs) {
     chainSec: age(inputs?.chainTsMs),
   };
   // stale = true только при ИЗВЕСТНОМ возрасте сверх лимита; отсутствующие данные дают свои
-  // собственные unknown-причины на уровне условий (протухло и отсутствует — разные ноты).
+  // собственные unknown-причины на уровне условий (протухло и отсутствует - разные ноты).
   const stale = {
     perp: ages.perpSec != null && ages.perpSec > staleTickSec,
     candles: ages.candlesSec != null && ages.candlesSec > rules.staleCandlesSec,
@@ -212,7 +212,7 @@ export function evaluateScan(state, inputs, preset, nowMs) {
     posNum(perp.indexPrice) && fin(perp.markPrice)
       ? (Math.abs(perp.markPrice - perp.indexPrice) / perp.indexPrice) * 100 > rules.anomalyPct
       : false;
-  const spotUntrusted = anomaly || stale.perp || spot == null; // условия от S — unknown (§7 случаи 1, 11)
+  const spotUntrusted = anomaly || stale.perp || spot == null; // условия от S - unknown (§7 случаи 1, 11)
   const usDiffWarn = fin(inputs?.usDiffMs) && Math.abs(inputs.usDiffMs) > rules.usDiffWarnMs;
   const utcDay = new Date(nowMs).getUTCDay();
   const weekend = utcDay === 0 || utcDay === 6;
@@ -236,7 +236,7 @@ export function evaluateScan(state, inputs, preset, nowMs) {
   });
 
   // Обогащение кандидата тикером/книгой/издержками; У12-xPremium получает премию позиции
-  // из бюджетного размера (до кэпа глубины — глубина сама её и гейтит).
+  // из бюджетного размера (до кэпа глубины - глубина сама её и гейтит).
   const enrich = (c) => {
     const t = inputs?.instruments?.[c.instrument] ?? {};
     const book = t.book ?? {};
@@ -296,7 +296,7 @@ export function evaluateScan(state, inputs, preset, nowMs) {
     };
   });
 
-  // Лучший кандидат — максимум pass по инструментным gate-условиям; ничьи решает порядок
+  // Лучший кандидат - максимум pass по инструментным gate-условиям; ничьи решает порядок
   // candidates.js (близость к середине σ-окна). При ACTIVE оценка пинуется на инструменте
   // сигнала (сигнал зреет и живёт на конкретном инструменте, §5.5).
   let bestEntry = enriched.length
@@ -345,7 +345,7 @@ export function evaluateScan(state, inputs, preset, nowMs) {
   const perpBookAge = age(inputs?.perpBook?.tsMs);
   const perpBookStale = perpBookAge != null && perpBookAge > staleTickSec;
 
-  // ── Stage B · условия по активу (книга У8 — от лучшего/пинованного кандидата).
+  // ── Stage B · условия по активу (книга У8 - от лучшего/пинованного кандидата).
   const assetRows = evaluateAssetConditions({
     preset,
     side,
@@ -356,7 +356,7 @@ export function evaluateScan(state, inputs, preset, nowMs) {
     baselineIvPct: inputs?.dvol?.baselineIvPct ?? null,
     wings: inputs?.wings ?? null,
     // У8 мерит дисбаланс по стакану ПЕРПА, а не по книге кандидата: книги опционов забираются ≤2
-    // финалистам за тик, и за 72ч прогона 3 глубина набрала 56 замеров из 8758 — на такой выборке
+    // финалистам за тик, и за 72ч прогона 3 глубина набрала 56 замеров из 8758 - на такой выборке
     // условие не живёт. Перп стоит один вызов и есть всегда.
     book: inputs?.perpBook ? { bidDepthUsd: inputs.perpBook.bidDepthUsd, askDepthUsd: inputs.perpBook.askDepthUsd } : null,
     ages: { candlesSec: ages.candlesSec, ivRefSec: ages.ivRefSec, farIvSec: ages.farIvSec, dvolSec: ages.dvolSec, wingsSec: ages.wingsSec, bookSec: age(inputs?.perpBook?.tsMs) },
@@ -365,7 +365,7 @@ export function evaluateScan(state, inputs, preset, nowMs) {
   });
   const instrumentRows = bestEntry
     ? bestEntry.rows
-    : evaluateInstrumentConditions(null, instCtx); // «нет кандидатов» — весь блок unknown (§7 случай 6)
+    : evaluateInstrumentConditions(null, instCtx); // «нет кандидатов» - весь блок unknown (§7 случай 6)
 
   // ── Stage D · гистерезис, агрегат, sizing, lifecycle.
   const { rows: effRows, memory: hystMemory } = applyHysteresis([...assetRows, ...instrumentRows], st.hyst, settings.hystPct);
@@ -378,7 +378,7 @@ export function evaluateScan(state, inputs, preset, nowMs) {
         equityUsd: settings.equityUsd,
         riskPerTradePct: settings.riskPerTradePct,
         qtyMax: settings.qtyMax,
-        entryDepthUsd: target.askDepthUsd, // сторона входа покупателя — ask
+        entryDepthUsd: target.askDepthUsd, // сторона входа покупателя - ask
         maxQtyDepthPct: preset.maxQtyDepthPct,
       })
     : null;

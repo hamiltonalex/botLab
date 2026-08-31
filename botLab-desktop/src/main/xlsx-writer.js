@@ -1,7 +1,7 @@
-// xlsx-writer.js — minimal dependency-free XLSX (OOXML spreadsheet) writer for the ledger export.
+// xlsx-writer.js - minimal dependency-free XLSX (OOXML spreadsheet) writer for the ledger export.
 // An .xlsx is a ZIP of XML parts; this writer emits STORE-mode (uncompressed) ZIP entries with a
 // hand-computed CRC32 and the five mandatory parts + one worksheet. STORE trades file size for
-// zero risk of a subtly wrong DEFLATE stream — ledger exports are a few MB of text at worst.
+// zero risk of a subtly wrong DEFLATE stream - ledger exports are a few MB of text at worst.
 // Strings are written as inline strings (no sharedStrings part needed); numbers as raw <v>.
 // The project deliberately has ZERO runtime npm dependencies; do not replace this with a library.
 

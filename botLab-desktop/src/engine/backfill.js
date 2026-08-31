@@ -1,4 +1,4 @@
-// backfill.js — trailing-history acquisition with an INCREMENTALLY REFRESHED disk cache.
+// backfill.js - trailing-history acquisition with an INCREMENTALLY REFRESHED disk cache.
 // Builds the hourly frame that summary stats, trailing charts and offline-gap accrual run on.
 // Two-leg needs GMX+HL merged; one-leg needs GMX only.
 //

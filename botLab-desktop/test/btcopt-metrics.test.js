@@ -1,4 +1,4 @@
-// btcopt-metrics.test.js — golden run-metrics (Phase 2b): Sharpe / hit-rate / max drawdown / average
+// btcopt-metrics.test.js - golden run-metrics (Phase 2b): Sharpe / hit-rate / max drawdown / average
 // hedge size / peak Δ-excursion from crafted cycle-return series. PURE, inline fixtures (no fixture files).
 // "Cycle" = one reprice tick; cycle return = Δ net_total between consecutive ticks.
 import test from "node:test";
@@ -49,7 +49,7 @@ test("summarize: empty / single-cycle → zeros, no NaN", () => {
 
 test("accumulators survive JSON round-trip (peakNet null, never −Infinity)", () => {
   const acc = initMetrics();
-  foldCycle(acc, { net: -3, decision: "SKIP" }); // negative first net — peak must track it, not clamp to 0
+  foldCycle(acc, { net: -3, decision: "SKIP" }); // negative first net - peak must track it, not clamp to 0
   const revived = JSON.parse(JSON.stringify(acc)); // simulate saveBotState → load
   foldCycle(revived, { net: -1, decision: "SKIP" });
   near(summarize(revived).maxDrawdown, 0, 1e-12, "−3 → −1 is a gain, drawdown stays 0");

@@ -1,15 +1,15 @@
-// conditions.js — «OTM-сканер» условия У1-У14 (S1, план §5.2). PURE.
+// conditions.js - «OTM-сканер» условия У1-У14 (S1, план §5.2). PURE.
 // Каждое условие возвращает строку контракта чеклиста:
 //   { key, idx, group: "asset"|"instrument", mode: "gate"|"info"|"off", core,
 //     state: "pass"|"fail"|"unknown"|"off", value, threshold, thresholdHi, op, unit,
 //     note (русский, живой текст ячейки «Значение»), staleSec, hkey }
-// Семантика tri-state (план §5.2): unknown = данных нет или протухли — в строгом режиме
+// Семантика tri-state (план §5.2): unknown = данных нет или протухли - в строгом режиме
 // блокирует сигнал, в UI отличим от fail; off = выключено пресетом или календарём (выходные
-// для У6) — из агрегата исключено. Деградация данных даёт unknown и видимую причину, никогда
+// для У6) - из агрегата исключено. Деградация данных даёт unknown и видимую причину, никогда
 // молчаливый fail или фантомный pass (закон §7).
 //
-// Все пороги приходят из preset — в этом файле НЕТ ни одного числа-порога (урок аудита письма
-// Дмитрия). Гистерезис: hystPct (% ВЕЛИЧИНЫ порога) — условие, ставшее pass, теряет pass,
+// Все пороги приходят из preset - в этом файле НЕТ ни одного числа-порога (урок аудита письма
+// Дмитрия). Гистерезис: hystPct (% ВЕЛИЧИНЫ порога) - условие, ставшее pass, теряет pass,
 // только когда значение уходит за порог более чем на hyst в обратную сторону (план §5.4);
 // направление fail к pass переключается на самом пороге, без липкости.
 
@@ -21,7 +21,7 @@ const fmt = (x, d = 1) => (fin(x) ? x.toFixed(d) : "н/д");
 const fmtSign = (x, d = 1) => (fin(x) ? `${x >= 0 ? "+" : ""}${x.toFixed(d)}` : "н/д");
 const sideWord = (side) => (side === "call" ? "CALL" : side === "put" ? "PUT" : "н/д");
 
-// Порядок, группы, ядро и короткие имена строк (ui-spec §9) — единый реестр для агрегата,
+// Порядок, группы, ядро и короткие имена строк (ui-spec §9) - единый реестр для агрегата,
 // телеметрии и UI. Ядро score-режима: У1 + У10 + У14 (план §5.4, А5 ратифицирован).
 export const CONDITION_META = Object.freeze([
   { key: "rv7d_gt_iv", idx: "У1", group: "asset", core: true, label: "RV7d выше IV" },
@@ -43,7 +43,7 @@ export const CONDITION_META = Object.freeze([
 ]);
 const META = Object.fromEntries(CONDITION_META.map((m) => [m.key, m]));
 
-// Фабрика строки: заполняет реестровые поля и дефолты, остальное — из args.
+// Фабрика строки: заполняет реестровые поля и дефолты, остальное - из args.
 function row(key, args) {
   const m = META[key];
   return {
@@ -79,16 +79,16 @@ const unknown = (key, note, extra) => row(key, { state: "unknown", note, ...extr
 const condMode = (v) => (v === "off" ? "off" : v === "info" ? "info" : "gate");
 
 // ── Группа «актив» (У1-У8). ctx:
-//   preset; side ("call"|"put"|null — направление У4);
-//   bundle — computeRvBundle() из rv.js (rv7dPct, rv3dPct, sigma1dPct, dP24hPct, impulse,
+//   preset; side ("call"|"put"|null - направление У4);
+//   bundle - computeRvBundle() из rv.js (rv7dPct, rv3dPct, sigma1dPct, dP24hPct, impulse,
 //            direction, ema, emaPeriod, lastClose);
-//   ivRefPct/ivRefSource — ATM-IV кандидатной экспирации ("atm") или DVOL-фолбэк ("dvol");
-//   farIvPct — IV_ref дальней экспирации (≥ fivFarMinDays); baselineIvPct — среднее DVOL 90д;
-//   wings — { putIvPct, callIvPct } на страйках около ±1σ;
-//   book — { bidDepthUsd, askDepthUsd } книги лучшего кандидата (для У8);
-//   ages — { candlesSec, ivRefSec, farIvSec, dvolSec, wingsSec, bookSec } возраст источников;
-//   stale — { candles, ivRef, farIv, dvol, wings, book } булевы «протухло» (Stage A);
-//   weekend — суббота/воскресенье UTC (вычислено вызывающим из nowMs).
+//   ivRefPct/ivRefSource - ATM-IV кандидатной экспирации ("atm") или DVOL-фолбэк ("dvol");
+//   farIvPct - IV_ref дальней экспирации (≥ fivFarMinDays); baselineIvPct - среднее DVOL 90д;
+//   wings - { putIvPct, callIvPct } на страйках около ±1σ;
+//   book - { bidDepthUsd, askDepthUsd } книги лучшего кандидата (для У8);
+//   ages - { candlesSec, ivRefSec, farIvSec, dvolSec, wingsSec, bookSec } возраст источников;
+//   stale - { candles, ivRef, farIv, dvol, wings, book } булевы «протухло» (Stage A);
+//   weekend - суббота/воскресенье UTC (вычислено вызывающим из nowMs).
 export function evaluateAssetConditions(ctx) {
   const { preset, side, bundle = {}, ages = {}, stale = {} } = ctx;
   const rows = [];
@@ -104,7 +104,7 @@ export function evaluateAssetConditions(ctx) {
   };
   const rvIvAge = Math.max(ages.candlesSec ?? 0, ages.ivRefSec ?? 0) || (ages.candlesSec ?? ages.ivRefSec ?? null);
 
-  // У1 rv7d_gt_iv (ядро): RV7d > IV_ref. value = спред RV−IV в п.п., порог 0 СТРУКТУРНЫЙ —
+  // У1 rv7d_gt_iv (ядро): RV7d > IV_ref. value = спред RV−IV в п.п., порог 0 СТРУКТУРНЫЙ -
   // условие проверяет знак разности, пресетного числа у него нет. Отсюда rv7dMode: откалибровать
   // такое условие нельзя, можно только решить, гейт оно или измерение.
   {
@@ -156,7 +156,7 @@ export function evaluateAssetConditions(ctx) {
       if (wantMargin) noteParts.push(`RV−IV ${fmtSign(marginVal)} п.п.`);
       if (wantRatio) noteParts.push(ratioUnknown ? "база DVOL н/д" : `IV ${fmt(ratioVal, 2)}× базовой`);
       // Семантика both: fail любого суб-режима решает; unknown блокирует только если без него
-      // не набирается вердикт (fail важнее unknown — он окончателен на живых данных).
+      // не набирается вердикт (fail важнее unknown - он окончателен на живых данных).
       let state;
       if ((marginOk === false && wantMargin) || (ratioOk === false && !ratioUnknown && wantRatio)) state = "fail";
       else if (ratioUnknown && wantRatio) state = "unknown";
@@ -221,7 +221,7 @@ export function evaluateAssetConditions(ctx) {
       );
   }
 
-  // У5 ema_trend: тренд совпадает со стороной (CALL: цена выше EMA, PUT: ниже). Булево — без
+  // У5 ema_trend: тренд совпадает со стороной (CALL: цена выше EMA, PUT: ниже). Булево - без
   // числового гистерезиса; дребезг гасится dwell-механикой сигнала.
   {
     if (!preset.trendOn) rows.push(off("ema_trend", "фильтр тренда выключен пресетом"));
@@ -245,7 +245,7 @@ export function evaluateAssetConditions(ctx) {
   }
 
   // У6 forward_iv: бэквордация терм-структуры FIV = IV(near) − IV(far) ≥ fivMinPts.
-  // В выходные UTC (fivWeekendOff) условие ВЫКЛЮЧЕНО календарём — state off, не fail (§5.2).
+  // В выходные UTC (fivWeekendOff) условие ВЫКЛЮЧЕНО календарём - state off, не fail (§5.2).
   {
     const m = condMode(preset.forwardIvMode);
     if (m === "off") rows.push(off("forward_iv", "выключено пресетом"));
@@ -271,7 +271,7 @@ export function evaluateAssetConditions(ctx) {
     }
   }
 
-  // У7 skew: прокси 25Δ RR — пут(−1σ) минус колл(+1σ) (вопрос Д4). Режим info по умолчанию:
+  // У7 skew: прокси 25Δ RR - пут(−1σ) минус колл(+1σ) (вопрос Д4). Режим info по умолчанию:
   // вердикт считается честно, но в агрегат и счёт не входит (спорная логика, аудит).
   {
     const mode = preset.skewMode === "off" ? "off" : preset.skewMode === "gate" ? "gate" : "info";
@@ -302,13 +302,13 @@ export function evaluateAssetConditions(ctx) {
   }
 
   // У8 book_imbalance: дисбаланс стакана ПЕРПА, объём bid к объёму ask ≥ imbalanceMin.
-  // Определение — Дмитрия (письмо 2026-08-03), оно и закрыло висевший вопрос Д5. Мерится по перпу,
+  // Определение - Дмитрия (письмо 2026-08-03), оно и закрыло висевший вопрос Д5. Мерится по перпу,
   // а НЕ по книге опциона: стаканы опционов забираются ≤2 финалистам за тик, и за 72ч прогона 3
-  // глубина получила 56 замеров из 8758 — распределения по такой выборке не построить. Стакан перпа
+  // глубина получила 56 замеров из 8758 - распределения по такой выборке не построить. Стакан перпа
   // стоит один дешёвый вызов и доступен всегда. Единицы: у обратного BTC-PERPETUAL объём уровня
   // УЖЕ в USD, поэтому глубина считается суммой количеств, а не цена×количество (у линейных
-  // опционов наоборот) — смешение дало бы тихо неверное отношение.
-  // Режим по умолчанию info: определение ратифицировано, ПОРОГ нет — условие считается и пишется в
+  // опционов наоборот) - смешение дало бы тихо неверное отношение.
+  // Режим по умолчанию info: определение ратифицировано, ПОРОГ нет - условие считается и пишется в
   // телеметрию, но входа не решает (прецедент У7 skew).
   {
     const mode = preset.imbalanceMode === "off" || !preset.imbalanceMode ? "off" : preset.imbalanceMode === "gate" ? "gate" : "info";
@@ -340,7 +340,7 @@ export function evaluateAssetConditions(ctx) {
 //   { instrument, strike, expiryMs, optionType, sigmaDist, markUsd, bidUsd, askUsd, markIvPct,
 //     thetaUsd, tickerAgeSec, tickerStale, bidDepthUsd, askDepthUsd, bookAgeSec, bookStale,
 //     costs (economics.computeTradeCosts | null), positionPremUsd (для У12 xPremium) }
-// ctx: { preset, spotUsd, anomaly }. hkey строк — `${key}|${instrument}`: смена лучшего
+// ctx: { preset, spotUsd, anomaly }. hkey строк - `${key}|${instrument}`: смена лучшего
 // кандидата естественно сбрасывает их гистерезис-память.
 export function evaluateInstrumentConditions(inst, ctx) {
   const { preset, anomaly } = ctx;
@@ -348,7 +348,7 @@ export function evaluateInstrumentConditions(inst, ctx) {
   const hk = (key) => `${key}|${inst?.instrument ?? "none"}`;
 
   if (!inst) {
-    // Нет кандидатов в окне (случай 6 §7): состояние, не ошибка — весь блок unknown.
+    // Нет кандидатов в окне (случай 6 §7): состояние, не ошибка - весь блок unknown.
     for (const m of CONDITION_META.filter((m) => m.group === "instrument")) {
       rows.push(unknown(m.key, "нет кандидатов в σ-окне и окне экспираций", { hkey: m.key }));
     }
@@ -362,13 +362,13 @@ export function evaluateInstrumentConditions(inst, ctx) {
 
   // У9 strike_sigma: окно отбора страйка. Два режима, оба гейтят одну и ту же мысль «страйк на
   // нужном удалении от денег», но РАЗНОЙ мерой:
-  //   sigma — σ-дистанция |K/S−1|/σ_T, считается из chain и IV_ref, тикера не требует (историческое
+  //   sigma - σ-дистанция |K/S−1|/σ_T, считается из chain и IV_ref, тикера не требует (историческое
   //           поведение v1/v2, сохранено ради сравнимости с прогоном 3);
-  //   delta — |Δ| по ЖИВЫМ грекам тикера. Живой замер 2026-08-03: σ-окно 1.2-1.5 и полоса дельты
+  //   delta - |Δ| по ЖИВЫМ грекам тикера. Живой замер 2026-08-03: σ-окно 1.2-1.5 и полоса дельты
   //           0.35-0.55 не пересекаются вообще, на 1.2-1.5σ дельта около 0.09. В этом режиме σ-окно
   //           пресета работает только СИТОМ снабжения (набор опрашиваемых собирается до тикеров),
   //           а гейтом служит дельта.
-  // Плата за режим delta: условие начинает зависеть от свежести тикера — протухший тикер даёт
+  // Плата за режим delta: условие начинает зависеть от свежести тикера - протухший тикер даёт
   // честный unknown там, где режим sigma дал бы вердикт. Это осознанно: дельта без живых греков
   // была бы выдумкой.
   {
@@ -450,8 +450,8 @@ export function evaluateInstrumentConditions(inst, ctx) {
     }
   }
 
-  // У12 depth_min: min(bid, ask) глубина в USD ≥ порога. Режим usd — абсолютный floor
-  // (не откалиброван до S3b); режим xPremium (v2.0) — кратно премии позиции.
+  // У12 depth_min: min(bid, ask) глубина в USD ≥ порога. Режим usd - абсолютный floor
+  // (не откалиброван до S3b); режим xPremium (v2.0) - кратно премии позиции.
   {
     if (inst.bookStale) rows.push(unknown("depth_min", `книга протухла (${fmt(inst.bookAgeSec, 0)}с)`, { staleSec: inst.bookAgeSec, hkey: hk("depth_min") }));
     else if (!fin(inst.bidDepthUsd) || !fin(inst.askDepthUsd))
@@ -481,7 +481,7 @@ export function evaluateInstrumentConditions(inst, ctx) {
     }
   }
 
-  // У13 theta_cap: |theta|/mark ≤ thetaMaxPctDay (тета линейных опционов — USD в сутки).
+  // У13 theta_cap: |theta|/mark ≤ thetaMaxPctDay (тета линейных опционов - USD в сутки).
   {
     const bad = tickerBad("theta_cap");
     if (bad) rows.push(bad);
@@ -504,7 +504,7 @@ export function evaluateInstrumentConditions(inst, ctx) {
     }
   }
 
-  // У14 cost_gate (ядро, А5): round-trip издержки ≤ costMaxPctPrem. Числа — из economics.js
+  // У14 cost_gate (ядро, А5): round-trip издержки ≤ costMaxPctPrem. Числа - из economics.js
   // (комиссия 0.0003 индекса с кэпом 12.5% премии, спред по execModel); только факты.
   {
     const c = inst.costs;

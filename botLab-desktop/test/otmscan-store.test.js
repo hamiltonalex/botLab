@@ -1,10 +1,10 @@
-// otmscan-store.test.js — S2 персист-контракт «OTM-сканера» (план §12-S2, закон Phase 0).
+// otmscan-store.test.js - S2 персист-контракт «OTM-сканера» (план §12-S2, закон Phase 0).
 // Доказывает: (1) аддитивная персистентность сканера НИКОГДА не создаёт файлы funding-arb
 // (positions.json/settings.json) И бота 2 (btc-options*.json); (2) init идемпотентен (файл
-// пишется ровно один раз); (3) ACTIVE-сигнал (замороженный контракт §8.1) переживает рестарт —
+// пишется ровно один раз); (3) ACTIVE-сигнал (замороженный контракт §8.1) переживает рестарт -
 // §7 случай 14; (4) телеметрия живёт ОТДЕЛЬНЫМ файлом: суточные вёдра персистятся, session
 // умирает с сессией, state-файл телеметрию не несёт; (5) битый JSON карантинится в
-// .corrupt-<ts>, а не перезаписывается молча — §7 случай 17.
+// .corrupt-<ts>, а не перезаписывается молча - §7 случай 17.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, existsSync, rmSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
@@ -20,9 +20,9 @@ const tmp = () => mkdtempSync(join(tmpdir(), "otmscan-store-"));
 const signalFixture = () =>
   JSON.parse(readFileSync(new URL("./fixtures/otmscan/signal-example.json", import.meta.url), "utf8"));
 
-// Зеркало main.js persistScanState()/flushScanTelemetry()/loadOrInitOtmScanner() — контракт
+// Зеркало main.js persistScanState()/flushScanTelemetry()/loadOrInitOtmScanner() - контракт
 // персиста юнит-тестится без electron (прецедент btcopt-store.test.js). Раздел: otm-scanner.json
-// несёт редьюсер БЕЗ телеметрии; otm-scanner-telemetry.json — только суточные вёдра.
+// несёт редьюсер БЕЗ телеметрии; otm-scanner-telemetry.json - только суточные вёдра.
 function persistState(dir, engineState) {
   const { telemetry, ...core } = engineState;
   saveBotState(dir, ID, { botId: ID, ...core });
@@ -32,7 +32,7 @@ function persistTelemetry(dir, engineState, stats) {
     schemaVersion: SCAN_SCHEMA_VERSION,
     botId: ID,
     days: engineState.telemetry?.days ?? {},
-    stats: { days: stats?.days ?? {} }, // S3b: статистика обкатки — аддитивный ключ того же файла
+    stats: { days: stats?.days ?? {} }, // S3b: статистика обкатки - аддитивный ключ того же файла
   });
 }
 function loadOrInit(dir) {
@@ -51,7 +51,7 @@ function loadOrInit(dir) {
   };
   if (!Array.isArray(engineState.journal)) engineState.journal = [];
   if ((engineState.schemaVersion || 0) < SCAN_SCHEMA_VERSION) engineState.schemaVersion = SCAN_SCHEMA_VERSION;
-  // S3b (зеркало main.js): статистика обкатки — из того же telemetry-файла, аддитивный ключ stats.
+  // S3b (зеркало main.js): статистика обкатки - из того же telemetry-файла, аддитивный ключ stats.
   const stats = { days: telRes.state?.stats?.days && typeof telRes.state.stats.days === "object" ? telRes.state.stats.days : {} };
   let wrote = false;
   if (!persisted) {
@@ -61,7 +61,7 @@ function loadOrInit(dir) {
   return { engineState, settings, stats, wrote, corrupt: stRes.corrupt };
 }
 
-test("первый запуск пишет otm-scanner.json ровно один раз; второй бут — no-op", () => {
+test("первый запуск пишет otm-scanner.json ровно один раз; второй бут - no-op", () => {
   const dir = tmp();
   try {
     const first = loadOrInit(dir);
@@ -105,7 +105,7 @@ test("ACTIVE-сигнал (§8.1, фикстура) переживает рес�
     const st = {
       ...createScanState(),
       phase: "active",
-      signal: signalFixture(), // замороженный контракт §8.1 — вплоть до снапшота условий
+      signal: signalFixture(), // замороженный контракт §8.1 - вплоть до снапшота условий
       cooldowns: { "BTC_USDC-26JUL26-107500-C|call": 1784550000000 },
       hyst: { "rv7d_gt_iv|": "pass" },
       journal: [
@@ -125,7 +125,7 @@ test("ACTIVE-сигнал (§8.1, фикстура) переживает рес�
     assert.deepEqual(back.engineState.journal, st.journal);
     assert.deepEqual(back.engineState.telemetry.days, { "2026-07-19": day }, "суточные вёдра из telemetry-файла");
     assert.deepEqual(back.engineState.telemetry.session, {}, "session-счётчики НЕ переживают рестарт");
-    // state-файл телеметрию не несёт вообще (раздел персиста — план §3.1)
+    // state-файл телеметрию не несёт вообще (раздел персиста - план §3.1)
     const raw = JSON.parse(readFileSync(join(dir, "otm-scanner.json"), "utf8"));
     assert.equal(raw.telemetry, undefined, "otm-scanner.json без телеметрии");
     assert.equal(raw.botId, ID);
@@ -199,7 +199,7 @@ test("S3b: статистика обкатки переживает рестар
     assert.equal(back.stats.days["2026-07-20"]["dmitri-v1"].capOverEq, 1);
     const rawState = JSON.parse(readFileSync(join(dir, "otm-scanner.json"), "utf8"));
     assert.equal(rawState.stats, undefined, "otm-scanner.json без статистики (раздел персиста)");
-    // Файл ДО S3b (без ключа stats) читается без ошибок — форвард-совместимость.
+    // Файл ДО S3b (без ключа stats) читается без ошибок - форвард-совместимость.
     saveBotState(dir, `${ID}-telemetry`, { schemaVersion: SCAN_SCHEMA_VERSION, botId: ID, days: {} });
     assert.deepEqual(loadOrInit(dir).stats, { days: {} });
   } finally {

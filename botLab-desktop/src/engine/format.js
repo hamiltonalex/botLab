@@ -1,4 +1,4 @@
-// format.js — parsing + formatting helpers shared by the engine, the cache, and tests.
+// format.js - parsing + formatting helpers shared by the engine, the cache, and tests.
 
 // Parse a spread_cache CSV (columns: ts,f_long,f_short,b_long,b_short,hl_rate,hl_premium).
 // The first column header may be "ts" or empty (pandas index). Returns an array of row
@@ -63,12 +63,12 @@ export function toSpreadCsv(rows) {
 
 // Percent with fixed decimals, e.g. 0.5339 -> "53.39%".
 export function pct(x, dp = 2) {
-  return Number.isFinite(x) ? `${(x * 100).toFixed(dp)}%` : "—";
+  return Number.isFinite(x) ? `${(x * 100).toFixed(dp)}%` : "-";
 }
 
 // Signed USD, e.g. 1067.95 -> "+$1,067.95".
 export function usd(x, dp = 2) {
-  if (!Number.isFinite(x)) return "—";
+  if (!Number.isFinite(x)) return "-";
   const sign = x < 0 ? "-" : "+";
   const v = Math.abs(x).toLocaleString("en-US", {
     minimumFractionDigits: dp,

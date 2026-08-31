@@ -1,4 +1,4 @@
-// otmscan-rv.test.js — S0: реализованная волатильность / импульс / EMA (rv.js), план §5.1.
+// otmscan-rv.test.js - S0: реализованная волатильность / импульс / EMA (rv.js), план §5.1.
 // Детерминизм: синтетические свечи с известными ответами; незакрытый бар; дыры в окне.
 
 import test from "node:test";
@@ -54,7 +54,7 @@ test("realizedVolPct: константная серия даёт RV 0, дыры 
   assert.equal(r.nPairs, 18);
 });
 
-test("emaLast: константа даёт константу; меньше периода — null", () => {
+test("emaLast: константа даёт константу; меньше периода - null", () => {
   assert.equal(emaLast(Array(30).fill(7), 20), 7);
   assert.equal(emaLast([1, 2, 3], 20), null);
 });

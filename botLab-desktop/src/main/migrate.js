@@ -1,4 +1,4 @@
-// migrate.js — one-time userData migration when the app's productName changes.
+// migrate.js - one-time userData migration when the app's productName changes.
 //
 // app.getPath("userData") resolves to <appData>/<productName>. Renaming productName
 // ("Funding-Arb Paper Simulator" -> "BotLab") therefore points Electron at a NEW, empty directory,
@@ -12,7 +12,7 @@
 //   - Idempotent: a marker file + a "new dir already has data" guard make repeat boots no-ops, and
 //     guarantee we never clobber a BotLab install that has already been used.
 //   - ALLOWLIST only our own files. userData is shared with Chromium; copying the whole directory
-//     would drag in Cache/, GPUCache/, Local Storage/, cookies, etc. — version-specific state that
+//     would drag in Cache/, GPUCache/, Local Storage/, cookies, etc. - version-specific state that
 //     conflicts with the fresh profile (see the cache/ collision scar in store.js).
 
 import { existsSync, mkdirSync, cpSync, writeFileSync } from "node:fs";
@@ -20,7 +20,7 @@ import { join } from "node:path";
 
 export const LEGACY_PRODUCT_NAME = "Funding-Arb Paper Simulator";
 export const MIGRATION_MARKER = ".migrated-from-fundingarb";
-// Exactly the files/dirs store.js persists — nothing Chromium owns.
+// Exactly the files/dirs store.js persists - nothing Chromium owns.
 export const MIGRATE_ENTRIES = ["settings.json", "positions.json", "frame-cache"];
 // A meaningful legacy profile has at least one of these (a bare frame-cache/ alone is refetchable).
 const SIGNAL_FILES = ["settings.json", "positions.json"];

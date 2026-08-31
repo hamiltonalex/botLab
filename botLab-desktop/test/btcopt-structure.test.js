@@ -1,4 +1,4 @@
-// btcopt-structure.test.js — golden numbers for the «BTC-опционы» 4-leg winged-straddle structure
+// btcopt-structure.test.js - golden numbers for the «BTC-опционы» 4-leg winged-straddle structure
 // builder + net-greek/debit aggregators (src/engine/btcopt/structure.js). Pure & deterministic; the
 // chain/snapshot fixtures are crafted INLINE (no fixtures files). Market deltas & marks are the audited
 // Strategy One reference values.

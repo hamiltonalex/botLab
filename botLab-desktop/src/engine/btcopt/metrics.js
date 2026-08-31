@@ -1,8 +1,8 @@
-// metrics.js — «BTC-опционы» (Strategy One) run-metrics CORE (Phase 2b).
-// PURE: no fetch / fs / DOM / Date.now — deterministic, unit-testable. Isolated from funding-arb.
+// metrics.js - «BTC-опционы» (Strategy One) run-metrics CORE (Phase 2b).
+// PURE: no fetch / fs / DOM / Date.now - deterministic, unit-testable. Isolated from funding-arb.
 //
-// The run metrics the spec (pp. 11) requires — Sharpe on cycle returns, hit rate, max drawdown,
-// hedge count / average hedge size, largest |Δ|-excursion before a hedge, cumulative fees/funding —
+// The run metrics the spec (pp. 11) requires - Sharpe on cycle returns, hit rate, max drawdown,
+// hedge count / average hedge size, largest |Δ|-excursion before a hedge, cumulative fees/funding -
 // are maintained as O(1) INCREMENTAL ACCUMULATORS (running Σ / Σ², running peak), never a stored
 // series. That is exact over an unbounded run yet adds ~nothing to the per-tick persisted state
 // (btc-options.json is re-serialized every tick, so a growing array would bloat it). The chart series
@@ -19,7 +19,7 @@ export function initMetrics() {
     sumR: 0, // Σ cycle return
     sumR2: 0, // Σ cycle return²  (→ σ / Sharpe)
     hitCount: 0, // cycles with a strictly positive return
-    peakNet: null, // running peak of net_total (null until the first cycle) — for max drawdown
+    peakNet: null, // running peak of net_total (null until the first cycle) - for max drawdown
     maxDD: 0, // max peak-to-trough drawdown of net_total
     hedgeCount: 0, // executed hedges
     sumHedgeBtc: 0, // Σ |hedge size| (BTC) → the average
@@ -61,7 +61,7 @@ export function foldCycle(acc, rec) {
 }
 
 // summarize(acc) → the run-metrics read-out for the cycle-snapshot / #optMetrics panel. Pure.
-// Sharpe = mean / σ of cycle returns (population σ) — a within-run consistency ratio (unitless, NOT
+// Sharpe = mean / σ of cycle returns (population σ) - a within-run consistency ratio (unitless, NOT
 // annualized); 0 when σ === 0 (flat) or n === 0. Margin utilisation is a separate concern (account()).
 export function summarize(acc) {
   const a = acc && typeof acc.n === "number" ? acc : initMetrics();

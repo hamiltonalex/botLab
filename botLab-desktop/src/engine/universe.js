@@ -1,4 +1,4 @@
-// universe.js — the Phase-1 instrument set (Core DoD): ETH/BTC two-leg + 3 one-leg carries.
+// universe.js - the Phase-1 instrument set (Core DoD): ETH/BTC two-leg + 3 one-leg carries.
 // Addresses verified against the mock UI literals and live markets/info. hlMaxLev is refreshed
 // live from metaAndAssetCtxs; the values here are fallbacks. A live scanner (P2) can extend this
 // by intersecting markets/info markets with HL coins.

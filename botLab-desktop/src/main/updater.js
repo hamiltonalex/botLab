@@ -1,10 +1,10 @@
-// updater.js — the ONLY place electron-updater lives (plan §5). It wires the real auto-updater's
+// updater.js - the ONLY place electron-updater lives (plan §5). It wires the real auto-updater's
 // events to the pure state machine (updater-state.js), exposes the fa:update:* IPC surface, and runs
 // the check scheduler. Everything is defensive: until quitAndInstall() the updater only READS remote
 // manifests and writes to a temp dir, so no failure here can crash or corrupt the running paper test
 // (§13). All async entry points are wrapped so a rejection never becomes an unhandledRejection.
 
-// ESM trap (§2): electron-updater is CommonJS with no named ESM exports — import the default, destructure.
+// ESM trap (§2): electron-updater is CommonJS with no named ESM exports - import the default, destructure.
 import electronUpdater from "electron-updater";
 // electron-log v5 splits main/renderer entry points; the main-process logger writes userData/logs/main.log.
 import log from "electron-log/main";
@@ -19,7 +19,7 @@ const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000; // then every 6 hours (§5.3)
 let machine = null;
 let win = null;
 let pollTimer = null;
-// What we were doing when an `error` event fires — electron-updater's error carries no stage, so we
+// What we were doing when an `error` event fires - electron-updater's error carries no stage, so we
 // track it ourselves to map the error to the right pill copy (§13).
 let phase = null; // "check" | "download" | "install" | null
 // A BACKGROUND check that fails (offline/DNS/5xx) is expected and stays silent; only a user-initiated
@@ -30,7 +30,7 @@ let checkKind = null; // "manual" | "background" | null
 // the 6h scheduler yields while anything runs, and overlapping user actions no-op. Without it, a
 // background check rejecting mid-download would be mislabeled as a download error and would surface a
 // failure §5.3 requires to stay silent.
-let inFlight = null; // "check" | "download" | "install" | null — the single active operation
+let inFlight = null; // "check" | "download" | "install" | null - the single active operation
 
 function send(snapshot) {
   if (win && !win.isDestroyed()) win.webContents.send("fa:update:state", snapshot);
@@ -71,7 +71,7 @@ export function initUpdater({ window, enabled = app.isPackaged } = {}) {
   wireIpc();
 
   if (!enabled && !devLoop) {
-    log.info("[updater] disabled (unpackaged/dev) — IPC live, no scheduled checks");
+    log.info("[updater] disabled (unpackaged/dev) - IPC live, no scheduled checks");
     return;
   }
   // First check shortly after boot, then every 6h. Both are BACKGROUND checks (silent on failure).
@@ -81,7 +81,7 @@ export function initUpdater({ window, enabled = app.isPackaged } = {}) {
 
 async function runCheck(kind) {
   if (inFlight) {
-    log.info(`[updater] ${kind} check skipped — "${inFlight}" already in flight`);
+    log.info(`[updater] ${kind} check skipped - "${inFlight}" already in flight`);
     return; // a background tick that collides with any operation simply waits for the next one
   }
   inFlight = "check";
@@ -118,7 +118,7 @@ function wireIpc() {
   });
 
   ipcMain.handle("fa:update:download", async () => {
-    if (inFlight) return machine.get(); // a check/download already running — serialization guard
+    if (inFlight) return machine.get(); // a check/download already running - serialization guard
     inFlight = "download";
     phase = "download";
     try {
@@ -133,7 +133,7 @@ function wireIpc() {
 
   ipcMain.handle("fa:update:install", () => {
     if (inFlight) return { ok: false }; // don't quit-and-install under an in-flight check/download
-    inFlight = "install"; // stays set — the app is quitting; cleared only if quitAndInstall throws
+    inFlight = "install"; // stays set - the app is quitting; cleared only if quitAndInstall throws
     phase = "install";
     machine.installing();
     // Records are synchronous + atomic and there are no before-quit holds, so nothing needs flushing
@@ -143,7 +143,7 @@ function wireIpc() {
       try {
         autoUpdater.quitAndInstall(true, true);
       } catch (err) {
-        inFlight = null; // install failed to launch — the app is still running, free the guard
+        inFlight = null; // install failed to launch - the app is still running, free the guard
         onUpdaterError(err);
       }
     });
@@ -157,7 +157,7 @@ function wireIpc() {
     return { ok: true };
   });
 
-  // Open the updater log (userData/logs/main.log) — the "Показать лог" exit from the error popover (§13, §14).
+  // Open the updater log (userData/logs/main.log) - the "Показать лог" exit from the error popover (§13, §14).
   ipcMain.handle("fa:update:showLog", () => {
     try {
       const file = log.transports.file.getFile();

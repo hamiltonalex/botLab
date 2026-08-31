@@ -1,4 +1,4 @@
-// btcopt-store.test.js — Phase 0 isolation contract for bot 2 «BTC-опционы».
+// btcopt-store.test.js - Phase 0 isolation contract for bot 2 «BTC-опционы».
 // Proves the additive persistence never disturbs funding-arb's files and that the create-on-first-run
 // init is idempotent (writes exactly once). The pure engine skeleton must round-trip through JSON.
 import { test } from "node:test";
@@ -36,7 +36,7 @@ test("engine.create() returns a persist-round-trippable skeleton with schemaVers
   assert.equal(st.botId, "btc-options");
   assert.equal(st.structure, null);
   assert.ok(st.settings && typeof st.settings === "object");
-  // no undefined / functions / Map — survives JSON persistence exactly
+  // no undefined / functions / Map - survives JSON persistence exactly
   assert.deepEqual(st, JSON.parse(JSON.stringify(st)));
 });
 
@@ -49,7 +49,7 @@ test("loadOrInit writes the state file exactly once; second boot is a no-op", ()
     assert.ok(existsSync(join(dir, "btc-options.json")));
 
     const second = loadOrInit(dir, 2);
-    assert.equal(second.wrote, false); // idempotent — file already exists
+    assert.equal(second.wrote, false); // idempotent - file already exists
     assert.equal(second.st.schemaVersion, engine.SCHEMA_VERSION);
     assert.equal(second.st.botId, "btc-options");
   } finally {
@@ -111,7 +111,7 @@ test("lastRunMetrics: survives the JSON round-trip; a pre-fix state file WITHOUT
     const back = loadBotState(dir, "btc-options");
     assert.deepEqual(back.lastRunMetrics, st.lastRunMetrics, "frozen run summary round-trips");
 
-    // pre-fix shape: the field is absent entirely — loading must not throw and readers null-guard
+    // pre-fix shape: the field is absent entirely - loading must not throw and readers null-guard
     delete back.lastRunMetrics;
     saveBotState(dir, "btc-options", back);
     const old = loadBotState(dir, "btc-options");

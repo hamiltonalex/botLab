@@ -1,4 +1,4 @@
-// settle-window.test.js — regression tests for the 2026-07-02 audit #3 fixes:
+// settle-window.test.js - regression tests for the 2026-07-02 audit #3 fixes:
 //   P1: settlePosition removes the live-accrual-cap dead zone (poll-interval change, sleep/wake)
 //       by pricing over-cap gaps from history before the capped live step;
 //   S1: the CSV frame cache lives in frame-cache/ (userData/cache IS Chromium's Cache/ on
@@ -27,7 +27,7 @@ const mkRow = (tsHour, f_short, hl_rate = 0) => ({
 const N = 100000;
 
 // ---------------------------------------------------------------------------
-// P1 — settlePosition
+// P1 - settlePosition
 // ---------------------------------------------------------------------------
 test("settlePosition: gap within the cap needs no history (pure live step)", () => {
   const p = openPosition({ strategy: "two", instrumentKey: "ETH", config: "A", capital: N, leverage: 1, nowMs: BASE });
@@ -77,7 +77,7 @@ test("poll-interval shrink: settling at the OLD cap covers the whole inter-poll 
 });
 
 // ---------------------------------------------------------------------------
-// S1 — frame cache location
+// S1 - frame cache location
 // ---------------------------------------------------------------------------
 test("frame cache writes to frame-cache/ (not Chromium's Cache/) and reads legacy cache/ as fallback (S1)", () => {
   const dir = mkdtempSync(join(tmpdir(), "fa-cache-"));
@@ -97,7 +97,7 @@ test("frame cache writes to frame-cache/ (not Chromium's Cache/) and reads legac
 });
 
 // ---------------------------------------------------------------------------
-// W1/W2 — windowed series drawdown + windowed entries/scanner
+// W1/W2 - windowed series drawdown + windowed entries/scanner
 // ---------------------------------------------------------------------------
 // 72h frame: first 48h favor config B (f_short<0), last 24h favor config A (f_short>0).
 const FLIP_FRAME = [];

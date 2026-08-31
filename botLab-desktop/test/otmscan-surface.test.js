@@ -1,11 +1,11 @@
-// otmscan-surface.test.js — строки записи поверхности (src/engine/otmscan/surface.js).
+// otmscan-surface.test.js - строки записи поверхности (src/engine/otmscan/surface.js).
 // Доказывает: (1) сшивка summary с метами chain по instrument_name; (2) КАЖДАЯ причина пропуска
-// считается явно, молчаливых потерь строк нет; (3) округление сохраняет null (нет котировки — не
+// считается явно, молчаливых потерь строк нет; (3) округление сохраняет null (нет котировки - не
 // ноль); (4) греки в строке совпадают с прямым вызовом black76 от тех же полей; (5) детерминированная
 // сортировка; (6) потолок горизонта; (7) сверка с биржевыми греками берёт только пересечение и не
 // выдумывает относительную ошибку при нулевом биржевом греке; (8) сводка считает полосу дельты.
 //
-// Форма фикстуры — с ЖИВОГО ответа Deribit 2026-08-03 (поля bid_price/ask_price/mark_price/
+// Форма фикстуры - с ЖИВОГО ответа Deribit 2026-08-03 (поля bid_price/ask_price/mark_price/
 // mid_price/mark_iv/underlying_price/open_interest/volume_usd), поэтому тест ловит переименование
 // полей биржей, а не только регрессии нашей логики.
 import { test } from "node:test";
@@ -83,7 +83,7 @@ test("каждая причина пропуска считается: чужо�
   assert.deepEqual(skipped, { notPrefix: 1, noMeta: 1, noIv: 1, expired: 1 });
 });
 
-test("нулевая или отрицательная IV — это noIv, а не строка с нулевыми греками", () => {
+test("нулевая или отрицательная IV - это noIv, а не строка с нулевыми греками", () => {
   const { rows, skipped } = buildSurfaceRows({
     summary: [sum("BTC_USDC-7AUG26-63500-P", { mark_iv: 0 })],
     chainMetas: CHAIN,
@@ -205,7 +205,7 @@ test("сверка не падает на пустом входе", () => {
 test("сводка: строки, экспирации, наличие котировок и наполнение полосы дельты 0.35-0.55", () => {
   const { rows } = buildSurfaceRows({
     summary: [
-      sum("BTC_USDC-7AUG26-63500-P"), // около денег — дельта попадёт в полосу
+      sum("BTC_USDC-7AUG26-63500-P"), // около денег - дельта попадёт в полосу
       sum("BTC_USDC-7AUG26-66000-C", { bid_price: null }), // дальний, без бида
       sum("BTC_USDC-5AUG26-64000-C"),
     ],
@@ -254,7 +254,7 @@ test("leg-сверка: расхождение считается от поле�
     tYears: yearsToExpiry(NOW, NOW + 96 * H),
     optionType: "put",
   });
-  // Биржевые греки задаём РАВНЫМИ нашим — расхождение обязано быть ровно нулевым.
+  // Биржевые греки задаём РАВНЫМИ нашим - расхождение обязано быть ровно нулевым.
   const checks = buildLegGreekChecks({
     legs: { "BTC_USDC-7AUG26-63500-P": leg({ delta: g.delta, theta: g.thetaUsd, vega: g.vegaUsd }) },
     nowMs: NOW,

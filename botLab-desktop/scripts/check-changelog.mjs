@@ -1,7 +1,7 @@
-// check-changelog.mjs — release gate (OTA plan §8.1, §9.2-3). Two invariants for the version being
+// check-changelog.mjs - release gate (OTA plan §8.1, §9.2-3). Two invariants for the version being
 // released:
 //   1. CHANGELOG.md has a `## [X.Y.Z]` section, and that section carries an **Влияние** (impact) line
-//      — the forcing function so every release consciously states its blast radius.
+//      - the forcing function so every release consciously states its blast radius.
 //   2. If the release's diff touches src/engine/** (the trading math), the impact line may NOT declare
 //      "нет"/"none": a change to the engine must state a real impact (⚠️/💰/🖥/⚙️). This is the
 //      §9.2-3 "engine diff ⇒ impact marker" gate, checked against CHANGELOG.md (which IS the release
@@ -39,20 +39,20 @@ for (const line of changelog.split("\n")) {
   if (inSection) sectionLines.push(line);
 }
 if (!inSection) {
-  console.error(`check-changelog: FAIL — no "## [${version}]" section in CHANGELOG.md.\n  Add the release section before tagging v${version}.`);
+  console.error(`check-changelog: FAIL - no "## [${version}]" section in CHANGELOG.md.\n  Add the release section before tagging v${version}.`);
   process.exit(1);
 }
 const section = sectionLines.join("\n");
 
 const impactLine = section.split("\n").find((l) => /Влияние/i.test(l));
 if (!impactLine) {
-  console.error(`check-changelog: FAIL — the [${version}] section has no **Влияние** (impact) line.\n  State the release impact (⚠️ торговая логика · 💰 P&L · 🖥 UI · ⚙️ настройки/данные, or "Влияние: нет").`);
+  console.error(`check-changelog: FAIL - the [${version}] section has no **Влияние** (impact) line.\n  State the release impact (⚠️ торговая логика · 💰 P&L · 🖥 UI · ⚙️ настройки/данные, or "Влияние: нет").`);
   process.exit(1);
 }
 
-// §9.2-3 engine gate: did this release touch the trading engine? (best-effort — never fails on git errors)
+// §9.2-3 engine gate: did this release touch the trading engine? (best-effort - never fails on git errors)
 let engineChanged = false;
-let engineNote = "no previous tag — engine-diff skipped (first release)";
+let engineNote = "no previous tag - engine-diff skipped (first release)";
 try {
   const tags = execSync("git tag --sort=-v:refname", { cwd: root, encoding: "utf8" })
     .split("\n").map((t) => t.trim()).filter((t) => /^v\d+\.\d+\.\d+/.test(t));
@@ -69,11 +69,11 @@ try {
 }
 
 // \b is ASCII-only in JS and forms no boundary around Cyrillic, so use \p{L} lookarounds as a
-// Unicode-aware word boundary — otherwise "Влияние: нет" would slip past the engine gate.
+// Unicode-aware word boundary - otherwise "Влияние: нет" would slip past the engine gate.
 const saysNone = /(?<!\p{L})(нет|none)(?!\p{L})/iu.test(impactLine) && !/[⚠️💰🖥⚙️]/u.test(impactLine);
 if (engineChanged && saysNone) {
-  console.error(`check-changelog: FAIL — src/engine/** changed but [${version}] declares "Влияние: нет".\n  An engine change must state a real impact (⚠️ торговая логика / 💰 P&L at minimum). Line was:\n  ${impactLine.trim()}`);
+  console.error(`check-changelog: FAIL - src/engine/** changed but [${version}] declares "Влияние: нет".\n  An engine change must state a real impact (⚠️ торговая логика / 💰 P&L at minimum). Line was:\n  ${impactLine.trim()}`);
   process.exit(1);
 }
 
-console.log(`check-changelog: OK — [${version}] section present with an impact line. ${engineNote}.`);
+console.log(`check-changelog: OK - [${version}] section present with an impact line. ${engineNote}.`);

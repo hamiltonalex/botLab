@@ -1,4 +1,4 @@
-// otmscan-candidates.test.js — S0: отбор кандидатов в σ-окне и окне экспираций (план §5.1/§5.2 У9).
+// otmscan-candidates.test.js - S0: отбор кандидатов в σ-окне и окне экспираций (план §5.1/§5.2 У9).
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -68,7 +68,7 @@ test("daily-конвенция: дистанция от σ1d, IV_ref не тре
   assert.deepEqual(candidates.map((c) => c.strike), [104]);
 });
 
-test("нет IV_ref экспирации (horizon) — skippedExpiries с причиной, не молчание", () => {
+test("нет IV_ref экспирации (horizon) - skippedExpiries с причиной, не молчание", () => {
   const { candidates, skippedExpiries } = selectCandidates({
     chain, side: "call", spot: 100, nowMs: NOW, preset, ivRefByExpiry: {},
   });
@@ -103,13 +103,13 @@ test("порядок delta: ближе к деньгам первым, а не �
   }
   assert.equal(byDelta[0].strike, 101, "первым идёт ближайший к деньгам страйк выше спота");
 
-  // Тот же набор в режиме sigma сортируется к СЕРЕДИНЕ окна — историческое поведение сохранено.
+  // Тот же набор в режиме sigma сортируется к СЕРЕДИНЕ окна - историческое поведение сохранено.
   const bySigma = selectCandidates({ ...base, preset: { ...wide, strikeMode: "sigma" } }).candidates;
   const mid = (wide.sigmaMin + wide.sigmaMax) / 2;
   for (let i = 1; i < bySigma.length; i++) {
     assert.ok(
       Math.abs(bySigma[i - 1].sigmaDist - mid) <= Math.abs(bySigma[i].sigmaDist - mid),
-      "в режиме sigma порядок — по близости к середине окна",
+      "в режиме sigma порядок - по близости к середине окна",
     );
   }
   assert.notEqual(bySigma[0].strike, byDelta[0].strike, "режимы дают РАЗНЫЙ первый кандидат");

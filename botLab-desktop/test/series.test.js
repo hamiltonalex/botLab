@@ -1,4 +1,4 @@
-// series.test.js — buildSeries adaptive chart granularity across the window range (1/7/30/90/365d).
+// series.test.js - buildSeries adaptive chart granularity across the window range (1/7/30/90/365d).
 // Short windows (<=7d) bucket by HOUR so 1d/7d have real resolution; longer windows bucket by DAY.
 
 import { test } from "node:test";
@@ -23,7 +23,7 @@ function frame(hours) {
   return rows;
 }
 
-const BIG = frame(400 * 24); // 400 days of hourly data — enough to slice every window from
+const BIG = frame(400 * 24); // 400 days of hourly data - enough to slice every window from
 
 test("1d window -> hourly buckets (24 points)", () => {
   const s = buildSeries(BIG, "two", "A", 1);

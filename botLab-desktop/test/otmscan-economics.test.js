@@ -1,4 +1,4 @@
-// otmscan-economics.test.js — S1 (А5, план §5.7/§11): кэп комиссии биндится/не биндится,
+// otmscan-economics.test.js - S1 (А5, план §5.7/§11): кэп комиссии биндится/не биндится,
 // обе execModel, breakeven, minCapital, riskActual после округления, qtyMaxDepth.
 
 import test from "node:test";
@@ -33,19 +33,19 @@ test("round-trip maker-mid: вход без пересечения спреда,
   near(c.roundTripCostPct, (2 * 30 + 5) / 3.5, 1e-9, "итого 18.571%");
 });
 
-test("round-trip taker-cross: разница моделей — ровно полуспред входа (комиссия одинакова)", () => {
+test("round-trip taker-cross: разница моделей - ровно полуспред входа (комиссия одинакова)", () => {
   const mk = (execModel) => computeTradeCosts({ markUsd: 350, bidUsd: 345, askUsd: 355, indexPrice: S, execModel });
   const diff = mk("taker-cross").roundTripCostPct - mk("maker-mid").roundTripCostPct;
   near(diff, 5 / 3.5, 1e-9, "дельта = halfSpread/mark");
 });
 
-test("издержки: null без bid/ask и при перевёрнутой книге — У14 уйдёт в unknown", () => {
+test("издержки: null без bid/ask и при перевёрнутой книге - У14 уйдёт в unknown", () => {
   assert.equal(computeTradeCosts({ markUsd: 350, bidUsd: null, askUsd: 355, indexPrice: S }), null);
   assert.equal(computeTradeCosts({ markUsd: 350, bidUsd: 360, askUsd: 355, indexPrice: S }), null);
   assert.equal(computeTradeCosts({ markUsd: 0, bidUsd: 0, askUsd: 1, indexPrice: S }), null);
 });
 
-test("breakeven: рост марка = roundTrip; движение спота в σ1d — дельта-приближение", () => {
+test("breakeven: рост марка = roundTrip; движение спота в σ1d - дельта-приближение", () => {
   const costs = computeTradeCosts({ markUsd: 350, bidUsd: 345, askUsd: 355, indexPrice: S, execModel: "maker-mid" });
   const e = computeEconomics({ costs, markUsd: 350, deltaAbs: 0.25, indexPrice: S, sigma1dPct: 2, lot: 0.01, riskPerTradePct: 20, maxConcurrent: 2 });
   near(e.breakEvenMarkPct, costs.roundTripCostPct, 1e-12, "breakeven = издержки");
@@ -66,11 +66,11 @@ test("riskActualPct: фактическая доля депозита после
   assert.equal(riskActualPct({ qty: null, markUsd: 350, equityUsd: 100 }), null);
 });
 
-test("qtyMaxByDepth: бюджет — доля ask-глубины, размер режется вниз до лот-сетки", () => {
+test("qtyMaxByDepth: бюджет - доля ask-глубины, размер режется вниз до лот-сетки", () => {
   const d = qtyMaxByDepth({ entryDepthUsd: 8000, maxQtyDepthPct: 25, markUsd: 350, lot: 0.01 });
   near(d.depthBudgetUsd, 2000, 1e-9, "25% от 8000");
   near(d.qtyMaxDepth, 5.71, 1e-9, "floor(2000/350/0.01)·0.01");
   const thin = qtyMaxByDepth({ entryDepthUsd: 10, maxQtyDepthPct: 25, markUsd: 350, lot: 0.01 });
-  near(thin.qtyMaxDepth, 0, 1e-12, "тоньше лота — ноль");
+  near(thin.qtyMaxDepth, 0, 1e-12, "тоньше лота - ноль");
   assert.equal(qtyMaxByDepth({ entryDepthUsd: null, maxQtyDepthPct: 25, markUsd: 350, lot: 0.01 }).qtyMaxDepth, null);
 });

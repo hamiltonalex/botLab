@@ -1,4 +1,4 @@
-// smoke-deribit.mjs — hits the REAL Deribit public API, resolves a live winged-straddle structure, and
+// smoke-deribit.mjs - hits the REAL Deribit public API, resolves a live winged-straddle structure, and
 // prints the option chain + one composite snapshot. NOT part of the golden suite (network-dependent).
 //   node scripts/smoke-deribit.mjs              # print a live chain + structure snapshot
 //   node scripts/smoke-deribit.mjs --record     # also write test/fixtures/deribit/live-*.json references
@@ -24,7 +24,7 @@ const DAY_MS = 86400000;
 const nearest = (arr, target) => arr.reduce((best, x) => (Math.abs(x - target) < Math.abs(best - target) ? x : best), arr[0]);
 
 (async () => {
-  console.log(`\nDeribit ${TESTNET ? "TESTNET" : "PRODUCTION"} public API — winged-straddle smoke\n`);
+  console.log(`\nDeribit ${TESTNET ? "TESTNET" : "PRODUCTION"} public API - winged-straddle smoke\n`);
 
   // 1) Chain: linear USDC BTC options, live, grouped by expiry.
   const all = await getInstruments({ currency: OPTION_CURRENCY, kind: "option", testnet: TESTNET });
@@ -89,12 +89,12 @@ const nearest = (arr, target) => arr.reduce((best, x) => (Math.abs(x - target) <
     const rows = Array.isArray(dv?.data) ? dv.data : [];
     const last = rows[rows.length - 1];
     const atmIv = snap.legs[legInstruments[0]]?.markIv;
-    console.log(`  DVOL: ${rows.length} hourly points over 48h · latest close=${last ? last[4] : "—"} · ATM mark_iv=${atmIv ?? "—"}`);
+    console.log(`  DVOL: ${rows.length} hourly points over 48h · latest close=${last ? last[4] : "-"} · ATM mark_iv=${atmIv ?? "-"}`);
   } catch (e) {
-    console.log(`  DVOL: FAILED — ${String(e?.message || e)}`);
+    console.log(`  DVOL: FAILED - ${String(e?.message || e)}`);
   }
 
-  // 6) Optionally record live-shape references (NOT the golden fixtures — those are hand-crafted in step 2).
+  // 6) Optionally record live-shape references (NOT the golden fixtures - those are hand-crafted in step 2).
   if (RECORD) {
     const dir = join(HERE, "..", "test", "fixtures", "deribit");
     mkdirSync(dir, { recursive: true });

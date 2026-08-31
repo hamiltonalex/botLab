@@ -1,4 +1,4 @@
-// otmscan-presets.test.js — S0: SCAN_PRESETS как единый источник истины + валидация патча (план §6).
+// otmscan-presets.test.js - S0: SCAN_PRESETS как единый источник истины + валидация патча (план §6).
 // S1: SCAN_DATA_RULES (структурные правила §7) и снапшот порогов в рождённом сигнале (§8.1).
 
 import test from "node:test";
@@ -12,7 +12,7 @@ test("пресеты: шесть id, различия v1/v2 по плану, з�
   const v1 = SCAN_PRESETS["dmitri-v1"];
   const v2 = SCAN_PRESETS["dmitri-v2"];
   assert.equal(v1.mode, "AND");
-  assert.equal(v1.skewMode, "info"); // аудит: спорная логика — не гейт
+  assert.equal(v1.skewMode, "info"); // аудит: спорная логика - не гейт
   assert.equal(v1.imbalanceMode, "off");
   assert.equal(v1.strikeMode, "sigma", "историческое поведение v1 сохранено ради сравнимости с прогоном 3");
   assert.equal(v2.sigmaMin, 0.55);
@@ -28,7 +28,7 @@ test("пресеты: шесть id, различия v1/v2 по плану, з�
 // молчаливый дрейф любого из них ломает связь пресета с замером, ради которого он заведён.
 test("delta-v1: пресет пяти правок, числа из живого замера", () => {
   const d = SCAN_PRESETS["delta-v1"];
-  assert.equal(d.strikeMode, "delta", "гейт страйка — по живым грекам, а не по σ");
+  assert.equal(d.strikeMode, "delta", "гейт страйка - по живым грекам, а не по σ");
   assert.equal(d.deltaMin, 0.35);
   assert.equal(d.deltaMax, 0.55);
   // σ-окно тут СИТО снабжения, а не гейт: полоса дельты живёт на σ 0.04-0.46 (замер по всем срокам),
@@ -45,7 +45,7 @@ test("delta-v1: пресет пяти правок, числа из живого
   // проходит с запасом (8.4-11.3% премии против порога 20).
   assert.equal(d.thetaMaxPctDay, SCAN_PRESETS["dmitri-v1"].thetaMaxPctDay);
   assert.equal(d.costMaxPctPrem, SCAN_PRESETS["dmitri-v1"].costMaxPctPrem);
-  assert.equal(d.imbalanceMode, "info", "определение ратифицировано, порог нет — считаем, но не гейтим");
+  assert.equal(d.imbalanceMode, "info", "определение ратифицировано, порог нет - считаем, но не гейтим");
   assert.ok(Object.isFrozen(d) && Object.isFrozen(d.exits));
 });
 
@@ -84,7 +84,7 @@ test("normalizeScanPatch: неизвестные ключи проходят б�
   assert.equal(r.value.someFutureKnob, 42);
 });
 
-test("SCAN_DATA_RULES (S1): структурные правила §7 заморожены — блэкаут как у бота 2", () => {
+test("SCAN_DATA_RULES (S1): структурные правила §7 заморожены - блэкаут как у бота 2", () => {
   assert.ok(Object.isFrozen(SCAN_DATA_RULES));
   assert.equal(SCAN_DATA_RULES.blackoutDailyWindowSec, 600);
   assert.equal(SCAN_DATA_RULES.blackoutPreExpirySec, 1800);
@@ -93,7 +93,7 @@ test("SCAN_DATA_RULES (S1): структурные правила §7 замор
   assert.equal(SCAN_DATA_RULES.minLotFallback, 0.01);
 });
 
-test("сигнал несёт ПОЛНЫЙ снапшот порогов рождения — глубокая копия, не ссылка (§8.1)", () => {
+test("сигнал несёт ПОЛНЫЙ снапшот порогов рождения - глубокая копия, не ссылка (§8.1)", () => {
   let st = createScanState();
   for (let i = 0; i < 3; i++) st = evaluateScan(st, mkInputs(NOW + i * 30000), PRESET, NOW + i * 30000).state;
   const sig = st.signal;
@@ -110,7 +110,7 @@ test("сигнал несёт ПОЛНЫЙ снапшот порогов рож�
 // молчаливый дрейф любого из них рвёт связь пресета с замером, ради которого он заведён.
 test("measure-v1: окно ровно 168 ч и волатильностная группа в info", () => {
   const m = SCAN_PRESETS["measure-v1"];
-  // Ширина ровно неделя — не подобранное число: все экспирации кроме дневных приходятся на пятницы
+  // Ширина ровно неделя - не подобранное число: все экспирации кроме дневных приходятся на пятницы
   // с шагом 7 суток, поэтому такое окно содержит ровно одну экспирацию в любой момент (замер по
   // записи прогона 5: 100.00% тактов против 13.38% пустоты при 6 сутках и 32.58% двойных при 8).
   assert.equal(m.expiryMaxH - m.expiryMinH, 168, "ширина окна обязана быть ровно неделей");

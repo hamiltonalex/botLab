@@ -1,7 +1,7 @@
-// ledger.js — the per-position transaction ledger (Журнал операций), DERIVED on demand from the
+// ledger.js - the per-position transaction ledger (Журнал операций), DERIVED on demand from the
 // position's persisted accruals[] + one-off round-trip cost. Nothing here is stored separately:
 // a parallel persisted ledger array could drift from the accrual state (the state-drift bug class
-// this project's audits keep hunting), while a pure derivation cannot — by construction.
+// this project's audits keep hunting), while a pure derivation cannot - by construction.
 //
 // Reconciliation identity (test + oracle + UI badge): for any position,
 //   lastEvent.runningBalance === sum(income) - sum(expense) === positionSummary(position).netPnl
@@ -45,7 +45,7 @@ function mkEvent(position, seq, t, type, amount, extra) {
 
 // Build the full event list for a position, oldest first, seq-monotonic. Pure function of data
 // already persisted on the position; positions opened before the ledger feature lack the
-// fundingUsd/borrowUsd split on old accrual entries — those render as ONE honest "агрегировано"
+// fundingUsd/borrowUsd split on old accrual entries - those render as ONE honest "агрегировано"
 // funding row (never a fabricated split) via meta.aggregated.
 export function buildLedger(position) {
   const events = [];
@@ -63,7 +63,7 @@ export function buildLedger(position) {
   const hlDirection = hlPerHourSign === -1 ? "long" : hlPerHourSign === 1 ? "short" : null;
   const oneLeg = position.strategy === "one";
 
-  // seq 0 — the round-trip costs, charged once at t0 (the engine's honest Phase-1 model prices
+  // seq 0 - the round-trip costs, charged once at t0 (the engine's honest Phase-1 model prices
   // open+close as one prepaid scalar; splitting a fabricated "close fee at close time" would
   // invent precision the engine does not have).
   push(position.createdAt, "open_costs", -(position.roundTripCost || 0), {
@@ -78,7 +78,7 @@ export function buildLedger(position) {
     if (a.source === "skipped") {
       push(a.t, "gap_unpriced", 0, {
         source: "skipped",
-        description: "разрыв данных — интервал не начислен",
+        description: "разрыв данных - интервал не начислен",
         meta: { gapSkippedSec: a.gapSkippedSec || 0, reason: a.reason || null },
       });
       continue;
@@ -88,7 +88,7 @@ export function buildLedger(position) {
     if ((a.gapSkippedSec || 0) > 0) {
       push(a.t, "gap_unpriced", 0, {
         source: a.source,
-        description: "разрыв данных — часть интервала не начислена",
+        description: "разрыв данных - часть интервала не начислена",
         meta: { gapSkippedSec: a.gapSkippedSec, reason: "нет пригодных данных для оценки этого отрезка" },
       });
     }
@@ -173,7 +173,7 @@ export function ledgerReconciles(position, events, tol = 1e-6) {
 // UTC day key for the renderer's day separators, e.g. "2026-07-03".
 const dayKey = (t) => new Date(t).toISOString().slice(0, 10);
 
-// Windowed query over the derived ledger — the single implementation behind BOTH the
+// Windowed query over the derived ledger - the single implementation behind BOTH the
 // fa:getLedger IPC handler and the oracle's renderer stub, so what the UI shows is provably
 // what the engine derives. Totals/recon are ALWAYS over the FULL unfiltered ledger (accounting
 // transparency: the headline numbers must reconcile with the position no matter the filter);

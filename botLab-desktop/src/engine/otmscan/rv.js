@@ -1,10 +1,10 @@
-// rv.js — «OTM-сканер» realized-volatility / impulse / trend CORE (S0).
-// PURE: no fetch / fs / DOM / Date.now — deterministic, unit-testable. Isolated from funding-arb and
+// rv.js - «OTM-сканер» realized-volatility / impulse / trend CORE (S0).
+// PURE: no fetch / fs / DOM / Date.now - deterministic, unit-testable. Isolated from funding-arb and
 // from the bot-2 engine (plan §3.1). Input: 1h candles of BTC-PERPETUAL as an index proxy (the perp
-// tracks the BTC_USDC index tightly; settlement math NEVER uses this — it uses delivery prices).
+// tracks the BTC_USDC index tightly; settlement math NEVER uses this - it uses delivery prices).
 //
 // Conventions (plan §5.1): percents are percent-points; log returns; RV is annualized close-to-close
-// over CLOSED bars only (the tradingview feed's last bar is the hour in progress — always dropped);
+// over CLOSED bars only (the tradingview feed's last bar is the hour in progress - always dropped);
 // completeness is judged on CONSECUTIVE pairs (a gap contributes no return and no fake bar); the
 // caller owns the clock (nowMs) and the candle ring.
 
@@ -37,7 +37,7 @@ export function closedCandles(candles, nowMs, barMs = HOUR_MS) {
 
 // Annualized close-to-close realized vol (percent) over the last `bars` bar-slots before nowMs.
 // Returns { rvPct|null, nPairs, need, complete }. Pairs are CONSECUTIVE closed bars (dt === barMs);
-// null when pairs < minCompleteness·(bars−1) — too many holes mean "no signal", never a fake number.
+// null when pairs < minCompleteness·(bars−1) - too many holes mean "no signal", never a fake number.
 export function realizedVolPct(candles, { bars, nowMs, barMs = HOUR_MS, minCompleteness = 0.9 } = {}) {
   const need = Math.max(1, bars - 1);
   const cutoff = nowMs - bars * barMs;
@@ -69,12 +69,12 @@ export function emaLast(values, period) {
 }
 
 // The one bundle the scanner conditions consume (plan §5.1). Any missing input yields null in that
-// field — conditions.js maps null → unknown; nothing here guesses.
-//   rv7dPct/rv3dPct — annualized RV over 7д/3д of 1h bars;
-//   sigma1dPct      — daily σ in % of price (rv7d/√365);
-//   dP24hPct        — close-to-close move over the last 24h of CLOSED bars;
-//   impulse         — |dP24hPct| / sigma1dPct;  direction — "call" | "put" | null (side of the move);
-//   ema             — EMA(emaPeriod) of closed closes;  lastClose/lastTs — the newest closed bar.
+// field - conditions.js maps null → unknown; nothing here guesses.
+//   rv7dPct/rv3dPct - annualized RV over 7д/3д of 1h bars;
+//   sigma1dPct      - daily σ in % of price (rv7d/√365);
+//   dP24hPct        - close-to-close move over the last 24h of CLOSED bars;
+//   impulse         - |dP24hPct| / sigma1dPct;  direction - "call" | "put" | null (side of the move);
+//   ema             - EMA(emaPeriod) of closed closes;  lastClose/lastTs - the newest closed bar.
 export function computeRvBundle(candles, nowMs, { barMs = HOUR_MS, emaPeriod = 20, rv7Bars = 168, rv3Bars = 72, minCompleteness = 0.9 } = {}) {
   const closed = closedCandles(candles, nowMs, barMs);
   const rv7 = realizedVolPct(closed, { bars: rv7Bars, nowMs, barMs, minCompleteness });

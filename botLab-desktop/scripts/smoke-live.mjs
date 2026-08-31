@@ -1,4 +1,4 @@
-// smoke-live.mjs — hits the REAL endpoints and prints current net APR + sign-gate status for the
+// smoke-live.mjs - hits the REAL endpoints and prints current net APR + sign-gate status for the
 // min-set. Not part of the golden suite (network-dependent). Run: node scripts/smoke-live.mjs
 import { fetchGmxCurrent, fetchHlCurrent, fetchSubsquidLatest } from "../src/engine/sources.js";
 import { reconcileGmx } from "../src/engine/signs.js";

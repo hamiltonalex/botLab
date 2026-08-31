@@ -1,4 +1,4 @@
-// btcopt-regime.test.js — IV-regime / entry-score (Phase 3b): golden iv_rank, favorable gating
+// btcopt-regime.test.js - IV-regime / entry-score (Phase 3b): golden iv_rank, favorable gating
 // (threshold / ivMinObs / flat window), strict window edges, newest-finite selection, no input
 // mutation. PURE, inline fixtures, explicit Date.UTC timestamps (no Date.now anywhere).
 import { test } from "node:test";
@@ -56,7 +56,7 @@ test("flat window (all equal) → rank 0.5 by policy, not favorable at the 0.35 
   assert.equal(r.n, 12);
   near(r.iv_rank, 0.5, 1e-12, "constant series sits mid-range");
   assert.equal(r.favorable, false, "0.5 > 0.35");
-  // a permissive threshold flips the verdict — the 0.5 policy value itself is unchanged
+  // a permissive threshold flips the verdict - the 0.5 policy value itself is unchanged
   assert.equal(computeRegime(flat, { nowMs: NOW, cfg: { ivEntryMaxRank: 0.6 } }).favorable, true);
 });
 
@@ -81,20 +81,20 @@ test("cfg.ivWindowSec shrinks the window (and is echoed as window_sec)", () => {
   assert.equal(r.window_sec, 3600);
   assert.equal(r.n, 2);
   assert.equal(r.atm_iv, 40);
-  near(r.iv_rank, 1, 1e-12, "(40−30)/(40−30) — the latest is the window max");
+  near(r.iv_rank, 1, 1e-12, "(40−30)/(40−30) - the latest is the window max");
 });
 
 test("newest-finite selection: nulls skipped, unsorted input handled, input NOT mutated", () => {
   const series = [
-    { ts: NOW, atmIv: null, dvol: null }, // newest entry — both fields null → skipped for both
+    { ts: NOW, atmIv: null, dvol: null }, // newest entry - both fields null → skipped for both
     { ts: NOW - 2 * HOUR, atmIv: 33, dvol: 44 }, // newest FINITE dvol
     { ts: NOW - 1 * HOUR, atmIv: 35 }, // newest FINITE atmIv (carries no dvol at all)
     { ts: NOW - 3 * HOUR, atmIv: 20, dvol: 40 },
   ]; // deliberately out of ts order
   const before = JSON.parse(JSON.stringify(series));
   const r = computeRegime(series, { nowMs: NOW });
-  assert.equal(r.atm_iv, 35, "newest finite atmIv — the null at ts=now is skipped");
-  assert.equal(r.dvol, 44, "newest finite dvol — picked independently of the atm_iv entry");
+  assert.equal(r.atm_iv, 35, "newest finite atmIv - the null at ts=now is skipped");
+  assert.equal(r.dvol, 44, "newest finite dvol - picked independently of the atm_iv entry");
   assert.equal(r.n, 3, "the null-atmIv entry does not count toward n");
   near(r.iv_rank, 1, 1e-12, "(35−20)/(35−20)");
   assert.deepEqual(series, before, "input array untouched (same order, same values)");
@@ -110,7 +110,7 @@ test("empty / out-of-window-only / non-array input → the all-null shape with n
 // --- Phase 3b integration: evaluate() forwards snapshot.ivContext → cycle.iv_regime -------------------
 import { create, evaluate } from "../src/engine/btcopt/engine.js";
 
-// A minimal FLAT snapshot (no structure, no perp) — evaluate() runs its SKIP path and still computes
+// A minimal FLAT snapshot (no structure, no perp) - evaluate() runs its SKIP path and still computes
 // the entry signal: IV regimes matter most while flat.
 const flatSnap = (ivContext) => ({
   ts: NOW,

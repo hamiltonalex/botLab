@@ -1,12 +1,12 @@
-// main.js — Electron main process. Owns the poll loop, all fetching/assembly, paper-position
+// main.js - Electron main process. Owns the poll loop, all fetching/assembly, paper-position
 // accrual, and disk persistence. Pushes ready-to-render datasets to the renderer over IPC.
-// Public read-only data only — no orders, no keys, no custody.
+// Public read-only data only - no orders, no keys, no custody.
 //
 // Key correctness invariants (see FUNCTIONAL_AUDIT_2026-07-01.md):
 //  * Offline gaps of open positions are accrued from HISTORICAL hourly rates (accrueFromRows),
 //    never by extrapolating the current instantaneous rate across the gap; live accrual steps are
 //    capped (maxDtSec) and anything not covered by data is recorded as gapSkippedSec.
-//  * Trailing frames are refreshed incrementally (delta top-up) — never frozen at first fetch.
+//  * Trailing frames are refreshed incrementally (delta top-up) - never frozen at first fetch.
 //  * getState/select respond immediately; backfills run in the background and arrive via push.
 //  * Snapshots that fail the netRate sign gate are shown with a warning but NOT accrued.
 
@@ -40,7 +40,7 @@ import { appendLedger as s1appendLedger, planSettleAdjustments as s1planSettleAd
 import { decimate } from "../engine/format.js";
 import { TWO_LEG, ONE_LEG, ALL_MARKETS, twoLegByKey, oneLegByKey, chainsInUse } from "../engine/universe.js";
 // OTM-сканер (S2): чистый движок каскада otmscan + его пресеты/правила. Вся грязь (fetch, таймеры,
-// диск) остаётся здесь — движок получает готовый inputs-объект (контракт в шапке scan-engine.js).
+// диск) остаётся здесь - движок получает готовый inputs-объект (контракт в шапке scan-engine.js).
 import { SCAN_PRESETS, SCAN_DATA_RULES, SCAN_SCHEMA_VERSION, defaultScanSettings, normalizeScanPatch } from "../engine/otmscan/presets.js";
 import { tvToCandles, computeRvBundle } from "../engine/otmscan/rv.js";
 import { selectCandidates as scnSelectCandidates, expiriesInWindow as scnExpiriesInWindow } from "../engine/otmscan/candidates.js";
@@ -91,7 +91,7 @@ app.on("second-instance", () => {
 const instFor = (strat, key) => (strat === "one" ? oneLegByKey(key) : twoLegByKey(key));
 const cacheKeyFor = (strat, key) => (strat === "one" ? `${key}__oneleg` : key);
 const MAX_CURVE_POINTS = 1200; // IPC payload cap; full resolution stays on disk
-// Anti-FOUC window background per theme — must equal each theme's --bg in the renderer CSS.
+// Anti-FOUC window background per theme - must equal each theme's --bg in the renderer CSS.
 const THEME_BG = { dark: "#07090d", light: "#eef1f6" };
 const uiTheme = () => (state.settings.ui && state.settings.ui.theme === "light" ? "light" : "dark");
 const uiLocale = () => (state.settings.ui && state.settings.ui.locale === "en" ? "en" : "ru");
@@ -119,12 +119,12 @@ const state = {
   snapshots: { byKey: {}, fresh: { gmxAt: 0, hlAt: 0, ageSec: null, stale: true, gateOk: true, accrualOk: false, notes: [] } },
   frames: new Map(), // cacheKey -> rows (also disk-cached, incrementally topped up)
   framePromises: new Map(), // cacheKey -> in-flight Promise (dedupes concurrent backfills)
-  backfilling: new Set(), // cacheKeys currently fetching — surfaced to the UI
+  backfilling: new Set(), // cacheKeys currently fetching - surfaced to the UI
   prices: new Map(), // token -> { daily: number[], fetchedAt: ms }
   bootNotes: [],
-  // Bot 2 «BTC-опционы» (Strategy One) — isolated paper engine + live Deribit source (Phase 1).
+  // Bot 2 «BTC-опционы» (Strategy One) - isolated paper engine + live Deribit source (Phase 1).
   // Read only by the s1:* handlers / assembleDataset1(); never leaks into assembleDataset()/fa:push.
-  // Phase 3b: bounded history RINGS live HERE (never in the persisted engine state — it re-serializes
+  // Phase 3b: bounded history RINGS live HERE (never in the persisted engine state - it re-serializes
   // every tick): ivHistory (30s-sampled {ts, atmIv, dvol}, cap 2880 ≈ 24h, flushed to its own
   // btc-options-history.json) and snapshotHistory (raw composite snapshots for the sweep, cap 600,
   // session-scoped). band = the polled ATM±{5,10,15}% instrument set; dvol = the cached index value.
@@ -133,22 +133,22 @@ const state = {
     // Схема продавца (продажа колла с дельта-хеджем): срез поверхности для ВЫБОРА ноги и найденный
     // кандидат. Оба живут только пока оператор держит тикет продавца, см. ensureBtcOptSellSurface.
     sellSurface: null, sellCandidate: null },
-  // OTM-сканер (S2) — изолированный сканер точек входа в покупку OTM-опционов (план otm-scanner).
+  // OTM-сканер (S2) - изолированный сканер точек входа в покупку OTM-опционов (план otm-scanner).
   // Читается только scn:*-хендлерами / assembleDatasetScan(); в fa:push и s1:push не попадает.
   // Кольца и кэши живут ЗДЕСЬ (движок O(1) на тик, паттерн 3b бота 2): candles (1h, бэкфилл 10д +
   // топ-ап), dvol (дневные закрытия 90д → baseline), chain (USDC), set (опрашиваемый набор:
-  // перп + ATM near/far + крылья + кандидаты — паттерн band), books (стаканы финалистов).
-  // engineState — персистентный редьюсер scan-engine (сигнал/журнал/кулдауны/гистерезис/телеметрия).
+  // перп + ATM near/far + крылья + кандидаты - паттерн band), books (стаканы финалистов).
+  // engineState - персистентный редьюсер scan-engine (сигнал/журнал/кулдауны/гистерезис/телеметрия).
   otmScanner: { engineState: null, sellEngineState: null, settings: {}, source: null, running: false, cycle: null, lastSnapshot: null,
     candles: [], candlesTsMs: 0, candlesBundle: null, dvol: null, chain: null, ivRef: null, wings: null,
     set: null, books: {}, event: { flagged: false, note: null, untilTs: null }, degraded: false,
     telemetryDirtyAt: 0, telemetryFlushedAt: 0, getCountAt: 0, budget: null, lastKickAt: 0,
     stats: { days: {} }, // S3b: суточная статистика обкатки (scn-stats.js), персист в telemetry-файле
-    // S3c (слой записи): surfaceAt — момент последнего снимка поверхности, surfaceLast — его сводка
-    // для лога и панели честности, recordCounts — сколько строк записано за сессию по каждому тракту.
+    // S3c (слой записи): surfaceAt - момент последнего снимка поверхности, surfaceLast - его сводка
+    // для лога и панели честности, recordCounts - сколько строк записано за сессию по каждому тракту.
     surfaceAt: 0, surfaceLast: null, recordCounts: { surface: 0, checks: 0, ticks: 0 },
     perpBook: null, // У8: стакан перпа (дисбаланс), тянется каждый тик
-    lastBest: null }, // лучший кандидат прошлого тика — ему книга достаётся раньше прочих (У12)
+    lastBest: null }, // лучший кандидат прошлого тика - ему книга достаётся раньше прочих (У12)
 };
 
 const pollSec = () => Math.min(15, Math.max(1, state.settings.pollMinutes || 5)) * 60;
@@ -192,11 +192,11 @@ async function pollLive() {
       byKey[inst.key] = snap;
       if (!snap.gateOk) {
         gateOk = false;
-        notes.push(`${inst.key}: sign-gate failed — accrual paused for this instrument`);
+        notes.push(`${inst.key}: sign-gate failed - accrual paused for this instrument`);
       }
       if (!snap.accrualOk) {
         accrualOk = false;
-        if (snap.gateOk) notes.push(`${inst.key}: required live leg is incomplete — accrual paused`);
+        if (snap.gateOk) notes.push(`${inst.key}: required live leg is incomplete - accrual paused`);
       }
     } else {
       accrualOk = false;
@@ -244,7 +244,7 @@ async function settleOpenPositions(capSec) {
         state.snapshots.fresh.notes.push(`${p.instrumentKey}: история для дозаполнения гэпа недоступна (${String(e.message || e).slice(0, 60)})`);
       }
     }
-    // markPx: best-effort mark for the ledger's "price at operation" column — never required
+    // markPx: best-effort mark for the ledger's "price at operation" column - never required
     if (settlePosition(p, rows, snap.raw, now, capSec, { markPx: snap.price })) changed = true;
   }
   if (changed) savePositions(baseDir, state.positions);
@@ -262,7 +262,7 @@ function closeOrphanedPositions() {
     if (p.status === "open" && !instFor(p.strategy, p.instrumentKey)) {
       recordUnpricedGap(p, now, "instrument removed from the tracked universe");
       closePosition(p, now);
-      state.bootNotes.push(`${p.instrumentKey}: инструмент удалён из набора — бумажная позиция закрыта, P&L зафиксирован`);
+      state.bootNotes.push(`${p.instrumentKey}: инструмент удалён из набора - бумажная позиция закрыта, P&L зафиксирован`);
       changed = true;
     }
   }
@@ -275,7 +275,7 @@ async function gapBackfillPositions() {
   const now = Date.now();
   // Any gap the capped live step can't fully cover MUST be priced from history, else the uncovered
   // seconds are silently dropped as gapSkippedSec. The live cap is pollSec()*3 (see pollLive), so the
-  // backfill threshold is tied to it — a hardcoded 30-min threshold left a (cap, 30min) dead zone
+  // backfill threshold is tied to it - a hardcoded 30-min threshold left a (cap, 30min) dead zone
   // that lost real funding at any pollMinutes < 10 (audit: gap-window constants were inconsistent).
   const liveCapMs = pollSec() * 3 * 1000;
   for (const p of state.positions) {
@@ -307,7 +307,7 @@ function frameIsFresh(rows) {
 }
 
 // Ensure the trailing frame for an instrument is loaded AND fresh. Concurrent callers share one
-// in-flight promise; failures are NOT cached (retry on the next call) — audit D7.
+// in-flight promise; failures are NOT cached (retry on the next call) - audit D7.
 async function ensureFrame(strat, key) {
   const inst = instFor(strat, key);
   if (!inst) return [];
@@ -385,7 +385,7 @@ async function warmFrames() {
 // instrument actually refetches at most once per staleness window regardless of poll cadence.
 function topUpFrames() {
   const s = state.settings;
-  ensureFrameAsync(s.strat, s.asset); // selection first — its push matters most
+  ensureFrameAsync(s.strat, s.asset); // selection first - its push matters most
   for (const p of state.positions) {
     if (p.status === "open") ensureFrameAsync(p.strategy, p.instrumentKey);
   }
@@ -400,7 +400,7 @@ function assembleDataset(sel) {
   const s = { ...state.settings, ...sel };
   // Entries and the scanner are computed over the SELECTED window (s.win) so the strategy panel,
   // the scanner ranking and the auto-chosen A/B config all describe the same rows as the hero and
-  // charts (they were full-frame 365d regardless of the window before — audit #3 W2).
+  // charts (they were full-frame 365d regardless of the window before - audit #3 W2).
   const twoLeg = {};
   for (const inst of TWO_LEG) {
     twoLeg[inst.key] = buildTwoLegEntry(inst, state.frames.get(inst.key), state.snapshots.byKey[inst.key], s.win);
@@ -472,7 +472,7 @@ function push() {
 }
 
 // ---------------------------------------------------------------------------
-// Bot 2 «BTC-опционы» (Strategy One) — isolated paper engine + live Deribit source.
+// Bot 2 «BTC-опционы» (Strategy One) - isolated paper engine + live Deribit source.
 // Fully separate from the funding-arb loop above: its own state (state.btcOptions), IPC namespace
 // (s1:*), push channel (s1:push) and persistence files. NEVER touches positions.json/settings.json.
 // Phase 0: state + IPC skeleton + persistence. The Deribit source + hedge engine land in Phase 1;
@@ -492,12 +492,12 @@ function loadOrInitBtcOptions() {
   if (healedBenefit) settings.benefitMovePct = persisted.priceTriggerPct;
   // One-shot heal of pre-fix profiles: the toolbar used to persist the deadband PRESET without its
   // width, so settings.json may carry e.g. preset='aggressive' with the stale 0.001 width. The preset
-  // is the user's recorded intent — realign the width to the canonical table. Sweep-applied pairs are
+  // is the user's recorded intent - realign the width to the canonical table. Sweep-applied pairs are
   // table-consistent by construction, so this is a no-op for them.
   const healWidth = s1engine.DEADBAND_PRESETS[settings.deadbandPreset];
   const healed = healWidth != null && settings.deadbandBtc !== healWidth;
   if (healed) settings.deadbandBtc = healWidth;
-  // One-shot heal of pre-fix profiles: the engine default used to be 3 s — a cadence the toolbar
+  // One-shot heal of pre-fix profiles: the engine default used to be 3 s - a cadence the toolbar
   // (5/15/30) can't express, so a persisted 3 can only be the stale default, never a user's choice.
   // Realign to the UI default 15 s; user-chosen 5/15/30 values pass through untouched.
   const healedReprice = settings.repriceSec === 3;
@@ -532,7 +532,7 @@ function loadOrInitBtcOptions() {
   // Водяной знак нотификаций маржи: исторические строки margin-alert загруженного леджера уже
   // были донесены (или устарели) - системное уведомление получает только пересечения ЭТОЙ сессии.
   s1MarginAlertSeq = st.ledger?.length ? st.ledger[st.ledger.length - 1].seq ?? 0 : 0;
-  // Phase 3b: the persisted IV history (its OWN file — never inside btc-options.json) survives
+  // Phase 3b: the persisted IV history (its OWN file - never inside btc-options.json) survives
   // restarts so the 24h regime window doesn't start empty every session.
   const histRes = loadBotStateQuarantine(baseDir, `${BTCOPT_ID}-history`);
   if (histRes.corrupt) console.warn(`[s1] ${BTCOPT_ID}-history.json битый - карантин, кольцо IV начнётся с нуля`);
@@ -540,17 +540,17 @@ function loadOrInitBtcOptions() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3b — market-history capture (main-process rings; the engine stays O(1)-per-tick).
+// Phase 3b - market-history capture (main-process rings; the engine stays O(1)-per-tick).
 // The source polls an ATM BAND (the ATM straddle + the ±5/10/15% wings, ∪ the open structure's legs)
-// so (a) the IV regime has a live ATM mark_iv even while FLAT — entry signals matter most then — and
+// so (a) the IV regime has a live ATM mark_iv even while FLAT - entry signals matter most then - and
 // (b) recorded snapshots carry quotes for every wing the sweep can pick (PDF p.14: "record its own
 // live chain snapshots"). The greeks gate stays scoped to the OPEN structure via primaryInstruments.
 // ---------------------------------------------------------------------------
-const IV_HISTORY_CAP = 2880; // 30s-sampled ⇒ ≈ 24h — matches the default ivWindowSec
+const IV_HISTORY_CAP = 2880; // 30s-sampled ⇒ ≈ 24h - matches the default ivWindowSec
 const IV_SAMPLE_MS = 30000;
 const SNAP_HISTORY_CAP = 600; // per-tick raw snapshots ⇒ ≈ 2.5 h at the 15 s default cadence (50 min at 5 s)
 const HIST_FLUSH_MS = 60000;
-const DVOL_REFRESH_MS = 300000; // the chain-cache cadence — DVOL is slow-moving
+const DVOL_REFRESH_MS = 300000; // the chain-cache cadence - DVOL is slow-moving
 const BAND_DRIFT_PCT = 0.02; // re-derive the band when the underlying moved 2% from its anchor
 
 // Derive the band instrument set from the cached chain: three pure buildStructure probes (5/10/15%).
@@ -565,7 +565,7 @@ function btcOptBand(chain, underlying, nowMs) {
     const probe = s1buildStructure({ expiry, callOffsetPct: wing, putOffsetPct: wing, qty: 0.01, execStyle: "limit" }, chain, { underlying });
     if (probe.error) continue;
     for (const l of probe.legs) names.add(l.instrument);
-    atmCall = probe.legs[0].instrument; // [atmCall, atmPut, otmCall, otmPut] — order is load-bearing
+    atmCall = probe.legs[0].instrument; // [atmCall, atmPut, otmCall, otmPut] - order is load-bearing
     atmPut = probe.legs[1].instrument;
   }
   if (!names.size) return null;
@@ -770,7 +770,7 @@ function captureSellSanity(built) {
 function recordBtcOptHistory(snap) {
   const bo = state.btcOptions;
   // Only snapshots that actually carry option quotes belong in the sweep ring. When the source is
-  // started BEFORE any chain/band exists (LIVE first, ticket later — the normal browse flow), the
+  // started BEFORE any chain/band exists (LIVE first, ticket later - the normal browse flow), the
   // first ticks are perp-only; such a tick at series[0] trips the sweep's honest-data gate and
   // excludes EVERY combo («нет котировки в series[0]») until the ring turns over (~30 min).
   if (snap.legs && Object.keys(snap.legs).length) {
@@ -846,7 +846,7 @@ async function ensureBtcOptDvol() {
 
 // ── S0 (OTM-сканер, P0 аудита): сверка расчёта экспирации с ОФИЦИАЛЬНОЙ delivery-ценой Deribit.
 // settleStructure рассчитывает по снапшоту индекса (честный прокси; кейс AVAX-пута показал, что
-// расхождение с 30-мин TWAP бывает материальным). Delivery публикуется вскоре после 08:00 UTC —
+// расхождение с 30-мин TWAP бывает материальным). Delivery публикуется вскоре после 08:00 UTC -
 // этот джоб находит settle-строки без пары settle-adjust (pnl.planSettleAdjustments), тянет таблицу
 // btc_usdc и бронирует поправку: realizedOptionsUsd += adjust + строка settle-adjust (meta.srcSeq
 // помечает пару). Троттлинг 10 мин; на сетевой ошибке ретрай через минуту; никогда не бросает в тик.
@@ -989,7 +989,7 @@ function onBtcOptSnapshot(snap) {
   try {
     const bo = state.btcOptions;
     bo.lastSnapshot = snap;
-    recordBtcOptHistory(snap); // copies BEFORE ivContext is attached — history entries stay context-free
+    recordBtcOptHistory(snap); // copies BEFORE ivContext is attached - history entries stay context-free
     snap.ivContext = { series: bo.ivHistory }; // → evaluate() computes cycle.iv_regime from this
     s1engine.ingest(bo.engine, snap, Date.now(), { bootAt: APP_BOOT_MS, sleepWindow: lastSleepWindow, sourceErrorSince: sourceErrorFirstAt });
     const hadStructure = !!bo.engine.structure;
@@ -999,7 +999,7 @@ function onBtcOptSnapshot(snap) {
     maybeOpenNextSell(); // async, самогейтится, в тик не бросает
     bo.snapshot = s1engine.evaluate(bo.engine, snap, Date.now());
     notifyMarginAlerts(); // новые строки margin-alert этого evaluate → системная нотификация
-    // Expiry settlement inside evaluate() may have flattened the book — re-point the source so the
+    // Expiry settlement inside evaluate() may have flattened the book - re-point the source so the
     // now-dead legs stop being the gate-relevant primary (band-only polling, like after a close).
     if (hadStructure && !bo.engine.structure) pointBtcOptSource();
     saveBotState(baseDir, BTCOPT_ID, bo.engine);
@@ -1028,7 +1028,7 @@ function onBtcOptSnapshot(snap) {
 }
 
 // Create the Deribit REST source (if absent) and start it (if idle); point it at the ATM band ∪ the
-// open legs (the legs are the gate-relevant primary — see pointBtcOptSource). Idempotent.
+// open legs (the legs are the gate-relevant primary - see pointBtcOptSource). Idempotent.
 function ensureBtcOptSource() {
   const bo = state.btcOptions;
   const cfg = bo.settings || {};
@@ -1045,9 +1045,9 @@ function ensureBtcOptSource() {
       sourceErrorFirstAt = msg ? (sourceErrorFirstAt ?? Date.now()) : null;
     });
   }
-  // Point the source BEFORE start() — start() fires an immediate tick, so the very first fetch must
+  // Point the source BEFORE start() - start() fires an immediate tick, so the very first fetch must
   // already target the right instruments (else it clobbers the just-opened cycle). The band may not
-  // exist yet (needs an underlying) — the first tick's perp index seeds it via refreshBtcOptBand.
+  // exist yet (needs an underlying) - the first tick's perp index seeds it via refreshBtcOptBand.
   if (!bo.band && bo.chain && Number.isFinite(bo.lastSnapshot?.underlying)) {
     bo.band = btcOptBand(bo.chain, bo.lastSnapshot.underlying, Date.now());
   }
@@ -1084,7 +1084,7 @@ function groupBtcOptChain(chain, underlying) {
   return { expiries, fetchedAt: chain.fetchedAt, underlying: underlying ?? null };
 }
 
-// Bot-2 ledger export (own column set — export.js's LEDGER_COLUMNS are funding-arb-specific).
+// Bot-2 ledger export (own column set - export.js's LEDGER_COLUMNS are funding-arb-specific).
 const BTCOPT_LEDGER_HEADER = ["seq", "time_utc", "type", "side", "contracts", "price_ref", "delta_btc", "fee_usd", "funding_usd", "realized_usd", "note"];
 const btcOptLedgerRows = (eng) =>
   (eng.ledger || []).map((e) => [e.seq, e.t ? new Date(e.t).toISOString() : "", e.type ?? "", e.side ?? "", e.contracts ?? 0, e.priceRef ?? 0, e.deltaBtc ?? 0, e.feeUsd ?? 0, e.fundingUsd ?? 0, e.realizedUsd ?? 0, e.note ?? ""]);
@@ -1096,7 +1096,7 @@ const btcOptLedgerJson = (eng) =>
   JSON.stringify(
     {
       format: "btc-options-ledger",
-      version: 1, // additive keys only (metrics/lastRunMetrics) — existing consumers keep parsing
+      version: 1, // additive keys only (metrics/lastRunMetrics) - existing consumers keep parsing
       botId: BTCOPT_ID,
       exportedAt: new Date().toISOString(),
       perpState: eng.perpState,
@@ -1110,12 +1110,12 @@ const btcOptLedgerJson = (eng) =>
   );
 
 // Run-metrics block appended after the ledger rows in the XLSX export (the sheet tolerates ragged
-// rows). Three columns: metric | current run | last finished run — so the numbers the «Метрики
+// rows). Three columns: metric | current run | last finished run - so the numbers the «Метрики
 // прогона» card wipes at the next open survive in the export.
 function btcOptMetricsRows(eng) {
   const cur = s1summarize(eng.metrics);
   const last = eng.lastRunMetrics || {};
-  const rows = [[], ["— метрики прогона —", "текущий прогон", "последний завершённый"]];
+  const rows = [[], ["- метрики прогона -", "текущий прогон", "последний завершённый"]];
   for (const k of Object.keys(cur)) rows.push([k, cur[k], last[k] ?? ""]);
   return rows;
 }
@@ -1132,7 +1132,7 @@ async function resolveBtcOptStructureLive(params) {
   if (!params || params.expiry == null) {
     const s = bo.settings || {};
     const exp = s1pickExpiry(chain, Date.now(), { minLeadMs: (s.preExpirySec ?? 1800) * 1000 });
-    if (exp == null) return { error: "нет живых экспираций ≤3д — авто-подбор невозможен" };
+    if (exp == null) return { error: "нет живых экспираций ≤3д - авто-подбор невозможен" };
     params = { ...(params || {}), expiry: exp };
     autoPicked = true;
   }
@@ -1350,13 +1350,13 @@ function wireIpcStrategy1() {
   ipcMain.handle("s1:setSettings", async (_e, s) => {
     const bo = state.btcOptions;
     // A preset arriving without its width (the toolbar sends only deadbandPreset) gains the canonical
-    // ±BTC value here — otherwise the engine keeps hedging by the stale width while the ticket shows
+    // ±BTC value here - otherwise the engine keeps hedging by the stale width while the ticket shows
     // the new preset name. Explicit widths (sweep-apply) pass through untouched.
     const patch = s1engine.normalizeDeadband(s || {});
     const before = { repriceSec: bo.settings?.repriceSec, testnet: !!bo.settings?.testnet };
     bo.settings = { ...bo.settings, ...patch };
     // Mirror into the ENGINE's own settings copy (created once at bootstrap/reset): preTradeCheck,
-    // account() and the NEXT openStructure's engineCfg freeze all read state.settings — without the
+    // account() and the NEXT openStructure's engineCfg freeze all read state.settings - without the
     // mirror, applied sweep params / deposit changes never reach the engine until an app restart.
     // The running structure stays untouched: it hedges by its frozen engineCfg, exactly as designed.
     if (bo.engine) bo.engine.settings = { ...bo.engine.settings, ...patch };
@@ -1369,7 +1369,7 @@ function wireIpcStrategy1() {
     if (sourceChanged && bo.source && bo.running) {
       bo.source.stop();
       bo.source = null;
-      bo.running = false; // ensureBtcOptSource() only start()s while this is false — without the reset the rebuilt source never polls
+      bo.running = false; // ensureBtcOptSource() only start()s while this is false - without the reset the rebuilt source never polls
       ensureBtcOptSource();
     }
     return assembleDataset1();
@@ -1444,10 +1444,10 @@ function wireIpcStrategy1() {
       const metaByInstrument = {};
       for (const l of built.legs) metaByInstrument[l.instrument] = res.chain.instruments.find((m) => m.instrument_name === l.instrument);
       const v = s1validateStructure(built, metaByInstrument);
-      // Pre-trade preview (3a): the same structured rejections the open gate applies — the ticket shows
+      // Pre-trade preview (3a): the same structured rejections the open gate applies - the ticket shows
       // the block/warn reasons BEFORE confirm (min lot / step / blackout / IM-vs-deposit with real numbers).
       // The margin warn compares IM to LIVE equity; with a structure open its MtM needs the OPEN legs'
-      // marks, which the preview snapshot (probe legs only) doesn't carry — merge the live ring's marks
+      // marks, which the preview snapshot (probe legs only) doesn't carry - merge the live ring's marks
       // underneath (preview legs win) so attribute() prices the open structure instead of falling back
       // to entry marks (≈0 MtM).
       const checkSnap = bo.lastSnapshot
@@ -1538,16 +1538,16 @@ function wireIpcStrategy1() {
     const bo = state.btcOptions;
     const snap = bo.lastSnapshot;
     if (!bo.engine.structure) return { error: "нет открытой структуры" };
-    if (!snap) return { error: "нет рыночных данных — запустите источник" };
+    if (!snap) return { error: "нет рыночных данных - запустите источник" };
     // Closing locks P&L in at lastSnapshot's marks, so that snapshot must be CURRENT: with a
     // stopped source or a stale ring the fixation would silently use outdated prices. The same
     // stale verdict the badge shows (max(15s, 5×reprice)) gates the button; the engine separately
     // refuses to orphan a held perp on an unpriced-perp snapshot.
     const src = bo.running && bo.source ? bo.source.status() : null;
-    if (!src || src.stale) return { error: "данные устарели — дождитесь LIVE и повторите" };
+    if (!src || src.stale) return { error: "данные устарели - дождитесь LIVE и повторите" };
     const r = s1engine.closeStructure(bo.engine, snap, Date.now());
     if (r.error) return r;
-    // Re-point at band-only polling (primary = [] — flat gates nothing). setInstruments([]) here would
+    // Re-point at band-only polling (primary = [] - flat gates nothing). setInstruments([]) here would
     // silence the WHOLE band: refreshBtcOptBand won't re-derive a band it still considers fresh (same
     // chain, <2% drift), so the IV-regime card would go blind until spot drifts or the app restarts.
     pointBtcOptSource();
@@ -1557,8 +1557,8 @@ function wireIpcStrategy1() {
     return { ok: true };
   });
 
-  // Phase 3b: the parameter sweep — a PURE replay of the captured snapshot ring through a fresh engine
-  // per combo (sweep.js), ranked by Sharpe. Synchronous CPU work of a few seconds — user-initiated,
+  // Phase 3b: the parameter sweep - a PURE replay of the captured snapshot ring through a fresh engine
+  // per combo (sweep.js), ranked by Sharpe. Synchronous CPU work of a few seconds - user-initiated,
   // button shows «идёт свип…»; a starved source tick during it is harmless (dedup-by-ts).
   ipcMain.handle("s1:runSweep", async () => {
     const bo = state.btcOptions;
@@ -1570,7 +1570,7 @@ function wireIpcStrategy1() {
         push1();
         return bo.sweepResult;
       }
-      // marginOk vs the LIVE equity (deposit + cumulative P&L) — the same limit the ticket's
+      // marginOk vs the LIVE equity (deposit + cumulative P&L) - the same limit the ticket's
       // IM-warn uses, so «в лимите» here can't contradict the next open's pre-trade check.
       const equityUsd = s1engine.account(bo.engine, bo.lastSnapshot ?? series[series.length - 1]).equity;
       const r = s1runSweep({ series, chain: bo.chain, expiryMs, baseSettings: bo.settings, equityUsd });
@@ -1627,14 +1627,14 @@ function wireIpcStrategy1() {
 }
 
 // ---------------------------------------------------------------------------
-// OTM-сканер (S2, план otm-scanner §12-S2) — интеграция PURE-движка otmscan в main-процесс.
+// OTM-сканер (S2, план otm-scanner §12-S2) - интеграция PURE-движка otmscan в main-процесс.
 // Полная изоляция (закон Phase 0): своё состояние (state.otmScanner), свои файлы
 // otm-scanner{,-settings,-telemetry}.json, свой IPC-неймспейс scn:* + push scn:push, свой
 // createRestSource-инстанс. funding-arb и Strategy One не задеты; deribit.js расширен аддитивно.
-// Источник работает ТОЛЬКО между scn:start и scn:stop — в простое ноль трафика (§4.2).
+// Источник работает ТОЛЬКО между scn:start и scn:stop - в простое ноль трафика (§4.2).
 // ---------------------------------------------------------------------------
 const SCN_ID = "otm-scanner";
-const SCN_RULES = SCAN_DATA_RULES; // структурные константы (§7) — единый источник истины в presets.js
+const SCN_RULES = SCAN_DATA_RULES; // структурные константы (§7) - единый источник истины в presets.js
 
 // Эффективный каданс кэшей: при авто-деградации (§4.2) все кадансы сканера удваиваются.
 const scnCacheMs = (baseSec) => baseSec * 1000 * (state.otmScanner.degraded ? 2 : 1);
@@ -1644,7 +1644,7 @@ const normalizeScanEvent = (e) => ({
   note: typeof e?.note === "string" ? e.note.slice(0, 24) : null,
   untilTs: Number.isFinite(e?.untilTs) ? e.untilTs : null,
 });
-// Флаг события живёт до untilTs (горизонт 24/48ч из тулбара) и дальше гаснет сам — движок и
+// Флаг события живёт до untilTs (горизонт 24/48ч из тулбара) и дальше гаснет сам - движок и
 // dataset всегда видят уже погашенную версию, персист чистится лениво при следующем сохранении.
 function effectiveScanEvent(nowMs) {
   const ev = state.otmScanner.event;
@@ -1669,9 +1669,9 @@ function saveScanSettings() {
   saveBotSettings(baseDir, SCN_ID, { ...sc.settings, event: sc.event });
 }
 
-// Персист-раздел (план §3.1): otm-scanner.json — редьюсер БЕЗ телеметрии (сигнал/журнал/кулдауны/
-// гистерезис; пишется каждый тик — ACTIVE-сигнал переживает рестарт, §7 случай 14);
-// otm-scanner-telemetry.json — только суточные вёдра (троттлинг + финальный сброс на quit;
+// Персист-раздел (план §3.1): otm-scanner.json - редьюсер БЕЗ телеметрии (сигнал/журнал/кулдауны/
+// гистерезис; пишется каждый тик - ACTIVE-сигнал переживает рестарт, §7 случай 14);
+// otm-scanner-telemetry.json - только суточные вёдра (троттлинг + финальный сброс на quit;
 // session-счётчики умирают с сессией по определению §5.6).
 function persistScanState() {
   const sc = state.otmScanner;
@@ -1714,11 +1714,11 @@ function loadOrInitOtmScanner() {
   sc.event = normalizeScanEvent(sc.settings.event);
   delete sc.settings.event; // событие живёт отдельным полем state; в файл возвращает saveScanSettings
 
-  // Битый JSON карантинится (.corrupt-<ts>), не перезаписывается молча — §7 случай 17.
+  // Битый JSON карантинится (.corrupt-<ts>), не перезаписывается молча - §7 случай 17.
   const stRes = loadBotStateQuarantine(baseDir, SCN_ID);
   const telRes = loadBotStateQuarantine(baseDir, `${SCN_ID}-telemetry`);
-  if (stRes.corrupt) console.warn(`[scn] ${SCN_ID}.json битый — карантин .corrupt-*, чистый re-init`);
-  if (telRes.corrupt) console.warn(`[scn] ${SCN_ID}-telemetry.json битый — карантин, телеметрия с нуля`);
+  if (stRes.corrupt) console.warn(`[scn] ${SCN_ID}.json битый - карантин .corrupt-*, чистый re-init`);
+  if (telRes.corrupt) console.warn(`[scn] ${SCN_ID}-telemetry.json битый - карантин, телеметрия с нуля`);
   const persisted = stRes.state && typeof stRes.state === "object" ? stRes.state : null;
   sc.engineState = {
     ...createScanState(),
@@ -1726,7 +1726,7 @@ function loadOrInitOtmScanner() {
     telemetry: { session: {}, days: telRes.state?.days && typeof telRes.state.days === "object" ? telRes.state.days : {} },
   };
   // S3b: статистика обкатки живёт в том же telemetry-файле (аддитивный ключ stats) и переживает
-  // рестарт вместе с суточными вёдрами; битый файл уже карантинен выше — тогда с нуля.
+  // рестарт вместе с суточными вёдрами; битый файл уже карантинен выше - тогда с нуля.
   sc.stats = { days: telRes.state?.stats?.days && typeof telRes.state.stats.days === "object" ? telRes.state.stats.days : {} };
   if (!Array.isArray(sc.engineState.journal)) sc.engineState.journal = [];
   if ((sc.engineState.schemaVersion || 0) < SCAN_SCHEMA_VERSION) sc.engineState.schemaVersion = SCAN_SCHEMA_VERSION;
@@ -1777,7 +1777,7 @@ async function ensureScanCandles() {
       sc.candles = [...byTs.values()].sort((a, b) => a.ts - b.ts).slice(-SCN_RULES.candlesRingCap);
     }
     sc.candlesTsMs = Date.now();
-    // Контракт S2: candlesBundle пересчитывается ТОЛЬКО при обновлении кэша свечей (движку — готовый).
+    // Контракт S2: candlesBundle пересчитывается ТОЛЬКО при обновлении кэша свечей (движку - готовый).
     sc.candlesBundle = computeRvBundle(sc.candles, Date.now());
   } catch (e) {
     console.warn("[scn] candles fetch:", String(e?.message || e));
@@ -1794,7 +1794,7 @@ async function ensureScanDvol() {
   scnDvolInFlight = true;
   try {
     const end = Date.now();
-    // 90д дневных закрытий тянутся ОДНОКРАТНО (план §4.1); дальше — топ-ап хвоста, baseline скользит.
+    // 90д дневных закрытий тянутся ОДНОКРАТНО (план §4.1); дальше - топ-ап хвоста, baseline скользит.
     const start = sc.dvol?.backfilled ? end - 3 * 86400000 : end - SCN_RULES.dvolBaselineDays * 86400000;
     const res = await deribit.getVolatilityIndexData({ currency: "BTC", start_timestamp: start, end_timestamp: end, resolution: "1D", testnet: !!sc.settings.testnet });
     const rows = Array.isArray(res?.data) ? res.data : [];
@@ -1853,7 +1853,7 @@ const scnDayKey = (ms) => new Date(ms).toISOString().slice(0, 10); // тот ж�
 let scnSurfaceInFlight = false;
 
 // Строка тика в запись. Дёшева (сеть не трогает), поэтому пишется КАЖДЫЙ тик, а не по кадансу:
-// 8758 строк за 72ч рядом с 69 МБ поверхности — шум, зато ряд непрерывен и склеивается с
+// 8758 строк за 72ч рядом с 69 МБ поверхности - шум, зато ряд непрерывен и склеивается с
 // поверхностью по времени без интерполяции. Отказ записи не трогает торговый тракт.
 function recordScanTick(cycle, nowMs) {
   const sc = state.otmScanner;
@@ -1880,7 +1880,7 @@ function recordScanTick(cycle, nowMs) {
 async function ensureScanSurface() {
   const sc = state.otmScanner;
   if (!sc.running || scnSurfaceInFlight) return;
-  if (!sc.chain?.instruments?.length) return; // страйк/срок/сторона живут в chain — без мет не сшить
+  if (!sc.chain?.instruments?.length) return; // страйк/срок/сторона живут в chain - без мет не сшить
   const nowMs = Date.now();
   if (sc.surfaceAt && nowMs - sc.surfaceAt < scnCacheMs(SCN_RULES.surfaceRefreshSec)) return;
   scnSurfaceInFlight = true;
@@ -1902,7 +1902,7 @@ async function ensureScanSurface() {
     sc.recordCounts.surface += appendScanRecords(baseDir, SCN_SURFACE_PREFIX, day, rows.map((r) => ({ ts: at, ...r })));
 
     // Две РАЗНЫЕ сверки, и разделять их обязательно. leg-сверка считает греки из полей того же
-    // тикера, с которого берутся биржевые, — это чистая точность формулы. surface-сверка сравнивает
+    // тикера, с которого берутся биржевые, - это чистая точность формулы. surface-сверка сравнивает
     // снимок поверхности с живым тикером и потому мерит сумму «формула + возраст снимка»: она
     // отвечает на вопрос, насколько поверхность вообще пригодна как источник.
     const legs = sc.lastSnapshot?.legs ?? {};
@@ -1932,7 +1932,7 @@ async function ensureScanSurface() {
 
 // ── Набор инструментов источника (§4.1, паттерн band бота 2): перп (в снапшоте всегда) +
 // ATM-пары near/far (IV_ref и FIV) + крылья ±1σ (У7) + кандидаты σ-окна (тикеры У10-У14) +
-// инструмент ACTIVE-сигнала (пин §5.5). Набор — решение момента сборки; живёт до дрейфа спота
+// инструмент ACTIVE-сигнала (пин §5.5). Набор - решение момента сборки; живёт до дрейфа спота
 // (setDriftPct), смены chain/стороны/пресета/σ-конвенции, ролловера near-экспирации или пина.
 function scnAtmPairOf(chain, expiryMs, spot) {
   const metas = (chain?.instruments ?? []).filter((m) => m.expiration_timestamp === expiryMs);
@@ -1972,7 +1972,7 @@ function buildScanSet(spot, nowMs) {
   const atmNear = nearExp != null ? scnAtmPairOf(chain, nearExp, spot) : null;
   const atmFar = farExp != null ? scnAtmPairOf(chain, farExp, spot) : null;
 
-  // Крылья ±1σ near-экспирации: σ_T из последнего IV_ref (или DVOL-фолбэк на холодном старте) —
+  // Крылья ±1σ near-экспирации: σ_T из последнего IV_ref (или DVOL-фолбэк на холодном старте) -
   // сборочное решение, как страйки band у бота 2; движок мерит скью по живым mark_iv этих крыльев.
   let wingPut = null;
   let wingCall = null;
@@ -1986,8 +1986,8 @@ function buildScanSet(spot, nowMs) {
     }
   }
 
-  // Кандидаты для ОПРОСА — тот же selectCandidates, что в движке; σ-вход из последних известных IV
-  // (движок на тике пересчитает всё по живым данным — набор лишь решает, каким инструментам будут
+  // Кандидаты для ОПРОСА - тот же selectCandidates, что в движке; σ-вход из последних известных IV
+  // (движок на тике пересчитает всё по живым данным - набор лишь решает, каким инструментам будут
   // тикеры; рассинхрон деградирует в unknown видимо и лечится пересборкой на дрейфе).
   const ivRefByExpiry = {};
   for (const exp of windowExps) {
@@ -2072,7 +2072,7 @@ function buildSellScanSet(chain, spot, nowMs) {
 function pointScanSource() {
   const sc = state.otmScanner;
   if (!sc.source) return;
-  // primary = []: у сканера нет «ног структуры» — greeks-гейт ничего не гейтит, и дырка в крыле
+  // primary = []: у сканера нет «ног структуры» - greeks-гейт ничего не гейтит, и дырка в крыле
   // не гасит LIVE (качество данных судит движок per-условие через unknown, §7). Здоровье источника
   // меряется перпом (heartbeat): его отказ растит errorStreak и включает деградацию.
   sc.source.setInstruments(sc.set?.instruments ?? [], []);
@@ -2111,8 +2111,8 @@ function refreshScanSet(spot, nowMs) {
   return changed;
 }
 
-// ── IV_ref (§5.1): среднее mark_iv ATM-пары кандидатной экспирации (одна нога — тоже значение,
-// правило ATM-пары бота 2); пары нет вовсе — DVOL-фолбэк с пометкой source:"dvol" (движок несёт
+// ── IV_ref (§5.1): среднее mark_iv ATM-пары кандидатной экспирации (одна нога - тоже значение,
+// правило ATM-пары бота 2); пары нет вовсе - DVOL-фолбэк с пометкой source:"dvol" (движок несёт
 // её в note У1-У3). far-нога FIV при дырке в тике доживает со своим farTsMs и протухает честно.
 function deriveScanIvRef(snap, nowMs) {
   const sc = state.otmScanner;
@@ -2137,24 +2137,24 @@ function deriveScanIvRef(snap, nowMs) {
   const put = ivOf(set?.wingPut);
   const call = ivOf(set?.wingCall);
   if (put != null || call != null) sc.wings = { putIvPct: put, callIvPct: call, tsMs: snapTs };
-  // некотирующиеся крылья: прежние доживают и протухают по tsMs — У7 уйдёт в unknown честно
+  // некотирующиеся крылья: прежние доживают и протухают по tsMs - У7 уйдёт в unknown честно
 }
 
 // ── Стаканы финалистов (§4.1): только кандидаты, прошедшие У9-У11 по данным тикера (σ-окно
-// гарантировано отбором; премия и спред — дешёвые формулы), приоритет — пин ACTIVE-сигнала
-// (его книга кормит У8/У12 живого сигнала). Не более booksPerTickMax вызовов; никто не прошёл —
-// ноль вызовов (У12 останется unknown, но вердикт уже none из-за У10/У11 — бюджет не тратится).
+// гарантировано отбором; премия и спред - дешёвые формулы), приоритет - пин ACTIVE-сигнала
+// (его книга кормит У8/У12 живого сигнала). Не более booksPerTickMax вызовов; никто не прошёл -
+// ноль вызовов (У12 останется unknown, но вердикт уже none из-за У10/У11 - бюджет не тратится).
 function pickBookFinalists(snap, preset) {
   const sc = state.otmScanner;
   const spot = snap.perp?.index ?? null;
   const out = [];
   const pinned = sc.set?.pinned;
   if (pinned && snap.legs?.[pinned]) out.push(pinned);
-  // ЛУЧШИЙ ПРОШЛОГО ТИКА — вторым по важности, сразу за пином. Без этого книги уходили первым двум
-  // кандидатам НАБОРА, прошедшим пречек У10/У11, а «лучшим» движок выбирает другого — по вердиктам
+  // ЛУЧШИЙ ПРОШЛОГО ТИКА - вторым по важности, сразу за пином. Без этого книги уходили первым двум
+  // кандидатам НАБОРА, прошедшим пречек У10/У11, а «лучшим» движок выбирает другого - по вердиктам
   // всех условий. Выборы расходятся, лучший остаётся без книги, У12 уходит в unknown, а unknown в
   // режиме AND запрещает сигнал: сканер не смог бы дать сигнал НИКОГДА, по механической причине.
-  // В прогоне 3 дефект был не виден — там пречек почти никто не проходил (У10/У11 pass 70.7%/0.5%),
+  // В прогоне 3 дефект был не виден - там пречек почти никто не проходил (У10/У11 pass 70.7%/0.5%),
   // и У12 давал 99.4% unknown, что списывалось на узость выборки финалистов.
   if (sc.lastBest && sc.lastBest !== pinned && snap.legs?.[sc.lastBest]) out.push(sc.lastBest);
   for (const name of sc.set?.candidates ?? []) {
@@ -2171,7 +2171,7 @@ function pickBookFinalists(snap, preset) {
   return out.slice(0, SCN_RULES.booksPerTickMax);
 }
 
-// depthUsd = Σ(цена × количество) по топ-5 уровням (§5.2 У12); уровни Deribit — [price, amount].
+// depthUsd = Σ(цена × количество) по топ-5 уровням (§5.2 У12); уровни Deribit - [price, amount].
 const scnBookDepthUsd = (levels) => (levels ?? []).reduce((s, l) => s + (Number(l?.[0]) || 0) * (Number(l?.[1]) || 0), 0);
 
 // Глубина стакана ПЕРПА (У8, дисбаланс). Единицы у обратного BTC-PERPETUAL другие: объём уровня уже
@@ -2179,7 +2179,7 @@ const scnBookDepthUsd = (levels) => (levels ?? []).reduce((s, l) => s + (Number(
 // Перепутать легко, а ошибка была бы тихой: отношение bid/ask осталось бы правдоподобным числом.
 const scnPerpDepthUsd = (levels) => (levels ?? []).reduce((s, l) => s + (Number(l?.[1]) || 0), 0);
 
-// Стакан перпа тянется КАЖДЫЙ тик (один дешёвый вызов): дисбаланс — быстрый сигнал, на кадансе
+// Стакан перпа тянется КАЖДЫЙ тик (один дешёвый вызов): дисбаланс - быстрый сигнал, на кадансе
 // поверхности он потерял бы смысл. Отказ оставляет прошлую книгу, она протухнет по bookAgeSec и даст
 // честный unknown, а не молчаливый fail.
 async function fetchScanPerpBook() {
@@ -2203,7 +2203,7 @@ async function fetchScanBooks(names) {
         sc.books[name] = { bidDepthUsd: scnBookDepthUsd(ob?.bids), askDepthUsd: scnBookDepthUsd(ob?.asks), tsMs: Date.now() };
         fetched++;
       } catch {
-        /* книга доживёт и протухнет по bookAgeSec в движке — честный unknown, не молчаливый fail */
+        /* книга доживёт и протухнет по bookAgeSec в движке - честный unknown, не молчаливый fail */
       }
     }),
   );
@@ -2220,7 +2220,7 @@ function assembleScanInputs(snap, nowMs) {
   if (sc.set?.pinned) wanted.add(sc.set.pinned);
   for (const name of wanted) {
     const l = snap.legs?.[name];
-    if (!l) continue; // нет тикера — движок даст unknown по инструментной группе (честно)
+    if (!l) continue; // нет тикера - движок даст unknown по инструментной группе (честно)
     instruments[name] = {
       mark: l.mark,
       bid: l.bid,
@@ -2237,17 +2237,17 @@ function assembleScanInputs(snap, nowMs) {
     if (Number.isFinite(sc.ivRef.nearPct) && Number.isFinite(sc.ivRef.nearExpiryMs)) ivRefByExpiry[sc.ivRef.nearExpiryMs] = sc.ivRef.nearPct;
     if (Number.isFinite(sc.ivRef.farPct) && Number.isFinite(sc.ivRef.farExpiryMs)) ivRefByExpiry[sc.ivRef.farExpiryMs] = sc.ivRef.farPct;
   }
-  // Живой ATM-IV получают только near и far — по одной ATM-паре на каждую (§4.1). Все ОСТАЛЬНЫЕ
+  // Живой ATM-IV получают только near и far - по одной ATM-паре на каждую (§4.1). Все ОСТАЛЬНЫЕ
   // экспирации окна остаются без σ, и selectCandidates отправляет их в skippedExpiries целиком.
   // Замер обкатки 2026-08-04: в окне 48-336ч биржа держит 3 экспирации (2.6/3.6/9.6 суток), а
-  // кандидатов давала ровно ОДНА — ближайшая; skippedExpiries=2 на 2388 тиках из 2399. Девятидневная,
+  // кандидатов давала ровно ОДНА - ближайшая; skippedExpiries=2 на 2388 тиках из 2399. Девятидневная,
   // единственная с тетой 5-6%/сут (то есть единственная, способная пройти У13), не попадала в
-  // кандидаты НИКОГДА — и расширение окна до 336ч оказалось безрезультатным.
+  // кандидаты НИКОГДА - и расширение окна до 336ч оказалось безрезультатным.
   // Сборщик НАБОРА этот фолбэк уже имеет, поэтому тикеры тех инструментов мы и так скачиваем:
   // движок их просто выбрасывал. Правка возвращает уже оплаченные данные и не стоит ни одного GET.
-  // Только для strikeMode "delta": там σ — СИТО снабжения, а гейтом служит дельта живых греков,
+  // Только для strikeMode "delta": там σ - СИТО снабжения, а гейтом служит дельта живых греков,
   // поэтому грубость DVOL-прокси на вердикт не влияет. В режиме "sigma" (dmitri-v1/v2) σ гейтит
-  // напрямую, подмена ATM-IV на 30-дневный индекс исказила бы У9 — и сравнимость с прогоном 3.
+  // напрямую, подмена ATM-IV на 30-дневный индекс исказила бы У9 - и сравнимость с прогоном 3.
   if (resolveScanPreset().strikeMode === "delta" && Number.isFinite(sc.dvol?.lastClosePct) && sc.chain) {
     for (const exp of scnExpiriesInWindow(sc.chain, nowMs, resolveScanPreset())) {
       if (!Number.isFinite(ivRefByExpiry[exp])) ivRefByExpiry[exp] = sc.dvol.lastClosePct;
@@ -2271,9 +2271,9 @@ function assembleScanInputs(snap, nowMs) {
   };
 }
 
-// Авто-деградация каданса (§4.2): errorStreak >= 3 — интервал x2 (setIntervalMs сохраняет
-// lastTs/metaCache/errorStreak — пересоздание источника обнуляло бы счётчик и ломало детект
-// выздоровления); errorStreak == 0 — номинал. Кэш-кадансы удваивает scnCacheMs по флагу.
+// Авто-деградация каданса (§4.2): errorStreak >= 3 - интервал x2 (setIntervalMs сохраняет
+// lastTs/metaCache/errorStreak - пересоздание источника обнуляло бы счётчик и ломало детект
+// выздоровления); errorStreak == 0 - номинал. Кэш-кадансы удваивает scnCacheMs по флагу.
 function maybeDegradeScanCadence() {
   const sc = state.otmScanner;
   if (!sc.source) return;
@@ -2282,7 +2282,7 @@ function maybeDegradeScanCadence() {
   if (streak >= 3 && !sc.degraded) {
     sc.degraded = true;
     sc.source.setIntervalMs(baseMs * 2);
-    console.warn(`[scn] авто-деградация: errorStreak ${streak} — каданс x2 (${(baseMs * 2) / 1000}с) до выздоровления`);
+    console.warn(`[scn] авто-деградация: errorStreak ${streak} - каданс x2 (${(baseMs * 2) / 1000}с) до выздоровления`);
   } else if (streak === 0 && sc.degraded) {
     sc.degraded = false;
     sc.source.setIntervalMs(baseMs);
@@ -2307,18 +2307,18 @@ async function onScanSnapshot(snap) {
     const finalists = pickBookFinalists(snap, preset);
     const [booksFetched] = await Promise.all([
       finalists.length ? fetchScanBooks(finalists) : 0,
-      fetchScanPerpBook(), // У8: дисбаланс — быстрый сигнал, тянем каждый тик
+      fetchScanPerpBook(), // У8: дисбаланс - быстрый сигнал, тянем каждый тик
     ]);
     const nowMs = Date.now();
     const { state: nextState, cycle } = evaluateScan(sc.engineState, assembleScanInputs(snap, nowMs), preset, nowMs);
     sc.engineState = nextState;
     sc.cycle = cycle;
     sc.lastBest = cycle.best?.instrument ?? null; // приоритет книги на следующем тике (У12)
-    // S3b: суточные распределения обкатки (значения условий, экономика лучшего, Д8, инциденты) —
+    // S3b: суточные распределения обкатки (значения условий, экономика лучшего, Д8, инциденты) -
     // фолд ДО флаша, чтобы telemetry-файл уносил свежие вёдра тем же троттлингом.
     sc.stats = foldScanStats(sc.stats, cycle, { degraded: sc.degraded, equityUsd: sc.settings.equityUsd, repriceSec: sc.settings.scanRepriceSec }, nowMs, SCN_RULES);
     // S3c: вторая половина сырья. Поверхность несёт срез по инструментам, а условия У1-У8 живут на
-    // уровне АКТИВА и в неё не попадают — без этой строки чужой пресет по записи не пересчитывается.
+    // уровне АКТИВА и в неё не попадают - без этой строки чужой пресет по записи не пересчитывается.
     // Здесь же единственный источник распределения ГЛУБИНЫ: стаканы берутся ≤2 финалистам за тик,
     // а book_summary глубины не отдаёт вовсе.
     recordScanTick(cycle, nowMs);
@@ -2327,7 +2327,7 @@ async function onScanSnapshot(snap) {
     pushScan();
 
     // Бюджет §4.3: дельта GET-счётчика с конца прошлого тика (снапшот + книги + кэш-джобы;
-    // при работающем боте 2 — общий трафик приложения, подпись в логе это фиксирует).
+    // при работающем боте 2 - общий трафик приложения, подпись в логе это фиксирует).
     const total = deribit.getRpcCallCount();
     if (sc.getCountAt) {
       const gets = total - sc.getCountAt;
@@ -2339,8 +2339,8 @@ async function onScanSnapshot(snap) {
     }
     sc.getCountAt = total;
 
-    // Пересборка набора — для СЛЕДУЮЩЕГО тика (порядок бота 2: evaluate, потом band). Холодный
-    // старт: первый тик перп-only дал спот — набор родился; немедленный полный тик вместо
+    // Пересборка набора - для СЛЕДУЮЩЕГО тика (порядок бота 2: evaluate, потом band). Холодный
+    // старт: первый тик перп-only дал спот - набор родился; немедленный полный тик вместо
     // ожидания каданса (гвард 5с от циклов: refreshNow сработает уже после inFlight-выхода).
     const grew = refreshScanSet(snap.perp?.index ?? null, Date.now());
     maybeDegradeScanCadence();
@@ -2420,7 +2420,7 @@ async function onSellScanSnapshot(snap) {
 }
 
 // Создать (если нет) и запустить источник сканера. Идемпотентно; набор может быть пуст
-// (холодный старт) — первый тик перп-only сеет спот, набор рождается в его обработчике.
+// (холодный старт) - первый тик перп-only сеет спот, набор рождается в его обработчике.
 function ensureScanSource() {
   const sc = state.otmScanner;
   const cfg = sc.settings;
@@ -2445,11 +2445,11 @@ function ensureScanSource() {
 function stopScanSource() {
   const sc = state.otmScanner;
   sc.source?.stop();
-  sc.running = false; // кэш-джобы гейтятся на running — в простое ноль трафика (§4.2)
+  sc.running = false; // кэш-джобы гейтятся на running - в простое ноль трафика (§4.2)
 }
 
-// §7 случай 16 (testnet на лету): семьи данных несовместимы — кольца сбрасываются. Состояние
-// движка НЕ трогаем: журнал — история, ACTIVE ревалидируется первым тиком новой сети
+// §7 случай 16 (testnet на лету): семьи данных несовместимы - кольца сбрасываются. Состояние
+// движка НЕ трогаем: журнал - история, ACTIVE ревалидируется первым тиком новой сети
 // (instrument-gone даст честный INVALIDATED).
 function resetScanDataRings() {
   const sc = state.otmScanner;
@@ -2477,13 +2477,13 @@ function assembleDatasetScan() {
     botId: SCN_ID,
     running: sc.running,
     scanMode: scnMode(), // buy | sell - тулбар биндится к нему
-    settings: sc.settings, // живые параметры (применяются сразу — «оценка живая, сигнал снимок»)
+    settings: sc.settings, // живые параметры (применяются сразу - «оценка живая, сигнал снимок»)
     presetId: preset.id,
-    preset, // полный объект порогов — тулбар/редактор S3 биндятся к нему
+    preset, // полный объект порогов - тулбар/редактор S3 биндятся к нему
     presetIds: [...new Set([...Object.keys(SCAN_PRESETS), ...Object.keys(sc.settings.userPresets ?? {})])],
     cycle: sc.cycle, // полный dataset-контракт движка (план §9 + правки ui-spec §1.4)
     // S3a (аддитивно): абсолютные ряды волатильности для канваса «RV против IV» и модельной
-    // аналитики UI — cycle несёт только спреды условий, а канвасу нужны сами уровни (§9 плана)
+    // аналитики UI - cycle несёт только спреды условий, а канвасу нужны сами уровни (§9 плана)
     vol: {
       rv7dPct: sc.candlesBundle?.rv7dPct ?? null,
       rv3dPct: sc.candlesBundle?.rv3dPct ?? null,
@@ -2493,7 +2493,7 @@ function assembleDatasetScan() {
       baselineIvPct: sc.dvol?.baselineIvPct ?? null,
     },
     event: effectiveScanEvent(Date.now()),
-    budget: sc.budget, // счётчик GET/тик (§4.3) — панель качества данных S3
+    budget: sc.budget, // счётчик GET/тик (§4.3) - панель качества данных S3
     degraded: sc.degraded,
     fresh: sc.source
       ? { ...sc.source.status(), degraded: sc.degraded }
@@ -2575,7 +2575,7 @@ function wireIpcScan() {
 
   ipcMain.handle("scn:refreshNow", async () => {
     const sc = state.otmScanner;
-    // Остановленный сканер НЕ автостартует: scn:start/scn:stop — явные примитивы (вопрос А4
+    // Остановленный сканер НЕ автостартует: scn:start/scn:stop - явные примитивы (вопрос А4
     // открыт; автостарт-обвязка, если будет ратифицирована, придёт в S3 поверх этих примитивов).
     if (sc.source && sc.running) sc.source.refreshNow();
     return assembleDatasetScan();
@@ -2621,7 +2621,7 @@ function wireIpcScan() {
     if (!SCAN_PRESETS[id] && !sc.settings.userPresets?.[id]) return { error: `неизвестный пресет: ${String(id)}` };
     sc.settings.presetId = id;
     saveScanSettings();
-    // dwell сбросится сам: dwellKey несёт presetId (§7 случай 20 — сигнал зреет на одном пресете)
+    // dwell сбросится сам: dwellKey несёт presetId (§7 случай 20 - сигнал зреет на одном пресете)
     return assembleDatasetScan();
   });
 
@@ -2697,7 +2697,7 @@ function wireIpcScan() {
 // IPC
 // ---------------------------------------------------------------------------
 // Shell-level UI IPC (theme). Wired BEFORE createWindow: the renderer's inline <head> script asks
-// for the theme synchronously while the page is still parsing — the handler must already exist.
+// for the theme synchronously while the page is still parsing - the handler must already exist.
 function wireIpcUi() {
   ipcMain.on("ui:getTheme", (e) => {
     e.returnValue = uiTheme();
@@ -2762,11 +2762,11 @@ function wireIpc() {
       return { error: "капитал и плечо должны быть конечными числами > 0" };
     }
     const dup = state.positions.find((p) => p.status === "open" && p.instrumentKey === key && p.strategy === strat);
-    if (dup) return { error: "по этому инструменту уже есть открытая позиция — сначала закройте её" };
+    if (dup) return { error: "по этому инструменту уже есть открытая позиция - сначала закройте её" };
     const snap = state.snapshots.byKey[key];
-    if (!snap) return { error: "нет живого снапшота по инструменту — дождитесь обновления данных" };
-    if (snap.gateOk === false) return { error: "гейт знаков не пройден — открытие заблокировано" };
-    if (snap.accrualOk === false) return { error: "обязательная живая нога недоступна — открытие заблокировано" };
+    if (!snap) return { error: "нет живого снапшота по инструменту - дождитесь обновления данных" };
+    if (snap.gateOk === false) return { error: "гейт знаков не пройден - открытие заблокировано" };
+    if (snap.accrualOk === false) return { error: "обязательная живая нога недоступна - открытие заблокировано" };
 
     const notional = capital * leverage;
     if (!Number.isFinite(notional)) return { error: "ноционал позиции выходит за допустимый числовой диапазон" };
@@ -2794,7 +2794,7 @@ function wireIpc() {
   ipcMain.handle("fa:closePaper", async (_e, id) => {
     const p = state.positions.find((x) => x.id === id);
     if (p) {
-      // final settle so the last interval isn't dropped (audit M16) — incl. history pricing of any
+      // final settle so the last interval isn't dropped (audit M16) - incl. history pricing of any
       // over-cap gap (e.g. close right after a laptop wake). А6 R2: тот же дозабор фрейма, что в
       // settleOpenPositions - закрытие сразу после пробуждения не должно терять часы в gapSkippedSec;
       // при недоступной сети закрытие НЕ блокируется (остаток честно уйдёт в recordUnpricedGap/skip).
@@ -2851,7 +2851,7 @@ function wireIpc() {
 
   // ── transaction ledger (Журнал операций) ────────────────────────────────
   // Windowed on-demand query: the derived ledger can reach tens of thousands of events per
-  // position, so it never rides on fa:push — the renderer asks for a page when the selection
+  // position, so it never rides on fa:push - the renderer asks for a page when the selection
   // changes or the projection's accrualCount moves. No status filter: closed positions keep
   // their ledger queryable until deleted (requirement), matching fa:closePaper's lookup.
   ipcMain.handle("fa:getLedger", async (_e, req) => {
@@ -2895,12 +2895,12 @@ function wireIpc() {
   });
 
   // Deleting a position removes it AND its ledger irreversibly (the ledger is derived from the
-  // position, so this is one operation). Open positions must be closed first — an open forward
+  // position, so this is one operation). Open positions must be closed first - an open forward
   // test disappearing silently would be indistinguishable from data loss.
   ipcMain.handle("fa:deletePaper", async (_e, id) => {
     const p = state.positions.find((x) => x.id === id);
     if (!p) return { error: "позиция не найдена" };
-    if (p.status === "open") return { error: "нельзя удалить открытую позицию — сначала закройте её" };
+    if (p.status === "open") return { error: "нельзя удалить открытую позицию - сначала закройте её" };
     state.positions = state.positions.filter((x) => x.id !== id);
     savePositions(baseDir, state.positions);
     push();
@@ -2976,21 +2976,21 @@ app.whenReady().then(async () => {
   createWindow();
   wireIpc();
   // Bot 2 «BTC-опционы»: load/create its isolated state, then wire its IPC (so s1:* is ready as
-  // early as fa:*). The Deribit source is NOT started here — the engine ticks only between
+  // early as fa:*). The Deribit source is NOT started here - the engine ticks only between
   // s1:start and s1:stop (Phase 1). Purely additive; funding-arb boot is unaffected.
   loadOrInitBtcOptions();
   wireIpcStrategy1();
-  // OTM-сканер (S2): изолированное состояние + IPC scn:*. Источник НЕ стартует на буте —
+  // OTM-сканер (S2): изолированное состояние + IPC scn:*. Источник НЕ стартует на буте -
   // опрос живёт только между scn:start и scn:stop (§4.2); в простое ноль трафика.
   loadOrInitOtmScanner();
   wireIpcScan();
-  // SCN_AUTOSTART=1 — режим обкатки: опрос заводится на буте, БЕЗ показа вкладки «Сканер».
+  // SCN_AUTOSTART=1 - режим обкатки: опрос заводится на буте, БЕЗ показа вкладки «Сканер».
   // Зачем флаг вообще: в обычной работе опрос стартует из renderer при первом показе вида
   // (А4, scnOnShow), а стартовый вид жёстко «Обзор». На удалённой машине это значит, что каждый
-  // перезапуск требует ручного открытия вкладки — клики Screen Sharing не передаёт, а синтетический
+  // перезапуск требует ручного открытия вкладки - клики Screen Sharing не передаёт, а синтетический
   // ввод osascript по SSH запрещён (-25211), и обкатку приходилось заводить клавиатурой. Для
   // трёхсуточного прогона такая зависимость от человека недопустима: любой рестарт убил бы сбор.
-  // Флаг НИЧЕГО не меняет без явной установки — обычный запуск по-прежнему не трогает сеть в простое.
+  // Флаг НИЧЕГО не меняет без явной установки - обычный запуск по-прежнему не трогает сеть в простое.
   if (SCN_AUTOSTART) {
     ensureScanSource();
     console.log("[scn] SCN_AUTOSTART=1: опрос заведён на буте без показа вкладки");
@@ -3045,7 +3045,7 @@ app.whenReady().then(async () => {
     console.log("[smoke] series lens:", ds.series ? `eq=${ds.series.equityBaseCum.length} spread=${ds.series.spreadDaily.length} legs=${ds.series.legsMonthly.length} raw=${ds.series.rawRows.length} key=${ds.series.forKey}` : "none");
     console.log("[smoke] scanner rows:", ds.scanner.length, ds.scanner.map((r) => `${r.s}:${((r.med ?? 0) * 100).toFixed(1)}%`).join(" "));
 
-    // paper lifecycle self-test in a TEMP dir (never touches the real positions.json — audit M36):
+    // paper lifecycle self-test in a TEMP dir (never touches the real positions.json - audit M36):
     // open 3h ago -> gap-backfill from the real frame -> capped live accrue -> persist/reload.
     const scratch = mkdtempSync(join(tmpdir(), "fa-smoke-"));
     try {
@@ -3090,7 +3090,7 @@ app.whenReady().then(async () => {
       await win.webContents.executeJavaScript("typeof setView==='function' && setView('btc-options')");
       const chain = await win.webContents.executeJavaScript("window.s1.getChain()");
       const exps = (chain && chain.expiries) || [];
-      // Phase 3a: full-stack AUTO-construction — expiry:null makes the engine pick the nearest live
+      // Phase 3a: full-stack AUTO-construction - expiry:null makes the engine pick the nearest live
       // expiry itself; the response reports chosenExpiry + the structured pre-trade rejections.
       const params = { expiry: null, auto: true, callOffsetPct: 10, putOffsetPct: 10, qty: 0.01, execStyle: "limit" };
       const open = await win.webContents.executeJavaScript(`window.s1.openStructure(${JSON.stringify(params)})`);
@@ -3161,13 +3161,13 @@ app.whenReady().then(async () => {
       await new Promise((r) => setTimeout(r, 17000)); // ≈3 живых тика (5с каданс + сеть + кэш-джобы)
       scnReport("live v1", await win.webContents.executeJavaScript("window.scn.getState()"));
       // Смена пресета на живом IPC: окно экспираций v2 (48-60ч) чаще пересекается с сеткой
-      // листинга (находка Д8) — в дни без пересечения кандидатов честно нет у обоих пресетов.
+      // листинга (находка Д8) - в дни без пересечения кандидатов честно нет у обоих пресетов.
       await win.webContents.executeJavaScript("window.scn.setPreset('dmitri-v2')");
       await new Promise((r) => setTimeout(r, 12000)); // пересборка набора + ≈2 полных тика
       const dsV2 = await win.webContents.executeJavaScript("window.scn.getState()");
       scnReport("live v2", dsV2);
       // Третья фаза: ШИРОКИЙ пользовательский пресет через штатный канал userPresets (тот же путь,
-      // каким S3-редактор сохранит «Калиброванный») — гарантирует кандидатов при любой сетке дня,
+      // каким S3-редактор сохранит «Калиброванный») - гарантирует кандидатов при любой сетке дня,
       // чтобы смоук показал Stage C живьём: кандидаты, финалисты, книги (≤2), У9-У14 по тикерам.
       const wide = { ...dsV2.preset, id: "smoke-wide", label: "смоук-широкий", expiryMinH: 6, expiryMaxH: 240, sigmaMin: 0.3, sigmaMax: 3.0, premMaxPct: 5, spreadMaxPctPrem: 50, depthMinUsd: 1 };
       await win.webContents.executeJavaScript(`window.scn.setSettings({ userPresets: { "smoke-wide": ${JSON.stringify(wide)} } })`);
@@ -3178,7 +3178,7 @@ app.whenReady().then(async () => {
       console.log("[scnsmoke] stop:", JSON.stringify({ running: stopped.running }));
       // Рестарт-проба (§7 случай 14, acceptance S2): синтетический ACTIVE-сигнал пишется на диск,
       // состояние перечитывается тем же путём, что и настоящий рестарт (loadOrInitOtmScanner).
-      // Синтетика легальна: SMOKE-блок — тестовый контекст в изолированном временном профиле.
+      // Синтетика легальна: SMOKE-блок - тестовый контекст в изолированном временном профиле.
       const scSmoke = state.otmScanner;
       scSmoke.engineState = {
         ...scSmoke.engineState,

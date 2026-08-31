@@ -1,7 +1,7 @@
-// deribit.js — «BTC-опционы» (Strategy One) live market-data client. IMPURE (global fetch) — the ONLY
+// deribit.js - «BTC-опционы» (Strategy One) live market-data client. IMPURE (global fetch) - the ONLY
 // impure module in src/engine/btcopt/. Mirrors src/engine/sources.js: global fetch (Node 18+/Electron
 // main), AbortSignal.timeout, linear backoff, throw new Error("HTTP <status>") on non-2xx. All endpoints
-// are Deribit PUBLIC, read-only (no keys, no orders — paper).
+// are Deribit PUBLIC, read-only (no keys, no orders - paper).
 //
 // Deribit is JSON-RPC over HTTPS GET. Envelope: success { jsonrpc, id, result, usDiff, testnet },
 // error { error:{ code, message } }. Rate-limit surfaces as HTTP 429 / error.code 10028.
@@ -20,15 +20,15 @@ const SLEEP = (ms) => new Promise((r) => setTimeout(r, ms));
 const BASE = (testnet) => (testnet ? "https://test.deribit.com/api/v2" : "https://www.deribit.com/api/v2");
 
 // Phase 3c telemetry: the last successful call's round-trip + Deribit's server-side processing time
-// (the envelope's usDiff, microseconds). Module-held like metaCache — the impure client's own stat.
+// (the envelope's usDiff, microseconds). Module-held like metaCache - the impure client's own stat.
 // In a Promise.all tick every fetch starts together, so the LAST writer is the slowest of the batch:
 // lastRpcStats.rttMs ≈ that tick's worst RTT. This is the evidence base for any future "REST lags"
-// case (the WS transport was assessed 2026-07 and DEFERRED — no lag/rate-limit pressure existed).
+// case (the WS transport was assessed 2026-07 and DEFERRED - no lag/rate-limit pressure existed).
 const lastRpcStats = { rttMs: null, usDiffMs: null, at: null };
 export const getRpcStats = () => ({ ...lastRpcStats });
 
-// S2 (OTM-сканер, план §4.3): монотонный счётчик HTTP GET-попыток — доказательная база бюджета
-// запросов («счётчик GET на тик»). Считает ПОПЫТКИ (включая ретраи) — это реальный трафик к бирже.
+// S2 (OTM-сканер, план §4.3): монотонный счётчик HTTP GET-попыток - доказательная база бюджета
+// запросов («счётчик GET на тик»). Считает ПОПЫТКИ (включая ретраи) - это реальный трафик к бирже.
 // Общий на модуль: при одновременной работе бота 2 и сканера дельта покрывает обоих (лог это
 // подписывает). Аддитивно: бот 2 счётчик не читает.
 let rpcCallCount = 0;
@@ -52,13 +52,13 @@ export async function rpc(method, params = {}, { testnet = false, retries = 2, t
       rpcCallCount++; // каждая попытка = один реальный GET (бюджет §4.3 сканера)
       const r = await fetch(url, { headers: { "User-Agent": UA }, signal });
       if (r.status === 429) {
-        await SLEEP(8000 * (attempt + 1)); // Deribit rate limit — back off hard
+        await SLEEP(8000 * (attempt + 1)); // Deribit rate limit - back off hard
         throw new Error("HTTP 429");
       }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
       if (j && j.error) throw new Error(`Deribit ${j.error.code}: ${j.error.message}`);
-      lastRpcStats.rttMs = Date.now() - t0; // 3c telemetry — successful calls only
+      lastRpcStats.rttMs = Date.now() - t0; // 3c telemetry - successful calls only
       lastRpcStats.usDiffMs = Number.isFinite(j?.usDiff) ? j.usDiff / 1000 : null;
       lastRpcStats.at = Date.now();
       return j.result;
@@ -87,16 +87,16 @@ export const getOrderBook = (instrument_name, { depth = 5, testnet = false } = {
 
 // Вся поверхность опционов ОДНИМ вызовом (S3c, слой записи сканера). Отдаёт bid/ask/mark/mid,
 // mark_iv, underlying_price (форвард СВОЕЙ экспирации), open_interest и объёмы по каждому
-// инструменту валюты — на живых данных 2026-08-03 это 2310 USDC-опционов, из них 428 BTC_USDC,
+// инструменту валюты - на живых данных 2026-08-03 это 2310 USDC-опционов, из них 428 BTC_USDC,
 // ответ ~1.1 МБ. Греков в ответе НЕТ: их считает black76.js из mark_iv и форварда.
-// Дорогой по трафику и намеренно НЕ тиковый — вызывается на своём медленном кадансе (§4.3), иначе
+// Дорогой по трафику и намеренно НЕ тиковый - вызывается на своём медленном кадансе (§4.3), иначе
 // съедает бюджет 15 GET/тик.
 export const getBookSummaryByCurrency = ({ currency = "USDC", kind = "option", testnet = false } = {}) =>
   rpc("public/get_book_summary_by_currency", { currency, kind }, { testnet });
 
-// DVOL — Deribit's 30-day implied-volatility index (Phase 3b IV regime). PUBLIC endpoint; a BTC-currency
+// DVOL - Deribit's 30-day implied-volatility index (Phase 3b IV regime). PUBLIC endpoint; a BTC-currency
 // query returning { data: [[ts, open, high, low, close], …] } at the given resolution (seconds: "1" |
-// "60" | "3600" | "43200" | "1D"). Slow-moving — callers cache it like the chain (never per tick).
+// "60" | "3600" | "43200" | "1D"). Slow-moving - callers cache it like the chain (never per tick).
 export const getVolatilityIndexData = ({ currency = "BTC", start_timestamp, end_timestamp, resolution = "3600", testnet = false } = {}) =>
   rpc("public/get_volatility_index_data", { currency, start_timestamp, end_timestamp, resolution }, { testnet });
 
@@ -112,7 +112,7 @@ export const getTradingviewChartData = ({ instrument_name = PERP_INSTRUMENT, sta
 // { data: [{ date: "YYYY-MM-DD", delivery_price }], records_total }, newest first; btc_usdc and
 // btc_usd delivery prices coincide. Same-day fee check on get_instrument (BTC_USDC-* option):
 // maker_commission = taker_commission = 0.0003 (fraction of index per contract; the 12.5%-of-premium
-// cap is documented in the Deribit KB — no API field carries it).
+// cap is documented in the Deribit KB - no API field carries it).
 export const getDeliveryPrices = ({ index_name = "btc_usdc", offset = 0, count = 10, testnet = false } = {}) =>
   rpc("public/get_delivery_prices", { index_name, offset, count }, { testnet });
 
@@ -123,7 +123,7 @@ export const OPTION_PREFIX = "BTC_USDC-";
 export const isBtcUsdcOption = (name) => typeof name === "string" && name.startsWith(OPTION_PREFIX);
 
 // ---------------------------------------------------------------------------
-// PURE mappers: raw Deribit ticker/meta -> canonical snapshots. No I/O — unit-testable.
+// PURE mappers: raw Deribit ticker/meta -> canonical snapshots. No I/O - unit-testable.
 // ---------------------------------------------------------------------------
 const num = (x) => (Number.isFinite(x) ? x : null);
 
@@ -224,7 +224,7 @@ export function pickSpotRef({ legs = [], perp = null, nowMs } = {}) {
 // Names of the legs that FAIL the greeks gate: absent from `legs` entirely (fetch failed) or present
 // with a non-finite delta/gamma/vega/theta/mark. requiredNames (optional) is the list of legs that
 // MUST be present: a leg whose fetch failed entirely is absent from `legs`, and judging only the
-// survivors would pass the gate on a partial snapshot — the engine would then hedge off an
+// survivors would pass the gate on a partial snapshot - the engine would then hedge off an
 // understated option delta (missing legs default to δ 0). No list ⇒ the legacy behaviour: validate
 // whatever is present; empty either way ⇒ [] (nothing to gate). Order follows requiredNames, so the
 // ticket can name the culprits deterministically.
@@ -237,8 +237,8 @@ export function greeksGateFailures(legs, requiredNames = null) {
   });
 }
 
-// Whether an open structure's legs all carry finite greeks (the "greeks gate" — hedging pauses if
-// false). Defined AS greeksGateFailures().length === 0 — one iteration, no drift between the boolean
+// Whether an open structure's legs all carry finite greeks (the "greeks gate" - hedging pauses if
+// false). Defined AS greeksGateFailures().length === 0 - one iteration, no drift between the boolean
 // and the culprit list.
 export function greeksGateOk(legs, requiredNames = null) {
   return greeksGateFailures(legs, requiredNames).length === 0;
@@ -246,11 +246,11 @@ export function greeksGateOk(legs, requiredNames = null) {
 
 // ---------------------------------------------------------------------------
 // Composite snapshot builder (IMPURE). Fetches the perp + the polled legs, maps to canonical, and returns
-// the engine's sole input contract. NEVER throws — per-fetch failures land in errors[]/fresh.notes.
+// the engine's sole input contract. NEVER throws - per-fetch failures land in errors[]/fresh.notes.
 // Liquidity is derived from the perp ticker's best bid/ask (no extra order-book call per tick).
 // Phase 3b: legInstruments may include an auxiliary ATM band (IV regime + sweep capture) beyond the open
 // structure's legs. `primaryInstruments` names the legs the greeks gate / ok flag protect (default: all)
-// — a missing band quote must never pause the hedge engine or flip LIVE to warn; it only lands in notes.
+// - a missing band quote must never pause the hedge engine or flip LIVE to warn; it only lands in notes.
 // `underlying` выбирает pickSpotRef (свежайшая нога, при протухании - живой индекс перпа); рядом
 // лежит блок `spot` = { ts, ageSec, stale, source } - телеметрия свежести опционного спота.
 // ---------------------------------------------------------------------------
@@ -300,14 +300,14 @@ export async function buildDeribitSnapshot({ legInstruments = [], primaryInstrum
   const liquidity = perp ? bookToLiquidity(perp) : null;
   // Gate + ok are judged over the PRIMARY legs only (the open structure); auxiliary band failures stay
   // visible in notes but never degrade the hedge engine's inputs-quality verdict. The gate demands the
-  // PRESENCE of every primary leg, not just finite greeks on the survivors — a leg whose fetch failed
+  // PRESENCE of every primary leg, not just finite greeks on the survivors - a leg whose fetch failed
   // must pause hedging (its delta would otherwise silently count as 0 in the net).
   const primaryNames = Array.isArray(primaryInstruments) ? primaryInstruments : legInstruments;
   const primarySet = new Set(primaryNames);
-  const gateFailed = greeksGateFailures(legs, primaryNames); // culprit names — band legs never appear here
+  const gateFailed = greeksGateFailures(legs, primaryNames); // culprit names - band legs never appear here
   const gateOk = gateFailed.length === 0;
   // primaryErrors (perp + gate-relevant legs) is what the SOURCE's health verdict may judge by;
-  // band-leg failures stay in errors/notes only — they must never flip LIVE to warn (see header).
+  // band-leg failures stay in errors/notes only - they must never flip LIVE to warn (see header).
   const primaryErrors = errors.filter((e) => e.instrument === perpName || primarySet.has(e.instrument));
   const ok = !!perp && primaryErrors.length === 0 && gateOk;
 
@@ -342,7 +342,7 @@ export async function buildDeribitSnapshot({ legInstruments = [], primaryInstrum
 // ---------------------------------------------------------------------------
 // MarketSource factory: owns its own setInterval, runs ONLY between start()/stop(). Dedups by snapshot ts,
 // never throws into the tick, and exposes status() for the connection cluster + assembleDataset1().fresh.
-// This is the seam a WebSocket source (Phase 3) drops behind — same {start,stop,refreshNow,setInstruments,status}.
+// This is the seam a WebSocket source (Phase 3) drops behind - same {start,stop,refreshNow,setInstruments,status}.
 // ---------------------------------------------------------------------------
 export function createRestSource({ testnet = false, intervalMs = 3000, staleAfterSec = 15, fetchSnapshot = null } = {}) {
   let timer = null;
@@ -419,7 +419,7 @@ export function createRestSource({ testnet = false, intervalMs = 3000, staleAfte
     setOnError(fn) {
       onError = typeof fn === "function" ? fn : null;
     },
-    // S2 (OTM-сканер): живая смена каданса БЕЗ пересоздания источника — авто-деградация x2 при
+    // S2 (OTM-сканер): живая смена каданса БЕЗ пересоздания источника - авто-деградация x2 при
     // errorStreak >= 3 обязана сохранять lastTs/metaCache/errorStreak (пересоздание обнуляло бы
     // errorStreak, и выздоровление детектировалось бы ложно). Аддитивно: бот 2 метод не зовёт.
     setIntervalMs(ms) {

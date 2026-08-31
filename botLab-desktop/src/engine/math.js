@@ -1,9 +1,9 @@
-// math.js — pure port of gmx_carry_backtest/funding_spread_core.py (annualized + scan_token).
+// math.js - pure port of gmx_carry_backtest/funding_spread_core.py (annualized + scan_token).
 //
-// SOURCE OF TRUTH for the strategy P&L math. No I/O, no DOM — unit-testable in Node and
+// SOURCE OF TRUTH for the strategy P&L math. No I/O, no DOM - unit-testable in Node and
 // golden-tested against the cached spread_cache CSVs (see test/golden.test.js).
 //
-// SIGN + SCALE CONVENTION (verified — do not "simplify"):
+// SIGN + SCALE CONVENTION (verified - do not "simplify"):
 //   * GMX f_long/f_short/b_long/b_short are RAW Subsquid per-second factors ALREADY divided by 1e30.
 //     (The /1e30 descale happens in the fetch layer, exactly like fetch_gmx_hourly in the Python.)
 //     raw f_short > 0  =>  SHORT RECEIVES funding (longs pay).  b_* >= 0 is ALWAYS a cost.
@@ -17,7 +17,7 @@ export const HOURS_PER_YEAR = 8760;            // 24 * 365
 export const GMX_FACTOR_SCALE = 1e30;          // raw Subsquid factor scale (applied in the fetch layer)
 
 // ---------------------------------------------------------------------------
-// Stats helpers — chosen to match pandas semantics exactly.
+// Stats helpers - chosen to match pandas semantics exactly.
 // ---------------------------------------------------------------------------
 const finite = (xs) => xs.filter((x) => Number.isFinite(x));
 
@@ -37,7 +37,7 @@ export function median(xs) {
   return n % 2 ? f[m] : (f[m - 1] + f[m]) / 2;
 }
 
-// Sample standard deviation (ddof=1) — matches pandas Series.std().
+// Sample standard deviation (ddof=1) - matches pandas Series.std().
 export function std(xs) {
   const f = finite(xs);
   const n = f.length;
@@ -100,7 +100,7 @@ export function maxDrawdownFraction(netSeries) {
 }
 
 // ---------------------------------------------------------------------------
-// Core annualization — direct port of annualized() (funding_spread_core.py L342).
+// Core annualization - direct port of annualized() (funding_spread_core.py L342).
 // Input row fields are the cached/live column names: f_long, f_short, b_long, b_short, hl_rate.
 // Every returned quantity is a per-$1 annualized rate (e.g. 0.5339 == 53.39% APR).
 // ---------------------------------------------------------------------------
@@ -152,7 +152,7 @@ function statsForConfig(ann, config, meanA, meanB) {
 }
 
 // ---------------------------------------------------------------------------
-// scanTwoLeg — port of scan_token(): pick config by argmax of the whole-window MEAN
+// scanTwoLeg - port of scan_token(): pick config by argmax of the whole-window MEAN
 // of net_A vs net_B (ties -> A), return both configs' stat blocks + the chosen one.
 // `meta` carries instrument metadata passed straight through (token, addresses, etc.).
 // ---------------------------------------------------------------------------
@@ -176,7 +176,7 @@ export function scanTwoLeg(rows, meta = {}, { minRows = 24 } = {}) {
     meanB,
     A,
     B,
-    // raw factors of the most recent row — for the transparency panels + inspector
+    // raw factors of the most recent row - for the transparency panels + inspector
     raw: {
       f_long: last.f_long,
       f_short: last.f_short,
@@ -193,7 +193,7 @@ export function scanTwoLeg(rows, meta = {}, { minRows = 24 } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// scanOneLeg — GMX one-leg carry: short the asset with collateral in the asset.
+// scanOneLeg - GMX one-leg carry: short the asset with collateral in the asset.
 // net = gmx_short_recv - gmx_borrow_short (audit single-leg identity). Matches the
 // mock ONE_LEG[market] shape.
 // ---------------------------------------------------------------------------
@@ -240,10 +240,10 @@ export function scanOneLeg(rows, meta = {}, { minRows = 24 } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// pnlPath — closed-window equity path from an annualized net-APR series.
+// pnlPath - closed-window equity path from an annualized net-APR series.
 // Per audit: $/hr = (net_APR/8760)*notional ; cum = running sum ; dd = cum - peak.
 // Used for the trailing historical curve and the golden P&L cross-check. The FORWARD
-// paper engine (paper.js) uses per-second live factors instead — this is the historical view.
+// paper engine (paper.js) uses per-second live factors instead - this is the historical view.
 // ---------------------------------------------------------------------------
 export function pnlPath(netSeries, notional) {
   const perHr = [];

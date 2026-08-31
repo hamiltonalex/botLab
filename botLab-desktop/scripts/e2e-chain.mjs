@@ -123,7 +123,7 @@ try {
 
   // Причина ожидания обязана быть НАЗВАНА: молчащая цепочка неотличима от работающей.
   const why = (await textOf(win, "optChainReason")).trim();
-  check("причина состояния названа", why.length > 3 && why !== "—", why.slice(0, 90));
+  check("причина состояния названа", why.length > 3 && why !== "-", why.slice(0, 90));
 
   // ── 6. Остановка не закрывает сделку и обратима.
   const stopped = await win.evaluate(`window.s1.setChain({on:false})`);

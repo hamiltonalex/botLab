@@ -1,4 +1,4 @@
-// paper.test.js — deterministic checks on the forward accrual engine + persistence.
+// paper.test.js - deterministic checks on the forward accrual engine + persistence.
 // Cross-validates the per-second/per-hour accrual against the annualized() APR identity.
 
 import test from "node:test";

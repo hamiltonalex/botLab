@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// report-scan.mjs — S3b отчёт обкатки «OTM-сканера» (план otm-scanner §10/§12-S3b).
+// report-scan.mjs - S3b отчёт обкатки «OTM-сканера» (план otm-scanner §10/§12-S3b).
 // Читает файлы профиля приложения READ-ONLY (ничего не пишет в userData) и печатает
 // markdown-отчёт: ворота §10 п.1 (вычислимость ≥95%), п.2 (вырожденность порогов),
 // п.4 (распределения roundTripCostPct и minCapitalUsd, А5), Д8 (окна экспираций против

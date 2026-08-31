@@ -1,4 +1,4 @@
-// otmscan-exits.test.js — правила выхода Е1-Е7 (exits.js). Проверяется прежде всего ПОРЯДОК:
+// otmscan-exits.test.js - правила выхода Е1-Е7 (exits.js). Проверяется прежде всего ПОРЯДОК:
 // при одновременном срабатывании двух правил отчёт обязан называть одну и ту же причину, иначе
 // разбор сделок разъедется между запусками.
 
@@ -18,7 +18,7 @@ const X = {
 const base = { entryMarkUsd: 100, entryIvPct: 40, markUsd: 100, ivPct: 40, heldH: 1,
   hoursToExpiry: 500, moveSigma: 1.0, exits: X };
 
-test("ничего не сработало — позиция держится", () => {
+test("ничего не сработало - позиция держится", () => {
   const r = evaluateExit(base);
   assert.equal(r.exit, false);
   assert.equal(r.reason, null);
@@ -26,7 +26,7 @@ test("ничего не сработало — позиция держится",
 
 test("Е6 тейк: марк вырос на порог", () => {
   assert.equal(evaluateExit({ ...base, markUsd: 190 }).reason, EXIT_REASONS.TAKE);
-  assert.equal(evaluateExit({ ...base, markUsd: 189.9 }).exit, false, "чуть ниже порога — держим");
+  assert.equal(evaluateExit({ ...base, markUsd: 189.9 }).exit, false, "чуть ниже порога - держим");
 });
 
 test("Е2 стоп: марк упал на порог", () => {
@@ -42,7 +42,7 @@ test("Е1 vega-стоп: воля упала на порог", () => {
 test("Е4 тайм-стоп: возраст выше порога И движения нет", () => {
   assert.equal(evaluateExit({ ...base, heldH: 12, moveSigma: 0.05 }).reason, EXIT_REASONS.TIME);
   assert.equal(evaluateExit({ ...base, heldH: 12, moveSigma: 0.5 }).exit, false,
-    "движение есть — тайм-стоп не срабатывает");
+    "движение есть - тайм-стоп не срабатывает");
   assert.equal(evaluateExit({ ...base, heldH: 11.9, moveSigma: 0.05 }).exit, false);
 });
 
@@ -79,7 +79,7 @@ test("выключенное правило (порог не положител�
     "стоп выключен нулём, марк почти обнулился, выхода нет");
 });
 
-test("нет данных о марке или пресете — выхода нет", () => {
+test("нет данных о марке или пресете - выхода нет", () => {
   assert.equal(evaluateExit({ ...base, markUsd: null }).exit, false);
   assert.equal(evaluateExit({ ...base, exits: null }).exit, false);
   assert.equal(evaluateExit().exit, false);
@@ -107,7 +107,7 @@ test("протяжка: выход на первом же снимке, где �
   assert.equal(r.heldH, 3);
 });
 
-test("протяжка: правило не сработало, инструмент дожил до конца записи — «конец записи»", () => {
+test("протяжка: правило не сработало, инструмент дожил до конца записи - «конец записи»", () => {
   const r = walkMarks([100, 101, 102]);
   assert.equal(r.reason, EXIT_REASONS.END_OF_RECORD);
   assert.equal(r.index, 2);
@@ -116,7 +116,7 @@ test("протяжка: правило не сработало, инструме
 
 // Марки ниже держатся в полосе 65..190, где ни одно правило пресета X не срабатывает: иначе
 // проверялась бы не пропажа, а стоп −35%, который сработал бы раньше.
-test("протяжка: инструмент ПРОПАЛ до конца записи — позиция закрывается, а не исчезает", () => {
+test("протяжка: инструмент ПРОПАЛ до конца записи - позиция закрывается, а не исчезает", () => {
   const r = walkMarks([100, 90, 80, null, null, null]);
   assert.equal(r.reason, EXIT_REASONS.VANISHED, "исчезновение обязано получить свою причину");
   assert.equal(r.index, 2, "закрытие по ПОСЛЕДНЕМУ снимку, где инструмент ещё был");
@@ -141,13 +141,13 @@ test("протяжка: правило важнее пропажи, если с�
   assert.equal(r.index, 1);
 });
 
-test("протяжка: ни одного снимка после входа — null, и это ЕДИНСТВЕННЫЙ такой случай", () => {
+test("протяжка: ни одного снимка после входа - null, и это ЕДИНСТВЕННЫЙ такой случай", () => {
   assert.equal(walkMarks([null, null, null]), null);
   assert.equal(walkMarks([]), null, "шагов нет вовсе");
   assert.equal(walkExit({ count: 0, at: () => null, entryMarkUsd: 100, exits: X }), null);
 });
 
-test("протяжка: без входных данных — null, а не выдуманный выход", () => {
+test("протяжка: без входных данных - null, а не выдуманный выход", () => {
   assert.equal(walkExit(), null);
   assert.equal(walkExit({ count: 3, at: () => null, entryMarkUsd: 0, exits: X }), null);
   assert.equal(walkExit({ count: 3, at: null, entryMarkUsd: 100, exits: X }), null);

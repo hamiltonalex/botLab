@@ -1,14 +1,14 @@
-// e2e-ui.mjs — live UI e2e for bot 2 «BTC-опционы» via Playwright _electron (the pre-merge-review
+// e2e-ui.mjs - live UI e2e for bot 2 «BTC-опционы» via Playwright _electron (the pre-merge-review
 // pattern). Launches the REAL Electron app against the REAL Deribit public API and drives one full
 // paper cycle through the UI: source → LIVE → «Старт (авто)» ticket → confirm → live decisions →
 // sweep → double-press close → ledger reconciliation. Asserts the UI contracts the 2026-07-14
 // mechanics-audit fixes locked in (№1/2/6/11/13/15 are cheap to check from the DOM).
-// Секция 13 (S3a, аддитивно): вкладка «Сканер» — автостарт А4, первый живой цикл, чеклист 14
+// Секция 13 (S3a, аддитивно): вкладка «Сканер» - автостарт А4, первый живой цикл, чеклист 14
 // условий, health-кластер, honest-empty кандидатов (Д8), blur-отклонение мусора в редакторе.
 //
 // SAFETY: the entire Electron profile is redirected to throw-away temp dirs (--user-data-dir AND a
 // scratch HOME). The run ABORTS before any interaction unless app.getPath("userData") provably
-// lives inside them — the user's real paper ledger is never touched. Temp dirs are removed at exit.
+// lives inside them - the user's real paper ledger is never touched. Temp dirs are removed at exit.
 //
 // Not part of the golden suite (network-dependent, ~2 min). Run: npm run e2e:ui
 // Screenshots land in a temp dir by default; override with E2E_SHOTS=/path.
@@ -33,7 +33,7 @@ const tmpProfile = mkdtempSync(join(tmpdir(), "botlab-e2e-profile-"));
 const results = [];
 const check = (name, ok, detail = "") => {
   results.push({ name, ok });
-  console.log(`${ok ? "✓" : "✗"} ${name}${detail ? " — " + detail : ""}`);
+  console.log(`${ok ? "✓" : "✗"} ${name}${detail ? " - " + detail : ""}`);
   return ok;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -56,12 +56,12 @@ try {
     env: { ...process.env, HOME: tmpHome }, // belt-and-braces: appData follows the scratch HOME too
   });
 
-  // ── 0. PROFILE ISOLATION — hard abort otherwise (the real paper ledger is untouchable).
+  // ── 0. PROFILE ISOLATION - hard abort otherwise (the real paper ledger is untouchable).
   // realpath both sides: on macOS /var symlinks to /private/var and a bare prefix check lies.
   const userData = realpathSync(await app.evaluate(({ app: a }) => a.getPath("userData")));
   const isolated = userData.startsWith(realpathSync(tmpProfile)) || userData.startsWith(realpathSync(tmpHome));
   check("изоляция профиля (userData во временной папке)", isolated, userData);
-  if (!isolated) throw new Error("profile NOT isolated — aborting before any interaction");
+  if (!isolated) throw new Error("profile NOT isolated - aborting before any interaction");
 
   const win = await app.firstWindow();
   await win.waitForLoadState("domcontentloaded");
@@ -94,7 +94,7 @@ try {
 
   // ── 5. Fix №13: λ input rejects 0.5 (aria-invalid; the setting is never pushed)
   await win.fill("#optLambda", "0.5");
-  await sleep(500); // > the 250ms settings debounce — an invalid value must NOT land
+  await sleep(500); // > the 250ms settings debounce - an invalid value must NOT land
   const lamBad = await win.evaluate("document.getElementById('optLambda').getAttribute('aria-invalid')");
   const lamSetting = await win.evaluate("window.s1.getState().then(d=>d.settings.lambda)");
   check("№13: λ=0.5 помечен invalid и не сохранён", lamBad === "true" && lamSetting === 1.25, `aria-invalid=${lamBad}, settings.lambda=${lamSetting}`);
@@ -206,7 +206,7 @@ try {
   await win.screenshot({ path: join(SHOTS, "05-closed.png") });
 
   // ── 13. OTM-сканер (S3a, аддитивно): вкладка → автостарт (А4) → первый тик → чеклист + health.
-  // Каданс ужимается до 5с ДО первого показа вида — автостарт scnOnShow стартует уже быстрый источник.
+  // Каданс ужимается до 5с ДО первого показа вида - автостарт scnOnShow стартует уже быстрый источник.
   await win.evaluate("window.scn.setSettings({ scanRepriceSec: 5 })");
   await win.evaluate("setView('otm-scanner')");
   const scnRunning = await waitFor(() => win.evaluate("window.scn.getState().then(d=>d.running===true)"), { timeout: 10000, label: "scn autostart" });
@@ -222,10 +222,10 @@ try {
   check("токен сигнала в одном из пяти состояний", /^(ОЖИДАНИЕ|ФОРМИРУЕТСЯ|СИГНАЛ|КУЛДАУН|БЛЭКАУТ)$/.test(scnTok), scnTok);
   const scnLive = await waitFor(async () => { const t = await win.textContent("#scnLiveTxt"); return /LIVE|ПРЕДУПР\./.test(t) ? t : null; }, { timeout: 30000, label: "scn health LIVE" });
   check("health-кластер дошёл до LIVE/ПРЕДУПР.", true, scnLive);
-  // пустые дни кандидатов — НОРМА (находка Д8): валидны и строки, и честное «нет инструментов»
+  // пустые дни кандидатов - НОРМА (находка Д8): валидны и строки, и честное «нет инструментов»
   const scnCand = await win.textContent("#scnCandBody");
   check("кандидаты: строки либо честное пустое состояние (Д8)", /BTC_USDC-|нет инструментов/.test(scnCand), scnCand.trim().slice(0, 60));
-  // редактор порогов: blur-отклонение мусора (прецедент λ) — значение не применяется, ошибка текстом
+  // редактор порогов: blur-отклонение мусора (прецедент λ) - значение не применяется, ошибка текстом
   await win.fill("#scnThPremCap", "0");
   await win.evaluate("document.getElementById('scnThPremCap').blur()");
   const premBad = await win.evaluate("document.getElementById('scnThPremCap').getAttribute('aria-invalid')");

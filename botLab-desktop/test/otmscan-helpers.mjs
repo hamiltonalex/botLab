@@ -1,7 +1,7 @@
-// otmscan-helpers.mjs — общие фикстуры-строители S1-тестов сканера (НЕ тест-файл: суффикса
+// otmscan-helpers.mjs - общие фикстуры-строители S1-тестов сканера (НЕ тест-файл: суффикса
 // .test нет, node --test его не запускает). Базовый сценарий: понедельник 2026-07-20 12:00 UTC
 // (не выходной, не блэкаут), спот 100 000, один колл-кандидат в σ-окне dmitri-v1, все данные
-// свежие — полный проход чеклиста. Отклонения задаются overrides.
+// свежие - полный проход чеклиста. Отклонения задаются overrides.
 
 import { SCAN_PRESETS } from "../src/engine/otmscan/presets.js";
 
@@ -10,7 +10,7 @@ export const NOW = Date.UTC(2026, 6, 20, 12, 0, 0); // Пн, 12:00 UTC
 export const SPOT = 100000;
 export const EXP = NOW + 150 * H; // в окне экспираций v1 (120..240ч)
 export const INST = "BTC_USDC-26JUL26-107500-C"; // σ-дист 7.5%/5.496% ≈ 1.365 в окне 1.2..1.5
-export const INST_B = "BTC_USDC-26JUL26-107000-C"; // ≈1.274 — дальше от середины окна, чем INST
+export const INST_B = "BTC_USDC-26JUL26-107000-C"; // ≈1.274 - дальше от середины окна, чем INST
 export const PRESET = SCAN_PRESETS["dmitri-v1"];
 
 export const near = (a, b, tol, label) => {
@@ -53,8 +53,8 @@ export function mkTicker(now, o = {}) {
 }
 
 // Полный inputs-объект одного тика. overrides:
-//   settings/bundle/ticker/event — частичные пачки; expiryMs — своя экспирация кандидата;
-//   chain/instruments/ivRefByExpiry — полная замена; raw — мердж поверх результата.
+//   settings/bundle/ticker/event - частичные пачки; expiryMs - своя экспирация кандидата;
+//   chain/instruments/ivRefByExpiry - полная замена; raw - мердж поверх результата.
 export function mkInputs(now, o = {}) {
   const expiryMs = o.expiryMs ?? EXP;
   const chain = o.chain ?? { instruments: [mkMeta(INST, 107500, expiryMs)] };

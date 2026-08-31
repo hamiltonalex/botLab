@@ -1,4 +1,4 @@
-// btcopt-hedge.test.js — golden worked-examples for the «BTC-опционы» delta-hedge engine.
+// btcopt-hedge.test.js - golden worked-examples for the «BTC-опционы» delta-hedge engine.
 // PURE math, inline crafted inputs (no fixtures). Reproduces the spec's worked numbers exactly.
 // All time-dependent calls pass an explicit nowMs (never Date.now()) so the tests are deterministic.
 import test from "node:test";
@@ -168,7 +168,7 @@ test("decideHedge: отрицательные издержки не вырожд
   assert.equal(r.decision, "SKIP", "нулевой избыток не может пройти гейт ни при какой ставке");
 });
 
-test("decideHedge HEDGE case — benefit clears cost·lambda", () => {
+test("decideHedge HEDGE case - benefit clears cost·lambda", () => {
   const r = decideHedge({
     optionDelta: -0.002,
     Qperp: 0,
@@ -195,7 +195,7 @@ test("decideHedge HEDGE case — benefit clears cost·lambda", () => {
   assert.deepEqual(r.trigger_reason, ["delta"]);
 });
 
-test("decideHedge (limit) — the order rides post-only and the cost model follows the branch", () => {
+test("decideHedge (limit) - the order rides post-only and the cost model follows the branch", () => {
   const r = decideHedge({
     optionDelta: -0.002,
     Qperp: 0,
@@ -216,7 +216,7 @@ test("decideHedge (limit) — the order rides post-only and the cost model follo
   near(r.estimated_cost.spread, 0, 1e-12, "spread (mid fill)");
 });
 
-test("decideHedge SKIP case — cost filter blocks the hedge", () => {
+test("decideHedge SKIP case - cost filter blocks the hedge", () => {
   const r = decideHedge({
     optionDelta: -0.0005,
     Qperp: 0,
@@ -241,7 +241,7 @@ test("decideHedge SKIP case — cost filter blocks the hedge", () => {
   assert.equal(r.estimated_benefit > r.estimated_cost.total * 1.25, false);
 });
 
-test("decideHedge BLACKOUT case — settlement window suppresses the hedge", () => {
+test("decideHedge BLACKOUT case - settlement window suppresses the hedge", () => {
   const r = decideHedge({
     optionDelta: -0.002,
     Qperp: 0,

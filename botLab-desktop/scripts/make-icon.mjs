@@ -1,9 +1,9 @@
-// make-icon.mjs — generates build/icon.png (1024×1024), the single source icon electron-builder
+// make-icon.mjs - generates build/icon.png (1024×1024), the single source icon electron-builder
 // rasterizes into the macOS .icns and Windows .ico at build time (§ Phase 1 icons).
 //
-// Pure Node (zlib only) — no image deps in this repo. The mark: a dark rounded-square tile with an
+// Pure Node (zlib only) - no image deps in this repo. The mark: a dark rounded-square tile with an
 // ascending bar chart (growth, up-and-to-the-right) in BotLab's green, the tallest bar in accent
-// blue — echoing the in-app BOT·LAB wordmark palette. Regenerate: `node scripts/make-icon.mjs`.
+// blue - echoing the in-app BOT·LAB wordmark palette. Regenerate: `node scripts/make-icon.mjs`.
 // This is a clean placeholder-grade mark; drop a designed 1024² PNG at build/icon.png to replace it.
 import { deflateSync } from "node:zlib";
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -38,7 +38,7 @@ const BARS = [
   { x0: 639, x1: 721, top: 224, color: BLUE },
 ];
 
-// colour (rgba, 0..255) at a continuous sample point — used with 3× supersampling for smooth edges
+// colour (rgba, 0..255) at a continuous sample point - used with 3× supersampling for smooth edges
 function sample(fx, fy) {
   if (!inRR(fx, fy, 40, 40, S - 40, S - 40, 180)) return [0, 0, 0, 0]; // outside tile -> transparent
   for (const b of BARS) {

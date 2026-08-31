@@ -1,4 +1,4 @@
-// audit-fixes.test.js — regression tests for the 2026-07-01 functional-audit fixes:
+// audit-fixes.test.js - regression tests for the 2026-07-01 functional-audit fixes:
 // gap backfill from history (D3), capped live accrual, APR gating (D2), incremental frame
 // merge (D6), snapshot HL semantics (M10/M23), IPC decimation, CSV tsHour, store quarantine (M32),
 // cost-model persistence ordering (DEV-07, 2026-07-03 UI verification).
@@ -158,7 +158,7 @@ test("cost normalization prevents negative/non-finite instant paper profit", () 
 test("cost edits persist from inside the delegated handler, after the mutation (DEV-07)", () => {
   // Listeners on the same node fire in registration order: a second 'input' listener on
   // #costRows (registered at script init, before renderCosts wired the delegated one) sent
-  // COSTS to main BEFORE the edit was applied — the last edit never reached disk and the
+  // COSTS to main BEFORE the edit was applied - the last edit never reached disk and the
   // next dataset push reverted it. The persist call must live inside the mutating handler.
   const html = readFileSync(new URL("../src/renderer/index.html", import.meta.url), "utf8");
   const wired = html.match(/if\(!costWired\)\{([\s\S]*?)costWired=true;/);

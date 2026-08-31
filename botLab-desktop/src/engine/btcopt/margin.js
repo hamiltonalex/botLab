@@ -1,16 +1,16 @@
-// margin.js — «BTC-опционы» (Strategy One) margin CORE (Phase 2c).
-// PURE: no fetch / fs / DOM / Date.now — deterministic, unit-testable. Isolated from funding-arb.
+// margin.js - «BTC-опционы» (Strategy One) margin CORE (Phase 2c).
+// PURE: no fetch / fs / DOM / Date.now - deterministic, unit-testable. Isolated from funding-arb.
 //
 // Real Deribit STANDARD-MARGIN requirement for the SHORT option legs of the winged straddle, using the
 // published LINEAR / USDC (BTC) formulas (all values in USDC, per 1.0 contract). Long legs are paid in
 // full via premium and require NO additional margin. Standard margin does NOT net short against long, so
-// the structure requirement is the SUM of the two short-leg requirements — a conservative upper bound
+// the structure requirement is the SUM of the two short-leg requirements - a conservative upper bound
 // (Portfolio Margin, which would net the defined-risk wings, needs private keys → unavailable in paper).
-// Coefficients are the BTC/ETH set (0.15 max / 0.10 floor initial, 0.075 maintenance) — NOT the altcoin
+// Coefficients are the BTC/ETH set (0.15 max / 0.10 floor initial, 0.075 maintenance) - NOT the altcoin
 // set (0.2/0.13/0.1). Source: Deribit "Linear USDC Options" (support.deribit.com, art. 31424932728093).
 //
 // The put is asymmetric to the call: its initial floor is 0.10·Strike (not 0.10·Index) and maintenance
-// uses 0.075·MIN(Index, Strike) — because a put's loss is bounded by the strike, not the (higher) index.
+// uses 0.075·MIN(Index, Strike) - because a put's loss is bounded by the strike, not the (higher) index.
 
 // ДОЛЯ ВНЕ ДЕНЕГ МЕРИТСЯ ОТ ИНДЕКСА, А НЕ ОТ ФОРВАРДА, И ЭТО НЕ ПРИДИРКА. Формула биржи целиком
 // стоит на индексной цене (`max(0.15 − OTM/Index, 0.1)·Index + Mark`), и обе другие её части здесь

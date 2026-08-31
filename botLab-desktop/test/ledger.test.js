@@ -1,4 +1,4 @@
-// ledger.test.js — the transaction-ledger derivation and its reconciliation identity.
+// ledger.test.js - the transaction-ledger derivation and its reconciliation identity.
 // The ledger is a pure function of the position; these tests lock:
 //   * event composition per accrual source (live / history / skipped / cap-trimmed),
 //   * the funding/borrow split summing EXACTLY to dPnlGmx,

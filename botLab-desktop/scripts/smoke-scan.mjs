@@ -1,4 +1,4 @@
-// smoke-scan.mjs — живой S0-смоук OTM-сканера (сеть; вне golden-сьюта, как smoke-live.mjs).
+// smoke-scan.mjs - живой S0-смоук OTM-сканера (сеть; вне golden-сьюта, как smoke-live.mjs).
 // Печатает: свечи → RV/импульс/EMA, окно кандидатов обоих пресетов Дмитрия, delivery-цены.
 // Запуск: npm run smoke:scan
 import {
@@ -14,7 +14,7 @@ import { tvToCandles, computeRvBundle, HOUR_MS } from "../src/engine/otmscan/rv.
 import { SCAN_PRESETS } from "../src/engine/otmscan/presets.js";
 import { selectCandidates, expiriesInWindow } from "../src/engine/otmscan/candidates.js";
 
-const fmt = (x, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : "—");
+const fmt = (x, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : "-");
 
 // ATM IV экспирации = среднее mark_iv ATM-пары (правило бота 2, main.js ivOf/ATM-pair).
 async function atmIv(chain, expiryMs, spot) {
@@ -40,9 +40,9 @@ const now = Date.now();
 const tv = await getTradingviewChartData({ start_timestamp: now - 10 * 24 * HOUR_MS, end_timestamp: now, resolution: "60" });
 const candles = tvToCandles(tv);
 const b = computeRvBundle(candles, now);
-console.log(`[scan] свечи: ${candles.length} × 1h · последняя закрытая ${b.lastTs ? new Date(b.lastTs).toISOString() : "—"} · close ${fmt(b.lastClose, 1)}`);
+console.log(`[scan] свечи: ${candles.length} × 1h · последняя закрытая ${b.lastTs ? new Date(b.lastTs).toISOString() : "-"} · close ${fmt(b.lastClose, 1)}`);
 console.log(
-  `[scan] RV7d ${fmt(b.rv7dPct)}% (${b.bars.n7}/${b.bars.need7}) · RV3d ${fmt(b.rv3dPct)}% · σ1d ${fmt(b.sigma1dPct)}% · Δ24h ${fmt(b.dP24hPct)}% · импульс ${fmt(b.impulse)} · сторона ${b.direction ?? "—"} · EMA20 ${fmt(b.ema, 1)}`,
+  `[scan] RV7d ${fmt(b.rv7dPct)}% (${b.bars.n7}/${b.bars.need7}) · RV3d ${fmt(b.rv3dPct)}% · σ1d ${fmt(b.sigma1dPct)}% · Δ24h ${fmt(b.dP24hPct)}% · импульс ${fmt(b.impulse)} · сторона ${b.direction ?? "-"} · EMA20 ${fmt(b.ema, 1)}`,
 );
 
 const perp = await getTicker(PERP_INSTRUMENT);
@@ -53,7 +53,7 @@ console.log(`[scan] chain: ${chain.instruments.length} BTC_USDC-опционов
 const grid = [...new Set(chain.instruments.map((m) => m.expiration_timestamp))].sort((a, b) => a - b);
 console.log(`[scan] сетка экспираций, часов до: ${grid.map((e) => ((e - now) / HOUR_MS).toFixed(0)).join(" · ")}`);
 
-const side = b.direction ?? "call"; // при нулевом импульсе сторона неопределена — для смоука колл
+const side = b.direction ?? "call"; // при нулевом импульсе сторона неопределена - для смоука колл
 for (const preset of Object.values(SCAN_PRESETS)) {
   if (preset.id === "calibrated") continue; // черновик = копия v1, печатать нечего
   const expiries = expiriesInWindow(chain, now, preset);

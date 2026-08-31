@@ -1,10 +1,10 @@
-// updater-state.js — the PURE half of the OTA updater (plan §5.1). No Electron, no electron-updater,
+// updater-state.js - the PURE half of the OTA updater (plan §5.1). No Electron, no electron-updater,
 // no fs: everything here is unit-testable with plain `node --test` and no native deps installed.
 //
 // It owns three things:
-//   1. the updater state machine (the 8 pill states, §15) — driven by events, emits one snapshot
+//   1. the updater state machine (the 8 pill states, §15) - driven by events, emits one snapshot
 //      object per transition;
-//   2. release-notes normalization (§8.4) — coerces a GitHub release body to a bounded plain string;
+//   2. release-notes normalization (§8.4) - coerces a GitHub release body to a bounded plain string;
 //   3. the "open the changelog once after an update" decision (§8.3) and the release-page URL builder,
 //      with URL-injection guarding.
 // updater.js wires the real electron-updater events to this module and pushes each snapshot to the
@@ -36,7 +36,7 @@ const clampPercent = (p) => {
 // bound its length so a pathological body can't bloat the IPC payload.
 //
 // GitHub renders release bodies to HTML (even a one-line note comes back as "<p>…</p>"). The renderer
-// injects notes with textContent (§8.4) — the real XSS boundary — which shows any tags LITERALLY, so
+// injects notes with textContent (§8.4) - the real XSS boundary - which shows any tags LITERALLY, so
 // raw HTML would leak "<p>…</p>" into the pill popover. We therefore strip tags to plain text here
 // (block ends -> newlines, list items -> bullets) as FORMATTING; textContent downstream is still the
 // security boundary, and stripping also guarantees no markup (e.g. <img onerror>) reaches the DOM.

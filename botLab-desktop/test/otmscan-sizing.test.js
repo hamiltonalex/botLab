@@ -1,4 +1,4 @@
-// otmscan-sizing.test.js — S1 (план §5.3/§11): бюджет риска, лот-гранулярность, кэп qtyMax,
+// otmscan-sizing.test.js - S1 (план §5.3/§11): бюджет риска, лот-гранулярность, кэп qtyMax,
 // кэп глубины (А5), честные отказы min_lot_exceeds_risk / min_lot_exceeds_depth.
 
 import test from "node:test";
@@ -24,7 +24,7 @@ test("лот-сетка: qty всегда кратен лоту (float-гиги�
   assert.equal(Math.round(s.qtySuggested * 100) % 1, 0);
 });
 
-test("min_lot_exceeds_risk: премия мин-лота больше бюджета — блок, не тихое округление вверх", () => {
+test("min_lot_exceeds_risk: премия мин-лота больше бюджета - блок, не тихое округление вверх", () => {
   const s = computeSizing({ ...BASE, markUsd: 2500 }); // лот $25 > бюджет $20
   assert.equal(s.ok, false);
   assert.equal(s.blockReason, "min_lot_exceeds_risk");
@@ -37,13 +37,13 @@ test("кэп глубины: qty режется до доли ask-глубины
   assert.equal(s.ok, true);
   near(s.qtySuggested, 0.03, 1e-12, "floor(12.5/3.5)=3 лота");
   assert.equal(s.depthCapped, true);
-  near(s.qtyBudget, 0.05, 1e-12, "бюджетный размер до кэпа — порог У12 xPremium");
+  near(s.qtyBudget, 0.05, 1e-12, "бюджетный размер до кэпа - порог У12 xPremium");
   const thin = computeSizing({ ...BASE, entryDepthUsd: 10, maxQtyDepthPct: 25 }); // $2.5 < лот $3.5
   assert.equal(thin.ok, false);
   assert.equal(thin.blockReason, "min_lot_exceeds_depth");
 });
 
-test("глубина неизвестна — кэп не применяется (У12 сам гейтит книгу)", () => {
+test("глубина неизвестна - кэп не применяется (У12 сам гейтит книгу)", () => {
   const s = computeSizing({ ...BASE, entryDepthUsd: null, maxQtyDepthPct: 25 });
   assert.equal(s.ok, true);
   near(s.qtySuggested, 0.05, 1e-12, "без кэпа");
@@ -51,7 +51,7 @@ test("глубина неизвестна — кэп не применяется
   assert.equal(s.qtyMaxDepth, null);
 });
 
-test("нет данных для размера: mark/лот/депозит отсутствуют — единый честный отказ", () => {
+test("нет данных для размера: mark/лот/депозит отсутствуют - единый честный отказ", () => {
   for (const bad of [{ markUsd: null }, { lot: null }, { equityUsd: 0 }, { riskPerTradePct: null }]) {
     const s = computeSizing({ ...BASE, ...bad });
     assert.equal(s.ok, false);

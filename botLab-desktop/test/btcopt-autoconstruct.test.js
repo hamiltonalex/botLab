@@ -1,4 +1,4 @@
-// btcopt-autoconstruct.test.js — Phase 3a auto-construct golden numbers for «BTC-опционы»
+// btcopt-autoconstruct.test.js - Phase 3a auto-construct golden numbers for «BTC-опционы»
 // (src/engine/btcopt/structure.js): pickExpiry (nearest live expiry ≤ maxDays), auto ATM/wings strike
 // resolution via pickExpiry → buildStructure, and the structured pre-trade rejections
 // (structureRejections + the validateStructure thin wrapper). Pure & deterministic; the chain/snapshot
@@ -14,12 +14,12 @@ const near = (a, b, tol, l) => assert.ok(Math.abs(a - b) < tol, `${l}: got ${a} 
 const NOW = Date.UTC(2026, 6, 10, 12, 0, 0);
 const DAY = 86400000;
 const E_PAST = Date.UTC(2026, 6, 10, 8, 0, 0);
-const E1 = Date.UTC(2026, 6, 11, 8, 0, 0); // +20h — the nearest live expiry
+const E1 = Date.UTC(2026, 6, 11, 8, 0, 0); // +20h - the nearest live expiry
 const E2 = Date.UTC(2026, 6, 12, 8, 0, 0); // +44h
-const E3 = Date.UTC(2026, 6, 13, 8, 0, 0); // +68h — still ≤ 3d
-const E_FAR = Date.UTC(2026, 6, 15, 8, 0, 0); // +116h — beyond the 3-day window
+const E3 = Date.UTC(2026, 6, 13, 8, 0, 0); // +68h - still ≤ 3d
+const E_FAR = Date.UTC(2026, 6, 15, 8, 0, 0); // +116h - beyond the 3-day window
 
-// pickExpiry only reads expiration_timestamp — a strike-less stub meta is enough for its tests.
+// pickExpiry only reads expiration_timestamp - a strike-less stub meta is enough for its tests.
 const stub = (exp) => ({ instrument_name: `stub-${exp}`, expiration_timestamp: exp });
 
 // --- pickExpiry ---------------------------------------------------------------------------------------
@@ -159,7 +159,7 @@ test("validateStructure stays the thin { ok, errors } wrapper over the rejection
 });
 
 test("pickExpiry: minLeadMs skips an expiry already inside the pre-expiry blackout", () => {
-  const soon = NOW + 10 * 60000; // 10 min out — inside a 30-min lead
+  const soon = NOW + 10 * 60000; // 10 min out - inside a 30-min lead
   assert.equal(pickExpiry([stub(soon), stub(E1)].map((m) => m), NOW, { minLeadMs: 1800000 }), E1);
   assert.equal(pickExpiry([stub(soon)], NOW, { minLeadMs: 1800000 }), null);
 });
@@ -169,7 +169,7 @@ import { create, openStructure, preTradeCheck } from "../src/engine/btcopt/engin
 
 // A two-expiry chain (E1 + E2 ladders) + a snapshot with the 2c margin-golden marks on the E1 legs:
 // u 63872.5 / idx 63861.83 / short 70000-C mark 0.04 / short 58000-P mark 0.54 → IM ≈ $63.9 + $58.0 =
-// $121.9 — the min-size straddle's real IM EXCEEDS the $100 paper deposit (the Phase-2c reality).
+// $121.9 - the min-size straddle's real IM EXCEEDS the $100 paper deposit (the Phase-2c reality).
 const chain2 = [...ladder(E1, "11JUL26"), ...ladder(E2, "12JUL26")];
 const mkLeg = (mark) => ({ mark, contractSize: 1, minTradeAmount: 0.01, tickSize: 5, markInUsd: true });
 const snap2 = {
@@ -201,10 +201,10 @@ test("openStructure auto-picks the nearest live expiry when params.expiry is nul
 
 test("openStructure auto-pick skips an expiry inside the pre-expiry blackout → the NEXT one", () => {
   const st = create({ nowMs: NOW });
-  const at = E1 - 20 * 60000; // 20 min before E1 (07:40 UTC — outside the ±10-min 08:00 window)
+  const at = E1 - 20 * 60000; // 20 min before E1 (07:40 UTC - outside the ±10-min 08:00 window)
   const r = openStructure(st, AUTO_PARAMS, chain2, snap2, at);
   assert.equal(r.ok, true);
-  assert.equal(r.structure.expiryMs, E2); // E1 is < 30 min out — never auto-open into delta decay
+  assert.equal(r.structure.expiryMs, E2); // E1 is < 30 min out - never auto-open into delta decay
 });
 
 test("openStructure blocks in the 08:00 UTC settlement window with a structured settlement rejection", () => {
@@ -219,7 +219,7 @@ test("openStructure blocks in the 08:00 UTC settlement window with a structured 
 test("openStructure blocks < 30 min before the chosen expiry (pre-expiry reason)", () => {
   const st = create({ nowMs: NOW });
   const at = E1 - 20 * 60000;
-  const r = openStructure(st, { ...AUTO_PARAMS, expiry: E1 }, chain2, snap2, at); // explicit E1 — no auto skip
+  const r = openStructure(st, { ...AUTO_PARAMS, expiry: E1 }, chain2, snap2, at); // explicit E1 - no auto skip
   assert.ok(r.error && r.error.includes("<30 мин до экспирации"), r.error);
   assert.ok((r.rejections || []).some((x) => x.code === "settlement"));
 });
@@ -231,14 +231,14 @@ test("openStructure: settlementBlackout=false disables the settlement gate (user
   assert.equal(r.ok, true);
 });
 
-test("margin IM > deposit is a WARN that rides the OK response — opening proceeds (decision (b))", () => {
+test("margin IM > deposit is a WARN that rides the OK response - opening proceeds (decision (b))", () => {
   const st = create({ nowMs: NOW });
   const r = openStructure(st, { ...AUTO_PARAMS, expiry: E1 }, chain2, snap2, NOW);
   assert.equal(r.ok, true); // warn never blocks
   const w = (r.rejections || []).find((x) => x.code === "margin");
   assert.ok(w, "margin warn present");
   assert.equal(w.severity, "warn");
-  assert.ok(w.detail.includes("IM $122"), w.detail); // round(121.9) — the 2c golden reality
+  assert.ok(w.detail.includes("IM $122"), w.detail); // round(121.9) - the 2c golden reality
   assert.ok(w.detail.includes("депозит $100"), w.detail);
   assert.ok(st.structure, "structure IS open despite the warn");
 });
@@ -273,7 +273,7 @@ test("preTradeCheck composes: sub-min qty + blackout together (both blocks repor
   const codes = rej.map((r) => r.code);
   assert.ok(codes.includes("min_size"), String(codes));
   assert.ok(codes.includes("settlement"), String(codes));
-  assert.ok(!codes.includes("margin"), String(codes)); // half size ⇒ IM ≈ $61 < $100 — no margin warn
+  assert.ok(!codes.includes("margin"), String(codes)); // half size ⇒ IM ≈ $61 < $100 - no margin warn
 });
 
 // ── Quote gate (audit №4): a leg the snapshot never priced must BLOCK the open, naming culprits ──

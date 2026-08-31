@@ -1,5 +1,5 @@
-// btcopt-deribit.test.js — the greeks gate (pure part of deribit.js). The load-bearing case: a
-// primary (open-structure) leg whose fetch failed entirely is ABSENT from the legs map — the gate
+// btcopt-deribit.test.js - the greeks gate (pure part of deribit.js). The load-bearing case: a
+// primary (open-structure) leg whose fetch failed entirely is ABSENT from the legs map - the gate
 // must fail on the missing name, not pass on the valid survivors (a missing leg's delta would
 // otherwise silently count as 0 and the engine would hedge off an understated net delta).
 // PURE, inline fixtures, no network.
@@ -230,7 +230,7 @@ test("снапшот: замороженная нога рядом с живой
 // setIntervalMs re-arms the timer WITHOUT recreating the source (recreation would zero errorStreak
 // and break recovery detection), and the GET-attempt counter feeds the §4.3 budget log. Also proves
 // the degradation premise: a failed-perp tick still DELIVERS a snapshot (ts = nowMs), so the
-// scanner's tick handler runs — and can detect the streak — even while the exchange is down.
+// scanner's tick handler runs - and can detect the streak - even while the exchange is down.
 import { createRestSource, getRpcCallCount } from "../src/engine/btcopt/deribit.js";
 
 test("S2 source API: errorStreak in status(); setIntervalMs updates cadence; failing tick still delivers", async () => {
@@ -238,7 +238,7 @@ test("S2 source API: errorStreak in status(); setIntervalMs updates cadence; fai
   global.fetch = stubFetch("BTC-PERPETUAL"); // перп падает → primary error → errorStreak растёт
   try {
     const src = createRestSource({ intervalMs: 600000, staleAfterSec: 15 }); // интервал заведомо не успеет второй тик
-    src.setInstruments([], []); // сканерный режим: primary=[] — гейтит только перп-heartbeat
+    src.setInstruments([], []); // сканерный режим: primary=[] - гейтит только перп-heartbeat
     assert.equal(src.status().errorStreak, 0, "аддитивное поле присутствует и стартует с нуля");
     assert.equal(src.status().intervalMs, 600000);
     src.setIntervalMs(1200000); // живой перевзвод БЕЗ пересоздания
@@ -252,10 +252,10 @@ test("S2 source API: errorStreak in status(); setIntervalMs updates cadence; fai
     // Отказ перпа = 2 попытки с retry-снами 1.5с + 3с (rpc backoff) ≈ 4.5с до завершения тика.
     await new Promise((r) => setTimeout(r, 6000));
     src.stop();
-    assert.ok(delivered >= 1, "снапшот доставлен несмотря на отказ перпа (ts=nowMs) — деградация детектится в обработчике");
+    assert.ok(delivered >= 1, "снапшот доставлен несмотря на отказ перпа (ts=nowMs) - деградация детектится в обработчике");
     assert.ok(src.status().errorStreak >= 1, "отказ перпа растит errorStreak");
     assert.equal(src.status().ok, false);
-    assert.ok(getRpcCallCount() >= c0 + 2, "счётчик GET считает ПОПЫТКИ (ретраи — реальный трафик)");
+    assert.ok(getRpcCallCount() >= c0 + 2, "счётчик GET считает ПОПЫТКИ (ретраи - реальный трафик)");
   } finally {
     global.fetch = real;
   }

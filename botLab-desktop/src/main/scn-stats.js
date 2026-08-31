@@ -1,14 +1,14 @@
-// scn-stats.js — «OTM-сканер» суточная статистика обкатки (S3b, план §10/§12-S3b). PURE.
-// Слой main ПОВЕРХ движка: складывает готовый scanCycle в суточные вёдра распределений — значения
+// scn-stats.js - «OTM-сканер» суточная статистика обкатки (S3b, план §10/§12-S3b). PURE.
+// Слой main ПОВЕРХ движка: складывает готовый scanCycle в суточные вёдра распределений - значения
 // условий (материал калибровки порогов), экономика лучшего кандидата (ворота §10 п.4: roundTripCostPct,
 // minCapitalUsd), метрики Д8 («нет кандидатов» против сетки листинга) и инциденты (деградация,
-// рестарты, блэкауты). Движок PURE не тронут: его телеметрия — часть замороженного контракта cycle,
-// а это — потребность отчёта обкатки, не стратегии (прецедент: guardrail-диапазоны редактора в renderer).
+// рестарты, блэкауты). Движок PURE не тронут: его телеметрия - часть замороженного контракта cycle,
+// а это - потребность отчёта обкатки, не стратегии (прецедент: guardrail-диапазоны редактора в renderer).
 //
-// Хранение: sparse-гистограммы {индекс_бина: счётчик} — 72ч на 30с кадансе это 8640 тиков, сырые
-// ряды в JSON-файл не влезают, а квантили из бинов достаточны для калибровки. Персист — аддитивный
+// Хранение: sparse-гистограммы {индекс_бина: счётчик} - 72ч на 30с кадансе это 8640 тиков, сырые
+// ряды в JSON-файл не влезают, а квантили из бинов достаточны для калибровки. Персист - аддитивный
 // ключ `stats` в otm-scanner-telemetry.json (тот же флаш-троттлинг, то же кольцо telemetryDays).
-// Бины — СТРУКТУРНЫЕ правила слоя статистики, не пороги Дмитрия (закон §1 п.5 соблюдён).
+// Бины - СТРУКТУРНЫЕ правила слоя статистики, не пороги Дмитрия (закон §1 п.5 соблюдён).
 
 import { SCAN_DATA_RULES } from "../engine/otmscan/presets.js";
 
@@ -37,7 +37,7 @@ export const SCN_STATS_BINS = deepFreeze({
 
 export const binCount = (spec) => (spec.edges ? spec.edges.length : Math.round((spec.hi - spec.lo) / spec.step));
 
-// Индекс бина значения (клампы в крайние бины — фактический размах несут min/max гистограммы).
+// Индекс бина значения (клампы в крайние бины - фактический размах несут min/max гистограммы).
 export function binIndexOf(spec, v) {
   if (!fin(v)) return null;
   if (spec.edges) {
@@ -70,7 +70,7 @@ function histAdd(h, spec, v) {
 }
 
 // Квантиль из sparse-гистограммы: линейная интерполяция внутри бина (равномерное допущение),
-// результат клампится в фактический [min, max]. Точность = ширина бина — для калибровки достаточно.
+// результат клампится в фактический [min, max]. Точность = ширина бина - для калибровки достаточно.
 export function histQuantile(h, spec, q) {
   if (!h || !h.n || !fin(q)) return null;
   const target = Math.max(0, Math.min(h.n - 1, q * (h.n - 1)));
@@ -100,12 +100,12 @@ const bucketCreate = () => ({
   degradedTicks: 0,
   verdictSignalTicks: 0,
   phases: { idle: 0, forming: 0, active: 0 },
-  candCounts: {}, // {число_кандидатов: тиков} — гистограмма Д8
+  candCounts: {}, // {число_кандидатов: тиков} - гистограмма Д8
   firstTickTs: null,
   lastTickTs: null,
   equityUsdLast: null,
   repriceSecLast: null,
-  values: {}, // {condKey: hist} — распределения значений условий (материал калибровки)
+  values: {}, // {condKey: hist} - распределения значений условий (материал калибровки)
   rtc: histCreate("pctPrem"), // roundTripCostPct лучшего кандидата (§10 п.4)
   minCap: histCreate("minCapUsd"), // minCapitalUsd лучшего кандидата (§10 п.4)
   capOverEq: 0, // тиков, где minCapitalUsd > депозита суб-счёта (§5.7)
@@ -123,7 +123,7 @@ const bucketClone = (b) => ({
 
 const dayKeyOf = (nowMs) => new Date(nowMs).toISOString().slice(0, 10);
 
-// Кольцо суточных вёдер — тот же горизонт, что у телеметрии условий (§5.6).
+// Кольцо суточных вёдер - тот же горизонт, что у телеметрии условий (§5.6).
 function pruneDays(days, nowMs, rules) {
   const cutoff = new Date(nowMs - rules.telemetryDays * 86400000).toISOString().slice(0, 10);
   for (const k of Object.keys(days)) if (k < cutoff) delete days[k];
@@ -140,7 +140,7 @@ function copyPath(stats, dayKey, presetId) {
   return { days, bucket };
 }
 
-// ── Главный фолд: один scanCycle в суточное ведро (ключи: сутки UTC, затем presetId — экономика
+// ── Главный фолд: один scanCycle в суточное ведро (ключи: сутки UTC, затем presetId - экономика
 // и значения зависят от пресета; счётчики условий движка пресет НЕ различают, это их известное
 // ограничение, отчёт о нём предупреждает). extra: { degraded, equityUsd, repriceSec }.
 export function foldScanStats(stats, cycle, extra, nowMs, rules = SCAN_DATA_RULES) {
@@ -165,7 +165,7 @@ export function foldScanStats(stats, cycle, extra, nowMs, rules = SCAN_DATA_RULE
 
   // Значения условий: только конечные (unknown/off несут value=null и в распределение не входят).
   // Unit фиксируется первым добавлением; смена unit под тем же ключом (правка режима У2 внутри
-  // суток) отбрасывается — честная гистограмма одной величины важнее полноты.
+  // суток) отбрасывается - честная гистограмма одной величины важнее полноты.
   for (const r of cycle.conditions ?? []) {
     const spec = SCN_STATS_BINS[r.unit];
     if (!spec || !fin(r.value)) continue;

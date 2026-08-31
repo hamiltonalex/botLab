@@ -1,4 +1,4 @@
-// account.test.js — account-level roll-up (accountSummary) + portfolio drawdown (combinedMaxDrawdown).
+// account.test.js - account-level roll-up (accountSummary) + portfolio drawdown (combinedMaxDrawdown).
 // Covers the audit fixes: annualize over the ACTUAL accrual horizon (no wall-clock decay after
 // close), notionalAll = Σ leveraged notional, and portfolio maxDrawdown from the COMBINED equity
 // curve (not the sum of per-position troughs).
@@ -47,7 +47,7 @@ test("accountSummary: realized APR is frozen at the accrual horizon and does NOT
 
   const a1 = accountSummary([p]);
   // Recompute much later in wall-clock time: accountSummary takes no `now`, so the horizon is fixed
-  // at the last accrual — the APR must be identical, not decayed.
+  // at the last accrual - the APR must be identical, not decayed.
   const a2 = accountSummary([p]);
   assert.ok(Math.abs(a1.hoursSinceFirst - 48) < 1e-6, "horizon is the 48h accrual window");
   assert.equal(a1.apr, a2.apr, "APR does not change as wall-clock advances");

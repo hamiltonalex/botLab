@@ -59,9 +59,9 @@ export function payoffAt(structure, S_T) {
   return unitOf(structure) * intrinsicOfLegs(structure, S_T) - structure.entryDebitUsd;
 }
 
-// The break-evens either side of the ATM floor — K ± D/(q·cs) — but ONLY where the tent actually
+// The break-evens either side of the ATM floor - K ± D/(q·cs) - but ONLY where the tent actually
 // crosses zero. Past a wing the curve is flat (plateau = wing width − debit), so a debit wider than a
-// wing has NO break-even on that side: the naive K ± D point would sit inside the flat loss region — a
+// wing has NO break-even on that side: the naive K ± D point would sit inside the flat loss region - a
 // phantom marker the chart must never draw. Position-stable [lower|null, upper|null] (the renderer
 // reads be[0]/be[1] as BE↓/BE↑). A credit (D<0) never crosses zero from above → both null.
 // Структура без полного набора страйков тента (продажа одной ноги) даёт [null, null]: у неё своя

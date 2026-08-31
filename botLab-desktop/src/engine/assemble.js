@@ -1,4 +1,4 @@
-// assemble.js — turns live snapshots + trailing history into the EXACT render-contract shapes the
+// assemble.js - turns live snapshots + trailing history into the EXACT render-contract shapes the
 // reused UI consumes (TWO_LEG[asset], ONE_LEG[key], SCANNER rows) plus per-selection chart series.
 // The renderer stays thin: it assigns these and calls its unchanged render/draw functions.
 
@@ -68,7 +68,7 @@ export function buildSnapshot(inst, gmxCanon, hlCanon) {
   const oneLegNet = a.gmx_short_recv - a.gmx_borrow_short;
   const chosen = a.net_A >= a.net_B ? "A" : "B";
   // HL plausibility: a two-leg HL rate that is FINITE but outside the sane per-hour band is a
-  // wrong-scale/units signal — pause accrual (mirrors the GMX netRate identity gate). A MISSING
+  // wrong-scale/units signal - pause accrual (mirrors the GMX netRate identity gate). A MISSING
   // (NaN) HL rate is NOT a gate failure: accrue() simply refuses that interval until HL returns.
   const hlImplausible = !isOneLeg && Number.isFinite(row.hl_rate) && Math.abs(row.hl_rate) >= HL_RATE_SANE_MAX;
   const required = isOneLeg
@@ -95,7 +95,7 @@ export function buildSnapshot(inst, gmxCanon, hlCanon) {
 
 // ---- windowed summaries merged with the live snapshot (mock TWO_LEG[asset] shape) ----
 // winDays slices the stats to the SELECTED window so the strategy panel / scanner match the hero
-// and charts (they were silently full-frame 365d before — audit #3 W2); omit for full-frame.
+// and charts (they were silently full-frame 365d before - audit #3 W2); omit for full-frame.
 export function buildTwoLegEntry(inst, frame, snap, winDays) {
   const rows = Number.isFinite(winDays) ? sliceWindow(frame, winDays) : frame || [];
   const minRows = Number.isFinite(winDays) ? ENTRY_MIN_ROWS : 25;
@@ -110,14 +110,14 @@ export function buildTwoLegEntry(inst, frame, snap, winDays) {
     gmxAddr: inst.gmxAddr,
     gmxChain: inst.chain,
     raw: snap?.raw ?? null,
-    oi: snap?.oi ?? null, // null (not zeros) when no live snapshot — renderer shows a placeholder
+    oi: snap?.oi ?? null, // null (not zeros) when no live snapshot - renderer shows a placeholder
     chosen: s?.chosen ?? snap?.chosen ?? "A",
     A,
     B,
     hours: s?.hours ?? 0,
     first: s?.first ?? null,
     last: s?.last ?? null,
-    // the window these stats were computed over — entries carry no forKey, so the renderer labels
+    // the window these stats were computed over - entries carry no forKey, so the renderer labels
     // the stats panel from THIS stamp (not the live selector) and can never mislabel a stale push
     winDays: Number.isFinite(winDays) ? winDays : null,
   };
@@ -235,13 +235,13 @@ export function buildSeries(frame, strat, cfg, winDays, priceDaily = []) {
   const legsMonthly = legBuckets.map((b) => ({ gmxFund: mean(b.gmxFund) || 0, gmxBorrow: mean(b.gmxBorrow) || 0, hlFund: mean(b.hlFund) || 0 }));
 
   // price context: a SINGLE reference series (Binance daily closes). We do NOT have per-venue
-  // (GMX-oracle vs HL-mark) history, so we do not fabricate two lines or a measured basis — the
+  // (GMX-oracle vs HL-mark) history, so we do not fabricate two lines or a measured basis - the
   // chart is labeled "reference (Binance)" and the cross-venue delta is a P3 item (audit).
   const px = priceDaily.length ? priceDaily.slice(-Math.min(180, nDays)) : [];
   const price = { ref: px.slice(), level: px.length ? px[px.length - 1] : 0 };
 
   // rawRows: the last 120 REAL hourly rows with derived APR fields (raw-data inspector).
-  // Per-hour prices are not joined here; price is null (rendered as "—"), never a fake constant.
+  // Per-hour prices are not joined here; price is null (rendered as "-"), never a fake constant.
   const lastN = rows.slice(-120).reverse(); // newest first (matches the inspector)
   const annLast = lastN.map(annualizeRow);
   const rawRows = lastN.map((r, i) => {
@@ -278,8 +278,8 @@ export function buildSeries(frame, strat, cfg, winDays, priceDaily = []) {
     nLegs,
     hours: rows.length,
     netMedian: median(comp.map((c) => c.net)),
-    // max drawdown of THIS window's net series, per $1 of notional — the hero shows this next to
-    // the windowed P&L/APR (it used to show the full-frame 365d ddPct there — audit #3 W1)
+    // max drawdown of THIS window's net series, per $1 of notional - the hero shows this next to
+    // the windowed P&L/APR (it used to show the full-frame 365d ddPct there - audit #3 W1)
     ddPct: maxDrawdownFraction(comp.map((c) => c.net)),
   };
 }

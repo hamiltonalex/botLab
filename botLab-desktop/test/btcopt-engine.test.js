@@ -1,4 +1,4 @@
-// btcopt-engine.test.js — «BTC-опционы» engine integration: create → openStructure → ingest → evaluate
+// btcopt-engine.test.js - «BTC-опционы» engine integration: create → openStructure → ingest → evaluate
 // produces the full §5 cycle-snapshot deterministically, executes a paper hedge, and closes cleanly.
 // Pure engine test (no Electron/network); the market snapshot is crafted inline to hit the spec numbers.
 import { test } from "node:test";
@@ -14,7 +14,7 @@ const EXPIRY = Date.UTC(2026, 6, 17, 8, 0, 0); // 17JUL26 08:00 UTC
 const NOON = Date.UTC(2026, 6, 15, 12, 0, 0); // non-blackout, 2 days before expiry
 const nm = (strike, type) => `BTC_USDC-TEST-${strike}-${type === "call" ? "C" : "P"}`;
 
-// A small live chain (metas) across a strike ladder, one expiry — the get_instruments shape.
+// A small live chain (metas) across a strike ladder, one expiry - the get_instruments shape.
 function mkChain() {
   const metas = [];
   for (const strike of [55000, 58000, 61000, 64000, 67000]) {
@@ -213,7 +213,7 @@ test("greeks gate: a snapshot with gateOk=false pauses hedging (SKIP, no fill)",
 });
 
 // ── Expiry settlement (settleStructure + the evaluate() trigger) ────────────────────────────────
-// The oracle: options settle at intrinsic, so the realized amount ≡ payoffAt(structure, S) — the
+// The oracle: options settle at intrinsic, so the realized amount ≡ payoffAt(structure, S) - the
 // same terminal tent the payoff chart promises (payoff.js).
 import { payoffAt } from "../src/engine/btcopt/payoff.js";
 
@@ -251,12 +251,12 @@ test("expiry settlement: evaluate() past expiry settles at intrinsic ≡ payoffA
   near(settle.priceRef, S, 1e-9, "settlement price recorded");
   near(st.realizedOptionsUsd, expected, 1e-9, "realizedOptionsUsd carries the terminal payoff");
   assert.ok(st.ledger.some((e) => e.type === "close-perp"), "perp exit booked");
-  // the same tick already reports a FLAT book — no hedging of a dead structure
+  // the same tick already reports a FLAT book - no hedging of a dead structure
   assert.equal(cyc.structure_id, null);
   assert.equal(cyc.option_legs.length, 0);
 });
 
-test("expiry settlement: three tent points — plateau beyond the wing, −debit at ATM, between BE and wing", () => {
+test("expiry settlement: three tent points - plateau beyond the wing, −debit at ATM, between BE and wing", () => {
   for (const S of [70_000, 61_000, 64_000]) {
     const { st, snap } = opened();
     engine.evaluate(st, snap, NOON);
@@ -392,7 +392,7 @@ test("closeStructure refuses to close over a snapshot without a priced perp (no 
   const degraded = { ...snap, perp: null }; // perp fetch failed on this tick
   const r = engine.closeStructure(st, degraded, NOON + 120_000);
   assert.ok(r.error && r.error.includes("нет цены перпетуала"), r.error);
-  assert.ok(st.structure, "structure still open — nothing was half-closed");
+  assert.ok(st.structure, "structure still open - nothing was half-closed");
   assert.notEqual(st.perpState.qty, 0, "perp untouched");
   assert.ok(!st.ledger.some((e) => e.type === "close-options"), "no options close was booked");
 
@@ -424,7 +424,7 @@ test("engineCfg overlays the ticket's actual params over settings (debounce-race
   engine.evaluate(st, snap, NOON); // the paper fill must follow the frozen (actual) style
   const fill = st.ledger.find((e) => e.type === "hedge");
   assert.ok(fill, "hedge executed");
-  assert.equal(fill.priceRef, 61001, "market buy crosses to the ask — not the limit-mid fill");
+  assert.equal(fill.priceRef, 61001, "market buy crosses to the ask - not the limit-mid fill");
 });
 
 // ── А6 R3 (fault-tolerance аудит, ратифицировано 2026-07-20): фандинг-гэп сверх анти-catch-up

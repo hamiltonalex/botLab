@@ -1,4 +1,4 @@
-// otmscan-aggregate.test.js — S1: агрегатор AND против score, жёсткое ядро У1+У10+У14,
+// otmscan-aggregate.test.js - S1: агрегатор AND против score, жёсткое ядро У1+У10+У14,
 // unknown-семантика, off/info вне знаменателя; телеметрия-фолд и окна (план §5.4/§5.6/§11).
 
 import test from "node:test";
@@ -11,7 +11,7 @@ const R = (idx, state, { mode = "gate", core = false, key } = {}) => ({ key: key
 const CORE = [R("У1", "pass", { core: true }), R("У10", "pass", { core: true }), R("У14", "pass", { core: true })];
 const fill = (n, state = "pass") => Array.from({ length: n }, (_, i) => R(`Ф${i}`, state));
 
-test("AND: все применимые pass — signal; один fail — none с причиной", () => {
+test("AND: все применимые pass - signal; один fail - none с причиной", () => {
   const ok = aggregateVerdict([...CORE, ...fill(3)], { mode: "AND" });
   assert.equal(ok.verdict, "signal");
   assert.equal(ok.passed, 6);
@@ -36,7 +36,7 @@ test("off и info исключены из числителя и знаменат
   assert.equal(a.applicable, 3);
 });
 
-test("score: порог scoreMin с прошедшим ядром — signal; unknown не засчитывается в passed", () => {
+test("score: порог scoreMin с прошедшим ядром - signal; unknown не засчитывается в passed", () => {
   const rows = [...CORE, ...fill(7), R("У6", "unknown"), R("У5", "fail")];
   const a = aggregateVerdict(rows, { mode: "score", scoreMin: 10 });
   assert.equal(a.passed, 10);
@@ -57,7 +57,7 @@ test("score: без ядра нет сигнала даже при перебо�
   assert.equal(aggregateVerdict([...coreUnknown, ...fill(10)], { mode: "score", scoreMin: 10 }).coreOk, false);
 });
 
-test("AND без применимых условий — none (пустой чеклист не сигналит)", () => {
+test("AND без применимых условий - none (пустой чеклист не сигналит)", () => {
   assert.equal(aggregateVerdict([R("У8", "off", { mode: "off" })], { mode: "AND" }).verdict, "none");
 });
 

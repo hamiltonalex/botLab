@@ -1,4 +1,4 @@
-// sources.js — all external data access. Ports fetch_gmx_hourly / fetch_hl_hourly (history)
+// sources.js - all external data access. Ports fetch_gmx_hourly / fetch_hl_hourly (history)
 // from funding_spread_core.py and adds the live "current snapshot" fetchers. Uses global fetch
 // (Node 18+/Electron main). All endpoints are public, read-only, CORS=*. No keys, no orders.
 
@@ -55,7 +55,7 @@ async function postJson(url, body, { retries = 6, timeoutMs = 45000, hl = false 
         signal: ctl,
       });
       if (r.status === 429) {
-        // Hyperliquid rate limit — back off hard (mirrors _post_hl).
+        // Hyperliquid rate limit - back off hard (mirrors _post_hl).
         await SLEEP(8000 * (attempt + 1));
         throw new Error("429");
       }
@@ -75,7 +75,7 @@ const floorHour = (tsSec) => Math.floor(tsSec / 3600) * 3600;
 const hourIso = (tsSec) => new Date(floorHour(tsSec) * 1000).toISOString().replace(".000Z", "+00:00").replace("T", " ");
 
 // ---------------------------------------------------------------------------
-// GMX Subsquid history (keyset pagination) — port of _paginate_gmx + fetch_gmx_hourly.
+// GMX Subsquid history (keyset pagination) - port of _paginate_gmx + fetch_gmx_hourly.
 // funding uses marketAddress_eq; borrow uses address_eq (the field name DIFFERS).
 // ---------------------------------------------------------------------------
 async function paginateGmx(chain, entity, addrField, market, startTs, endTs, fields) {
@@ -122,7 +122,7 @@ export async function fetchGmxHistory(market, startTs, endTs, chain = "arbitrum"
 }
 
 // ---------------------------------------------------------------------------
-// Hyperliquid funding history — port of fetch_hl_hourly.
+// Hyperliquid funding history - port of fetch_hl_hourly.
 // Returns Map(tsHour -> {hl_rate, hl_premium}).
 // ---------------------------------------------------------------------------
 export async function fetchHlHistory(coin, startTs, endTs) {
@@ -190,7 +190,7 @@ export async function fetchHlCurrent() {
   return { byCoin, fetchedAt: Date.now() };
 }
 
-// Latest single Subsquid snapshot for one market — used as the reconciliation reference.
+// Latest single Subsquid snapshot for one market - used as the reconciliation reference.
 export async function fetchSubsquidLatest(market, chain = "arbitrum") {
   const q = `{ fundingRateSnapshots(limit:1, orderBy: snapshotTimestamp_DESC, where:{ marketAddress_eq:"${market}" }) { snapshotTimestamp fundingFactorPerSecondLong fundingFactorPerSecondShort } borrowingRateSnapshots(limit:1, orderBy: snapshotTimestamp_DESC, where:{ address_eq:"${market}" }) { snapshotTimestamp borrowingFactorPerSecondLong borrowingFactorPerSecondShort } }`;
   const j = await postJson(CHAINS[chainKey(chain)].subsquid, { query: q });

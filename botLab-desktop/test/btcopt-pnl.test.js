@@ -1,4 +1,4 @@
-// btcopt-pnl.test.js — golden + sign-lock tests for the «BTC-опционы» P&L attribution core.
+// btcopt-pnl.test.js - golden + sign-lock tests for the «BTC-опционы» P&L attribution core.
 // Options are LINEAR USDC (USD-native marks, no ×index); the hedge is an INVERSE BTC perpetual
 // ($10/contract, BTC-denominated PnL). The point of these tests is to pin the inverse mark-to-market
 // and funding signs EXACTLY, and to prove the attribution identity + ledger reconciliation close.
@@ -16,7 +16,7 @@ import {
 
 const near = (a, b, tol, l) => assert.ok(Math.abs(a - b) < tol, `${l}: got ${a} want ${b}`);
 
-// ── markStructure (LINEAR options — USD marks, no ×index) ───────────────────────────────────────
+// ── markStructure (LINEAR options - USD marks, no ×index) ───────────────────────────────────────
 test("markStructure: one long ATM call, mark 200→2090 → upl_usd +1890", () => {
   const structure = { legs: [{ instrument: "C", qtySigned: +1, entryMark: 200, contractSize: 1, markInUsd: true }] };
   const snapshot = { legs: { C: { mark: 2090 } } };
@@ -54,7 +54,7 @@ test("markStructure: multi-leg Σ (long call +1890, short put +100) = +1990", ()
   assert.equal(markStructure(structure, snapshot).upl_usd, 1990);
 });
 
-// ── markPerp (INVERSE $10 perpetual — BTC-denominated PnL) ───────────────────────────────────────
+// ── markPerp (INVERSE $10 perpetual - BTC-denominated PnL) ───────────────────────────────────────
 test("markPerp inverse: short −13 @63000, mark 60000 → gains as price drops", () => {
   const r = markPerp({ qty: -13, avgEntry: 63000 }, { mark: 60000, contractSize: 10 });
   near(r.futuresDeltaBtc, -0.0020635, 1e-6, "futuresDeltaBtc"); // −130/63000 = ∂upl_usd/∂mark
@@ -150,7 +150,7 @@ test("accrueFunding: successive calls accumulate into fundingCum", () => {
 });
 
 // ── attribute + ledgerReconciles (the golden end-to-end) ────────────────────────────────────────
-// NOTE the fixture is engine-real: funding lives ONLY in perpState.fundingCum — the journal carries
+// NOTE the fixture is engine-real: funding lives ONLY in perpState.fundingCum - the journal carries
 // no funding rows by design (accrueFunding never appends). A reconcile that summed a fundingUsd
 // column would fail on exactly this shape; keeping fundingCum ≠ 0 here is the regression assert.
 function goldenState() {
@@ -187,17 +187,17 @@ test("attribute: folds live inverse mark into futures_upl", () => {
   near(a.futures_upl, 100 + 6.190476, 1e-5, "futures_upl = realized + mark"); // 100 + inverse upl
 });
 
-// ── noHedgeAttribute (Phase 2a shadow book — perp zeroed) ────────────────────────────────────────
+// ── noHedgeAttribute (Phase 2a shadow book - perp zeroed) ────────────────────────────────────────
 test("noHedgeAttribute: shadow net ≡ options_upl, and (hedged − shadow) ≡ vs_no_hedge", () => {
   const st = goldenState();
   const hedged = attribute(st, goldenSnapshot);
   const shadow = noHedgeAttribute(st, goldenSnapshot);
-  assert.equal(shadow.net_total, 1890); // options only — no perp realized/funding/fees
+  assert.equal(shadow.net_total, 1890); // options only - no perp realized/funding/fees
   assert.equal(shadow.net_total, hedged.options_upl);
   near(hedged.net_total - shadow.net_total, hedged.vs_no_hedge, 1e-9, "contribution ≡ vs_no_hedge");
 });
 
-test("noHedgeAttribute: 'over-hedged choppy day' — hedging turns +0.90 options into −0.05 net", () => {
+test("noHedgeAttribute: 'over-hedged choppy day' - hedging turns +0.90 options into −0.05 net", () => {
   // spec pp.9: options MTM +0.90, futures +0.35, fees+funding −1.30 → net −0.05; the hedge COST 0.95.
   const st = {
     structure: { legs: [{ instrument: "C", qtySigned: 1, entryMark: 200, contractSize: 1 }] },

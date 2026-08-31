@@ -1,4 +1,4 @@
-// golden.test.js — the CORRECTNESS GATE.
+// golden.test.js - the CORRECTNESS GATE.
 //
 // The ported JS math (src/engine/math.js) must reproduce the audited engine numbers over the
 // cached spread_cache windows before any live data is trusted. Reference values come from

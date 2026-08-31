@@ -1,4 +1,4 @@
-// xlsx-writer.test.js — the hand-rolled OOXML writer is the riskiest new code (binary format
+// xlsx-writer.test.js - the hand-rolled OOXML writer is the riskiest new code (binary format
 // written by hand), so it gets structural round-trip coverage: CRC32 against the canonical test
 // vector, ZIP local/central/EOCD layout re-parsed byte-for-byte, and the sheet XML content.
 
@@ -112,7 +112,7 @@ test("toLedgerCsv: BOM + CRLF + full column pool + quoting; sheet rows keep numb
   assert.equal(lines[0].split(",").length, LEDGER_COLUMNS.length, "full column pool");
   assert.ok(lines[0].startsWith("seq,operation_id,time_utc,type,"), "audit column order");
   assert.ok(lines[1].includes('"разовые издержки входа-выхода · зафиксированы при открытии"') || lines[1].includes("разовые издержки"), "description present");
-  // a description containing a comma must be quoted — force one and re-serialize
+  // a description containing a comma must be quoted - force one and re-serialize
   events[0].description = 'a,"b"';
   const csv2 = toLedgerCsv(events);
   assert.ok(csv2.includes('"a,""b"""'), "RFC-4180 quoting");

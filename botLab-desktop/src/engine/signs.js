@@ -1,4 +1,4 @@
-// signs.js — the LIVE sign/scale layer. This is where the known GMX sign-inversion bug is
+// signs.js - the LIVE sign/scale layer. This is where the known GMX sign-inversion bug is
 // contained. Everything here converts a live source into the ONE canonical representation the
 // golden-tested math (math.js) expects: per-second factors, /1e30-scaled, Subsquid convention
 //   raw f_short > 0  => SHORT RECEIVES ;  b_* >= 0 is a cost.
@@ -83,7 +83,7 @@ export function reconcileGmx(canonical, subsquidLatest) {
   return {
     fundingSignAgrees,
     borrowClose,
-    note: fundingSignAgrees ? "signs agree" : "FUNDING SIGN MISMATCH vs subsquid — inspect",
+    note: fundingSignAgrees ? "signs agree" : "FUNDING SIGN MISMATCH vs subsquid - inspect",
   };
 }
 

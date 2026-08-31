@@ -1,4 +1,4 @@
-// paper.js — forward paper-trading funding/borrow accrual engine. It prices the modeled carry from
+// paper.js - forward paper-trading funding/borrow accrual engine. It prices the modeled carry from
 // real exchange rates; execution effects, liquidation and account reconciliation remain outside
 // this Phase-1 ledger and must not be inferred from its P&L.
 //
@@ -7,7 +7,31 @@
 //     hl_rate * notional once per crossed hour boundary (close mid-hour => that hour not charged).
 //   * Round-trip fees (open+close) are modeled once and netted against gross funding P&L.
 //
-// No orders, no keys — this simulates the ledger a real position WOULD produce from live rates.
+// No orders, no keys - this simulates the ledger a real position WOULD produce from live rates.
+//
+// ЦЕНА ОТСУТСТВУЮЩЕЙ ЛИКВИДАЦИИ ИЗМЕРЕНА, И ОНА НЕ МАЛА. Английская оговорка выше говорит, что
+// ликвидации в этом леджере НЕТ; она не говорит, сколько это стоит, и потому читается как мелочь.
+// Замер 2026-08-31 (ветка исследования, `scripts/funding-arb-study/pf-vf-залог.mjs`):
+//
+//   Ноги стоят на РАЗНЫХ биржах, кросс-маржи между GMX и Hyperliquid нет, поэтому прибыль
+//   уцелевшей ноги проигрывающую НЕ ПОДДЕРЖИВАЕТ. Позиция дельта-нейтральна в сумме и при этом
+//   ликвидируема поштучно.
+//
+//   BERA, февраль 2026: цена прошла +127.59% за отрезок удержания (768-792 ч). Короткая нога
+//   умирает при ходе около +95%, то есть ДАЖЕ ПРИ ПЛЕЧЕ 1. Дальше цена откатила, и к концу
+//   отрезка осталось +18.9%: выбитая нога потеряна целиком, уцелевшая отдала бумажную прибыль.
+//   Депозит $3991 стал $2373, то есть минус 41%, что равно 2.30 ГОДА чистого дохода стратегии.
+//
+//   Частота: 2 отрезка из 132 при плече 1 (оба это ОДИН календарный эпизод, увиденный с двух
+//   сдвигов старта), 10 из 132 при плече 2, 46 из 132 при плече 3.
+//
+// СЛЕДСТВИЕ ДЛЯ ЧТЕНИЯ ЛЮБОГО ЧИСЛА ЭТОГО ЛЕДЖЕРА: просадка и доходность, посчитанные здесь, это
+// просадка и доходность КРИВОЙ ФИНАНСИРОВАНИЯ, и они по построению НЕ содержат того риска, который
+// решает дело. Число «худшая просадка 0.69% депозита» верно и неполно одновременно.
+//
+// ЧТО ЭТО ЗНАЧИТ ДЛЯ АВТОМАТА (фаза 4): сторож залога обеих ног это блокирующий компонент, а не
+// украшение. Автомат обязан брать `liquidationPx` каждой ноги на каждом опросе и отказывать и во
+// входе, и в удержании при недостаточном запасе, называя отказ вслух.
 //
 // РАЗБАВЛЕНИЕ ВХОДА (позиции с `dilute: true`). Котируемая ставка это ставка рынка БЕЗ нас. Наш
 // вход увеличивает базу принимающей стороны, и достаётся нам `f * B/(B+S)`, а не `f`. Правило
@@ -275,7 +299,7 @@ export function closePosition(position, nowMs) {
 }
 
 // Annualization is meaningless below this horizon (it just multiplies noise/one-off costs by
-// 8760/hours); the UI shows "—" until enough hours have accrued.
+// 8760/hours); the UI shows "-" until enough hours have accrued.
 export const APR_MIN_HOURS = 24;
 
 // Realized summary (used by the hero + forward equity panel).
@@ -285,7 +309,7 @@ export function positionSummary(position) {
   const hoursElapsed = (position.lastAccrualAt - position.createdAt) / HOUR_MS;
   const ret = position.capital ? netPnl / position.capital : 0;
   // aprGross annualizes ONLY the funding flow (a rate, meaningful to annualize); apr additionally
-  // amortizes the one-off round-trip cost — reliable only once enough hours have passed.
+  // amortizes the one-off round-trip cost - reliable only once enough hours have passed.
   const aprGross = hoursElapsed > 0 ? (grossPnl / position.capital) * (HOURS_PER_YEAR / hoursElapsed) : 0;
   const apr = hoursElapsed > 0 ? (netPnl / position.capital) * (HOURS_PER_YEAR / hoursElapsed) : 0;
   // Один проход по журналу: пропущенное время и честность ставки. Порядок сложения тот же, что был
@@ -323,7 +347,7 @@ export function positionSummary(position) {
     aprGross,
     aprReliable: hoursElapsed >= APR_MIN_HOURS,
     hoursElapsed,
-    gapSkippedSec, // seconds of history that could NOT be priced (no data) — honesty marker
+    gapSkippedSec, // seconds of history that could NOT be priced (no data) - honesty marker
     flowQuoted, // 0 у позиции без разбавления; разница с flowReceived это цена фантома
     flowReceived,
     dilutionRetained, // null у позиции без разбавления
@@ -336,7 +360,7 @@ export function positionSummary(position) {
   };
 }
 
-// Portfolio max drawdown ($, <= 0) on the COMBINED equity curve across positions — NOT the sum of
+// Portfolio max drawdown ($, <= 0) on the COMBINED equity curve across positions - NOT the sum of
 // per-position drawdowns (troughs at different times must not be added; maxDD is not additive).
 // Each position contributes its running cumulative funding (cum); pointers advance independently by
 // time, so a position that has not opened yet contributes 0 and a closed one holds its final cum.
@@ -363,7 +387,7 @@ export function combinedMaxDrawdown(positions) {
 }
 
 // Account roll-up across all paper positions (open + closed). Annualizes over the ACTUAL accrual
-// horizon (first createdAt -> last accrual across positions), NOT wall-clock now — so realized APR
+// horizon (first createdAt -> last accrual across positions), NOT wall-clock now - so realized APR
 // and $/hr stay frozen after positions close instead of decaying to zero. Drawdown is the
 // combined-curve drawdown; notionalAll exposes leveraged per-leg notional for the UI. Returns null
 // for an empty account.

@@ -1,10 +1,10 @@
-// otmscan-tick-record.test.js — строка записи тика (src/engine/otmscan/tick-record.js).
-// Доказывает: (1) уровень актива (RV/IV/база/импульс) попадает в строку — без него чужой пресет по
-// записи не пересчитывается; (2) значения условий пишутся по idx У1-У14, состояния — строкой кодов,
+// otmscan-tick-record.test.js - строка записи тика (src/engine/otmscan/tick-record.js).
+// Доказывает: (1) уровень актива (RV/IV/база/импульс) попадает в строку - без него чужой пресет по
+// записи не пересчитывается; (2) значения условий пишутся по idx У1-У14, состояния - строкой кодов,
 // причём порядок состояний совпадает с порядком условий; (3) null не подменяется нулём; (4) лучший
 // кандидат и глубина финалистов пишутся, когда они есть, и НЕ создают пустых ключей, когда их нет;
 // (5) глубина берётся из книг тика (единственный источник распределения глубины); (6) битый вход
-// даёт null, а не исключение; (7) движок не мутируется — строка собирается только чтением.
+// даёт null, а не исключение; (7) движок не мутируется - строка собирается только чтением.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildTickRecord, conditionDigest } from "../src/engine/otmscan/tick-record.js";
@@ -56,7 +56,7 @@ test("вердикт, фаза и счётчики тика записаны", (
   assert.equal(rec.dg, true, "деградация каданса видна в записи");
   assert.equal(rec.bo, false);
   assert.equal(rec.cn, 3, "число кандидатов");
-  assert.equal(rec.sk, 1, "пропущенные экспирации — причина отсутствия кандидатов");
+  assert.equal(rec.sk, 1, "пропущенные экспирации - причина отсутствия кандидатов");
   assert.equal(rec.pid, "dmitri-v1");
 });
 
@@ -103,7 +103,7 @@ test("лучший кандидат пишется с экономикой, кл
   assert.equal(withBest.B.dp, 5681.82);
   assert.equal(withBest.B.rtc, 25.01, "издержки лучшего идут из экономики цикла");
   assert.equal(withBest.B.mc, 12.4);
-  assert.equal("B" in buildTickRecord({ cycle: cycle(), vol }), false, "нет кандидата — нет ключа");
+  assert.equal("B" in buildTickRecord({ cycle: cycle(), vol }), false, "нет кандидата - нет ключа");
 });
 
 test("глубина финалистов пишется из книг тика и не создаёт пустого ключа", () => {
@@ -114,7 +114,7 @@ test("глубина финалистов пишется из книг тика 
   const rec = buildTickRecord({ cycle: cycle(), vol, books });
   assert.equal(rec.D.length, 1);
   assert.deepEqual(rec.D[0], { n: "BTC_USDC-7AUG26-66000-C", bd: 5681.82, ad: 7765.15, at: NOW - 1000 });
-  assert.equal("D" in buildTickRecord({ cycle: cycle(), vol, books: {} }), false, "нет книг — нет ключа");
+  assert.equal("D" in buildTickRecord({ cycle: cycle(), vol, books: {} }), false, "нет книг - нет ключа");
   assert.equal("D" in buildTickRecord({ cycle: cycle(), vol }), false);
 });
 
@@ -125,7 +125,7 @@ test("битый или отсутствующий цикл даёт null, а н
   assert.deepEqual(conditionDigest(null), { values: {}, states: "" });
 });
 
-test("сбор строки не мутирует цикл (запись — только чтение)", () => {
+test("сбор строки не мутирует цикл (запись - только чтение)", () => {
   const c = cycle();
   const snapshot = JSON.parse(JSON.stringify(c));
   buildTickRecord({ cycle: c, vol, books: { X: { bidDepthUsd: 1, askDepthUsd: 2 } } });

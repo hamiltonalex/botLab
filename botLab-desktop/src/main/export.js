@@ -1,11 +1,11 @@
-// export.js — ledger export serializers (pure, unit-testable without Electron). The export is
+// export.js - ledger export serializers (pure, unit-testable without Electron). The export is
 // ALWAYS the FULL ledger of one position with every audit field, independent of the on-screen
 // filter/pagination: the file must stand alone for reconciliation, audit or re-import.
 
 import { positionSummary } from "../engine/paper.js";
 import { ledgerTotals, ledgerReconciles } from "../engine/ledger.js";
 
-// Flat column pool (superset of the on-screen table) — order is the audit-friendly reading order.
+// Flat column pool (superset of the on-screen table) - order is the audit-friendly reading order.
 export const LEDGER_COLUMNS = [
   ["seq", (e) => e.seq],
   ["operation_id", (e) => e.id],
@@ -95,7 +95,7 @@ export function toLedgerJson(position, events) {
   );
 }
 
-// fa-ledger_ETH_p3-1751234567890_20260704-1530.csv — sortable, position-traceable.
+// fa-ledger_ETH_p3-1751234567890_20260704-1530.csv - sortable, position-traceable.
 export function ledgerFileName(position, format, now = new Date()) {
   const stamp = now.toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
   const safeKey = String(position.instrumentKey || "pos").replace(/[^A-Za-z0-9_-]+/g, "-");

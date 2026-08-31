@@ -1,4 +1,4 @@
-// btcopt-settle-adjust.test.js — S0: сверка расчёта экспирации с официальной delivery-ценой
+// btcopt-settle-adjust.test.js - S0: сверка расчёта экспирации с официальной delivery-ценой
 // (P0 аудита 2026-07-19). Покрывает: meta-паттерн строк журнала, meta на settle-строке движка,
 // planSettleAdjustments (сверка/пропуски/повторы) и сохранение сверки журнала после поправки.
 
@@ -81,7 +81,7 @@ test("planSettleAdjustments: поправка = unit·(intr(delivery) − intr(p
   st.structure = mkStructure();
   s1engine.settleStructure(st, { index: 95 }, EXPIRY + 1000);
 
-  // даты ещё нет в таблице delivery — план пуст, строка остаётся pending
+  // даты ещё нет в таблице delivery - план пуст, строка остаётся pending
   assert.deepEqual(planSettleAdjustments(st.ledger, {}), []);
 
   const plans = planSettleAdjustments(st.ledger, { "2026-07-18": 93 });

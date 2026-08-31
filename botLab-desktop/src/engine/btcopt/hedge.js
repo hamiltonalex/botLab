@@ -1,12 +1,12 @@
-// hedge.js — «BTC-опционы» (Strategy One) delta-hedge decision engine.
-// PURE: no electron / DOM / fs / fetch — deterministic and unit-testable. Every time-dependent
+// hedge.js - «BTC-опционы» (Strategy One) delta-hedge decision engine.
+// PURE: no electron / DOM / fs / fetch - deterministic and unit-testable. Every time-dependent
 // function takes an explicit `nowMs` (never Date.now()) so the caller owns the clock and tests
 // are reproducible.
 //
 // The 4-leg options structure carries an aggregate delta (optionDelta, in BTC). A BTC perpetual
 // leg (Qperp, signed BTC) is traded to keep the book near delta-neutral. This module decides
 // WHETHER to re-hedge (delta / price / time triggers gated by a benefit-vs-cost filter), sizes
-// the perp order, and — on fill — updates the inverse-perp position state (P&L in USD).
+// the perp order, and - on fill - updates the inverse-perp position state (P&L in USD).
 //
 // Units: deltas are BTC; perp fills are quoted in BTC then converted to Deribit $10 inverse
 // contracts. Costs/benefits/realized-P&L are USD.
@@ -60,7 +60,7 @@ export function benefitMoveFrac(cfg) {
 }
 
 // Settlement / expiry blackout window. Hedging pauses around the daily 08:00 UTC settlement and
-// in the final minutes before an expiry (thin books, settlement prints — hedges there are noise).
+// in the final minutes before an expiry (thin books, settlement prints - hedges there are noise).
 //   secOfDay via the (%+%)% idiom so a negative nowMs still maps into [0,86400).
 //   dailyActive:  within ±dailyWindowSec of 08:00 UTC (28800s).
 //   preActive:    expiry is in the future and within preExpirySec.
@@ -118,8 +118,8 @@ export function expectedBenefit({ deltaBtc, underlying, m }) {
 }
 
 // Itemized $ cost of the hedge, execution-style aware (mirrors the fill semantics in engine.js):
-// market — fee is round-trip (2x taker) on the traded size and the half-spread is paid; limit
-// (post-only) — maker rate (Deribit BTC-perp 0.00%) and NO spread term (the fill models mid).
+// market - fee is round-trip (2x taker) on the traded size and the half-spread is paid; limit
+// (post-only) - maker rate (Deribit BTC-perp 0.00%) and NO spread term (the fill models mid).
 // slippage stays in BOTH branches as a non-zero cost floor: a real resting order still carries
 // non-fill / adverse-selection risk, and a zero total would degenerate the λ filter.
 //
@@ -179,7 +179,7 @@ export function decideHedge({
   const deadband = effectiveDeadband({ deadbandBtc: cfg.deadbandBtc, structureQty, refQty: cfg.deadbandRefQty });
   const blackout = settlementBlackout(nowMs, expiryMs, cfg);
 
-  // (1) blackout gate — do not hedge into settlement / the pre-expiry window.
+  // (1) blackout gate - do not hedge into settlement / the pre-expiry window.
   if (cfg.settlementBlackout && blackout.active) {
     return {
       decision: "BLACKOUT",
@@ -217,7 +217,7 @@ export function decideHedge({
     blackout,
   };
 
-  // (3) nothing fired — stand pat
+  // (3) nothing fired - stand pat
   if (t.reasons.length === 0) {
     return { decision: "SKIP", estimated_cost: null, estimated_benefit: 0, hedge_order: null, ...base };
   }
@@ -340,7 +340,7 @@ export function applyFill(perpState, hedge_order, priceRef, meta, cfg) {
       perpState.avgEntry = denom / (absQty > 0 ? absQty / perpState.avgEntry + absAdd / priceRef : absAdd / priceRef);
     }
   } else {
-    // reducing or flipping — realize P&L on the closed contracts (inverse: USD per contract)
+    // reducing or flipping - realize P&L on the closed contracts (inverse: USD per contract)
     const closing = Math.min(Math.abs(contractsDelta), Math.abs(qty));
     const closedSigned = Math.sign(qty) * closing;
     realized = (closedSigned * cs * (priceRef - perpState.avgEntry)) / perpState.avgEntry;

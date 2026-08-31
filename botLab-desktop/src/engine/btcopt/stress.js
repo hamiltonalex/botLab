@@ -1,16 +1,16 @@
-// stress.js — «BTC-опционы» (Strategy One) what-if stress scenarios (Phase 2d).
-// PURE: no fetch / fs / DOM / Date.now — deterministic, unit-testable. Isolated from funding-arb.
+// stress.js - «BTC-опционы» (Strategy One) what-if stress scenarios (Phase 2d).
+// PURE: no fetch / fs / DOM / Date.now - deterministic, unit-testable. Isolated from funding-arb.
 //
 // Deterministic "what-if" on the OPEN structure, from net greeks + payoff geometry. HYBRID basis, and
 // each row carries its `mode` so the reader is never misled:
-//   • spot moves — the instant convexity estimate ½·Γ·ΔS² (delta is hedged ⇒ ~0 first order) is valid
+//   • spot moves - the instant convexity estimate ½·Γ·ΔS² (delta is hedged ⇒ ~0 first order) is valid
 //     only for SMALL moves; beyond that the bounded TERMINAL payoff (payoffAt, which pins to the wing
 //     cap) is the true, smaller outcome. We report min(instant, terminal-gain) and label the winner
 //     `instant` / `expiry`, so a spot row can never exceed the structure's max possible P&L (the wings).
 //     ОБЕ ВЕТКИ ХЕДЖИРОВАНЫ: терминальная включает вклад держимого перпа на том же движении, иначе
 //     две клетки одной таблицы стояли бы на разных базах (разбор у самой функции ниже).
-//   • IV — ΔV ≈ net_vega·ΔIV (vol points), the spec's first-class vol dimension (mode `instant`).
-//   • funding — one horizon of accrual on the held perp at 3× the current rate (mode `horizon`).
+//   • IV - ΔV ≈ net_vega·ΔIV (vol points), the spec's first-class vol dimension (mode `instant`).
+//   • funding - one horizon of accrual on the held perp at 3× the current rate (mode `horizon`).
 
 import { payoffAt } from "./payoff.js";
 

@@ -1,4 +1,4 @@
-// btcopt-sweep.test.js — pure parameter sweep (Phase 3b): determinism, ranked-order property
+// btcopt-sweep.test.js - pure parameter sweep (Phase 3b): determinism, ranked-order property
 // (marginOk partition → sharpe DESC → net tiebreak), EXACT metrics-reuse vs a manual engine replay,
 // honest-data exclusions (unquoted wings), grid overrides, tiny-deposit ranking. PURE, inline
 // fixtures (no fixture files, no network), explicit Date.UTC times.
@@ -9,11 +9,11 @@ import { summarize } from "../src/engine/btcopt/metrics.js";
 import { runSweep } from "../src/engine/btcopt/sweep.js";
 
 const EXPIRY = Date.UTC(2026, 6, 17, 8, 0, 0); // 17JUL26 08:00 UTC
-const T0 = Date.UTC(2026, 6, 15, 12, 0, 0); // noon UTC — clear of the 08:00 settlement blackout
+const T0 = Date.UTC(2026, 6, 15, 12, 0, 0); // noon UTC - clear of the 08:00 settlement blackout
 const STRIKES = [54400, 57600, 60800, 64000, 67200, 70400, 73600]; // 64000 ± 5/10/15% exactly
 const nm = (strike, type) => `BTC_USDC-TEST-${strike}-${type === "call" ? "C" : "P"}`;
 
-// One-expiry chain metas across the ladder — every wing the default grid can pick exists.
+// One-expiry chain metas across the ladder - every wing the default grid can pick exists.
 function mkChain() {
   const metas = [];
   for (const strike of STRIKES) {
@@ -33,7 +33,7 @@ function mkChain() {
 }
 
 // Deterministic quote model (smooth shapes, NOT a pricer): call delta = 0.5 + 0.5·tanh(6·(S−K)/S),
-// put = call − 1 — the tanh curvature makes the winged straddle's net delta drift as S moves, so
+// put = call − 1 - the tanh curvature makes the winged straddle's net delta drift as S moves, so
 // hedges genuinely fire; mark = intrinsic + time value (floor 30, decaying with |S−K|; ivBump adds
 // a vol kicker). omitStrikes drops BOTH quotes at a strike (the chain meta stays) → honest-data tests.
 function mkSnap(ts, underlying, ivBump = 0, omitStrikes = []) {
@@ -70,7 +70,7 @@ const PATH = [64000, 64500, 63700, 65200, 64300, 66000, 65100, 66800, 66000, 676
 const mkSeries = (omitStrikes = []) => PATH.map((u, i) => mkSnap(T0 + i * 300_000, u, 0, omitStrikes));
 
 // qty 1 → realistic hedge sizes; equity 13000 splits marginOk by wing width at series[0] marks:
-// short-leg IM totals ≈ 15560 (±5%) / 12680 (±10%) / 11900 (±15%) — only the ±5% wings exceed it.
+// short-leg IM totals ≈ 15560 (±5%) / 12680 (±10%) / 11900 (±15%) - only the ±5% wings exceed it.
 const BASE = { qty: 1, paperEquityUsd: 13000, deadbandRefQty: 1 };
 
 test("determinism: two identical runSweep calls → deepEqual results", () => {
@@ -86,13 +86,13 @@ test("shape + ranking: 144 combos, marginOk-first partition, sharpe DESC / net t
   assert.equal(r.combos.length, 144, "3 wings · 4 deadbands · 3 triggers · 4 lambdas");
   assert.equal(r.best, 0, "best indexes the ranked head");
 
-  // combo shape — the documented keys, gridIndex stripped
+  // combo shape - the documented keys, gridIndex stripped
   assert.deepEqual(
     Object.keys(r.combos[0]).sort(),
     ["deadbandBtc", "deadbandPreset", "hedges", "lambda", "marginOk", "maxDD", "net", "priceTriggerPct", "sharpe", "wingPct"],
   );
 
-  // equity 13000 splits by wing width: ±5% IM ≈ 15560 (over) vs ±10/15% (under) — both groups present
+  // equity 13000 splits by wing width: ±5% IM ≈ 15560 (over) vs ±10/15% (under) - both groups present
   assert.ok(r.combos.every((c) => c.marginOk === (c.wingPct !== 5)), "marginOk ⇔ not the ±5% wings");
   const firstFalse = r.combos.findIndex((c) => !c.marginOk);
   assert.equal(firstFalse, 96, "all 96 marginOk:true combos precede the 48 marginOk:false");
@@ -116,7 +116,7 @@ test("metrics-reuse: the best combo's numbers equal a manual engine replay EXACT
   const r = runSweep({ series, chain, expiryMs: EXPIRY, baseSettings: { ...BASE } });
   const bc = r.combos[r.best];
 
-  // Replay the same params through the raw engine lifecycle — no sweep involved.
+  // Replay the same params through the raw engine lifecycle - no sweep involved.
   const st = engine.create({
     nowMs: series[0].ts,
     settings: {
@@ -217,6 +217,6 @@ test("equityUsd: live equity replaces the deposit as the marginOk limit; omitted
   assert.ok(rich.combos.length > 0 && rich.combos.every((c) => c.marginOk === true), "everything fits a huge equity");
   const poor = runSweep({ ...args(), equityUsd: 1 });
   assert.ok(poor.combos.length > 0 && poor.combos.every((c) => c.marginOk === false), "nothing fits a drained account");
-  const dflt = runSweep(args()); // omitted → paperEquityUsd 13000 — the pre-equity behaviour
+  const dflt = runSweep(args()); // omitted → paperEquityUsd 13000 - the pre-equity behaviour
   assert.ok(dflt.combos.some((c) => c.marginOk) && dflt.combos.some((c) => !c.marginOk), "deposit fallback still splits by wing");
 });

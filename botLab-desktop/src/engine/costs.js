@@ -1,4 +1,4 @@
-// costs.js — the editable round-trip cost model (mirrors the mock COSTS + AUDIT cost defaults).
+// costs.js - the editable round-trip cost model (mirrors the mock COSTS + AUDIT cost defaults).
 // One-off round-trip fees are netted against gross funding P&L (a 365d hold pays open+close once,
 // not recurring). Percentages are of notional; gmxGas is a flat $ (Arbitrum keeper/gas, ~unaffected
 // by size). Live positionFeeFactor is NOT in markets/info, so these conservative defaults stand.

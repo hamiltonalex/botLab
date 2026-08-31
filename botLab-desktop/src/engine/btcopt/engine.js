@@ -1,18 +1,18 @@
-// engine.js — «BTC-опционы» (Dmitri Marinkin Strategy One) paper engine CORE.
-// PURE: no electron / DOM / fs / fetch — deterministic, unit-testable. Isolated from the
+// engine.js - «BTC-опционы» (Dmitri Marinkin Strategy One) paper engine CORE.
+// PURE: no electron / DOM / fs / fetch - deterministic, unit-testable. Isolated from the
 // funding-arb engine (paper.js/ledger.js are carry-accrual only; options P&L is mark-to-market).
 //
 // The strategy: a 4-leg BTC options "winged straddle" (long ATM call + long ATM put + short OTM call
 // + short OTM put), one expiry, delta-hedged with a BTC perpetual. Greeks come FROM Deribit
 // (public/ticker); this module never prices options itself. The option legs are LINEAR USDC
-// (BTC_USDC-*, marks in USD); the hedge leg is the INVERSE BTC-PERPETUAL ($10 contract) — the perp's
+// (BTC_USDC-*, marks in USD); the hedge leg is the INVERSE BTC-PERPETUAL ($10 contract) - the perp's
 // inverse mark-to-market / funding is localized to hedge.js/pnl.js.
 //
 // This module composes the pure sub-modules into the tick lifecycle:
-//   ingest(state, snapshot, nowMs)   — accrue funding on the held perp; stamp clocks.
-//   evaluate(state, snapshot, nowMs) — net greeks + hedge decision + (paper) fill + P&L → the cycle-snapshot.
-//   openStructure / closeStructure   — manual entry / exit.
-//   account                          — paper equity/margin estimate.
+//   ingest(state, snapshot, nowMs)   - accrue funding on the held perp; stamp clocks.
+//   evaluate(state, snapshot, nowMs) - net greeks + hedge decision + (paper) fill + P&L → the cycle-snapshot.
+//   openStructure / closeStructure   - manual entry / exit.
+//   account                          - paper equity/margin estimate.
 // All time-dependent behaviour takes an explicit nowMs (never Date.now()) so tests are reproducible.
 
 import { buildStructure, buildSellStructure, buildSellStrangleStructure, optionDeltaTotal, netGreeks, netDebit, pickExpiry, structureRejections } from "./structure.js";
@@ -42,7 +42,7 @@ export const isSellKind = (kind) => kind === "sell-call" || kind === "sell-stran
 // under the persisted settings at evaluate time (settings win if they ever override one).
 const HEDGE_CONSTANTS = {
   takerFeeRate: 0.0005, // 5 bps taker (Deribit illustrative)
-  makerFeeRate: 0, // Deribit BTC-perp maker 0.00% — the limit (post-only) execution branch
+  makerFeeRate: 0, // Deribit BTC-perp maker 0.00% - the limit (post-only) execution branch
   slippageRate: 0.0002, // flat slippage rate on the perp mark
   fundingHorizonSec: 28800, // one 8h funding period
   dailyWindowSec: 600, // ±10 min around 08:00 UTC settlement
@@ -84,7 +84,7 @@ export function normalizeDeadband(patch) {
 }
 
 // Default engine/strategy settings (spec defaults). Persisted to <BOT_ID>-settings.json.
-// qty default is the linear-USDC option minimum (0.01) — right-sized for the $100 paper deposit.
+// qty default is the linear-USDC option minimum (0.01) - right-sized for the $100 paper deposit.
 export function defaultSettings() {
   return {
     deadbandPreset: "normal", // aggressive | normal | conservative
@@ -112,12 +112,12 @@ export function defaultSettings() {
     testnet: false, // public data source: prod (www.deribit.com) vs test.deribit.com
     paperEquityUsd: 100, // starting paper deposit (USD); equity = this + cumulative net P&L
     marginAlertPct: 0.8, // alert when maintenance-margin utilisation ≥ this fraction of equity (Phase 2c)
-    ivWindowSec: 86400, // IV-regime rolling window (Phase 3b) — rank ATM IV within the last 24h
+    ivWindowSec: 86400, // IV-regime rolling window (Phase 3b) - rank ATM IV within the last 24h
     ivEntryMaxRank: 0.35, // entry favorable when IV-rank ≤ this (long-vol thesis: enter when IV is LOW)
   };
 }
 
-// The persisted paper state — must round-trip cleanly through JSON.stringify/parse.
+// The persisted paper state - must round-trip cleanly through JSON.stringify/parse.
 export function create(params) {
   params = params || {};
   return {
@@ -128,13 +128,13 @@ export function create(params) {
     structure: null, // the open 4-leg structure (set by openStructure())
     perpState: { qty: 0, avgEntry: 0, feesCum: 0, fundingCum: 0, realizedUsd: 0, fundingGapSec: 0 }, // inverse BTC-perp hedge (qty in $10 contracts); fundingGapSec - А6 R3, см. ingest
     realizedOptionsUsd: 0, // option MtM locked in by closed structures (cumulative)
-    ledger: [], // cumulative hedge/accrual/open/close events — independent of any exchange session reset
+    ledger: [], // cumulative hedge/accrual/open/close events - independent of any exchange session reset
     lastHedgeAt: null, // ms of the last executed hedge (time/price trigger baseline)
     lastHedgeUnderlying: null, // BTC price at the last hedge (price trigger baseline)
     lastIngestAt: null, // ms of the last ingest (funding-accrual dt baseline)
     lastUnderlying: null, // last seen BTC price
-    metrics: initMetrics(), // run-metrics accumulators (Phase 2b) — O(1) scalars, reset at each structure open
-    lastRunMetrics: null, // frozen summary of the LAST finished run — the only survivor of openStructure's metrics reset
+    metrics: initMetrics(), // run-metrics accumulators (Phase 2b) - O(1) scalars, reset at each structure open
+    lastRunMetrics: null, // frozen summary of the LAST finished run - the only survivor of openStructure's metrics reset
     marginAlert: { level: 0 }, // ступень маржин-алерта (0 | 1 | 2) с гистерезисом - см. trackMarginAlert
 
     // ЦЕПОЧКА СХЕМЫ ПРОДАВЦА. Отдельный накопитель нужен потому, что `metrics` обнуляется КАЖДЫМ
@@ -302,7 +302,7 @@ export function uptimeStats(state) {
 // ── Evaluate: the full per-cycle computation → the §5 cycle-snapshot (drives the whole view).
 // Recomputes net greeks, runs the hedge decision, executes a paper fill on HEDGE, and attributes P&L.
 export function evaluate(state, snapshot, nowMs) {
-  // Expiry settlement runs FIRST — before anything reads state.structure — so a tick that crosses the
+  // Expiry settlement runs FIRST - before anything reads state.structure - so a tick that crosses the
   // expiry settles the book and the rest of the cycle computes flat (no hedging a dead structure).
   if (state.structure && nowMs >= state.structure.expiryMs) settleStructure(state, snapshot, nowMs);
   // ПРАВИЛО ДОСРОЧНОГО ВЫХОДА спрашивается строго здесь. ПОСЛЕ расчёта - потому что экспирация
@@ -391,7 +391,7 @@ export function evaluate(state, snapshot, nowMs) {
 
   // ── Hedge vs no-hedge (Phase 2a): a real shadow book (perpQty ≡ 0) run in parallel. Its net is the
   // options-only, after-costs outcome; hedge_contribution is the hedge program's true net contribution
-  // (perp realized + funding − perp fees) — positive means hedging helped after costs, negative means it
+  // (perp realized + funding − perp fees) - positive means hedging helped after costs, negative means it
   // only cost money (a common outcome on tiny size). Derived, stored nowhere, appends no ledger row.
   const shadow = noHedgeAttribute(state, snapshot);
   const hedgeContribution = pnl.net_total - shadow.net_total;
@@ -434,7 +434,7 @@ export function evaluate(state, snapshot, nowMs) {
 
   // ── Side-effect: execute the paper fill on HEDGE (takes effect next tick), book it, advance clocks.
   // Fill price follows the order's execution style: market crosses the spread (buy@ask / sell@bid);
-  // limit (post-only) fills at MID — a deliberate proxy that grants half the passive-price edge in
+  // limit (post-only) fills at MID - a deliberate proxy that grants half the passive-price edge in
   // exchange for the unmodeled non-fill risk of a real resting order. applyFill picks the fee rate
   // (maker vs taker) off the same order_type, so price and fee can't disagree.
   if (decision.decision === "HEDGE" && decision.hedge_order && perp) {
@@ -460,7 +460,7 @@ export function evaluate(state, snapshot, nowMs) {
     });
   }
 
-  // The last executed hedge (decision panel's "последний хедж") — derived from the ledger AFTER the
+  // The last executed hedge (decision panel's "последний хедж") - derived from the ledger AFTER the
   // fill, so it reflects this tick's hedge even though the position fields above are pre-fill.
   const lastHedgeEv = [...state.ledger].reverse().find((e) => e.type === "hedge");
   const lastHedge = lastHedgeEv
@@ -498,17 +498,17 @@ export function evaluate(state, snapshot, nowMs) {
     ? { scenarios: computeScenarios(structure, snapshot, greeks, state.perpState, cfg) }
     : { scenarios: [] };
 
-  // ── IV regime (Phase 3b): the entry signal, computed from the caller-attached IV history — the ring
+  // ── IV regime (Phase 3b): the entry signal, computed from the caller-attached IV history - the ring
   // lives in the MAIN process (snapshot.ivContext), never in this persisted state (O(1)-per-tick law).
   // LIVE settings, not the frozen engineCfg: entry advice must follow the CURRENT knobs even while an
-  // old structure still runs — and the signal matters most while FLAT (structure == null).
+  // old structure still runs - and the signal matters most while FLAT (structure == null).
   let iv_regime = null;
   if (snapshot.ivContext && Array.isArray(snapshot.ivContext.series)) {
     const liveCfg = buildCfg(state.settings);
     iv_regime = computeRegime(snapshot.ivContext.series, { nowMs, cfg: liveCfg });
     // The same ranking applied to the DVOL series: its history is backfilled 24–48h from the public
     // volatility-index endpoint, so this rank is meaningful from the first minutes of a session while
-    // the ATM window is still filling. Context only — `favorable` stays ATM-driven.
+    // the ATM window is still filling. Context only - `favorable` stays ATM-driven.
     iv_regime.dvol_rank = computeRegime(
       snapshot.ivContext.series.map((e) => ({ ts: e.ts, atmIv: e.dvol })),
       { nowMs, cfg: liveCfg },
@@ -563,9 +563,9 @@ export function evaluate(state, snapshot, nowMs) {
 }
 
 // ── Pre-trade check (Phase 3a): the structured go/no-go for opening THIS structure at THIS moment.
-// Composes the pure structure checks (min lot / lot step / expiry coherence — "block"), the settlement
-// blackout at the open moment ("block"; PDF p.14 "invalid due to … settlement state" — skipped when the
-// user disabled the blackout), and the real Deribit IM vs paper equity ("warn" — user decision: surfaced
+// Composes the pure structure checks (min lot / lot step / expiry coherence - "block"), the settlement
+// blackout at the open moment ("block"; PDF p.14 "invalid due to … settlement state" - skipped when the
+// user disabled the blackout), and the real Deribit IM vs paper equity ("warn" - user decision: surfaced
 // with real numbers, opening still allowed; consistent with 2c's over_deposit honesty).
 // `cfgOverride` несёт настройки схемы, отличные от профиля (сегодня это только схема продавца, см.
 // `sellhedgeEngineCfg`). Проверка обязана судить по ТЕМ ЖЕ числам, по которым структура будет
@@ -574,7 +574,7 @@ export function evaluate(state, snapshot, nowMs) {
 export function preTradeCheck(state, structure, metaByInstrument, snapshot, nowMs, cfgOverride = null) {
   const cfg = { ...buildCfg(state.settings), ...(cfgOverride ?? {}) };
   const rejections = [...structureRejections(structure, metaByInstrument)];
-  // Quote gate: every leg must have been priced by the snapshot the structure was built from — a
+  // Quote gate: every leg must have been priced by the snapshot the structure was built from - a
   // leg without a mark would open with entryMark null and silently DROP OUT of the net debit
   // (buildStructure sums entryMark ?? 0), understating cost/max-loss. Names every culprit; the
   // sweep surfaces this reason verbatim when a combo's wings aren't quoted in series[0].
@@ -583,7 +583,7 @@ export function preTradeCheck(state, structure, metaByInstrument, snapshot, nowM
     rejections.push({
       code: "no_quote",
       severity: "block",
-      detail: `нет котировки (mark): ${unquoted.map((l) => l.instrument).join(", ")} — обновите данные и повторите`,
+      detail: `нет котировки (mark): ${unquoted.map((l) => l.instrument).join(", ")} - обновите данные и повторите`,
     });
   if (cfg.settlementBlackout !== false) {
     const b = settlementBlackout(nowMs, structure.expiryMs, cfg);
@@ -593,8 +593,8 @@ export function preTradeCheck(state, structure, metaByInstrument, snapshot, nowM
         severity: "block",
         detail:
           b.reason === "pre-expiry"
-            ? "<30 мин до экспирации — открытие в блэкаут запрещено"
-            : "окно расчёта 08:00 UTC — открытие в блэкаут запрещено",
+            ? "<30 мин до экспирации - открытие в блэкаут запрещено"
+            : "окно расчёта 08:00 UTC - открытие в блэкаут запрещено",
       });
   }
   const equity = (cfg.paperEquityUsd ?? 100) + attribute(state, snapshot).net_total;
@@ -603,20 +603,20 @@ export function preTradeCheck(state, structure, metaByInstrument, snapshot, nowM
     rejections.push({
       code: "margin",
       severity: "warn",
-      detail: `IM $${Math.round(im)} > депозит $${Math.round(equity)} — структура не помещается в депозит`,
+      detail: `IM $${Math.round(im)} > депозит $${Math.round(equity)} - структура не помещается в депозит`,
     });
   return rejections;
 }
 
 // ── Open a structure (manual or auto). Auto-construction (Phase 3a): expiry == null ⇒ the engine picks
-// the nearest live expiry itself (≤3d, skipping any already inside the pre-expiry blackout — opening into
+// the nearest live expiry itself (≤3d, skipping any already inside the pre-expiry blackout - opening into
 // delta decay is never right). Gated by preTradeCheck; "warn" rejections ride along in the OK response.
 export function openStructure(state, params, chain, snapshot, nowMs) {
   ensureSellChain(state);
   // One structure at a time: a second open would silently orphan the first (its MtM is realized only
   // via closeStructure) and leave the perp hedge sized for the discarded legs. The IPC resolve path is
-  // async, so a double-click/retried invoke CAN land here twice — the guard, not the UI, is the invariant.
-  if (state.structure) return { error: "структура уже открыта — сначала закройте текущую" };
+  // async, so a double-click/retried invoke CAN land here twice - the guard, not the UI, is the invariant.
+  if (state.structure) return { error: "структура уже открыта - сначала закройте текущую" };
   // ВЕТКА ПРОДАВЦА (схемы sellhedge/sellstrangle): контракт или пару выбирает правило движка
   // (`pickSellLeg` / `rankStranglePairs`), размер считает `lotsByMargin` от ФАКТИЧЕСКОГО счёта;
   // правила живут в otmscan и здесь только зовутся. Экспирация не подбирается и не передаётся:
@@ -704,7 +704,7 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   }
   // Freeze the engine params at open (read-only while running). The ACTUAL open params (ticket
   // qty/offsets/execStyle) overlay the settings snapshot: the toolbar pushes settings through a
-  // debounce, so a confirm racing a just-toggled control could otherwise freeze a stale value —
+  // debounce, so a confirm racing a just-toggled control could otherwise freeze a stale value -
   // the position must hedge by what the ticket showed, not by what the settings file caught up to.
   const actualParams = Object.fromEntries(Object.entries(built.params).filter(([, v]) => v != null));
   // ПОРЯДОК СЛИЯНИЯ ЗНАЧИМ. Правила схемы продавца кладутся ПОСЛЕ параметров тикета и побеждают:
@@ -745,7 +745,7 @@ export function openStructure(state, params, chain, snapshot, nowMs) {
   return { ok: true, structure: built, rejections };
 }
 
-// ── Flatten the perp hedge at market (immediacy over price — always order_type "market", so the
+// ── Flatten the perp hedge at market (immediacy over price - always order_type "market", so the
 // taker rate applies regardless of the structure's execStyle). Shared by closeStructure and
 // settleStructure so the two exit paths can never drift in math.
 function flattenPerp(state, snapshot, nowMs, cfg) {
@@ -977,7 +977,7 @@ export function sellChainStats(state) {
   };
 }
 
-// Freeze the finished run's metrics BEFORE the structure ref is dropped — openStructure wipes
+// Freeze the finished run's metrics BEFORE the structure ref is dropped - openStructure wipes
 // state.metrics at the next open, so this snapshot is the only survivor of a completed run.
 function snapshotRunMetrics(state, nowMs) {
   return {
@@ -993,11 +993,11 @@ function snapshotRunMetrics(state, nowMs) {
 export function closeStructure(state, snapshot, nowMs, reason = "manual") {
   if (!state.structure) return { error: "нет открытой структуры" };
   // A held perp needs a PRICED perp to flatten. Without this guard flattenPerp silently no-ops,
-  // the options still close and structure goes null — orphaning an unclosable hedge position
+  // the options still close and structure goes null - orphaning an unclosable hedge position
   // (the close button hides with the structure) that keeps accruing funding. Same perpPriced
   // rule settleStructure applies: closing late beats closing wrong.
   if (state.perpState.qty !== 0 && !(snapshot?.perp && snapshot.perp.mark)) {
-    return { error: "нет цены перпетуала в снимке — обновите данные и повторите закрытие" };
+    return { error: "нет цены перпетуала в снимке - обновите данные и повторите закрытие" };
   }
   const cfg = buildCfg(state.settings);
   flattenPerp(state, snapshot, nowMs, cfg);
@@ -1039,12 +1039,12 @@ export function closeStructure(state, snapshot, nowMs, reason = "manual") {
 
 // ── Expiry settlement: a structure that reaches its expiry cash-settles instead of freezing. Without
 // this the legs vanish from the API, the greeks gate fails forever and markStructure falls back to
-// entry marks — i.e. the UI would show a phantom ≈0 MtM instead of the real terminal payoff.
-// Settlement price S = snapshot.index (perp index once the option tickers are gone) — an honest PROXY
+// entry marks - i.e. the UI would show a phantom ≈0 MtM instead of the real terminal payoff.
+// Settlement price S = snapshot.index (perp index once the option tickers are gone) - an honest PROXY
 // of Deribit's real delivery price (the 30-min index TWAP before 08:00 UTC), noted in the ledger row.
-// Options settle at intrinsic value: the realized amount is exactly payoffAt(structure, S) — the same
+// Options settle at intrinsic value: the realized amount is exactly payoffAt(structure, S) - the same
 // terminal "tent" the payoff chart promises. A degraded tick (no finite index, or an unpriced perp
-// while a hedge is still held) does NOT settle — settling on garbage is worse than settling late; the
+// while a hedge is still held) does NOT settle - settling on garbage is worse than settling late; the
 // next priced tick picks it up. A LATE settle (app was closed over the expiry) uses the then-current
 // index and says so in the note.
 export function settleStructure(state, snapshot, nowMs) {
@@ -1066,7 +1066,7 @@ export function settleStructure(state, snapshot, nowMs) {
     priceRef: S,
     realizedUsd: optSettleUsd,
     // meta feeds the delivery-price reconcile (pnl.planSettleAdjustments): unit = legs[0]
-    // qtyAbs·contractSize — the same per-unit scale payoff.js derives (equal-qty legs law).
+    // qtyAbs·contractSize - the same per-unit scale payoff.js derives (equal-qty legs law).
     // НОГИ ЗАПИСЫВАЮТСЯ ЯВНО, и это не дубль strikes. Пересчёт по одним страйкам умеет только тент:
     // структуре из одной проданной ноги формула тента молча вернула бы |S−K| (модуль страйка вместо
     // короткого колла), то есть НЕВЕРНУЮ поправку, а не ошибку. Список ног задаёт геометрию любой
@@ -1094,7 +1094,7 @@ export function settleStructure(state, snapshot, nowMs) {
 }
 
 // ── Paper account estimate. Equity = deposit + cumulative net P&L. Margin (Phase 2c) is the REAL Deribit
-// Standard-Margin requirement of the SHORT option legs (linear/USDC formulas, per-leg sum, no netting) —
+// Standard-Margin requirement of the SHORT option legs (linear/USDC formulas, per-leg sum, no netting) -
 // replacing the Phase-1 debit proxy. On tiny size vs a $100 deposit the min-size straddle's initial margin
 // can EXCEED the deposit; that is surfaced honestly (over_deposit + the utilisation figures), not gated.
 // margin_alert keys on MAINTENANCE utilisation (the liquidation-relevant figure), not initial.

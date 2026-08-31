@@ -1,10 +1,10 @@
-// pnl.js — «BTC-опционы» (Strategy One) P&L attribution CORE.
-// PURE: no fetch / fs / DOM / Date.now — deterministic, unit-testable. Isolated from the
+// pnl.js - «BTC-опционы» (Strategy One) P&L attribution CORE.
+// PURE: no fetch / fs / DOM / Date.now - deterministic, unit-testable. Isolated from the
 // funding-arb engine. Two very different legs are marked with two very different conventions:
 //
-//   • OPTIONS are LINEAR USDC instruments — marks are quoted directly in USD premium, so leg
+//   • OPTIONS are LINEAR USDC instruments - marks are quoted directly in USD premium, so leg
 //     P&L is qtySigned·(mark − entryMark)·contractSize with NO ×index term.
-//   • The HEDGE is an INVERSE BTC perpetual ($10/contract) — margin & PnL are denominated in BTC,
+//   • The HEDGE is an INVERSE BTC perpetual ($10/contract) - margin & PnL are denominated in BTC,
 //     so PnL per contract is contractSize·(1/avgEntry − 1/mark) BTC, and a SHORT (qty<0) that pays
 //     a POSITIVE funding rate RECEIVES cash. Getting these two signs right is the whole point.
 //
@@ -13,7 +13,7 @@
 
 import { intrinsicAt, intrinsicOfLegs } from "./payoff.js";
 
-// ── Options structure (LINEAR USDC — marks already in USD) ──────────────────────────────────────
+// ── Options structure (LINEAR USDC - marks already in USD) ──────────────────────────────────────
 // markStructure(structure, snapshot) → { upl_usd, byLeg:[{ instrument, upl_usd, value_usd }] }.
 // Per leg: currentMark = snapshot.legs[instrument]?.mark ?? entryMark (fall back to open mark when the
 // leg is missing from this snapshot), upl = qtySigned·(currentMark − entryMark)·contractSize,
@@ -117,7 +117,7 @@ export function attribute(engineState, snapshot) {
 // ── No-hedge shadow book (Phase 2a) ───────────────────────────────────────────────────────────────
 // noHedgeAttribute(engineState, snapshot) → the SAME 6-key attribution shape for a SHADOW book holding
 // the identical option structure but with NO perp hedge (perpQty ≡ 0). Because option MtM is independent
-// of the hedge and markPerp short-circuits to zero for a flat perp, net_total ≡ options_upl — the true
+// of the hedge and markPerp short-circuits to zero for a flat perp, net_total ≡ options_upl - the true
 // "options-only, after-costs" comparison that pnl.vs_no_hedge only proxied. Pure; re-uses attribute() on
 // a zeroed-perp overlay (no second engine), so it reconciles by construction.
 export function noHedgeAttribute(engineState, snapshot) {
@@ -133,7 +133,7 @@ export function noHedgeAttribute(engineState, snapshot) {
 // appendLedger(engineState, event) → assigns seq = ledger.length+1, pushes a normalized event with
 // every numeric field defaulted to 0 (so downstream sums never see undefined), returns the stored row.
 // An optional event.meta object rides along verbatim (the fa-ledger precedent: export.js reads
-// e.meta) — settle rows use it to carry the strikes/unit the delivery reconcile needs.
+// e.meta) - settle rows use it to carry the strikes/unit the delivery reconcile needs.
 export function appendLedger(engineState, event = {}) {
   const stored = {
     seq: engineState.ledger.length + 1,
@@ -155,12 +155,12 @@ export function appendLedger(engineState, event = {}) {
 
 // ── Delivery-price reconcile (S0 otm-scanner; P0 of the 2026-07-19 audit) ───────────────────────
 // planSettleAdjustments(ledger, deliveryByDate) → [{ srcSeq, date, proxyPrice, deliveryPrice,
-// adjustUsd }]. settleStructure settles on the index snapshot — an honest PROXY of Deribit's real
+// adjustUsd }]. settleStructure settles on the index snapshot - an honest PROXY of Deribit's real
 // delivery price (30-min index TWAP before 08:00 UTC). Once the official delivery price for the
-// expiry DATE (UTC) is known, the correction is unit·(intrinsic(delivery) − intrinsic(proxy)) — the
+// expiry DATE (UTC) is known, the correction is unit·(intrinsic(delivery) − intrinsic(proxy)) - the
 // entry debit cancels in the difference. Pending = settle-options rows carrying meta {expiryMs,
 // strikes, unit} with no settle-adjust row pointing back via meta.srcSeq. Dates absent from
-// deliveryByDate stay pending (delivery publishes shortly after 08:00 UTC — the next pass gets them).
+// deliveryByDate stay pending (delivery publishes shortly after 08:00 UTC - the next pass gets them).
 // Pure: the CALLER books the result (realizedOptionsUsd += adjustUsd + a settle-adjust row).
 export function planSettleAdjustments(ledger, deliveryByDate) {
   const rows = Array.isArray(ledger) ? ledger : [];
@@ -191,10 +191,10 @@ export function planSettleAdjustments(ledger, deliveryByDate) {
 // Checks the attribution identity closes AND that the ledger's independent sums equal the running
 // accumulators. ok = every delta < 1e-6·max(1, |net_total|).
 //   • Funding is deliberately NOT reconciled against rows: accrual is accumulator-only
-//     (perpState.fundingCum) and the journal carries no funding rows by design (guide §8) — a
+//     (perpState.fundingCum) and the journal carries no funding rows by design (guide §8) - a
 //     sum-vs-accumulator check here would fail on every session that ever accrued funding.
-//   • realizedUsd rows come from TWO sources — hedge/close-perp (→ perpState.realizedUsd) and
-//     close-options/settle-options (→ engineState.realizedOptionsUsd) — so the row sum reconciles
+//   • realizedUsd rows come from TWO sources - hedge/close-perp (→ perpState.realizedUsd) and
+//     close-options/settle-options (→ engineState.realizedOptionsUsd) - so the row sum reconciles
 //     against the SUM of both accumulators, not the perp one alone.
 export function ledgerReconciles(engineState, snapshot) {
   const a = attribute(engineState, snapshot);

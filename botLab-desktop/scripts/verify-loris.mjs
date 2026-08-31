@@ -1,4 +1,4 @@
-// verify-loris.mjs — EXTERNAL verification of the bot's rates against loris.tools and the
+// verify-loris.mjs - EXTERNAL verification of the bot's rates against loris.tools and the
 // Hyperliquid official API. Complements the internal gates (golden suite, selector oracle,
 // GMX net-identity): those check the bot against its own sources; this checks it against an
 // independent aggregator. loris.tools does NOT list GMX, so the HL leg is compared three-way
@@ -55,7 +55,7 @@ const rate1hToBps8h = (r) => r * 8 * 10000;
 {
   const eq = (a, b) => Math.abs(a - b) <= 1e-12 * Math.max(1, Math.abs(a), Math.abs(b));
   if (!eq(lorisBpsTo1h(1.0), 1.25e-5) || !eq(hl1hToApr(1.25e-5), 0.1095) || !eq(rate1hToBps8h(1.25e-5), 1.0))
-    throw new Error("unit-conversion self-test failed — do not trust anything below");
+    throw new Error("unit-conversion self-test failed - do not trust anything below");
 }
 
 // ---------------------------------------------------------------------------
@@ -86,8 +86,8 @@ const RANK = { PASS: 0, MISSING: 1, WARN: 1, FAIL: 2 };
 const worst = (vs) => vs.reduce((a, b) => (RANK[b] > RANK[a] ? b : a), "PASS");
 const floorHour = (sec) => Math.floor(sec / 3600) * 3600;
 const isoHour = (sec) => new Date(sec * 1000).toISOString().slice(0, 16) + "Z";
-const fmt1h = (x) => (Number.isFinite(x) ? x.toExponential(4) : "—");
-const fmtBps = (x) => (Number.isFinite(x) ? x.toFixed(4) : "—");
+const fmt1h = (x) => (Number.isFinite(x) ? x.toExponential(4) : "-");
+const fmtBps = (x) => (Number.isFinite(x) ? x.toFixed(4) : "-");
 const relDelta = (a, b) => Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b), 1e-12);
 
 // ---------------------------------------------------------------------------
@@ -137,7 +137,7 @@ const UNIT_INTERPRETATIONS = [
 
 // Calibrate which unit a dump uses by fitting against a reference Map(coin -> 1h rate).
 // Only discrete known interpretations are allowed and the fit must be tight, so this cannot
-// hide a genuine disagreement — per-coin deltas are still checked against tolerances after.
+// hide a genuine disagreement - per-coin deltas are still checked against tolerances after.
 function calibrateUnits(perCoinRaw, ref1h) {
   const pairs = [];
   for (const [coin, v] of perCoinRaw) {
@@ -307,9 +307,9 @@ async function sectionLive(lorisSources) {
       const n = normalizeLorisLive(src.payload, ref1h, src.label);
       lorisLive.push(n);
       const age = Number.isFinite(n.tsMs) ? Math.round((fetchedAt - n.tsMs) / 1000) : null;
-      sourceNotes.push(`${n.label}${age != null ? `, age ${age}s${age > 120 ? " (STALE >120s)" : ""}` : ""}${n.hlIntervalOk ? "" : " — FAIL: HL interval != 1h"}`);
+      sourceNotes.push(`${n.label}${age != null ? `, age ${age}s${age > 120 ? " (STALE >120s)" : ""}` : ""}${n.hlIntervalOk ? "" : " - FAIL: HL interval != 1h"}`);
     } catch (e) {
-      sourceNotes.push(`${src.label}: UNUSABLE — ${e.message}`);
+      sourceNotes.push(`${src.label}: UNUSABLE - ${e.message}`);
     }
   }
   const loris = lorisLive[0] || null; // primary source; extras cross-checked below
@@ -328,7 +328,7 @@ async function sectionLive(lorisSources) {
     const botEntry = bot.byCoin.get(coin);
     const lorisEntry = loris?.perCoin.get(coin);
     if (!rawEntry || !botEntry) {
-      rows.push(`| ${coin} | — | — | — | — | — | — | — | MISSING (not on HL) |`);
+      rows.push(`| ${coin} | - | - | - | - | - | - | - | MISSING (not on HL) |`);
       verdicts.push("MISSING");
       continue;
     }
@@ -344,7 +344,7 @@ async function sectionLive(lorisSources) {
 
     let lorisV = "MISSING";
     let dBps = NaN;
-    let signNote = "—";
+    let signNote = "-";
     if (lorisEntry && loris.hlIntervalOk) {
       dBps = Math.abs(rate1hToBps8h(lorisEntry.v1h) - rate1hToBps8h(raw1h));
       const bothBig = Math.abs(rate1hToBps8h(lorisEntry.v1h)) > 0.5 && Math.abs(rate1hToBps8h(raw1h)) > 0.5;
@@ -359,8 +359,8 @@ async function sectionLive(lorisSources) {
     const v = worst([fetchV, lorisV === "MISSING" ? "PASS" : lorisV]); // absent-on-loris shouldn't fail the coin
     verdicts.push(lorisEntry ? v : worst([fetchV, "MISSING"]));
     rows.push(
-      `| ${coin} | ${fmt1h(bot1h)} | ${fmt1h(raw1h)} | ${lorisEntry ? fmtBps(rate1hToBps8h(lorisEntry.v1h)) : "—"} | ${lorisEntry ? fmt1h(lorisEntry.v1h) : "—"} | ` +
-        `${pct(hl1hToApr(bot1h))} | ${lorisEntry ? pct(hl1hToApr(lorisEntry.v1h)) : "—"} | ${fmtBps(dBps)} | ${signNote} ${lorisEntry ? v : "MISSING-on-loris"} |`,
+      `| ${coin} | ${fmt1h(bot1h)} | ${fmt1h(raw1h)} | ${lorisEntry ? fmtBps(rate1hToBps8h(lorisEntry.v1h)) : "-"} | ${lorisEntry ? fmt1h(lorisEntry.v1h) : "-"} | ` +
+        `${pct(hl1hToApr(bot1h))} | ${lorisEntry ? pct(hl1hToApr(lorisEntry.v1h)) : "-"} | ${fmtBps(dBps)} | ${signNote} ${lorisEntry ? v : "MISSING-on-loris"} |`,
     );
   }
 
@@ -380,7 +380,7 @@ async function sectionLive(lorisSources) {
   }
 
   const md = [
-    "## 1. Live predicted funding — HL leg (three-way)",
+    "## 1. Live predicted funding - HL leg (three-way)",
     "",
     ...sourceNotes.map((s) => `- ${s}`),
     "",
@@ -411,10 +411,10 @@ async function sectionHistory(baseDir, lorisSources) {
       const gmx = await fetchGmxHistory(inst.gmxAddr, startHour, endHour, inst.chain);
       const hl = await fetchHlHistory(coin, startHour, endHour);
       rows = mergeHourly(gmx, hl);
-      cacheNote = " (cache absent — in-memory rebuild, transform-only check)";
+      cacheNote = " (cache absent - in-memory rebuild, transform-only check)";
     }
     if (!rows || !rows.length) {
-      lines.push(`| ${inst.key} | no cache | — | — | — | WARN |`);
+      lines.push(`| ${inst.key} | no cache | - | - | - | WARN |`);
       verdicts.push("WARN");
       continue;
     }
@@ -443,13 +443,13 @@ async function sectionHistory(baseDir, lorisSources) {
 
     // loris settlement: API first, then dump hunting, else two-way note
     let lorisCol = "unavailable (no key / no dump source)";
-    let lorisV = "PASS"; // absence degrades, per plan — not a failure
+    let lorisV = "PASS"; // absence degrades, per plan - not a failure
     let settle = null;
     let settleTo1h = null; // unit converter when the API declares units; null -> calibrate
     if (LORIS_KEY) {
       // documented contract (docs/api/funding/settlement): symbol + exchanges + ISO start/end;
       // response {unit:"bps_8h", series:{hyperliquid:[{timestamp,t,y,intervalMinutes}]}}.
-      // Settlement needs the Dev tier — a free key gets live /funding only.
+      // Settlement needs the Dev tier - a free key gets live /funding only.
       const startIso = new Date(startHour * 1000).toISOString().replace(/\.\d+Z$/, "Z");
       const endIso = new Date((endHour + 3600) * 1000).toISOString().replace(/\.\d+Z$/, "Z");
       try {
@@ -475,7 +475,7 @@ async function sectionHistory(baseDir, lorisSources) {
     if (!settle) for (const src of lorisSources) {
       settle = extractSettlementSeries(src.payload, coin);
       if (settle) {
-        settleTo1h = null; // dump units are undeclared — always calibrate
+        settleTo1h = null; // dump units are undeclared - always calibrate
         lorisCol = `from ${src.label}`;
         break;
       }
@@ -514,7 +514,7 @@ async function sectionHistory(baseDir, lorisSources) {
   }
 
   const md = [
-    `## 2. Settled history — last ${DAYS}d, hours ${isoHour(startHour)} … ${isoHour(endHour)}`,
+    `## 2. Settled history - last ${DAYS}d, hours ${isoHour(startHour)} … ${isoHour(endHour)}`,
     "",
     "| Instrument | Hours (cache/HL) | cache↔HL max relΔ | loris settlement vs HL | cache/loris | Verdict |",
     "|------------|------------------|-------------------|------------------------|-------------|---------|",
@@ -527,7 +527,7 @@ async function sectionHistory(baseDir, lorisSources) {
 }
 
 // ---------------------------------------------------------------------------
-// Section 3: GMX leg (loris has no GMX) — identity gate, Subsquid reconcile, cache re-fetch
+// Section 3: GMX leg (loris has no GMX) - identity gate, Subsquid reconcile, cache re-fetch
 // ---------------------------------------------------------------------------
 async function sectionGmx(baseDir) {
   const chains = new Map(); // chainLower -> fetchGmxCurrent result (or null)
@@ -547,7 +547,7 @@ async function sectionGmx(baseDir) {
     const cur = chains.get(inst.chain.toLowerCase());
     const g = cur?.byMarket.get(inst.gmxAddr.toLowerCase());
     if (!g) {
-      lines.push(`| ${inst.gmxName} (${inst.chain}) | endpoint unavailable | — | — | — | WARN |`);
+      lines.push(`| ${inst.gmxName} (${inst.chain}) | endpoint unavailable | - | - | - | WARN |`);
       verdicts.push("WARN");
       continue;
     }
@@ -556,7 +556,7 @@ async function sectionGmx(baseDir) {
     const rec = reconcileGmx(g, sub);
     const recV = rec.fundingSignAgrees === false || rec.borrowClose === false ? "WARN" : "PASS";
 
-    // cache-integrity re-fetch over the recent window (Subsquid snapshots should be immutable —
+    // cache-integrity re-fetch over the recent window (Subsquid snapshots should be immutable -
     // but the project has seen ONE retroactive reindex, so mismatches mean EITHER cache corruption
     // OR another reindex; both need eyes, hence WARN/FAIL wording in the header note.)
     let cacheCol = "no cache";
@@ -598,19 +598,19 @@ async function sectionGmx(baseDir) {
   }
 
   const md = [
-    "## 3. GMX leg (no loris coverage — own gates + Subsquid)",
+    "## 3. GMX leg (no loris coverage - own gates + Subsquid)",
     "",
     "| Market | net-identity gate | Subsquid reconcile | cache vs re-fetch (last ≤3d) | gate/recon/cache | Verdict |",
     "|--------|-------------------|--------------------|------------------------------|------------------|---------|",
     ...lines,
     "",
-    "Cache-vs-refetch mismatches mean EITHER local cache corruption OR a Subsquid retroactive reindex (observed once, Jun 2026) — inspect before trusting historical stats either way.",
+    "Cache-vs-refetch mismatches mean EITHER local cache corruption OR a Subsquid retroactive reindex (observed once, Jun 2026) - inspect before trusting historical stats either way.",
   ].join("\n");
   return { verdict: worst(verdicts), md };
 }
 
 // ---------------------------------------------------------------------------
-// Section 4: unit-conversion audit — a worked example from the latest cached row
+// Section 4: unit-conversion audit - a worked example from the latest cached row
 // ---------------------------------------------------------------------------
 function sectionAudit(baseDir) {
   const inst = TWO_LEG[0];
@@ -639,7 +639,7 @@ function sectionAudit(baseDir) {
     `net_A     = fund − borrow + hl_long = ${pct(a.net_A)}`,
     `hl_rate in loris terms: ${fmtBps(rate1hToBps8h(r.hl_rate))} bps(8h)`,
     "```",
-    ok ? "Hand-computed values match annualizeRow exactly. GMX gets ×3600×8760, HL gets ×8760 only." : "**MISMATCH between hand-computed and annualizeRow — investigate math.js**",
+    ok ? "Hand-computed values match annualizeRow exactly. GMX gets ×3600×8760, HL gets ×8760 only." : "**MISMATCH between hand-computed and annualizeRow - investigate math.js**",
   ].join("\n");
   return { verdict: ok ? "PASS" : "FAIL", md };
 }
@@ -656,7 +656,7 @@ async function main() {
     for (const cmd of [["test"], ["run", "smoke"]]) {
       const r = spawnSync("npm", cmd, { cwd: ROOT, stdio: "inherit" });
       if (r.status !== 0) {
-        console.error(`\npreflight failed: npm ${cmd.join(" ")} exited ${r.status} — fix internal gates first`);
+        console.error(`\npreflight failed: npm ${cmd.join(" ")} exited ${r.status} - fix internal gates first`);
         process.exit(2);
       }
     }
@@ -677,7 +677,7 @@ async function main() {
     try {
       lorisSources.push({ label: "api.loris.tools/funding", payload: await lorisApiGet("/funding") });
     } catch (e) {
-      console.error(`loris API unavailable (${e.message}) — continuing with remaining sources`);
+      console.error(`loris API unavailable (${e.message}) - continuing with remaining sources`);
     }
   }
   if (!lorisSources.length && MODE !== "history") {
@@ -698,7 +698,7 @@ async function main() {
   mkdirSync(dirname(outPath), { recursive: true });
 
   const report = [
-    `# Loris verification — ${startedAt.toISOString().replace("T", " ").slice(0, 19)} UTC`,
+    `# Loris verification - ${startedAt.toISOString().replace("T", " ").slice(0, 19)} UTC`,
     "",
     `Preflight: ${gateLine}`,
     `Mode: ${MODE} · days: ${DAYS} · loris sources: ${lorisSources.length ? lorisSources.map((s) => s.label).join(" + ") : "none"}`,

@@ -1,4 +1,4 @@
-// btcopt-margin.test.js — golden Deribit STANDARD-MARGIN for the short winged-straddle legs (Phase 2c):
+// btcopt-margin.test.js - golden Deribit STANDARD-MARGIN for the short winged-straddle legs (Phase 2c):
 // LINEAR/USDC BTC formulas (0.15/0.10/0.075), per-leg sum, no netting; long legs contribute 0. PURE,
 // inline fixtures. Numbers use the recorded-snapshot underlying/index (test/fixtures/deribit/live-snapshot).
 import test from "node:test";

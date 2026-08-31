@@ -1,4 +1,4 @@
-// store.js — disk persistence for the forward paper test. CRITICAL: paper positions + full
+// store.js - disk persistence for the forward paper test. CRITICAL: paper positions + full
 // accrual ledgers survive app restarts so a forward test resumes. Trailing history is cached as
 // CSVs (same layout as spread_cache) so restarts don't refetch the whole window.
 //
@@ -33,7 +33,7 @@ const positionsPath = (b) => join(b, "positions.json");
 const settingsPath = (b) => join(b, "settings.json");
 // NOT "cache": userData is shared with Chromium, and on the case-insensitive filesystems Electron
 // ships on (macOS APFS default, Windows NTFS) join(userData, "cache") IS Chromium's own "Cache"
-// directory — its cache backend purges foreign files there, so the CSV frames silently vanished on
+// directory - its cache backend purges foreign files there, so the CSV frames silently vanished on
 // every boot and each start refetched the full trailing window (audit #3).
 const FRAME_CACHE_DIR = "frame-cache";
 const cacheDir = (b) => ensureDir(join(b, FRAME_CACHE_DIR));
@@ -63,7 +63,7 @@ export function savePositions(baseDir, positions) {
 }
 
 // ---- UI/settings (capital, leverage, selection, cost overrides, poll interval) ----
-// Whether a settings.json already exists — lets the post-update changelog logic tell a fresh install
+// Whether a settings.json already exists - lets the post-update changelog logic tell a fresh install
 // (no file) apart from an upgrade (file present, §8.3). Read-only: never creates the file.
 export function hasSettings(baseDir) {
   return existsSync(settingsPath(baseDir));
@@ -79,7 +79,7 @@ export function saveSettings(baseDir, settings) {
 
 // ---- per-bot state + settings (isolated modules; ADDITIVE) ----
 // A second bot (e.g. "btc-options") gets its OWN files so it never collides with funding-arb's
-// positions.json/settings.json — those are never read or written here (zero migration risk to the
+// positions.json/settings.json - those are never read or written here (zero migration risk to the
 // working bot). Files: userData/<id>.json (paper state + cumulative ledger) and
 // userData/<id>-settings.json. Same atomic-write + tolerant-read discipline as above.
 const botStatePath = (b, id) => join(b, `${id}.json`);
@@ -92,7 +92,7 @@ export function saveBotState(baseDir, id, st) {
   ensureDir(baseDir);
   atomicWrite(botStatePath(baseDir, id), JSON.stringify(st, null, 2));
 }
-// S2 (OTM-сканер, план §7 случай 17): строгая загрузка с КАРАНТИНОМ битого JSON — файл
+// S2 (OTM-сканер, план §7 случай 17): строгая загрузка с КАРАНТИНОМ битого JSON - файл
 // переименовывается в .corrupt-<ts>, чтобы журнал сигналов не был уничтожен одной плохой записью
 // (закон loadPositions, аудит M32). loadBotState() выше сохраняет терпимое поведение бота 2.
 export function loadBotStateQuarantine(baseDir, id, nowMs = Date.now()) {
@@ -119,12 +119,12 @@ export function saveBotSettings(baseDir, id, s) {
 
 // ---- append-only NDJSON records (S3c, слой записи сканера) ----
 // ПОЧЕМУ ОТДЕЛЬНЫЙ ТРАКТ, А НЕ КЛЮЧ В ТЕЛЕМЕТРИИ. saveBotState переписывает файл ЦЕЛИКОМ (write
-// tmp + rename). Для суточных вёдер это правильно — они маленькие и должны быть атомарны. Но записи
+// tmp + rename). Для суточных вёдер это правильно - они маленькие и должны быть атомарны. Но записи
 // поверхности это ~82 КБ на снимок и десятки мегабайт за прогон: перезапись целого файла на каждом
 // флаше дала бы квадратичную стоимость и растущие паузы. Поэтому здесь дописывание в конец.
 //
 // ЦЕНА ВЫБОРА, НАЗВАННАЯ ЯВНО: append не атомарен. Падение процесса посреди записи оставляет
-// оборванную последнюю строку — поэтому читатель обязан её пережить, а не бросить. Ровно одна
+// оборванную последнюю строку - поэтому читатель обязан её пережить, а не бросить. Ровно одна
 // строка в конце файла может пострадать, и она считается в `broken`, а не проглатывается молча
 // (та же дисциплина, что карантин в loadBotStateQuarantine: данные не уничтожаются одной плохой
 // записью, но и не выдаются за целые).
@@ -135,7 +135,7 @@ const RECORDS_DIR = "scan-records";
 const recordsDir = (b) => ensureDir(join(b, RECORDS_DIR));
 const recordPath = (b, prefix, dayKey) => join(recordsDir(b), `${prefix}-${dayKey}.ndjson`);
 
-// Дописать строки. rows — массив объектов; пустой массив НЕ создаёт файл (пустой прогон не должен
+// Дописать строки. rows - массив объектов; пустой массив НЕ создаёт файл (пустой прогон не должен
 // оставлять следов, по которым отчёт решит, что данные были). Возвращает число записанных строк.
 export function appendScanRecords(baseDir, prefix, dayKey, rows) {
   if (!Array.isArray(rows) || rows.length === 0) return 0;
@@ -144,7 +144,7 @@ export function appendScanRecords(baseDir, prefix, dayKey, rows) {
   return rows.length;
 }
 
-// Прочитать записи за перечисленные сутки. Возвращает { rows, broken, files } — broken это число
+// Прочитать записи за перечисленные сутки. Возвращает { rows, broken, files } - broken это число
 // нечитаемых строк (оборванный хвост после падения); отчёт обязан его показать.
 export function readScanRecords(baseDir, prefix, dayKeys) {
   const rows = [];
@@ -166,7 +166,7 @@ export function readScanRecords(baseDir, prefix, dayKeys) {
   return { rows, broken, files };
 }
 
-// Какие сутки записаны для префикса — чтобы отчёт не угадывал диапазон, а читал его с диска.
+// Какие сутки записаны для префикса - чтобы отчёт не угадывал диапазон, а читал его с диска.
 export function listScanRecordDays(baseDir, prefix) {
   const dir = join(baseDir, RECORDS_DIR);
   if (!existsSync(dir)) return [];
@@ -177,7 +177,7 @@ export function listScanRecordDays(baseDir, prefix) {
     .sort();
 }
 
-// Размер записей на диске в байтах — для панели честности и для лога прогона: рост файла обязан
+// Размер записей на диске в байтах - для панели честности и для лога прогона: рост файла обязан
 // быть видимым оператору, а не сюрпризом на 60-м часу.
 export function scanRecordsBytes(baseDir, prefix) {
   const dir = join(baseDir, RECORDS_DIR);

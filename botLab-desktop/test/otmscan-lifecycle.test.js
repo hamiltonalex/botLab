@@ -1,4 +1,4 @@
-// otmscan-lifecycle.test.js — S1: dwell/TTL/инвалидация/кулдаун/блэкаут/рестарт-ревалидация
+// otmscan-lifecycle.test.js - S1: dwell/TTL/инвалидация/кулдаун/блэкаут/рестарт-ревалидация
 // (план §5.5, §7, §11; fixed-clock паттерн settle-window.test.js). Плюс заморозка контракта
 // §8.1 (фикстура signal-example.json) и детерминизм (inputs-basecase.json).
 
@@ -60,7 +60,7 @@ test("смена лучшего кандидата в FORMING сбрасывае
   ({ state: st, cycle: cy } = run(st, T(0), both({ now: T(0) })));
   assert.equal(cy.best.instrument, INST, "ближе к середине σ-окна");
   assert.equal(cy.lifecycle.dwell.count, 1);
-  // тик 2: у INST проваливается У10 (mark 500 = 0.5% спота) — лучшим становится INST_B
+  // тик 2: у INST проваливается У10 (mark 500 = 0.5% спота) - лучшим становится INST_B
   ({ state: st, cycle: cy } = run(st, T(1), both({ now: T(1), tickA: { mark: 500, bid: 495, ask: 505 } })));
   assert.equal(cy.best.instrument, INST_B);
   assert.equal(cy.score.verdict, "signal", "чеклист считается по новому лучшему");
@@ -88,7 +88,7 @@ test("TTL: сигнал истекает, запускается кулдаун 
   assert.equal(Object.keys(st.cooldowns).length, 0);
 });
 
-test("инвалидация: none держится failTicks=2 подряд — причина «ядро распалось (У1)»", () => {
+test("инвалидация: none держится failTicks=2 подряд - причина «ядро распалось (У1)»", () => {
   let { st } = activate();
   const badIv = (now) => ({ raw: { ivRef: { nearPct: 50, nearExpiryMs: EXP, farPct: 40.0, farExpiryMs: now + 30 * 86400000, source: "atm", tsMs: now, farTsMs: now } } });
   let cy;
@@ -168,7 +168,7 @@ test("min_lot_exceeds_risk: сигнал блокирован честным о�
   near(cy.economics.minCapitalUsd, 17.5, 1e-9, "премия лота 3.5 при риске 20%");
 });
 
-test("инструмент пропал из chain при ACTIVE — INVALIDATED instrument-gone (случай 8 §7)", () => {
+test("инструмент пропал из chain при ACTIVE - INVALIDATED instrument-gone (случай 8 §7)", () => {
   let { st } = activate();
   const gone = { chain: { instruments: [] }, instruments: {} };
   const { cycle: cy } = run(st, T(3), gone);
@@ -177,7 +177,7 @@ test("инструмент пропал из chain при ACTIVE — INVALIDATED
   assert.equal(cy.lifecycle.phase, "idle");
 });
 
-test("экспирация выкатилась из окна при ACTIVE — INVALIDATED expiry-rolled (случай 7 §7)", () => {
+test("экспирация выкатилась из окна при ACTIVE - INVALIDATED expiry-rolled (случай 7 §7)", () => {
   const exp = NOW + 120.5 * H;
   const o = { expiryMs: exp, chain: { instruments: [mkMeta(INST, 106600, exp)] }, settings: { ttlSec: 7200 } };
   let st = createScanState();
