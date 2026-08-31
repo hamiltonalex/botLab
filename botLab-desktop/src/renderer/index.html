@@ -5740,12 +5740,17 @@ function refreshOverview(){
     faRun ? t('home.openOf',{open:faOpen,total:acc.count})+' · '+t('home.pnlNet')+' <span class="'+clsSign(faPnl)+'">'+fmtUSDfull(faPnl)+'</span>'
              +(faPreAuto ? ' · '+t('home.fa.preAuto') : '')
       : (acc && acc.count>0 ? t('home.fa.closed',{n:acc.count}) : t('home.fa.idle')));
-  // - карточка/точка btc-options -
-  if(faRun && !faAutoOn){
-    const faTag = $('card-tag-funding-arb');
-    if(faTag){ faTag.textContent = t('home.tag.pos'); faTag.className = 'bc-tag run';
-      faTag.title = faPreAuto ? t('home.fa.preAuto') : ''; }
+  /* ПОДСКАЗКА ЖЕТОНА ОБНУЛЯЕТСЯ БЕЗУСЛОВНО, А СТАВИТСЯ ПО УСЛОВИЮ. Прежняя редакция чистила её
+     ВНУТРИ ветки, поэтому при выходе из ветки (позиция закрылась, автомат включился) старый текст
+     переживал: `overviewCard` трогает textContent и класс, а title не трогает вовсе. Залипшая
+     подсказка объясняла бы состояние, которого уже нет. */
+  const faTag = $('card-tag-funding-arb');
+  if(faTag) faTag.title = '';
+  if(faRun && !faAutoOn && faTag){
+    faTag.textContent = t('home.tag.pos'); faTag.className = 'bc-tag run';
+    if(faPreAuto) faTag.title = t('home.fa.preAuto');
   }
+  // - карточка/точка btc-options -
   overviewCard('btc-options', s1Run, s1Pnl,
     s1Open ? t('home.opt.open')+' · '+optDecisionWord(s1cyc&&s1cyc.decision)+' · '+t('home.pnlNet')+' <span class="'+clsSign(s1Pnl)+'">'+fmtUSDfull(s1Pnl)+'</span>'
       : (s1ch && s1ch.on) ? t('home.opt.chain')

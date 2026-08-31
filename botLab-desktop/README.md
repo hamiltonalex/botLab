@@ -10,8 +10,9 @@ Bot 2 (BTC options) mechanics guide:
 
 It runs a delta-neutral **funding-rate arbitrage** strategy on **live GMX V2 (Arbitrum/Avalanche)
 x Hyperliquid** data and **forward-tests paper trading from "now"**. It shows the strategy's
-profitability on *current* market data and accrues a realized equity curve from the moment you
-open a paper position.
+profitability on *current* market data and accrues a realized equity curve from the moment the
+automaton opens a paper position. Bot 1 has ONE control: the automaton switch. There is no manual
+launch path any more.
 
 > **Phase 1 handles NO real money, NO private keys, NO order execution, NO custody.**
 > Public read-only endpoints only. Every screen keeps the honest disclaimers (PAPER · liquidation
@@ -25,8 +26,9 @@ open a paper position.
   borrow, open interest and prices and shows the **net APR now**, per-leg APRs, spread and OI skew
   for ETH/BTC (two-leg) and the ETH-Arb / BTC-Arb / ETH-Avax one-leg GMX carries. (APT was
   dropped 2026-07-02: top historical spread ~47% median, but its live GMX market is inactive (~$0 OI).)
-- **Forward paper test** - "Открыть бумажную позицию" records `t0`, instrument, strategy, config,
-  capital and leverage, then at each poll accrues the modelled funding/borrow P&L from live data:
+- **Forward paper test** - the automaton picks the market by the entry rule and records `t0`,
+  instrument, strategy, config, capital and leverage; then at each poll it accrues the modelled
+  funding/borrow P&L from live data:
   GMX funding+borrow **continuously per second** (`factor × elapsed_s × notional`), Hyperliquid
   funding **discretely at each top-of-hour settlement**. The forward equity curve is drawn from `t0`
   and **persists to disk** - close and reopen the app and the test resumes.
