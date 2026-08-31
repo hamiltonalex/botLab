@@ -54,8 +54,14 @@ const PXHL = loadPx("hlc-skept-px.json.gz");
 
 // ── Поддерживающая маржа Hyperliquid по монете.
 const hlUni = JSON.parse(fs.readFileSync(`${DATA}/snapshots/hl.json`, "utf8"))[0].universe;
-const MM = new Map(hlUni.filter((u) => !u.isDelisted).map((u) => [u.name, 1 / (2 * u.maxLeverage)]));
-const MAXLEV = new Map(hlUni.filter((u) => !u.isDelisted).map((u) => [u.name, u.maxLeverage]));
+// Hyperliquid котирует мелкие монеты пачками по 1000 под именем kXXX. Это ТА ЖЕ монета, ставка
+// маржи от переименования не меняется, поэтому имена сводятся здесь, а не подставляются руками.
+const HLNAME = { PEPE: "kPEPE", SHIB: "kSHIB", BONK: "kBONK", FLOKI: "kFLOKI", LUNC: "kLUNC", DOGS: "kDOGS", NEIRO: "kNEIRO" };
+const liveHl = hlUni.filter((u) => !u.isDelisted);
+const hlOf = (t) => liveHl.find((u) => u.name === (HLNAME[t] || t));
+const MM = new Map();
+const MAXLEV = new Map();
+for (const t of new Set([...PX.keys()])) { const u = hlOf(t); if (u) { MM.set(t, 1 / (2 * u.maxLeverage)); MAXLEV.set(t, u.maxLeverage); } }
 
 // ── Отрезки удержания из журнала ходока. Журнал даёт только смену состава, поэтому отрезок
 // закрывается следующей записью или концом прогона.
@@ -217,3 +223,68 @@ for (const e of U) {
   }
 }
 console.log(`\n## 9. Сверка цены Binance против Hyperliquid на общих часах: ${n} наблюдений, среднее расхождение ${pct(sum / (n || 1))}, худшее ${pct(worst)}`);
+
+// ── 10. ЧЕМ ЭТО СТОИТ ДЕПОЗИТУ. Ликвидация проигрывающей ноги не забирает депозит мгновенно:
+// в этот момент выигрывающая нога стоит примерно столько же в плюсе. Деньги теряются ПОТОМ,
+// когда цена возвращается, а хеджа уже нет. Считается это так: нога умирает в первый час, когда
+// ход от входа превысил 1/L - mm; её залог M = N/L списывается целиком; уцелевшая нога держится
+// до конца отрезка и закрывается по цене конца. Итог депозита = M + N*(ход конца в её пользу),
+// и он не может уйти ниже нуля (её собственный залог тоже конечен).
+console.log(`\n## 10. Что ликвидация ноги стоит депозиту (различные отрезки rule-1, ноционал S=$${S.toFixed(0)} на ногу)\n`);
+console.log(`| плечо | залог ноги | депозит | отрезков с ликвидацией | худший итог депозита | медиана итога по этим отрезкам |`);
+console.log(`|---|---|---|---|---|---|`);
+for (const L of [1, 2, 3]) {
+  const M = S / L, dep = 2 * M;
+  const outs = [];
+  for (const e of U) {
+    if (!Number.isFinite(e.mm)) continue;
+    const thr = 1 / L - e.mm;
+    if (thr <= 0) { outs.push({ e, end: 0, note: "плечо выше предела биржи" }); continue; }
+    const a = PX.get(e.token), p0 = a[e.t0];
+    let tl = -1, up = false;
+    for (let t = e.t0 + 1; t <= Math.min(e.t1, YEAR - 1); t += 1) {
+      const p = a[t]; if (!Number.isFinite(p)) continue;
+      const x = p / p0 - 1;
+      if (x > thr) { tl = t; up = true; break; }
+      if (-x > thr) { tl = t; up = false; break; }
+    }
+    if (tl < 0) continue;
+    let p1 = NaN;
+    for (let t = Math.min(e.t1, YEAR - 1); t >= e.t0; t -= 1) { if (Number.isFinite(a[t])) { p1 = a[t]; break; } }
+    const move = p1 / p0 - 1;
+    const surv = up ? move : -move; // уцелела нога, которой ход был в плюс
+    const end = Math.max(0, M + S * surv);
+    outs.push({ e, end, up, move });
+  }
+  const ends = outs.map((o) => o.end);
+  console.log(`| ${L}x | $${M.toFixed(0)} | $${dep.toFixed(0)} | ${outs.length}/${U.length} | ${outs.length ? "$" + mn(ends).toFixed(0) + " из $" + dep.toFixed(0) : "-"} | ${outs.length ? "$" + q(ends, 0.5).toFixed(0) : "-"} |`);
+  if (L === 1 && outs.length) for (const o of outs) console.log(`|   L=1 срыв | ${o.e.token} | часов ${o.e.hours} | связывающий ход ${pct(o.e.bind)} | ход к концу ${pct(o.move)} | итог $${o.end.toFixed(0)} |`);
+}
+
+// ── 11. Предел плеча самой биржи Hyperliquid на рынках, куда бот входил.
+console.log(`\n## 11. Потолок плеча Hyperliquid на входимых рынках\n`);
+const rows11 = toks.map((t) => [t, MAXLEV.get(t), MM.get(t)]).sort((a, b) => (a[1] ?? 99) - (b[1] ?? 99));
+console.log(`| рынок | maxLeverage HL | mm | ход, убивающий ногу при L=1 | при L=2 | при L=3 |`);
+console.log(`|---|---|---|---|---|---|`);
+for (const [t, ml, mm] of rows11) {
+  const f = (L) => (ml && L > ml ? "плечо запрещено" : pct(1 / L - mm));
+  console.log(`| ${t} | ${ml ?? "н-д"} | ${Number.isFinite(mm) ? pct(mm) : "н-д"} | ${f(1)} | ${f(2)} | ${f(3)} |`);
+}
+
+// ── 12. Диагностика крайних наблюдений: где именно они лежат во времени.
+const HOUR = (r) => new Date((HOUR0 + r) * 3600e3).toISOString().slice(0, 13) + "Z";
+console.log(`\n## 12. Диагностика крайних ходов (проверка, что это событие рынка, а не дыра в данных)\n`);
+for (const [name, lag] of [["1 ч", 1], ["24 ч", 24]]) {
+  let bestUp = null, bestDn = null;
+  for (const e of U) {
+    const a = PX.get(e.token); if (!a) continue;
+    for (let t = e.t0; t + lag <= Math.min(e.t1, YEAR - 1); t += 1) {
+      const p0 = a[t], p1 = a[t + lag];
+      if (!Number.isFinite(p0) || !Number.isFinite(p1) || !(p0 > 0)) continue;
+      const x = p1 / p0 - 1;
+      if (!bestUp || x > bestUp.x) bestUp = { x, tok: e.token, t, p0, p1 };
+      if (!bestDn || x < bestDn.x) bestDn = { x, tok: e.token, t, p0, p1 };
+    }
+  }
+  for (const [lbl, b] of [["вверх", bestUp], ["вниз", bestDn]]) if (b) console.log(`шаг ${name}, худший ${lbl}: ${b.tok} ${pct(b.x)} с ${HOUR(b.t)} (${b.p0} -> ${b.p1})`);
+}

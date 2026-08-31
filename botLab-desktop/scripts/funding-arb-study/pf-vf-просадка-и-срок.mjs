@@ -95,15 +95,30 @@ function curveOf(r, first, end) {
   return { pts, net: realized - costs };
 }
 
-// ── Максимальная просадка от предыдущего пика. Пик стартует с нуля.
+// ── Максимальная просадка от предыдущего пика. Пик стартует с НУЛЯ: владелец кладёт депозит и
+// первым делом платит круг за вход, и этот минус он видит на счёте.
+//
+// ЧТО ЕЩЁ СЧИТАЕТСЯ ЗДЕСЬ И ЗАЧЕМ. «Сколько» без «как долго» вводит в заблуждение: просадка $35
+// на неделю и та же $35 на квартал это два разных ответа на вопрос «что я увижу через месяц».
+// Поэтому вместе с глубиной берётся ВРЕМЯ ПОД ВОДОЙ (от пика до возврата к нему) и РАЗЛОЖЕНИЕ дна
+// на две причины: сколько добрали издержки перекладок и сколько отнял отрицательный брутто.
 function drawdown(pts) {
-  let peak = 0, peakT = pts[0].t, worst = 0, at = null;
-  for (const p of pts) {
-    if (p.net > peak) { peak = p.net; peakT = p.t; }
+  let peak = 0, peakT = pts[0].t, peakIdx = 0, worst = 0, at = null, atIdx = -1;
+  pts.forEach((p, i) => {
+    if (p.net > peak) { peak = p.net; peakT = p.t; peakIdx = i; }
     const dd = peak - p.net;
-    if (dd > worst) { worst = dd; at = { ...p, peak, peakT, peakDay: (peakT - pts[0].t) / 24 }; }
-  }
-  return { dd: worst, at };
+    if (dd > worst) { worst = dd; at = { ...p, peak, peakT, peakDay: (peakT - pts[0].t) / 24, peakIdx }; atIdx = i; }
+  });
+  if (!at) return { dd: 0, at: null, under: 0, recovered: true, dCost: 0, dGross: 0 };
+  let rec = -1;
+  for (let i = atIdx + 1; i < pts.length; i += 1) if (pts[i].net >= at.peak) { rec = i; break; }
+  return {
+    dd: worst, at,
+    under: (rec >= 0 ? pts[rec].t : pts[pts.length - 1].t) - at.peakT,
+    recovered: rec >= 0,
+    dCost: at.costs - pts[at.peakIdx].costs,
+    dGross: at.realized - pts[at.peakIdx].realized,
+  };
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -127,6 +142,8 @@ for (const mode of MODES) {
       s, first, net: r.net, ann, opens: r.tally.open,
       dd: d.dd, ddDay: d.at ? d.at.day : 0, ddT: d.at ? d.at.t : null,
       ddPeakDay: d.at ? d.at.peakDay : 0,
+      underDays: d.under / 24, recovered: d.recovered, ddCost: d.dCost, ddGross: d.dGross,
+      ddPeakNet: d.at ? d.at.peak : 0, ddTroughNet: d.at ? d.at.net : 0,
       ddPctDep: (d.dd / DEPOSIT) * 100,
       ddPctAnn: ann > 0 ? (d.dd / ann) * 100 : NaN,
       final: pts[pts.length - 1].net, costs: pts[pts.length - 1].costs,
@@ -155,6 +172,31 @@ for (const mode of MODES) {
   const pa = R.map((x) => x.ddPctAnn).filter(Number.isFinite);
   console.log(`| | % от годовой прибыли | ${q(pa, 0.5).toFixed(2)}% | **${worst.ddPctAnn.toFixed(2)}%** | ${best.ddPctAnn.toFixed(2)}% | ${mean(pa).toFixed(2)}% |`);
   console.log(`| | день прогона, когда дно | ${q(R.map((x) => x.ddDay), 0.5).toFixed(1)} | ${worst.ddDay.toFixed(1)} | ${best.ddDay.toFixed(1)} | ${mean(R.map((x) => x.ddDay)).toFixed(1)} |`);
+  console.log(`| | суток под водой (пик -> возврат к пику) | ${q(R.map((x) => x.underDays), 0.5).toFixed(1)} | ${worst.underDays.toFixed(1)} | ${best.underDays.toFixed(1)} | ${mean(R.map((x) => x.underDays)).toFixed(1)} |`);
+}
+
+// СКОЛЬКО ЗДЕСЬ НА САМОМ ДЕЛЕ НАБЛЮДЕНИЙ. 40 стартов разнесены на 468 ч (19.5 сут) и накрывают
+// почти один и тот же год, поэтому «худший из 40» это НЕ худший из 40 независимых случаев. Число
+// различных значений просадки и различных календарных часов дна показывает, сколько РАЗНЫХ
+// событий за этим стоит на самом деле.
+console.log(`\n### Сколько за этими 40 стартами разных СОБЫТИЙ, а не разных прогонов\n`);
+console.log(`| рука | различных значений просадки | различных календарных часов дна | календарное окно дна |`);
+console.log(`|---|---|---|---|`);
+for (const mode of MODES) {
+  const R = part1[mode];
+  const uD = new Set(R.map((x) => x.dd.toFixed(2)));
+  const uT = [...new Set(R.map((x) => x.ddT))].sort((a, b) => a - b);
+  console.log(`| ${mode} | ${uD.size} (${[...uD].map((x) => "$" + x).join(", ")}) | ${uT.length} | час ${uT[0]}..${uT[uT.length - 1]} |`);
+}
+
+console.log(`\n### Из чего сложено дно: издержки перекладок против отрицательного брутто\n`);
+console.log(`| рука | старт | просадка | добавили издержки | отнял брутто | под водой |`);
+console.log(`|---|---|---|---|---|---|`);
+for (const mode of MODES) {
+  const w = part1[mode].reduce((a, b) => (b.dd > a.dd ? b : a));
+  const med = part1[mode].slice().sort((a, b) => a.dd - b.dd)[Math.floor(STARTS / 2)];
+  for (const [tag, x] of [["худший", w], ["медианный", med]])
+    console.log(`| ${mode} | ${tag} (#${x.s}) | $${x.dd.toFixed(2)} | $${x.ddCost.toFixed(2)} | $${x.ddGross.toFixed(2)} | ${x.underDays.toFixed(1)} сут${x.recovered ? "" : " (НЕ ВОССТАНОВИЛОСЬ до конца прогона)"} |`);
 }
 
 console.log(`\n### Где именно случается дно (распределение дня по ${STARTS} стартам)\n`);
