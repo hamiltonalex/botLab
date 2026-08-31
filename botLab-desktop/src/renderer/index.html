@@ -474,24 +474,14 @@ button.botcard:hover .bc-open .arw{ transform:translateX(2px); }
 .sec-head .rule{ flex:1 1 auto; height:1px; background:linear-gradient(90deg,var(--line-2),transparent); }
 .sec-head .hint{ font-size:11px; color:var(--txt-faint); }
 
-/* ───────────────────────── HERO (A) ───────────────────────── */
-.hero{ display:grid; grid-template-columns:minmax(300px,1.05fr) minmax(360px,1.55fr); gap:14px; }
-.hero-main{
-  background:
-    radial-gradient(560px 240px at 12% 0%, var(--glow-hero), transparent 60%),
-    linear-gradient(180deg, var(--panel-2), var(--panel));
-  border:1px solid var(--line); border-radius:var(--r); padding:18px 20px;
-  display:flex; flex-direction:column; gap:14px; position:relative; overflow:hidden;
-}
-.hero-main .topline{ display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+/* ───────────────────────── ПИЛЮЛИ И БОЛЬШОЕ ЧИСЛО ─────────────────────────
+   Правила `.hero`, `.hero-main` и `.hero-foot` сняты вместе с героем гипотезы; `.pnl-hero`,
+   `.kpi` и `.hero-kpis` остались - их носит кокпит зоны Ⅱ. */
 .cfg-pill{
   font-family:var(--f-mono); font-size:11px; font-weight:600; color:var(--txt);
   border:1px solid var(--line-2); border-radius:6px; padding:3px 9px; background:var(--inset);
 }
 .cfg-pill b{ color:var(--accent); }
-.mode-pill{ font-family:var(--f-mono); font-size:10.5px; font-weight:600; letter-spacing:.4px; padding:3px 8px; border-radius:6px; }
-.mode-gross{ color:var(--neu); border:1px solid color-mix(in srgb, var(--neu) 35%, transparent); background:var(--neu-bg); }
-.mode-net{ color:var(--pos); border:1px solid color-mix(in srgb, var(--pos) 35%, transparent); background:var(--pos-bg); }
 
 .pnl-hero{ display:flex; flex-direction:column; gap:2px; }
 .pnl-hero .lbl{ font-size:11px; letter-spacing:.8px; text-transform:uppercase; color:var(--txt-faint); font-weight:600; }
@@ -511,31 +501,9 @@ button.botcard:hover .bc-open .arw{ transform:translateX(2px); }
 .kpi .v{ font-family:var(--f-mono); font-weight:700; font-size:24px; line-height:1; }
 .kpi .sub{ font-size:10.5px; color:var(--txt-faint); margin-top:5px; }
 
-.hero-foot{ display:flex; gap:16px; flex-wrap:wrap; font-size:11px; color:var(--txt-dim); margin-top:auto; }
-.hero-foot .it{ display:flex; gap:6px; align-items:center; }
-.hero-foot .it .k{ color:var(--txt-faint); }
 
-/* matrix */
-.matrix-wrap{ background:linear-gradient(180deg, var(--panel-2), var(--panel)); border:1px solid var(--line); border-radius:var(--r); padding:16px; display:flex; flex-direction:column; }
-.matrix-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
-.matrix-head .ttl{ font-size:11px; letter-spacing:1px; text-transform:uppercase; color:var(--txt-dim); font-weight:700; }
-.matrix-head .leg{ display:flex; gap:12px; font-size:10.5px; color:var(--txt-faint); }
-.matrix{ display:grid; grid-template-columns:84px 1fr 1fr; gap:8px; }
-.matrix .corner{}
-.matrix .colh, .matrix .rowh{ display:flex; align-items:center; justify-content:center; font-family:var(--f-mono); font-size:11px; font-weight:600; color:var(--txt-dim); }
-.matrix .rowh{ justify-content:flex-end; padding-right:10px; flex-direction:column; align-items:flex-end; gap:1px; }
-.matrix .rowh small{ color:var(--txt-faint); font-size:9.5px; font-weight:500; }
-.cell{
-  position:relative; cursor:pointer; text-align:center; border:1px solid var(--line); border-radius:8px;
-  background:var(--inset); padding:11px 8px 10px; transition:.14s; min-width:0;
-}
-.cell:hover{ border-color:var(--line-2); background:var(--panel-2); transform:translateY(-1px); }
-.cell .pnl{ font-family:var(--f-mono); font-weight:700; font-size:17px; line-height:1.05; }
-.cell .apr{ font-family:var(--f-mono); font-size:11px; margin-top:3px; color:var(--txt-dim); }
-.cell[aria-checked="true"]{ border-color:var(--accent); background:var(--accent-bg); box-shadow:0 0 0 1px var(--accent), 0 6px 20px -10px color-mix(in srgb, var(--accent) 60%, transparent); }
-.cell[aria-checked="true"] .apr{ color:var(--txt); }
-.cell .pick{ position:absolute; top:6px; right:7px; font-size:8.5px; color:var(--accent); font-weight:700; letter-spacing:.5px; opacity:0; }
-.cell[aria-checked="true"] .pick{ opacity:1; }
+/* Правила матрицы «капитал × плечо» (`.matrix*`, `.cell*`) сняты вместе с ней: выбирать
+   капитал и плечо больше некому и незачем. */
 
 /* ───────────────────────── EQUITY (B) ───────────────────────── */
 .chart-box{ position:relative; width:100%; }
@@ -582,6 +550,13 @@ button.botcard:hover .bc-open .arw{ transform:translateX(2px); }
 
 /* ───────────────────────── STRATEGY (E) + COSTS (F) ───────────────────────── */
 .two-col{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+/* Рынка нет - панели рынка не показываются вовсе, вместо них полоса с причиной (идиома
+   `.zone.idle .trade-grid`). Правила привязаны к ИДЕНТИФИКАТОРУ, а не к классу `.zone-analysis`:
+   тот же класс носят зоны бота 2 и OTM-сканера, и общий селектор дотянулся бы до них.
+   Показ полосы прописан явно: базовое `.trade-empty{display:none}` открывается только под
+   `.zone.idle`, а у этой зоны свой признак пустоты. */
+#zoneAnalysis.nomarket > .grid{ display:none; }
+#zoneAnalysis.nomarket > #zaEmpty{ display:flex; }
 .why-box{ background:var(--inset); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:7px; padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--txt-dim); }
 .why-box b{ color:var(--txt); }
 .addr{ font-family:var(--f-mono); font-size:11px; color:var(--txt-dim); word-break:break-all; }
@@ -669,14 +644,12 @@ table.scan tr:hover td{ background:color-mix(in srgb, var(--slate) 5%, transpare
 
 /* responsive */
 @media (max-width:1080px){
-  .hero{ grid-template-columns:1fr; }
   .transparency{ grid-template-columns:1fr; }
   .two-col{ grid-template-columns:1fr; }
   .disc{ grid-template-columns:1fr; }
 }
 @media (max-width:560px){
   .app{ padding:0 10px 48px; }
-  .matrix{ grid-template-columns:62px 1fr 1fr; }
   .hero-kpis{ grid-template-columns:1fr; }
 }
 .span2{ grid-column:1 / -1; }
@@ -820,6 +793,10 @@ table.ledger tr.ldetail .dl{ max-width:640px; }
 .ledger-del[hidden]{ display:none; } /* авторский display иначе перебивает UA-правило атрибута hidden (см. .ticket) */
 .ledger-del .k{ font-size:11px; color:var(--neg-bri); }
 .ledger-foot{ display:flex; align-items:center; gap:14px; padding:10px 16px 14px; }
+/* Подпись-абзац в подвале карточки. `.stamp` запрещает перенос (он рассчитан на короткий штамп
+   времени), и длинная подпись под таблицей обрезалась правым краем - конец фразы просто не
+   доезжал до читателя. */
+.foot-note{ font-family:var(--f-mono); font-size:11px; color:var(--txt-faint); white-space:normal; line-height:1.5; }
 .ledger-empty{ padding:26px 16px; text-align:center; color:var(--txt-faint); font-size:12px; }
 #ledgerUpdated .blip{ display:inline-block; width:6px; height:6px; border-radius:50%;
   background:var(--txt-faint); margin-right:6px; vertical-align:1px; box-shadow:none; }
@@ -1252,7 +1229,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
       <span class="tag" data-i18n="fa.zt.tag">форвард · с t0 · нетто</span>
       <button class="help-btn" data-help="paper">?</button>
       <span class="rule"></span>
-      <span class="hint" data-i18n="fa.zt.hint">не зависит от периода и режима P&amp;L в анализе</span>
+      <span class="hint" data-i18n="fa.zt.hint">реализованный результат счёта · переключателей нет ни здесь, ни в зоне рынка</span>
     </div>
   <div class="trade-empty" id="tradeEmpty" role="status">
     <span data-i18n="fa.zt.emptyText">○ позиций нет: их открывает автомат. Включите его на пульте ниже, и реализованный P&amp;L появится здесь.</span>
@@ -1363,6 +1340,54 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
           <button id="faAutoTktCancel" class="paperbtn" data-i18n="fa.ticket.cancel"></button>
         </div>
       </div>
+    </div>
+
+    <!-- ══ ПОСЛЕДНЯЯ ОЦЕНКА ПО РЫНКАМ ══
+         ЧТО ЭТО. Пять строк по числу рынков вселенной: что правило входа увидело по каждому в
+         ПОСЛЕДНЕМ ЦИКЛЕ РЕШЕНИЯ. Именно эта карточка отвечает на вопрос «какую сделку бот сейчас
+         продумывает»: рынок ранга 1 это тот, в который он войдёт, если войдёт.
+
+         КАРТОЧКА НЕ ИМЕЕТ ПРАВА ОБЕЩАТЬ ЖИВОЙ ПРОЦЕСС, и это её главное ограничение. Оценка
+         СУТОЧНАЯ: каданс решения 24 часа, между решениями движок вселенную не пересчитывает вовсе.
+         Поэтому в шапке стоит не «сейчас», а два времени - когда снято и когда будет снято снова, -
+         и ставка ног в строке заморожена моментом оценки, а не подтягивается живой. Строка
+         описывает ОДНО наблюдение; смешать в ней сутки и текущую минуту значило бы сделать её
+         непрочитываемой при верных числах в каждой колонке по отдельности.
+
+         ПЕРЕСЕЧЕНИЕ С ЖУРНАЛОМ РЕШЕНИЙ НАЗВАНО ВСЛУХ. Лучший кандидат будет назван на вкладке
+         дважды: здесь строкой ранга 1 и в журнале решений строкой цикла, и четыре величины у них
+         общие - рынок, размер, доля удержания и нетто. Это ОДНА оценка, показанная с двух сторон:
+         журнал даёт её во времени (что решалось цикл за циклом), карточка - вширь (что видели по
+         всем рынкам в последнем). Два числа, разошедшиеся между ними, означают дефект, а не два
+         разных замера, и подпись обязана говорить это прямо. -->
+    <div class="card flush span2" id="faEvalCard">
+      <div class="sec-head" style="padding:16px 16px 0;margin-bottom:10px">
+        <h2 data-i18n="fa.ev.title"></h2>
+        <span class="tag amber" data-i18n="fa.ev.chip"></span>
+        <button class="help-btn" data-help="fa-eval">?</button>
+        <span class="rule"></span>
+        <span class="stamp" id="faEvalStamp"><span class="blip" aria-hidden="true"></span><span aria-live="polite" id="faEvalStampTxt" data-i18n="fa.ev.stamp0"></span></span>
+      </div>
+      <div class="table-scroll" style="max-height:none" tabindex="0" role="region" data-i18n-aria="fa.ev.tableAria">
+        <table class="scan" id="faEvalTable">
+          <caption class="sr-only" data-i18n="fa.ev.caption"></caption>
+          <thead><tr>
+            <th class="lft" scope="col" data-i18n="fa.pos.thInstr"></th>
+            <th class="lft" scope="col" data-i18n="fa.pos.thCfg"></th>
+            <th scope="col" data-i18n="fa.ev.thRank"></th>
+            <th class="lft" scope="col" data-i18n="fa.ev.thState"></th>
+            <th class="lft" scope="col" data-i18n="fa.ev.thBind"></th>
+            <th scope="col" data-i18n="fa.ev.thSize"></th>
+            <th scope="col" data-i18n="fa.ev.thNet"></th>
+            <th scope="col" data-i18n="fa.ev.thCov"></th>
+            <th scope="col" data-i18n="fa.ev.thKept"></th>
+            <th scope="col" data-i18n="fa.ev.thApr"></th>
+          </tr></thead>
+          <tbody id="faEvalBody"></tbody>
+        </table>
+        <div class="ledger-empty" id="faEvalEmpty" data-i18n="fa.ev.empty"></div>
+      </div>
+      <div class="ledger-foot" style="padding-top:0"><span class="foot-note" data-i18n="fa.ev.note"></span></div>
     </div>
 
     <!-- ══ ЧЕСТНОСТЬ СЧЁТА ══
@@ -1505,7 +1530,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
         <span class="hint" id="faJournalFoot">-</span>
         <span class="hint" id="faJournalBroken" hidden>-</span>
       </div>
-      <div class="ledger-foot" style="padding-top:0"><span class="stamp" data-i18n="fa.jr.note"></span></div>
+      <div class="ledger-foot" style="padding-top:0"><span class="foot-note" data-i18n="fa.jr.note"></span></div>
     </div>
   </div>
 
@@ -1651,141 +1676,45 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
   </div>
   </section><!-- /zoneTrade -->
 
-  <!-- ══════════════════ ЗОНА Ⅰ · АНАЛИЗ СТРАТЕГИЙ (история · гипотеза) ══════════════════ -->
+  <!-- ══════════════════ ЗОНА Ⅰ · РЫНОК БОТА ══════════════════
+       ТРИ ТЕКСТА ШАПКИ ПЕРЕПИСАНЫ ВСЛЕД ЗА СОДЕРЖИМЫМ, и это не косметика. Зона называлась
+       «Анализ стратегий», ярлык обещал гипотезу, подсказка объясняла, что период и плечо действуют
+       только здесь. Ни гипотезы, ни периода, ни плеча в зоне не осталось - все три текста стали бы
+       ложью, а ложная шапка хуже отсутствующей: она отвечает на вопрос, которого никто не задавал.
+       Зона показывает ОДИН рынок - тот, который выбрал бот, - и говорит о нём то, что видит сам
+       бот: горизонт правила, первичные ставки бирж и модель круга издержек. ══════════════════ -->
   <section id="zoneAnalysis" class="zone zone-analysis" aria-labelledby="zoneAnalysisHead">
     <div class="zone-head">
-      <span class="zn" id="zoneAnalysisHead" data-i18n="fa.za.title">Ⅰ · Анализ стратегий</span>
-      <span class="tag" data-i18n="fa.za.tag">история · гипотеза · не бумажный счёт</span>
+      <span class="zn" id="zoneAnalysisHead" data-i18n="fa.za.title">Ⅰ · Рынок бота</span>
+      <span class="tag" data-i18n="fa.za.tag">рынок выбирает бот · переключателей нет</span>
+      <span class="cfg-pill" id="zaMarketPill">-</span>
       <span class="rule"></span>
-      <span class="hint" data-i18n="fa.za.hint">период и плечо действуют только здесь</span>
+      <span class="hint" data-i18n="fa.za.hint">окно 30 суток - горизонт правила входа</span>
     </div>
+  <!-- ЧЕСТНОЕ ПУСТОЕ СОСТОЯНИЕ, А НЕ НОЛЬ. Пока нет ни сделки, ни ЦИКЛА РЕШЕНИЯ, рынка у зоны нет,
+       и панели гасятся целиком: серия «загружается» на месте, где грузить нечего, читается как
+       поломка, а нули читались бы как измеренные. Полоса называет причину и зовёт на пульт. -->
+  <div class="trade-empty" id="zaEmpty" role="status" hidden>
+    <span data-i18n="fa.za.emptyText"></span>
+  </div>
 
-  <!-- ══════════════════ CONTROL TOOLBAR (C) ══════════════════ -->
-  <nav class="toolbar reveal" aria-label="Параметры расчёта" data-i18n-aria="fa.tb.aria">
-    <div class="ctl">
-      <label id="assetLbl" data-i18n="fa.tb.instr">Инструмент</label>
-      <div class="assetsel" id="assetSel" role="group" aria-labelledby="assetLbl"></div>
-    </div>
-    <div class="ctl">
-      <label data-i18n="fa.tb.strat">Стратегия</label>
-      <div class="seg" id="stratSel" role="group" aria-label="Стратегия" data-i18n-aria="fa.tb.strat">
-        <button data-v="two" aria-pressed="true" data-i18n="fa.tb.stratTwo">Дельта-нейтральная · 2 ноги</button>
-        <button data-v="one" aria-pressed="false" data-i18n="fa.tb.stratOne">Одна нога · GMX carry</button>
-      </div>
-    </div>
-    <div class="ctl" id="cfgWrap">
-      <label data-i18n="fa.tb.cfg">Конфигурация</label>
-      <div class="seg" id="cfgSel" role="group" aria-label="Конфигурация ног" data-i18n-aria="fa.tb.cfgAria">
-        <button data-v="A" aria-pressed="true" class="num">A · short GMX + long HL</button>
-        <button data-v="B" aria-pressed="false" class="num">B · long GMX + short HL</button>
-      </div>
-    </div>
-    <div class="ctl">
-      <label data-i18n="fa.tb.win">Период</label>
-      <div class="seg" id="winSel" role="group" aria-label="Период данных" data-i18n-aria="fa.tb.winAria">
-        <button data-v="1"   class="num" aria-pressed="true" data-i18n="fa.tb.d1">1д</button>
-        <button data-v="7"   class="num" aria-pressed="false" data-i18n="fa.tb.d7">7д</button>
-        <button data-v="30"  class="num" aria-pressed="false" data-i18n="fa.tb.d30">30д</button>
-        <button data-v="90"  class="num" aria-pressed="false" data-i18n="fa.tb.d90">90д</button>
-        <button data-v="365" class="num" aria-pressed="false" data-i18n="fa.tb.d365">365д</button>
-      </div>
-    </div>
-    <div class="ctl">
-      <label data-i18n="fa.tb.mode">Режим P&amp;L</label>
-      <div class="seg semantic" id="modeSel" role="group" aria-label="Режим расчёта P&L" data-i18n-aria="fa.tb.modeAria">
-        <button data-v="gross" aria-pressed="true" data-i18n="fa.tb.gross">Брутто</button>
-        <button data-v="net"   aria-pressed="false" data-i18n="fa.tb.net">Нетто · после издержек</button>
-      </div>
-    </div>
-    <div class="ctl" style="justify-content:center; margin-left:auto">
-      <label aria-hidden="true">&nbsp;</label>
-      <button id="recalcBtn" class="recalc-btn" title="Полный пересчёт: синхронизировать выбранные параметры с движком, обновить живые данные и перерисовать все разделы заново" data-i18n-title="fa.tb.recalcTitle" data-i18n="fa.tb.recalc">⟳ Пересчёт</button>
-    </div>
-    <div class="ctl" style="justify-content:center">
-      <label aria-hidden="true">&nbsp;</label>
-      <button class="help-btn" data-help="toolbar">?</button>
-    </div>
-  </nav>
+  <!-- ПЕРЕКЛЮЧАТЕЛЕЙ ЗДЕСЬ БОЛЬШЕ НЕТ, И ЗАВОДИТЬ ИХ НЕЛЬЗЯ. Стоял тулбар из пяти органов
+       (инструмент, стратегия, конфигурация, период, режим P&L) и кнопки полного пересчёта. Все
+       шесть отвечали на вопрос «что показать», которого у полного автомата не существует: рынок и
+       конфигурацию выбирает правило входа, окно задано горизонтом правила (720 ч = 30 суток), а
+       режим «до/после издержек» описывал гипотезу, которой в этой зоне больше нет.
+       Выбор приходит ОДНИМ путём - из главного процесса, `faViewSelection()`, полем `selection`
+       датасета. Второго правила выбора в отрисовщике нет и быть не должно. -->
 
-  <!-- ══════════════════ HERO - ДОХОДНОСТЬ (A) ══════════════════ -->
-  <section class="grid reveal" style="animation-delay:.08s">
-    <div class="hero">
-      <div class="hero-main">
-        <div class="topline">
-          <span class="cfg-pill" id="heroCfg">Конфигурация <b>A</b></span>
-          <span class="mode-pill mode-gross" id="heroMode">БРУТТО · до издержек</span>
-          <button class="help-btn" data-help="hero">?</button>
-        </div>
-        <div class="pnl-hero" aria-live="polite" aria-atomic="true">
-          <span class="lbl"><span id="heroLbl">Оценка P&amp;L за окно · история (гипотеза)</span> · <span id="heroCtx" class="mono">$1k · 1x · 1д</span></span>
-          <span class="val" id="heroPnl"><span class="cur">$</span>-</span>
-        </div>
-        <div class="hero-kpis">
-          <div class="kpi">
-            <div class="lbl" data-i18n="fa.hero.ret">Доходность за период</div>
-            <div class="v" id="heroRet">0%</div>
-            <div class="sub" id="heroRetSub" data-i18n="fa.hero.retSub0">к инвестированному капиталу</div>
-          </div>
-          <div class="kpi">
-            <div class="lbl" data-i18n="fa.hero.apr">APR · в годовом выражении</div>
-            <div class="v" id="heroApr">0%</div>
-            <div class="sub" id="heroAprSub" data-i18n="fa.hero.aprSub0">медианная (устойчивая к выбросам): -</div>
-          </div>
-        </div>
-        <div class="hero-foot">
-          <div class="it"><span class="k" data-i18n="fa.hero.notional">ноционал на ногу</span><span class="num" id="heroNotional">-</span></div>
-          <div class="it"><span class="k" data-i18n="fa.hero.perHr">$/час</span><span class="num" id="heroPerHr">-</span></div>
-          <div class="it"><span class="k" data-i18n="fa.hero.dd">макс. просадка</span><span class="num neg" id="heroDD">-</span></div>
-          <div class="it"><span class="k" data-i18n="fa.hero.hours">часов в периоде</span><span class="num" id="heroHours">-</span></div>
-        </div>
-        <!-- РУЧНОГО ЗАПУСКА ЗДЕСЬ БОЛЬШЕ НЕТ. Стояла кнопка «▶ Открыть позицию вручную» и её
-             тикет: второй путь запуска, оставшийся от однорежимного приложения. Он отвечал на тот
-             же вопрос «работает ли бот», что и автомат, и ответы расходились. Зона анализа теперь
-             считает ТОЛЬКО гипотезу по истории: её селекторы, матрица и кривая никого не
-             открывают. Открывает позиции автомат, рубильник у него один, на пульте зоны Ⅱ. -->
-      </div>
+  <!-- ГИПОТЕЗЫ ЗДЕСЬ БОЛЬШЕ НЕТ. Стоял герой «Оценка P&L за окно · история (гипотеза)» и рядом
+       матрица «капитал × плечо»: шестнадцать сценариев по истории окна, ни один из которых не был
+       ни сделкой, ни решением бота. Матрица к тому же была ЕДИНСТВЕННЫМ местом, где выбирались
+       капитал и плечо, то есть двумя переключателями сверх тулбара. У полного автомата капитал
+       и плечо это замороженные параметры взвода, и они показаны в тикете и на пульте. -->
 
-      <div class="matrix-wrap">
-        <div class="matrix-head">
-          <span class="ttl" data-i18n="fa.mx.title">Капитал × плечо</span>
-          <span class="leg"><span data-i18n="fa.mx.leg">сценарии по истории окна · не бумажный счёт</span></span>
-          <button class="help-btn" data-help="matrix">?</button>
-        </div>
-        <div class="matrix" id="matrix" role="radiogroup" aria-label="Сценарий: капитал × плечо" data-i18n-aria="fa.mx.aria">
-          <div class="corner" aria-hidden="true"></div>
-          <div class="colh" aria-hidden="true" data-i18n="fa.mx.col1">1× плечо</div>
-          <div class="colh" aria-hidden="true" data-i18n="fa.mx.col10">10× плечо</div>
-          <!-- rows injected -->
-        </div>
-        <div class="cost-note" style="margin-top:12px">
-          <span data-i18n="fa.mx.note1">В ячейке - чистый P&amp;L, ниже - APR. Расчёт учитывает режим</span>
-          (<span id="mxMode">брутто</span>) <span data-i18n="fa.mx.note2">и период</span> (<span id="mxWin" class="mono">365д</span>).
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ══════════════════ EQUITY CURVE (B) ══════════════════ -->
-  <section class="grid reveal" style="animation-delay:.12s">
-    <div class="card">
-      <div class="sec-head">
-        <h2 data-i18n="fa.eq.title">Кривая капитала · история за окно (гипотеза)</h2>
-        <button class="help-btn" data-help="equity">?</button>
-        <span class="tag" id="eqTag">$100k · 1x</span>
-        <span class="rule"></span>
-        <span class="hint" data-i18n="fa.eq.hint">затенение - просадка от пика · режим брутто/нетто - в панели управления</span>
-      </div>
-      <div class="chart-box">
-        <canvas id="equityCanvas" class="equity-canvas" aria-label="График кривой капитала" data-i18n-aria="fa.eq.canvasAria"></canvas>
-        <div class="chart-tip" id="equityTip"></div>
-      </div>
-      <div class="legend">
-        <div class="it"><span class="sw line" style="background:var(--pos)"></span><span data-i18n="fa.eq.legEquity">капитал (equity = депозит + накопленный P&amp;L)</span></div>
-        <div class="it"><span class="sw" style="background:color-mix(in srgb, var(--neg) 28%, transparent)"></span><span data-i18n="fa.eq.legDd">просадка (drawdown)</span></div>
-        <div class="it"><span class="sw line" style="background:var(--neu);opacity:.7"></span><span data-i18n="fa.eq.legStart">начальный капитал</span></div>
-      </div>
-    </div>
-  </section>
+  <!-- КРИВОЙ ГИПОТЕЗЫ ЗДЕСЬ БОЛЬШЕ НЕТ. Стоял `#equityCanvas`: капитал выбранного сценария по
+       истории окна. НЕ ПУТАТЬ с кривой капитала СЧЁТА (`#fwdCanvas`, зона Ⅱ) - та показывает
+       реальную накопленную equity позиции с t0 и остаётся на месте. -->
 
   <!-- ══════════════════ ПРОЗРАЧНОСТЬ ДАННЫХ (D) ══════════════════ -->
   <section class="grid reveal" style="animation-delay:.16s">
@@ -1880,46 +1809,50 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
     </div>
   </section>
 
-  <!-- ══════════════════ СТРАТЕГИЯ (E) + ИЗДЕРЖКИ (F) ══════════════════ -->
+  <!-- ══════════════════ ИЗДЕРЖКИ (F) ══════════════════
+       СВОДКИ ПО СТРАТЕГИИ ЗДЕСЬ БОЛЬШЕ НЕТ. Она стояла слева в паре с этой карточкой и объясняла
+       ВЫБОР ОПЕРАТОРА: почему конфигурация A лучше B на выбранном окне, что даёт выбранный период.
+       Выбора нет, объяснять нечего, а её числа (доля положительных часов, смены знака, вклад ног)
+       это статистика окна, а не решение бота: решение со своими числами стоит на пульте автомата и
+       в журнале решений.
+       КАРТОЧКА ИЗДЕРЖЕК ОСТАЛАСЬ, потому что объясняет КРУГ, а не гипотезу: сколько стоит вход и
+       выход. Её поля редактируемы и уезжают в `settings.costs`, то есть в тот самый набор, которым
+       правило входа считает свои нетто, - это модель, а не переключатель вида. ══════════════════ -->
   <section class="grid reveal" style="animation-delay:.2s">
-    <div class="two-col">
-
-      <!-- strategy summary -->
-      <div class="card">
-        <div class="sec-head">
-          <h2 data-i18n="fa.strat.title">Сводка по стратегии</h2>
-          <button class="help-btn" data-help="strategy">?</button>
-          <span class="tag" id="stratTag">Конфигурация A</span>
-          <span class="rule"></span>
-        </div>
-        <div class="why-box" id="whyBox"></div>
-        <div class="dl" id="stratSummary"></div>
-      </div>
 
       <!-- cost model -->
       <div class="card">
         <div class="sec-head">
           <h2 data-i18n="fa.costs.title">Транзакционные издержки · модель</h2>
           <button class="help-btn" data-help="costs">?</button>
+          <span class="tag" id="costSrcTag">-</span>
           <span class="rule"></span>
         </div>
         <div id="costRows"></div>
+        <!-- НОЦИОНАЛ БОЛЬШЕ НЕ ВЫБИРАЕТСЯ. Он приходил из матрицы «капитал × плечо», то есть был
+             сценарием оператора; теперь это РАЗМЕР БОТА - ноционал открытой сделки, а без сделки
+             размер, который правило входа назначило лучшему кандидату последней оценки. Пока нет
+             ни того, ни другого, здесь прочерк: круг по неизвестному размеру это выдуманное число. -->
         <div class="cost-total">
-          <span class="k"><span data-i18n="fa.costs.oneOff">Разовые издержки (вход+выход) · ноционал</span> <span id="costNotional" class="num">$1k</span></span>
-          <span class="v neg" id="costTotal">−$0</span>
+          <span class="k"><span data-i18n="fa.costs.oneOff">Разовые издержки (вход+выход) · ноционал</span> <span id="costNotional" class="num">-</span></span>
+          <span class="v neg" id="costTotal">-</span>
         </div>
+        <!-- НЕТТО СЧИТАЕТ ДВИЖОК, А НЕ ЭТА КАРТОЧКА. Здесь стояло «чистый результат после
+             издержек» = кумулятив гипотезы минус круг, посчитанный в отрисовщике. Гипотезы нет, а
+             своё нетто у интерфейса заводить запрещено: показанное число это `netUsd` кривой
+             правила входа за его горизонт, издержки в нём уже вычтены самим правилом. -->
         <div class="cost-total" style="border-top:0; padding-top:4px">
-          <span class="k" data-i18n="fa.costs.after">Чистый результат после издержек</span>
-          <span class="v" id="costAfter">$0</span>
+          <span class="k" data-i18n="fa.costs.netEng"></span>
+          <span class="v" id="costAfter">-</span>
         </div>
         <div class="blue-hint"><span class="sw"></span><span data-i18n="fa.costs.blueHint">синие поля редактируемы · мгновенный пересчёт</span></div>
         <div class="cost-note" data-i18n="fa.costs.note">
-          Позиция удерживается весь период, поэтому торговые комиссии - РАЗОВЫЕ (один вход и выход на ногу),
-          а не ежечасные. Финансирование и заимствование GMX уже учтены в брутто-P&amp;L (непрерывно).
+          Позиция удерживается весь горизонт, поэтому торговые комиссии - РАЗОВЫЕ (один вход и выход на ногу),
+          а не ежечасные. Фандинг и заимствование GMX уже учтены в брутто-P&amp;L (непрерывно). Ноционал берётся
+          у бота: у открытой сделки её собственный, иначе размер лучшего кандидата последней оценки.
         </div>
       </div>
 
-    </div>
   </section>
 
   <!-- ══════════════════ ИНСПЕКТОР СЫРЫХ ДАННЫХ (D) ══════════════════ -->
@@ -1947,31 +1880,13 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
     </div>
   </section>
 
-  <!-- ══════════════════ SCANNER RANKING (E) ══════════════════ -->
-  <section class="grid reveal" style="animation-delay:.28s">
-    <div class="card flush">
-      <div class="sec-head" style="padding:16px 16px 0; margin-bottom:10px">
-        <h2 data-i18n="fa.scr.title">Скринер инструментов · ранжирование</h2>
-        <button class="help-btn" data-help="scanner">?</button>
-        <span class="tag amber" data-i18n="fa.scr.tagMedian">ранжирование по медиане · устойчиво к выбросам</span>
-        <span class="tag" id="scanWinTag">окно -</span>
-        <span class="rule"></span>
-        <span class="hint" data-i18n="fa.scr.hint">средние искажены выбросами на низколиквидных рынках · медиана устойчивее к выбросам</span>
-      </div>
-      <div class="table-scroll" style="max-height:none">
-        <table class="scan" id="scanTable">
-          <thead>
-            <tr>
-              <th class="lft">#</th><th class="lft" data-i18n="fa.pos.thInstr">Инструмент</th><th class="lft" data-i18n="fa.pos.thCfg">Конфиг</th>
-              <th data-i18n="fa.scr.thMed">Net APR (медиана)</th><th data-i18n="fa.scr.thMean">Net APR (среднее)</th>
-              <th data-i18n="fa.scr.thPos">Доля&nbsp;&gt;&nbsp;0</th><th data-i18n="fa.scr.thFlips">Смен знака</th><th class="lft" data-i18n="fa.pos.thStatus">Статус</th>
-            </tr>
-          </thead>
-          <tbody id="scanBody"></tbody>
-        </table>
-      </div>
-    </div>
-  </section>
+  <!-- СКРИНЕРА ЗДЕСЬ БОЛЬШЕ НЕТ. Он ранжировал инструменты по МЕДИАННОМУ историческому net APR за
+       окно оператора и брал ТОЛЬКО двуногие рынки, то есть два из пяти. Ни набор, ни мера, ни
+       окно не совпадали с тем, чем выбирает бот: правило входа смотрит все пять рынков, считает
+       НЕТТО ЗА ГОРИЗОНТ при торгуемом размере и учитывает потолки, стакан и разбавление. Две
+       разные таблицы «лучших рынков» рядом это два ответа на один вопрос, и второй был не тот.
+       Его место заняла карточка «Последняя оценка» на пульте зоны Ⅱ: те же пять рынков, но
+       числами движка. -->
 
   <!-- ══════════════════ FOOTER - ОГОВОРКИ ЧЕСТНОСТИ (G) ══════════════════ -->
   </section><!-- /zoneAnalysis -->
@@ -1980,12 +1895,12 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
     <h3 data-i18n="fa.foot.title">Риски, допущения и ограничения модели</h3>
     <div class="disc">
       <div class="d"><span class="i r">P</span><span><b data-i18n="fa.foot.d1b">Режим PAPER (симуляция).</b> <span data-i18n="fa.foot.d1">Модель рассчитывает доходность гипотетического капитала на фактических исторических данных бирж; ордера не исполняются, реальный капитал и API-ключи не задействованы.</span></span></div>
-      <div class="d"><span class="i r">L</span><span><b data-i18n="fa.foot.d2b">Риск ликвидации при использовании плеча.</b> <span data-i18n="fa.foot.d2">Ноционал = капитал × плечо. При 10× и P&amp;L, и разовые издержки масштабируются десятикратно, и возникает риск ликвидации, не учитываемый carry-моделью финансирования.</span></span></div>
-      <div class="d"><span class="i a">M</span><span><b data-i18n="fa.foot.d3b">Устойчивость к выбросам: медиана против среднего.</b> <span data-i18n="fa.foot.d3">Редкие скачки ставок могут резко завышать среднее, особенно на тонких рынках. Поэтому скринер ранжирует текущий набор по медиане, а обе метрики рассчитываются заново из выбранного живого окна.</span></span></div>
-      <div class="d"><span class="i b">B</span><span><b data-i18n="fa.foot.d4b">Короткие окна шумны.</b> <span data-i18n="fa.foot.d4">Годовая оценка по 1–7 дням чувствительна к отдельным часам и не является прогнозом. Проверяйте медиану, долю положительных часов, смены знака и ликвидность вместе.</span></span></div>
-      <div class="d"><span class="i a">D</span><span><b data-i18n="fa.foot.d5b">Актуальность данных.</b> <span data-i18n="fa.foot.d5">Историческое окно (до 365 дней) подтягивается с бирж и дополняется каждый час; текущие ставки опрашиваются каждые несколько минут. Фактическая свежесть - в отметке «данные по состоянию на &lt;UTC&gt;» вверху.</span></span></div>
+      <div class="d"><span class="i r">L</span><span><b data-i18n="fa.foot.d2b">Риск ликвидации.</b> <span data-i18n="fa.foot.d2">Ноционал ноги = капитал × плечо, и оба числа заморожены при взводе автомата (они в тикете и на пульте). Риск ликвидации carry-модель фандинга не учитывает: за ним отдельно следит сторож залога, его запас показан на карточке честности счёта.</span></span></div>
+      <div class="d"><span class="i a">M</span><span><b data-i18n="fa.foot.d3b">Рынок выбирает правило входа, а не рейтинг ставок.</b> <span data-i18n="fa.foot.d3">Выбор идёт по НЕТТО ЗА ГОРИЗОНТ при том размере, которым бот реально войдёт, с учётом свободного места на площадке, стакана и разбавления собственным входом. Средние и медианы исторических ставок в этот выбор не входят.</span></span></div>
+      <div class="d"><span class="i b">B</span><span><b data-i18n="fa.foot.d4b">Горизонт правила - 720 часов.</b> <span data-i18n="fa.foot.d4">Панели рынка показывают ровно те 30 суток, на которых бот принимает решение. Более коротких окон здесь нет намеренно: сравнивать нетто на окнах разной длины значит сравнивать разные единицы.</span></span></div>
+      <div class="d"><span class="i a">D</span><span><b data-i18n="fa.foot.d5b">Актуальность данных.</b> <span data-i18n="fa.foot.d5">Историческое окно подтягивается с бирж и дополняется каждый час; текущие ставки опрашиваются каждые несколько минут; вселенную бот пересчитывает раз в сутки. Свежесть данных - в отметке «данные по состоянию на &lt;UTC&gt;» вверху, время последней оценки - в её карточке.</span></span></div>
       <div class="d"><span class="i b">F</span><span><b data-i18n="fa.foot.d6b">Точность исполнения ограничена.</b> <span data-i18n="fa.foot.d6">Paper-ledger использует живые ставки, но не моделирует ликвидацию, динамический price impact, фактическое проскальзывание и кросс-биржевой ценовой базис. Эти риски нельзя выводить из показанного funding P&amp;L.</span></span></div>
-      <div class="d"><span class="i a">Z</span><span><b data-i18n="fa.foot.d7b">Две зоны - два смысла P&amp;L.</b> <span data-i18n="fa.foot.d7">«Ⅱ · Торговля» показывает реализованный результат позиций счёта с момента запуска (t0), всегда нетто. «Ⅰ · Анализ» - историческую гипотезу за выбранное окно (знак «≈»). Период, режим брутто/нетто и плечо анализа на торговый счёт не влияют.</span></span></div>
+      <div class="d"><span class="i a">Z</span><span><b data-i18n="fa.foot.d7b">Две зоны - два вопроса.</b> <span data-i18n="fa.foot.d7">«Ⅱ · Торговля» отвечает, что бот сделал: реализованный результат позиций счёта с момента запуска (t0), всегда нетто. «Ⅰ · Рынок бота» отвечает, на что он смотрит: первичные данные рынка, который выбрало правило входа. Переключателей нет ни в той, ни в другой.</span></span></div>
     </div>
     <div class="foot-src">
       <span data-i18n="fa.foot.src">Источники: GMX Subsquid (gmx-synthetics) · Hyperliquid info API · Binance 1h klines</span>
@@ -3297,9 +3212,6 @@ let ONE_LEG = {
     pctPos:null, flips:null, longsPayPct:null, shortsPayPct:null, ddPct:null, hours:0 },
 };
 
-/* ── Scanner ranking: ПУСТОЙ до живого скана (никаких фиктивных строк). ── */
-let SCANNER = [];
-
 /* ── default cost model (editable) - из AUDIT cost-model; правится в панели ниже ── */
 const COSTS = {
   gmxOpen:   0.06,   // % notional
@@ -3313,19 +3225,25 @@ const COST_LIMITS = { gmxOpen:100, gmxClose:100, gmxImpact:100, gmxGas:1000000, 
 
 /* ============================================================================
    LIVE DATA BRIDGE (main-процесс → рендерер). applyDataset полностью замещает
-   TWO_LEG/ONE_LEG/SCANNER живыми данными (без подмешивания seed-значений),
-   хранит серию графиков С МЕТКОЙ ВЫБОРА (series.forKey), бумажные позиции,
-   сводку счёта и штамп свежести. Всё остальное (render/draw) - без изменений.
+   TWO_LEG/ONE_LEG живыми данными (без подмешивания seed-значений), хранит серию графиков
+   С МЕТКОЙ ВЫБОРА (series.forKey), бумажные позиции, сводку счёта и штамп свежести.
+
+   ЗДЕСЬ ЖЕ ПРИЕЗЖАЕТ ВЫБОР РЫНКА, и это единственное место, где `state.strat/asset/cfg/win`
+   получают значение. Раньше выбор восстанавливался один раз на старте, а дальше его вёл тулбар;
+   теперь он МЕНЯЕТСЯ САМ - когда бот открыл сделку, закрыл её или переложился, - и обязан
+   приезжать каждым пушем, иначе панели остались бы на прошлом рынке с меткой нового.
    ========================================================================== */
-const LIVE = { ready:false, series:null, positions:[], fresh:null, account:null, auto:null, scannerWinDays:null };
+const LIVE = { ready:false, series:null, positions:[], fresh:null, account:null, auto:null };
 
 // Ключ текущего выбора - серия рендерится ТОЛЬКО если её forKey совпадает (аудит D5).
 function selKey(){
+  if(!state.asset) return null;                    // рынка нет - совпадать не с чем
   const cfg = state.strat==='one' ? 'A' : state.cfg;
   return state.strat+'|'+state.asset+'|'+cfg+'|'+state.win;
 }
 function matchedSeries(){
-  return (LIVE.series && LIVE.series.forKey===selKey()) ? LIVE.series : null;
+  const k = selKey();
+  return (k && LIVE.series && LIVE.series.forKey===k) ? LIVE.series : null;
 }
 
 function costFocusActive(){
@@ -3337,8 +3255,15 @@ function applyDataset(ds){
   if(!ds) return;
   if(ds.twoLeg)  TWO_LEG = ds.twoLeg;
   if(ds.oneLeg)  ONE_LEG = ds.oneLeg;
-  if(ds.scanner) SCANNER = ds.scanner;
-  LIVE.scannerWinDays = Number.isFinite(Number(ds.scannerWinDays)) ? Number(ds.scannerWinDays) : null;
+  // Выбор рынка. Приходит целиком, ВКЛЮЧАЯ пустой: `asset === null` означает «ни сделки, ни
+  // оценки», и подставлять на его место прежний рынок значило бы показывать чужие данные.
+  if(ds.selection){
+    state.strat   = ds.selection.strat  ?? null;
+    state.asset   = ds.selection.asset  ?? null;
+    state.cfg     = ds.selection.cfg    ?? null;
+    state.win     = Number.isFinite(Number(ds.selection.win)) ? Number(ds.selection.win) : state.win;
+    state.selFrom = ds.selection.from   ?? null;
+  }
   LIVE.series    = ds.series || null;   // null очищает: чужая серия не показывается
   LIVE.positions = ds.positions || [];
   LIVE.fresh     = ds.fresh || LIVE.fresh;
@@ -3355,19 +3280,21 @@ function applyDataset(ds){
 /* ============================================================================
    STATE
    ========================================================================== */
+/* ВЫБОРА ЗДЕСЬ БОЛЬШЕ НЕ ПРИНИМАЕТСЯ НИ ОДНОГО. Поля рынка ЗЕРКАЛЯТ `ds.selection`, которое
+   собирает главный процесс (`faViewSelection`) из открытой сделки или лучшего кандидата последней
+   оценки. Писать в них откуда-либо ещё запрещено: это было бы второе правило выбора, и оно молча
+   разошлось бы с первым - ровно тот класс дефекта, который проект ловил четырежды.
+   `cap`/`lev`/`mode` сняты вместе с матрицей и режимом P&L: сценариев по истории зона больше не
+   строит, а капитал и плечо бота это замороженные параметры взвода, они на пульте. */
 const state = {
-  strat: 'two',       // two | one
-  asset: 'ETH',       // two-leg: ETH|BTC ; one-leg: ETH-Arb|BTC-Arb|ETH-Avax
-  cfg:   'A',
-  win:   1,           // 1 | 7 | 30 | 90 | 365  (дефолт - самое короткое окно)
-  mode:  'gross',     // gross | net
-  cap:   1000,        // selected capital - по умолчанию МИНИМАЛЬНЫЙ из матрицы (CAPS[0])
-  lev:   1,           // selected leverage (matrix)
+  strat: null,        // two | one            из ds.selection
+  asset: null,        // ETH|BTC | ETH-Arb…   из ds.selection
+  cfg:   null,        // A | B                из ds.selection
+  win:   30,          // горизонт правила входа, 720 ч = 30 суток; из ds.selection.win
+  selFrom: null,      // position | candidate | null - ЧЕМ обоснован выбор рынка
   live:  false,
   view:  'home',      // активный вид оболочки: home | funding-arb | btc-options
 };
-const CAPS = [1000, 10000, 100000, 1000000];
-const LEVS = [1, 10];
 
 /* ============================================================================
    ПРОФИЛЬ / P&L / СЕРИИ - только живые данные (PRNG-генераторы удалены, аудит D4)
@@ -3410,48 +3337,17 @@ function oneOffCost(notional, isOne){
   if (!isOne) c += notional*(COSTS.hlTaker/100)*COSTS.hlSides;
   return c;
 }
-// ИСТОРИЧЕСКАЯ оценка за окно (гипотеза, НЕ бумажный счёт). Считается ТОЛЬКО по живой
-// серии, совпадающей с текущим выбором (matchedSeries); до её загрузки pnl === null и
-// потребители показывают «история загружается…». Аннуализация - по ФАКТИЧЕСКОМУ горизонту
-// данных серии (series.nDays), а не по запрошенному окну (аудит D9).
-function computePnL(cap, lev){
-  const prof = activeProfile();
-  const notional = cap * lev;
-  const cost = oneOffCost(notional, prof.isOne);
-  const s = matchedSeries();
-  const base = s && s.equityBaseCum;
-  if (!base || base.length<2){
-    return { notional, gross:null, cost, net:null, pnl:null, ret:null, apr:null, prof, nDays:null, hours:null, ddPct:null, loading:true };
-  }
-  const gross = base[base.length-1] * notional;
-  const net   = gross - cost;
-  const pnl   = state.mode==='net' ? net : gross;
-  const nDays = s.nDays || (base.length-1);
-  const hours = s.hours || nDays*24;
-  const ret   = pnl/cap;
-  const apr   = nDays>0 ? ret * (365/nDays) : null;
-  // просадка ТЕКУЩЕГО окна (доля ноционала) из той же серии, что и все остальные числа героя;
-  // раньше сюда попадал полнокадровый (365д) ddPct профиля - окно и просадка расходились
-  const ddPct = Number.isFinite(s.ddPct) ? s.ddPct : prof.ddPct;
-  return { notional, gross, cost, net, pnl, ret, apr, prof, nDays, hours, ddPct, loading:false };
-}
+// ГИПОТЕТИЧЕСКОГО P&L ЗДЕСЬ БОЛЬШЕ НЕ СЧИТАЕТСЯ. Стояла `computePnL(cap, lev)`: кумулятив окна на
+// выбранный сценарий, минус круг издержек, с режимом брутто/нетто. Её потребителями были герой,
+// матрица и кривая гипотезы - все трое сняты. Нетто за горизонт по каждому рынку теперь называет
+// ДВИЖОК (`netUsd` кривой правила входа), и второго счёта в интерфейсе нет.
 
 /* ── Серии графиков: ТОЛЬКО живая история текущего выбора (matchedSeries).
    Синтетические PRNG-фолбэки удалены (аудит D4): пока серии нет - build* возвращают
    null и renderCharts рисует заглушку «история загружается…». ── */
 
-/* equity-кривая: реальный кумулятив из истории (series.equityBaseCum, per-$1). */
-function buildEquity(cap, lev){
-  const s = matchedSeries();
-  const base = s && s.equityBaseCum;
-  if(!base || base.length<2) return null;
-  const notional=cap*lev, nDays=base.length-1;
-  const cost = state.mode==='net' ? oneOffCost(notional, activeProfile().isOne) : 0;
-  const cum = base.map((x,i)=> x*notional - (i>0?cost:0));   // net-режим: сдвиг на издержки после входа
-  const eq  = cum.map(c=>cap+c);
-  let peak=-Infinity; const dd=eq.map(v=>{ peak=Math.max(peak,v); return v-peak; });
-  return { eq, cum, dd, cap, nDays, unit: (s.bucketUnit==='hour'?t('fa.unit.h'):t('fa.unit.d')) };
-}
+/* Кривой ГИПОТЕЗЫ здесь больше нет (`buildEquity`). Кривая капитала СЧЁТА живёт своей функцией в
+   зоне Ⅱ и рисуется тем же `drawEquity` из реальных начислений позиции. */
 
 /* нетто-спред (для бар-чарта): реальные средние net APR по бакету (час/день по окну). */
 function buildSpread(){
@@ -3703,88 +3599,9 @@ function setBigPnl(el, v, est){
   el.innerHTML = approx + '<span class="cur">'+(v<0?'−$':'$')+'</span>' + Math.round(Math.abs(v)).toLocaleString('en-US');
   el.className = 'val ' + clsSign(v) + (est ? ' est' : '');
 }
-function renderHero(){
-  const big = $('heroPnl');
-  const setBig = (v, est)=> setBigPnl(big, v, est);
-
-  // Герой зоны АНАЛИЗА - ВСЕГДА историческая оценка (гипотеза) по текущему выбору селекторов.
-  // Реализованный P&L бумажных позиций показывает только зона «Торговля» (renderTrade):
-  // двухрежимный «хамелеон» устранён архитектурно (редизайн 2026-07, вопрос «застывшие −$373»).
-  const p = computePnL(state.cap, state.lev);
-  $('heroLbl').textContent = t('fa.hero.lbl');
-  if (p.loading){
-    setBig(NaN);
-    $('heroCtx').textContent = t('fa.chart.loading');
-    $('heroRet').textContent='-'; $('heroRet').className='v faint';
-    $('heroApr').textContent='-'; $('heroApr').className='v faint';
-    $('heroAprSub').textContent = t('fa.hero.wait');
-    $('heroNotional').textContent = fmtUSD(state.cap*state.lev,0);
-    $('heroPerHr').textContent='-'; $('heroDD').textContent='-'; $('heroHours').textContent='-';
-  } else {
-    setBig(p.pnl, true); // est=true: историческая ГИПОТЕЗА, не реализованный P&L - помечаем «≈»
-    $('heroCtx').textContent = fmtUSD(state.cap,0) + ' · ' + state.lev + 'x · ' + t('fa.hero.ctxData',{n:p.nDays,m:state.win});
-    $('heroRet').textContent = fmtPct(p.ret); $('heroRet').className='v '+clsSign(p.ret);
-    $('heroRetSub').textContent = t('fa.hero.retSub2');
-    $('heroApr').textContent = fmtPct(p.apr); $('heroApr').className='v '+clsSign(p.apr);
-    const med = matchedSeries() ? matchedSeries().netMedian : p.prof.netMedian;
-    const shortWin = state.win<=7 ? ' · <span class="neu">'+t('fa.hero.shortWin')+'</span>' : '';
-    $('heroAprSub').innerHTML = t('fa.hero.aprMed',{v:'<span class="'+clsSign(med)+'">'+(Number.isFinite(med)?fmtPct(med):'-')+'</span>'})+shortWin;
-    $('heroNotional').textContent = fmtUSD(p.notional,0);
-    const perHr = p.hours>0 ? p.pnl/p.hours : null;
-    $('heroPerHr').innerHTML = '<span class="'+clsSign(perHr)+'">'+(Number.isFinite(perHr)?fmtUSDfull(perHr):'-')+'</span>';
-    // просадка: доля НОЦИОНАЛА → $ по ноционалу, % - к капиталу (аудит M6/M21/M38);
-    // берётся из серии ТЕКУЩЕГО окна (p.ddPct), согласована с кривой капитала (аудит #3 W1)
-    const ddFrac = p.ddPct;
-    $('heroDD').textContent = Number.isFinite(ddFrac)
-      ? fmtPct(-ddFrac*state.lev) + ' (' + fmtUSDfull(-ddFrac*p.notional) + ')'
-      : '-';
-    $('heroHours').textContent = (p.hours||0).toLocaleString('en-US');
-  }
-
-  // пилюля конфигурации следует СЕЛЕКТОРУ: герой всегда описывает текущий выбор анализа
-  $('heroCfg').innerHTML = state.strat==='one'
-    ? t('fa.hero.oneLeg')
-    : t('fa.hero.cfgPill',{cfg:'<b>'+state.cfg+'</b>'});
-  const m = $('heroMode');
-  if(state.mode==='net'){ m.textContent=t('fa.hero.modeNet'); m.className='mode-pill mode-net'; }
-  else { m.textContent=t('fa.hero.modeGross'); m.className='mode-pill mode-gross'; }
-  $('mxMode').textContent = state.mode==='net'?t('fa.mx.net'):t('fa.mx.gross');
-  $('mxWin').textContent = state.win+t('fa.unit.d');
-  $('eqTag').textContent = fmtUSD(state.cap,0)+' · '+state.lev+'x';
-}
-
-function renderMatrix(){
-  const mx = $('matrix');
-  // удалить старые ряды (оставить 3 заголовка)
-  [...mx.querySelectorAll('.cell,.rowh')].forEach(n=>n.remove());
-  CAPS.forEach(cap=>{
-    const rh=document.createElement('div'); rh.className='rowh'; rh.setAttribute('aria-hidden','true');
-    rh.innerHTML = fmtUSD(cap,0) + '<small>'+t('fa.mx.capSmall')+'</small>';
-    mx.appendChild(rh);
-    LEVS.forEach(lev=>{
-      const p=computePnL(cap,lev);
-      const sel = (cap===state.cap && lev===state.lev);
-      const cell=document.createElement('div'); cell.className='cell'; cell.setAttribute('role','radio'); cell.tabIndex=0;
-      cell.setAttribute('aria-checked', sel?'true':'false');
-      if (p.loading){
-        cell.setAttribute('aria-label',t('fa.mx.cellAriaLoad',{cap:fmtUSD(cap,0),lev}));
-        cell.innerHTML = '<span class="pick" aria-hidden="true">'+t('fa.mx.picked')+'</span>'+
-          '<div class="pnl faint" aria-hidden="true">-</div>'+
-          '<div class="apr" aria-hidden="true">'+t('fa.mx.loading')+'</div>';
-      } else {
-        cell.setAttribute('aria-label',
-          t('fa.mx.cellAria',{cap:fmtUSD(cap,0),lev,pnl:(p.pnl<0?t('fa.mx.minus'):'')+fmtUSD(Math.abs(p.pnl),0),apr:fmtPct(p.apr,1)}));
-        cell.innerHTML = '<span class="pick" aria-hidden="true">'+t('fa.mx.picked')+'</span>'+
-          '<div class="pnl '+clsSign(p.pnl)+'" aria-hidden="true">'+(p.pnl<0?'−':'')+fmtUSD(Math.abs(p.pnl),0)+'</div>'+
-          '<div class="apr" aria-hidden="true">APR '+fmtPct(p.apr,1)+'</div>';
-      }
-      const pick=()=>{ state.cap=cap; state.lev=lev; render(); };
-      cell.onclick=pick;
-      cell.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); pick(); } };
-      mx.appendChild(cell);
-    });
-  });
-}
+/* ГЕРОЯ И МАТРИЦЫ НЕТ. `renderHero` рисовала оценку P&L за окно (гипотезу) и пилюли конфигурации,
+   режима и окна; `renderMatrix` строила шестнадцать сценариев «капитал × плечо» и БЫЛА органом
+   выбора этих двух чисел. Ни гипотезы, ни выбора в зоне не осталось. */
 
 function legUnitLabel(u){ const m={'мес':t('fa.unit.mo'),'нед':t('fa.unit.wk'),'дн':t('fa.unit.dd'),'6ч':t('fa.unit.h6')}; return m[u]||u||t('fa.unit.mo'); }
 
@@ -3877,79 +3694,54 @@ function renderHlPanel(){
     ' · '+(r.hl_rate>0?t('fa.hl.ratePos'):t('fa.hl.rateNeg'));
 }
 
-function renderStrategy(){
-  const prof=activeProfile();
-  const tag = state.strat==='one' ? t('fa.strat.tagOne') : t('fa.hero.cfgPill',{cfg:state.cfg});
-  $('stratTag').textContent=tag; $('spreadTag').textContent=tag; $('inspTag').textContent=tag;
+/* ШАПКА ЗОНЫ «РЫНОК БОТА». Заняла место `renderStrategy`, которая рисовала сводку по стратегии -
+   объяснение ВЫБОРА ОПЕРАТОРА («почему конфигурация A лучше B на выбранном окне»). Выбора нет.
+   Осталось ровно то, что у сводки было общим с прочими панелями: подпись рынка и конфигурации.
 
-  if(state.strat==='one'){
-    const m=ONE_LEG[state.asset] || {};
-    if(!Number.isFinite(m.netMean)){
-      $('whyBox').innerHTML = t('fa.strat.oneWhyLoad',{asset:(m.asset||'-'),chain:(m.chain||'-')});
-      $('stratSummary').innerHTML =
-        dlRow(t('fa.strat.rowGmxMarket'), m.gmxName||'-','white') +
-        dlRow(t('fa.strat.rowAddr'), '<span class="addr">'+(m.gmxAddr||'-')+'</span>','') +
-        dlRow(t('fa.strat.rowChain'), m.chain||'-','dim') +
-        dlRow(t('fa.strat.rowWinStats'), '<span class="faint">'+t('fa.chart.loading')+'</span>','faint');
-      return;
-    }
-    $('whyBox').innerHTML = t('fa.strat.oneWhyLoad',{asset:m.asset,chain:m.chain})+' '+
-      t('fa.strat.oneWhy2',{pct:'<b>'+fmtPctNS(m.longsPayPct)+'</b>'});
-    $('stratSummary').innerHTML =
-      dlRow(t('fa.strat.rowGmxMarket'), m.gmxName,'white') +
-      dlRow(t('fa.strat.rowAddr'), '<span class="addr">'+m.gmxAddr+'</span>','') +
-      dlRow(t('fa.strat.rowChain'), m.chain,'dim') +
-      // окно берём из ШТАМПА самого блока статистики (m.winDays), не из селектора: пуш, собранный
-      // под прежний период, не должен ни на миг подписываться новым (панель без forKey-гарда)
-      dlRow(t('fa.strat.rowWin'), t('fa.strat.winVal',{d:(m.winDays ?? state.win),h:(m.hours||0)}),'dim') +
-      dlRow(t('fa.strat.rowCarryMed'), fmtPct(m.netMedian), clsSign(m.netMedian)) +
-      dlRow(t('fa.strat.rowCarryMean'), fmtPct(m.netMean), clsSign(m.netMean)) +
-      dlRow(t('fa.strat.rowFundShort'), fmtPct(m.fundMean), clsSign(m.fundMean)) +
-      dlRow(t('fa.strat.rowBorrowCost'), fmtPctNS(m.borrowMean),'neu') +
-      dlRow(t('fa.strat.rowCarryPos'), fmtPctNS(m.pctPos),'dim') +
-      dlRow(t('fa.strat.rowFlips'), m.flips,'dim') +
-      dlRow(t('fa.strat.rowPayHours'), fmtPctNS(m.longsPayPct,0)+' / '+fmtPctNS(m.shortsPayPct,0),'dim') +
-      dlRow(t('fa.strat.rowDd'), fmtPct(-m.ddPct)+t('fa.strat.ofNotional'),'neg');
-    return;
+   НИЧЕГО НЕ ВЫБИРАЕТ И НЕ ВЫВОДИТ. Читает `state`, который целиком приехал из `ds.selection`. */
+function renderMarketHead(){
+  const has = !!state.asset;
+  const zone = $('zoneAnalysis'); if(zone) zone.classList.toggle('nomarket', !has);
+  const empty = $('zaEmpty'); if(empty) empty.hidden = has;
+  const tag = !has ? '-' : (state.strat==='one' ? t('fa.strat.tagOne') : t('fa.hero.cfgPill',{cfg:state.cfg}));
+  $('spreadTag').textContent = tag; $('inspTag').textContent = tag;
+  const pill = $('zaMarketPill'); if(!pill) return;
+  if(!has){ pill.textContent = t('fa.za.pillNone'); return; }
+  const label = state.strat==='one' ? ((ONE_LEG[state.asset]||{}).label || state.asset) : state.asset;
+  const m = {m:'<b>'+ledgerEsc(label)+'</b>'};
+  // Ключи вызываются ЯВНО, а не склейкой: склейку не видит ни проверка ссылочной целостности
+  // словарей, ни проверка мёртвых ключей (та же причина, что у таблицы `FA_CODE_TEXT`).
+  pill.innerHTML = state.selFrom==='position' ? t('fa.za.pillPos', m) : t('fa.za.pillCand', m);
+}
+
+/* НА КАКОМ РАЗМЕРЕ СЧИТАЕТСЯ КРУГ. Ноционал приходил из матрицы «капитал × плечо», то есть был
+   сценарием оператора. Теперь это РАЗМЕР БОТА: ноционал открытой сделки, а без сделки - размер,
+   который правило входа назначило лучшему кандидату последней оценки. Ни того, ни другого нет -
+   размера НЕТ, и карточка ставит прочерк: круг по выдуманному размеру это выдуманное число.
+   Нетто за горизонт берётся из той же строки оценки ГОТОВЫМ - его считает движок. */
+function costBasis(){
+  const rows = (LIVE.auto && LIVE.auto.lastEval && LIVE.auto.lastEval.markets) || [];
+  const open = (LIVE.positions||[]).find(x=>x.status==='open');
+  if(open){
+    const row = rows.find(m=>m.token===open.instrumentKey) || null;
+    return { notional:open.notional, isOne:open.strategy==='one', src:'position',
+             netUsd:(row && Number.isFinite(row.netUsd)) ? row.netUsd : null };
   }
-  const a=TWO_LEG[state.asset] || {}, p=a[state.cfg];
-  if(!p){
-    $('whyBox').innerHTML = t('fa.strat.twoLoadWhy');
-    $('stratSummary').innerHTML =
-      dlRow(t('fa.strat.rowGmxMarket'), a.gmxName||'-','white') +
-      dlRow(t('fa.strat.rowAddr'), '<span class="addr">'+(a.gmxAddr||'-')+'</span>','') +
-      dlRow(t('fa.strat.rowHlInstr'), a.hlCoin||'-','dim') +
-      dlRow(t('fa.strat.rowWinStats'), '<span class="faint">'+t('fa.chart.loading')+'</span>','faint');
-    return;
+  const best = rows.find(m=>m.rank===1);
+  if(best && Number.isFinite(best.sizeUsd)){
+    return { notional:best.sizeUsd, isOne:best.strategy==='one', src:'candidate',
+             netUsd:Number.isFinite(best.netUsd) ? best.netUsd : null };
   }
-  const chosen=a.chosen;
-  const why = state.cfg===chosen
-    ? t('fa.strat.whyAuto',{cfg:chosen,a:'<b class="'+clsSign(p.meanA)+'">'+fmtPct(p.meanA)+'</b>',b:'<b class="'+clsSign(p.meanB)+'">'+fmtPct(p.meanB)+'</b>'})
-    : t('fa.strat.whyNotOpt',{cfg:state.cfg,auto:chosen,a:fmtPct(p.meanA),b:fmtPct(p.meanB)});
-  $('whyBox').innerHTML = why;
-  const legLbl = state.cfg==='A' ? 'short GMX + long HL' : 'long GMX + short HL';
-  $('stratSummary').innerHTML =
-    dlRow(t('fa.tb.cfgAria'), legLbl,'white') +
-    dlRow(t('fa.strat.rowGmxMarket'), a.gmxName,'white') +
-    dlRow(t('fa.strat.rowAddr'), '<span class="addr">'+a.gmxAddr+'</span>','') +
-    dlRow(t('fa.strat.rowHlLev'), a.hlCoin+' · '+a.hlMaxLev+'×','dim') +
-    dlRow(t('fa.strat.rowWin'), t('fa.strat.winVal',{d:(a.winDays ?? state.win),h:(a.hours||0)}),'dim') +
-    dlRow(t('fa.strat.rowMedRobust'), fmtPct(p.netMedian), clsSign(p.netMedian)) +
-    dlRow(t('fa.strat.rowMean'), fmtPct(p.netMean), clsSign(p.netMean)) +
-    dlRow('Net APR · min / max', fmtPct(p.netMin,0)+' / '+fmtPct(p.netMax,0),'dim') +
-    dlRow(t('fa.strat.rowSpreadPos'), fmtPctNS(p.pctPos),'dim') +
-    dlRow(t('fa.strat.rowSignChg'), p.signChg,'dim') +
-    dlRow(t('fa.strat.rowContribGmx'), fmtPct(p.gmxFund), clsSign(p.gmxFund), C('--pos')) +
-    dlRow(t('fa.strat.rowContribBorrow'), fmtPct(-p.gmxBorrow),'neg', C('--neg')) +
-    dlRow(t('fa.strat.rowContribHl'), fmtPct(p.hlFund), clsSign(p.hlFund), C('--accent')) +
-    dlRow(t('fa.strat.rowDd'), fmtPct(-p.ddPct)+t('fa.strat.ofNotional'),'neg');
+  return { notional:null, isOne:activeProfile().isOne, src:null, netUsd:null };
 }
 
 let costWired=false;
 function renderCosts(){
-  const prof=activeProfile(); const isOne=prof.isOne;
-  const notional = state.cap*state.lev;
-  $('costNotional').textContent = fmtUSD(notional,0);
+  const b=costBasis(); const isOne=b.isOne;
+  $('costNotional').textContent = Number.isFinite(b.notional) ? fmtUSD(b.notional,0) : '-';
+  const srcTag=$('costSrcTag');
+  if(srcTag) srcTag.textContent = b.src==='position' ? t('fa.costs.srcPos')
+                                : b.src==='candidate' ? t('fa.costs.srcCand') : t('fa.costs.srcNone');
   const rows = [
     ['gmxOpen',t('fa.cost.gmxOpen'),t('fa.cost.uNotional'), true],
     ['gmxClose',t('fa.cost.gmxClose'),t('fa.cost.uNotional'), true],
@@ -3960,7 +3752,7 @@ function renderCosts(){
   ];
   // если пользователь сейчас редактирует поле - не пересобирать innerHTML (фокус/каретка
   // терялись бы на каждом 5-минутном push, аудит M2); обновляем только производные значения
-  if(costFocusActive()){ updateCostDerived(false); return; }
+  if(costFocusActive()){ updateCostDerived(); return; }
   let html='';
   rows.forEach(([key,label,unit,show])=>{
     if(!show){ return; }
@@ -3986,7 +3778,7 @@ function renderCosts(){
         // правка не доезжала до диска и откатывалась следующим push (DEV-07, UI-вериф. 2026-07-03)
         if(window.fa) window.fa.setCosts(COSTS);
       }
-      updateCostDerived(true);
+      updateCostDerived();
     });
     $('costRows').addEventListener('focusout', e=>{
       const inp=e.target.closest('input[data-cost]'); if(!inp) return;
@@ -3995,38 +3787,39 @@ function renderCosts(){
     });
     costWired=true;
   }
-  updateCostDerived(false);
+  updateCostDerived();
 }
 
 // Пересчёт ТОЛЬКО производных значений (usd-ячейки + итоги; при режиме «после комиссий» - hero/matrix/графики),
 // БЕЗ пересборки полей ввода. liveEdit=true только при ручном редактировании (full render уже обновил остальное).
-function updateCostDerived(liveEdit){
-  const prof=activeProfile(); const isOne=prof.isOne;
-  const notional = state.cap*state.lev;
+function updateCostDerived(){
+  const b=costBasis(); const isOne=b.isOne; const notional=b.notional;
+  const has=Number.isFinite(notional);
   $('costRows').querySelectorAll('.cost-row').forEach(row=>{
     const inp=row.querySelector('input[data-cost]'); const usdEl=row.querySelector('[data-usd]');
     if(!inp||!usdEl) return; const key=inp.dataset.cost;
-    if(key==='hlSides'){ usdEl.textContent='-'; return; }
+    if(key==='hlSides' || !has){ usdEl.textContent='-'; return; }
     let usd;
     if(key==='gmxGas') usd=COSTS.gmxGas;
     else if(key==='hlTaker') usd=notional*(COSTS.hlTaker/100)*COSTS.hlSides;
     else usd=notional*(COSTS[key]/100);
     usdEl.textContent='−'+fmtUSD(usd,2);
   });
-  const cost=oneOffCost(notional,isOne);
-  $('costTotal').textContent='−'+fmtUSDfull(cost);
-  // «после издержек» - тем же путём, что и hero (реальный кумулятив окна), аудит M8
-  const pc = computePnL(state.cap, state.lev);
-  if (pc.loading || !Number.isFinite(pc.gross)){
-    $('costAfter').textContent='-';
-    $('costAfter').className='v faint';
+  // ПРЕВЬЮ КРУГА СЧИТАЕТСЯ ЗДЕСЬ СОЗНАТЕЛЬНО, и это единственное исключение из закона «интерфейс не
+  // считает того, что считает движок». Поля модели редактируются посимвольно, а их значение уезжает
+  // в `settings.costs` тем же вводом; ждать ответа главного процесса на каждую нажатую клавишу
+  // значило бы показывать цифру от предыдущего символа. Формула та же, что у `costs.js`
+  // (`roundTripCost`), и она под golden-тестом. РЕШЕНИЕ правила этим превью не подменяется:
+  // нетто ниже приезжает готовым.
+  $('costTotal').textContent = has ? ('−'+fmtUSDfull(oneOffCost(notional,isOne))) : '-';
+  const after=$('costAfter');
+  if(Number.isFinite(b.netUsd)){
+    after.textContent=fmtUSDfull(b.netUsd);
+    after.className='v '+clsSign(b.netUsd);
   } else {
-    const after=pc.gross-cost;
-    $('costAfter').textContent=fmtUSDfull(after);
-    $('costAfter').className='v '+clsSign(after);
+    after.textContent='-';
+    after.className='v faint';
   }
-  // издержки влияют на главный P&L только в режиме «после комиссий»
-  if(liveEdit && state.mode==='net'){ renderHero(); renderMatrix(); renderCharts(); }
 }
 
 function renderRaw(){
@@ -4074,48 +3867,13 @@ function renderRaw(){
   $('rawBody').innerHTML=html;
 }
 
-function renderScanner(){
-  const scanWin = LIVE.scannerWinDays;
-  const current = Number.isFinite(scanWin) && scanWin===state.win;
-  const tag = $('scanWinTag');
-  if(tag) tag.textContent = current ? t('fa.scr.win',{n:scanWin}) : t('fa.scr.winUpd',{n:state.win});
-  // Scanner stats are window-dependent. A push assembled under the previous period can land
-  // inside the 50 ms selector debounce; do not relabel those rankings as the new period.
-  if(!current){
-    $('scanBody').innerHTML = '<tr><td class="lft faint" colspan="8">'+t('fa.scr.updating',{n:state.win})+'</td></tr>';
-    return;
-  }
-  if(!SCANNER.length){
-    $('scanBody').innerHTML = '<tr><td class="lft faint" colspan="8">'+t('fa.scr.filling')+'</td></tr>';
-    return;
-  }
-  let html='';
-  SCANNER.forEach(row=>{
-    const me = (state.strat!=='one' && row.s===state.asset);
-    const status = row.st==='trad'
-      ? '<span class="chip trad">'+t('fa.scr.liquid')+'</span>'
-      : '<span class="chip thin">'+t('fa.scr.thin')+'</span>';
-    html += '<tr class="'+(me?'me':'')+'">'+
-      '<td class="lft n">'+row.r+'</td>'+
-      '<td class="lft sym">'+row.s+'</td>'+
-      '<td class="lft"><span class="chip '+row.c+'">'+row.c+'</span></td>'+
-      '<td class="n '+clsSign(row.med)+'">'+fmtPct(row.med,1)+'</td>'+
-      '<td class="n dim">'+fmtPct(row.mean,1)+'</td>'+
-      '<td class="n dim">'+fmtPctNS(row.pct,0)+'</td>'+
-      '<td class="n dim">'+row.sc+'</td>'+
-      '<td class="lft">'+status+'</td></tr>';
-  });
-  $('scanBody').innerHTML=html;
-}
+/* `renderScanner` снята вместе со скринером: см. комментарий на его месте в разметке. */
 
 let chartData={};
 function renderCharts(){
-  chartData.eq = buildEquity(state.cap, state.lev);
   chartData.sp = buildSpread();
   chartData.lg = buildLegs();
   chartData.px = buildPrice();
-  if(chartData.eq) drawEquity($('equityCanvas'), chartData.eq, $('equityTip'));
-  else drawEmpty($('equityCanvas'), $('equityTip'), t('fa.chart.loading'));
   if(chartData.sp) drawSpread($('spreadCanvas'), chartData.sp, $('spreadTip'));
   else drawEmpty($('spreadCanvas'), $('spreadTip'), t('fa.chart.loading'));
   if(chartData.lg) drawLegs($('legsCanvas'), chartData.lg);
@@ -4124,72 +3882,36 @@ function renderCharts(){
   else drawEmpty($('priceCanvas'), null, t('fa.chart.pricesLoading'));
 }
 
-function syncControls(){
-  // показать/скрыть конфиг для one-leg; обновить asset-селектор список
-  $('cfgWrap').style.display = state.strat==='one' ? 'none' : '';
-  $('assetLbl').textContent = state.strat==='one' ? t('fa.tb.market1') : t('fa.tb.instr');
-  const sel=$('assetSel');
-  const opts = state.strat==='one'
-    ? Object.keys(ONE_LEG).map(k=>({v:k, t:ONE_LEG[k].label}))
-    : Object.keys(TWO_LEG).map(k=>({v:k, t:k}));
-  sel.innerHTML = opts.map(o=>'<button data-v="'+o.v+'" aria-pressed="'+(o.v===state.asset?'true':'false')+'">'+o.t+'</button>').join('');
-  sel.querySelectorAll('button').forEach(b=> b.onclick=()=>{
-    state.asset=b.dataset.v;
-    // двунога: при смене актива берём конфиг, выбранный движком (argmax mean A/B)
-    if(state.strat!=='one'){ state.cfg = TWO_LEG[state.asset].chosen; }
-    render();
-  });
-  // legs labels по конфигу
-  $('legGmxLbl').textContent = state.strat==='one' ? t('fa.legs.gmxShort') : (state.cfg==='A'?t('fa.legs.gmxShort'):t('fa.legs.gmxLong'));
-  $('legHlLbl').textContent = state.strat==='one' ? t('fa.legs.hlNone') : (state.cfg==='A'?t('fa.legs.hlLong'):t('fa.legs.hlShort'));
-  // config pressed
-  $('cfgSel').querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed', b.dataset.v===state.cfg?'true':'false'));
-  // sync strat/win/mode segments from state (для восстановленных настроек)
-  const setPressed=(id,val)=>{ const el=$(id); if(!el) return; el.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed', b.dataset.v===String(val)?'true':'false')); };
-  setPressed('stratSel', state.strat); setPressed('winSel', state.win); setPressed('modeSel', state.mode);
+/* `syncControls` СНЯТА ВМЕСТЕ С ТУЛБАРОМ: она наполняла селектор инструментов, прятала конфиг у
+   однуногой схемы и подсвечивала нажатые кнопки. Единственное, что она делала помимо органов
+   управления, - подписи ног на графике декомпозиции; они переехали в `renderLegLabels`. */
+function renderLegLabels(){
+  const isOne = state.strat==='one';
+  $('legGmxLbl').textContent = isOne ? t('fa.legs.gmxShort') : (state.cfg==='B'?t('fa.legs.gmxLong'):t('fa.legs.gmxShort'));
+  $('legHlLbl').textContent  = isOne ? t('fa.legs.hlNone')   : (state.cfg==='B'?t('fa.legs.hlShort'):t('fa.legs.hlLong'));
 }
 
 function render(){
-  syncControls();
-  renderHero();
-  renderMatrix();
+  renderMarketHead();
+  renderLegLabels();
   renderGmxPanel();
   renderHlPanel();
-  renderStrategy();
   renderCosts();
   renderRaw();
-  renderScanner();
   renderCharts();
   renderTrade(); // зона Ⅱ: кокпит/таблица/детали - нетто-первично, от режима анализа не зависит
   renderFaAuto();    // пульт автомата: состояние, ворота снабжения, непрерывность
   renderFaHonesty(); // четыре замера, каждый из которых занижает показанную прибыль до настоящей
+  renderFaEval();     // последняя оценка по рынкам: что бот увидел по каждому в цикле решения
   renderFaJournals(); // история сделок и журнал решений (данные тянутся отдельно, по требованию)
 }
 
 /* ============================================================================
    EVENTS
    ========================================================================== */
-function wireSeg(id, key, cast){
-  $(id).querySelectorAll('button').forEach(b=>{
-    b.onclick=()=>{
-      $(id).querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed','false'));
-      b.setAttribute('aria-pressed','true');
-      state[key]= cast? cast(b.dataset.v) : b.dataset.v;
-      // при смене стратегии - сбросить актив к валидному
-      if(key==='strat'){
-        state.asset = state.strat==='one' ? 'ETH-Arb' : 'ETH';
-        state.cfg = state.strat==='one' ? state.cfg : TWO_LEG[state.asset].chosen;
-        $('cfgSel').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed', x.dataset.v===state.cfg?'true':'false'));
-      }
-      // при смене актива (two-leg) - выбрать чосен-конфиг по умолчанию
-      render();
-    };
-  });
-}
-wireSeg('stratSel','strat');
-wireSeg('cfgSel','cfg');
-wireSeg('winSel','win', v=>parseInt(v,10));
-wireSeg('modeSel','mode');
+/* `wireSeg` СНЯТА: она навешивала обработчики на пять сегментных переключателей тулбара. Органов
+   нет, обработчиков нет. Рынок приходит из main; кнопки, которой его можно переназначить, в
+   приложении не существует. */
 
 /* интервал опроса (топбар): 1/5/15 мин - как часто main опрашивает биржи и начисляет форвард-тест.
    setSettings перезапускает таймер опроса (main.js). Кнопка выставляется оптимистично, а syncPollSel
@@ -4206,28 +3928,11 @@ if($('pollSel')) $('pollSel').querySelectorAll('button').forEach(b=>{
   };
 });
 
-/* «Пересчёт»: принудительная ПОЛНАЯ пересинхронизация. Все производные цифры - чистые
-   функции от (настройки, фреймы истории, живой снапшот), поэтому шаги: (1) отправить в
-   main ВСЕ текущие значения кнопок; (2) пересобрать датасет под этот выбор (fa:select);
-   (3) внеочередной опрос бирж (fa:refreshNow); (4) применить и перерисовать всё с нуля.
-   Страховка от любого рассинхрона состояния при переключениях на запущенном боте. */
-if($('recalcBtn')) $('recalcBtn').onclick = async ()=>{
-  const b=$('recalcBtn'); const prevTxt=b.textContent;
-  b.disabled=true; b.textContent=t('fa.tb.recalcBusy');
-  try{
-    if(window.fa){
-      persist();                                       // (1) все настройки -> main (cap/lev/mode вкл.)
-      const ds = await window.fa.select({strat:state.strat, asset:state.asset, cfg:state.cfg, win:state.win});
-      applyDataset(ds);                                // (2) серия и панели под ТЕКУЩИЙ выбор
-      const ds2 = await window.fa.refreshNow();        // (3) свежие живые ставки + начисление позиций
-      applyDataset(ds2);                               // (4) applyDataset -> render(): всё заново
-    } else {
-      render();                                        // файловый режим: перерисовать из локального состояния
-    }
-  }catch(e){ console.warn('recalc failed', e); }
-  b.disabled=false; b.textContent=prevTxt;
-  updateFreshness();
-};
+/* КНОПКИ «ПЕРЕСЧЁТ» БОЛЬШЕ НЕТ. Она делала четыре шага: слала в main все значения кнопок,
+   пересобирала датасет под этот выбор, дёргала внеочередной опрос и перерисовывала всё. Первые два
+   шага были страховкой от рассинхрона МЕЖДУ выбором оператора и состоянием main - рассинхрона,
+   которого без выбора не бывает. Третий шаг (опрос сейчас) остался за кнопкой свежести в топбаре:
+   она и была для этого. Четвёртый происходит сам на каждом пуше. */
 
 /* live-кнопка = индикатор свежести + принудительное обновление сейчас (не тумблер) */
 $('liveBtn').onclick = async ()=>{
@@ -4239,19 +3944,10 @@ $('liveBtn').onclick = async ()=>{
 };
 
 /* ── main→renderer мост ── */
-let selTimer;
-function notifyMain(){
-  if(!window.fa) return;
-  clearTimeout(selTimer);
-  selTimer=setTimeout(async ()=>{
-    try{ const ds=await window.fa.select({strat:state.strat, asset:state.asset, cfg:state.cfg, win:state.win}); applyDataset(ds); }
-    catch(e){ console.warn('select failed', e); }
-  }, 50);
-}
-function persist(){ if(window.fa) window.fa.setSettings({strat:state.strat,asset:state.asset,cfg:state.cfg,win:state.win,cap:state.cap,lev:state.lev,mode:state.mode}); }
-['stratSel','cfgSel','winSel','assetSel'].forEach(id=>{ const el=$(id); if(el) el.addEventListener('click', ()=>{ notifyMain(); persist(); }, false); });
-['modeSel'].forEach(id=>{ const el=$(id); if(el) el.addEventListener('click', persist, false); });
-$('matrix').addEventListener('click', persist, false);
+/* `notifyMain`, `persist` и четыре слушателя тулбара сняты. Отправлять в главный процесс было
+   НЕЧЕГО: единственная настройка, которую задаёт оператор на этой вкладке, - модель издержек, и
+   она уходит своим каналом `setCosts` из делегированного обработчика `renderCosts` (строго после
+   присвоения `COSTS[key]`, см. DEV-07). Интервал опроса уходит `setSettings` из топбара. */
 // правки модели издержек персистятся в делегированном обработчике renderCosts() - строго после
 // COSTS[key]=v; второй слушатель здесь отправлял модель с отставанием на один ввод (DEV-07)
 
@@ -4660,7 +4356,7 @@ if($('ledgerDelYes')) $('ledgerDelYes').onclick=async function(){
     else{
       tradeUi.selectedId=null;                       // выбор падёт на следующую позицию штатным фолбэком
       ledgerMsg(t('ledger.msgDeleted'), 'ok', 4000);
-      const ds=await window.fa.select({strat:state.strat, asset:state.asset, cfg:state.cfg, win:state.win});
+      const ds=await window.fa.getState();
       applyDataset(ds);
       const z=$('zoneTrade'); if(z) z.focus({preventScroll:true});
     }
@@ -4745,7 +4441,7 @@ async function closePaperById(id, btnEl){
   try{
     const r=await window.fa.closePaper(id);
     if(r && r.error){ paperError=r.error; }
-    const ds=await window.fa.select({strat:state.strat, asset:state.asset, cfg:state.cfg, win:state.win});
+    const ds=await window.fa.getState();
     applyDataset(ds);
   }catch(e){ paperError=t('fa.err.ipc')+String(e && e.message || e).slice(0,80); console.warn('closePaper', e); renderTrade(); }
   if(btnEl) btnEl.disabled=false;
@@ -5201,6 +4897,54 @@ function renderFaJournals(){
   }
 }
 
+/* ══ ПОСЛЕДНЯЯ ОЦЕНКА ПО РЫНКАМ ══════════════════════════════════════════════════════════════════
+   Пять строк, по одной на рынок вселенной. ВСЕ числа приезжают готовыми в `auto.lastEval.markets`:
+   ранг, нетто за горизонт, покрытие баз, доля удержания, связывающее ограничение и котируемая
+   ставка схемы. Здесь не считается НИЧЕГО - ни ранг, ни спред ног, ни сравнение с капиталом.
+
+   ПУСТОЕ СОСТОЯНИЕ ОТСЧИТЫВАЕТСЯ ОТ ЦИКЛА РЕШЕНИЯ, А НЕ ОТ ТИКА. Тик идёт раз в пять минут и почти
+   всегда заканчивается кодом `cadence_wait`: вселенную он не пересчитывает вовсе. Пока цикла не
+   было, показывать нечего, и прочерк здесь честнее любой цифры. ══════════════════════════════════ */
+function renderFaEval(){
+  const body=$('faEvalBody'), empty=$('faEvalEmpty'), stamp=$('faEvalStampTxt');
+  if(!body) return;
+  const ev = (LIVE.auto && LIVE.auto.lastEval) || null;
+  const rows = (ev && Array.isArray(ev.markets)) ? ev.markets : [];
+  if(stamp){
+    // ДВА ВРЕМЕНИ, А НЕ «СЕЙЧАС». Следующая оценка считается из каданса движка (`cadenceH`),
+    // своего периода интерфейс не заводит.
+    if(!ev || !Number.isFinite(ev.at)) stamp.textContent = t('fa.ev.stamp0');
+    else {
+      const next = Number.isFinite(ev.cadenceH) ? ev.at + ev.cadenceH*3600*1000 : null;
+      stamp.textContent = t('fa.ev.stamp', { at:faAutoDate(ev.at), next:next!=null?faAutoDate(next):'-' });
+    }
+  }
+  if(!rows.length){ body.innerHTML=''; if(empty) empty.hidden=false; return; }
+  if(empty) empty.hidden=true;
+  const held = ((LIVE.positions||[]).find(x=>x.status==='open')||{}).instrumentKey || null;
+  let html='';
+  for(const m of rows){
+    const funded = !!m.funded;
+    const mine = held ? m.token===held : m.rank===1;
+    const state = funded
+      ? '<span class="chip trad">'+ledgerEsc(faCodeText('funded'))+'</span>'
+      : '<span class="chip thin">'+ledgerEsc(faCodeText(m.refusal))+'</span>';
+    html += '<tr class="'+(mine?'me':'')+'">'+
+      '<td class="lft sym">'+ledgerEsc(m.token)+'</td>'+
+      '<td class="lft">'+(m.config?('<span class="chip '+ledgerEsc(m.config)+'">'+ledgerEsc(m.config)+'</span>'):'<span class="faint">-</span>')+'</td>'+
+      '<td class="n">'+(Number.isFinite(m.rank)?m.rank:'<span class="faint">-</span>')+'</td>'+
+      '<td class="lft">'+state+'</td>'+
+      '<td class="lft dim">'+(funded?ledgerEsc(faBindText(m.binding)):'<span class="faint">-</span>')+'</td>'+
+      '<td class="n dim">'+(Number.isFinite(m.sizeUsd)?fmtUSD(m.sizeUsd,0):'<span class="faint">-</span>')+'</td>'+
+      '<td class="n '+(Number.isFinite(m.netUsd)?clsSign(m.netUsd):'')+'">'+(Number.isFinite(m.netUsd)?fmtUSDfull(m.netUsd):'<span class="faint">-</span>')+'</td>'+
+      '<td class="n dim">'+(Number.isFinite(m.coverage)?fmtPctNS(m.coverage,1):'<span class="faint">-</span>')+'</td>'+
+      '<td class="n dim">'+(Number.isFinite(m.dilutionRetained)?fmtPctNS(m.dilutionRetained,1):'<span class="faint">-</span>')+'</td>'+
+      '<td class="n '+(Number.isFinite(m.legApr)?clsSign(m.legApr):'')+'">'+(Number.isFinite(m.legApr)?fmtPct(m.legApr,1):'<span class="faint">-</span>')+'</td>'+
+      '</tr>';
+  }
+  body.innerHTML=html;
+}
+
 /* ── МОСТ АВТОМАТА. Ровно два канала преложения: снять состояние и взвести или остановить. ── */
 async function faAutoGet(){
   if(!window.fa || !window.fa.auto) return null;
@@ -5387,25 +5131,22 @@ const HELP_CORE = {
 };
 // Тексты статей живут в словарях locales/*.js (ключи help.*); openHelp разрешает tk/bk через t().
 const HELP_FUNDING_ARB = {
-  toolbar: { tk:'help.toolbar.t', bk:'help.toolbar.b' },
-  hero: { tk:'help.hero.t', bk:'help.hero.b' },
-  matrix: { tk:'help.matrix.t', bk:'help.matrix.b' },
-  equity: { tk:'help.equity.t', bk:'help.equity.b' },
+  // Справок `toolbar`, `hero`, `matrix`, `equity`, `strategy` и `scanner` больше нет: у них не
+  // осталось кнопок. Справка без органа это мёртвый ключ, который живёт до первой проверки.
   paper: { tk:'help.paper.t', bk:'help.paper.b' },
   gmx: { tk:'help.gmx.t', bk:'help.gmx.b' },
   hl: { tk:'help.hl.t', bk:'help.hl.b' },
   spread: { tk:'help.spread.t', bk:'help.spread.b' },
   legs: { tk:'help.legs.t', bk:'help.legs.b' },
   price: { tk:'help.price.t', bk:'help.price.b' },
-  strategy: { tk:'help.strategy.t', bk:'help.strategy.b' },
   costs: { tk:'help.costs.t', bk:'help.costs.b' },
   raw: { tk:'help.raw.t', bk:'help.raw.b' },
-  scanner: { tk:'help.scanner.t', bk:'help.scanner.b' },
   // фаза 6: пульт автомата и карточка честности счёта
   'fa-auto': { tk:'help.fa-auto.t', bk:'help.fa-auto.b' },
   'fa-honesty': { tk:'help.fa-honesty.t', bk:'help.fa-honesty.b' },
   'fa-history': { tk:'help.fa-history.t', bk:'help.fa-history.b' },
   'fa-journal': { tk:'help.fa-journal.t', bk:'help.fa-journal.b' },
+  'fa-eval': { tk:'help.fa-eval.t', bk:'help.fa-eval.b' },
 };
 
 // HELP_BTC_OPTIONS = the «BTC-опционы» bot's panels (Strategy One), namespaced `opt-*` so they never
@@ -5840,11 +5581,9 @@ updateFreshness();
   try{
     const ds=await window.fa.getState();
     if(ds){
-      if(ds.selection){ state.strat=ds.selection.strat||state.strat; state.asset=ds.selection.asset||state.asset; state.cfg=ds.selection.cfg||state.cfg; state.win=ds.selection.win||state.win; }
-      if(ds.settings){ if(ds.settings.cap) state.cap=ds.settings.cap; if(ds.settings.lev) state.lev=ds.settings.lev; if(ds.settings.mode) state.mode=ds.settings.mode; }
-      // капитал теперь выбирается ТОЛЬКО из матрицы: сохранённое ручное значение прежних версий
-      // прижимаем к ближайшей строке CAPS, чтобы выбор в матрице всегда был подсвечен
-      if(!CAPS.includes(state.cap)){ state.cap = CAPS.reduce((a,b)=> Math.abs(b-state.cap)<Math.abs(a-state.cap)?b:a); persist(); }
+      // Выбор рынка и восстановление капитала/плеча/режима здесь больше не нужны: рынок
+      // приезжает полем `selection` внутри applyDataset на КАЖДОМ пуше, а капитала, плеча и
+      // режима у зоны не осталось вовсе.
       applyDataset(ds);
     }
     window.fa.onPush(ds2=>applyDataset(ds2));

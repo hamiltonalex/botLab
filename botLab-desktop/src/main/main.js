@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 
 import { fetchGmxCurrent, fetchHlCurrent, fetchHlBook, fetchBinancePrices } from "../engine/sources.js";
 import { getTwoLegFrame, getOneLegFrame, nowHourTs, WINDOW_DAYS, STALE_AFTER_SEC } from "../engine/backfill.js";
-import { buildSnapshot, buildTwoLegEntry, buildOneLegEntry, buildScanner, buildSeries } from "../engine/assemble.js";
+import { buildSnapshot, buildTwoLegEntry, buildOneLegEntry, buildSeries } from "../engine/assemble.js";
 import { openPosition, accrue, accrueFromRows, settlePosition, recordUnpricedGap, closePosition, positionSummary, accountSummary, legModel } from "../engine/paper.js";
 import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts } from "../engine/costs.js";
 import { ledgerView, buildLedger } from "../engine/ledger.js";
@@ -105,6 +105,15 @@ app.on("second-instance", () => {
 const instFor = (strat, key) => (strat === "one" ? oneLegByKey(key) : twoLegByKey(key));
 const cacheKeyFor = (strat, key) => (strat === "one" ? `${key}__oneleg` : key);
 const MAX_CURVE_POINTS = 1200; // IPC payload cap; full resolution stays on disk
+// Потолок пер-рыночных отказов, уезжающих на пульт одним тиком. СТРАХОВКА, а не рабочее
+// ограничение: вселенная сегодня пять рынков (`ALL_MARKETS`), отказы уже отфильтрованы решающим
+// кодом, и до потолка список не доходит. Стоит на случай роста вселенной.
+const FA_LAST_REFUSALS_CAP = 8;
+// ОКНО ПАНЕЛЕЙ РЫНКА, СУТКИ. Не выбор оператора, а ГОРИЗОНТ ПРАВИЛА: `FA_SIZING_DEFAULTS.horizonH`
+// равен 720 часам, то есть ровно 30 суткам. Панели зоны «Рынок бота» обязаны показывать те же
+// часы, на которых бот принимает решение; любое другое окно рисовало бы рядом с решением данные,
+// которых решение не видело.
+const FA_VIEW_WINDOW_DAYS = 30;
 // Anti-FOUC window background per theme - must equal each theme's --bg in the renderer CSS.
 const THEME_BG = { dark: "#07090d", light: "#eef1f6" };
 const uiTheme = () => (state.settings.ui && state.settings.ui.theme === "light" ? "light" : "dark");
@@ -118,14 +127,11 @@ let baseDir = null;
 let pollTimer = null;
 
 const state = {
+  // ВЫБОРА РЫНКА В НАСТРОЙКАХ БОЛЬШЕ НЕТ. Здесь лежали strat/asset/cfg/win/cap/lev/mode - семь
+  // полей тулбара анализа. Рынок, конфигурацию и окно теперь называет ОДИН источник, `faViewSelection()`
+  // ниже, и он читает автомат, а не оператора. Персист выбора, который никто не выбирает, это второе
+  // правило выбора, ждущее случая разойтись с первым.
   settings: {
-    strat: "two",
-    asset: "ETH",
-    cfg: "A",
-    win: 1, // display window in days: 1 | 7 | 30 | 90 | 365 (backfill is always WINDOW_DAYS)
-    cap: 1000, // default = the SMALLEST matrix capital (renderer CAPS[0])
-    lev: 1,
-    mode: "gross",
     costs: { ...DEFAULT_COSTS },
     pollMinutes: 5,
   },
@@ -141,8 +147,11 @@ const state = {
   //   bases  - журналы наблюдённых баз фандинга по ключу кадра (fa/bases.js), ленивое чтение с диска;
   //   books  - стаканы Hyperliquid по монете, тянутся ТОЛЬКО пока автомат взведён (в простое ноль трафика);
   //   records- сколько строк записано за сессию по каждому потоку, для панели честности фазы 6.
+  //   lastEval - сводка ПОСЛЕДНЕЙ ОЦЕНКИ по рынкам. Живёт отдельно от `lastTick` нарочно: тик идёт
+  //              раз в пять минут, а оценка раз в сутки, и складывать их в одно поле значило бы
+  //              стирать оценку 287 раз между решениями.
   auto: { engine: null, corrupt: false, bases: new Map(), books: new Map(), lastPollAt: null,
-    lastTick: null, records: { snap: 0, gap: 0, dec: 0, trade: 0 }, busy: false },
+    lastTick: null, lastEval: null, records: { snap: 0, gap: 0, dec: 0, trade: 0 }, busy: false },
   // Bot 2 «BTC-опционы» (Strategy One) - isolated paper engine + live Deribit source (Phase 1).
   // Read only by the s1:* handlers / assembleDataset1(); never leaks into assembleDataset()/fa:push.
   // Phase 3b: bounded history RINGS live HERE (never in the persisted engine state - it re-serializes
@@ -493,6 +502,10 @@ function faAutoMarkets() {
       },
       // Кривая удара GMX в приложении отсутствует (см. шапку раздела); стакан Hyperliquid живой.
       impact: { gmxNodes: [], hlNodes: bk?.slip?.nodes || [] },
+      // ЖИВЫЕ ФАКТОРЫ НОГ, как их отдал источник. Правило размера их не читает: ему нужны базы и
+      // стакан. Их читает сводка оценки (`legSpreadApr`), чтобы назвать котируемую ставку схемы
+      // одним числом - и считает его ДВИЖОК, потому что разбор схемы на ноги живёт там.
+      rates: { f_long: raw.f_long, f_short: raw.f_short, b_long: raw.b_long, b_short: raw.b_short, hl_rate: raw.hl_rate },
     });
   }
   return out;
@@ -696,11 +709,16 @@ async function faAutoStep(sources) {
   // ЧТО ИЗ ТИКА ВИДИТ ИНТЕРФЕЙС. Код исхода, отказы С ЧИСЛАМИ, вердикт сторожа залога и счёт ворот
   // снабжения. Строка `line` остаётся для ЛОГА и наружу не показывается: она по-русски всегда, а
   // перевод кодов живёт в словарях локализации (см. комментарий блока `auto` в assembleDataset).
-  // Пер-рыночные отказы режутся: их до трёх на рынок при 60+ рынках, а на экране нужен решающий и
-  // его числа, а не весь журнал (полный журнал пишет фаза 5).
+  //
+  // ПЕР-РЫНОЧНЫЕ ОТКАЗЫ РЕЖУТСЯ ДВАЖДЫ, и оба реза названы. Сначала по РЕШАЮЩЕМУ коду: на экране
+  // пульта нужна причина исхода с числами, а не весь журнал (полный журнал пишет фаза 5). Потом
+  // потолком `FA_LAST_REFUSALS_CAP`. Вселенная сегодня ПЯТЬ рынков (`ALL_MARKETS`), поэтому после
+  // первого реза остаётся не больше пяти строк и потолок не срабатывает НИ РАЗУ: он стоит
+  // страховкой на случай роста вселенной, а не как рабочее ограничение. Прежний комментарий
+  // обещал «60+ рынков» и был неверен уже на момент написания.
   state.auto.lastTick = {
     at: nowMs, kind: tick.kind, why: tick.why, line: faauto.explainAuto(tick),
-    refusals: (tick.refusals || []).filter((r) => r.code === tick.why).slice(0, 8),
+    refusals: (tick.refusals || []).filter((r) => r.code === tick.why).slice(0, FA_LAST_REFUSALS_CAP),
     codes: [...new Set((tick.refusals || []).map((r) => r.code))],
     margin: tick.margin ? {
       ok: !!tick.margin.ok, code: tick.margin.code ?? null,
@@ -714,6 +732,12 @@ async function faAutoStep(sources) {
     } : null,
     gate: tick.gate || null,
   };
+  // СВОДКА ОЦЕНКИ ПЕРЕЖИВАЕТ ТИКИ БЕЗ РЕШЕНИЯ. Между решениями `tick.evalMarkets` пуст (каданс 24 ч),
+  // и класть пустоту поверх последней снятой оценки значило бы гасить единственный честный ответ на
+  // вопрос «что бот видел по каждому рынку» на 287 тиков из 288.
+  if (tick.decided && tick.evalMarkets) {
+    state.auto.lastEval = { at: nowMs, cadenceH: params.cadenceH, capitalUsd: params.capitalUsd, markets: tick.evalMarkets };
+  }
   // Лог пишется на СМЕНЕ исхода, а не каждый тик: при опросе раз в пять минут одинаковая строка
   // 288 раз в сутки прячет ту единственную, которая изменилась. Смена исхода это и есть событие.
   if (!prev || prev.kind !== tick.kind || prev.why !== tick.why) console.log(`[fa-auto] ${state.auto.lastTick.line}`);
@@ -864,13 +888,13 @@ async function warmFrames() {
   }
 }
 
-// Keep ALL instrument frames topped up (delta fetches only), so the user can switch strategy /
-// instrument / config freely and land on ready data instead of waiting for an on-demand backfill.
+// Keep ALL instrument frames topped up (delta fetches only): правило автомата смотрит на ВСЮ
+// вселенную каждый цикл решения, и рынок, чей кадр не дотянут, для него не существует. Панели
+// зоны «Рынок бота» садятся на тот кадр, который назовёт автомат, поэтому отдельного «сначала
+// выбор» здесь больше нет: выбора оператора нет вовсе.
 // Self-limiting: ensureFrameAsync no-ops while a frame is fresh (STALE_AFTER_SEC), so each
 // instrument actually refetches at most once per staleness window regardless of poll cadence.
 function topUpFrames() {
-  const s = state.settings;
-  ensureFrameAsync(s.strat, s.asset); // selection first - its push matters most
   for (const p of state.positions) {
     if (p.status === "open") ensureFrameAsync(p.strategy, p.instrumentKey);
   }
@@ -879,13 +903,39 @@ function topUpFrames() {
 }
 
 // ---------------------------------------------------------------------------
+// ЧЕЙ РЫНОК ПОКАЗЫВАЮТ ПАНЕЛИ. ЕДИНСТВЕННОЕ правило выбора в приложении.
+//
+// Тулбар анализа снят: переключателей у полного автомата быть не должно, и вопрос «по какому рынку
+// собирать данные» перестал быть вопросом к оператору. Ответ на него теперь один и приходит из
+// автомата, а не из настроек. Второго правила выбора нет НИГДЕ - ни в отрисовщике, ни здесь рядом.
+//
+// ПОРЯДОК НАЗВАН: сделка > лучший кандидат последней оценки > ничего. Третья ветка это НЕ дефолт
+// «ETH на всякий случай», а честное отсутствие рынка: до первого цикла решения показывать нечего,
+// и рисовать в этот момент чужие данные значило бы отвечать на незаданный вопрос.
+// ---------------------------------------------------------------------------
+function faViewSelection() {
+  // Сделка. Рынок, на котором СТОЯТ ДЕНЬГИ, важнее любого кандидата - и неважно, кто её открыл:
+  // позиция, заведённая до перехода на автомат, это те же деньги.
+  const open = state.positions.find((p) => p.status === "open");
+  if (open && instFor(open.strategy, open.instrumentKey)) {
+    return { strat: open.strategy, asset: open.instrumentKey, cfg: open.config || "A", win: FA_VIEW_WINDOW_DAYS, from: "position" };
+  }
+  // Лучший кандидат последней оценки. Ранг 1 проставлен ТЕМ ЖЕ предикатом, каким автомат выбирает
+  // рынок входа (`bestAlternative`), и считается в движке.
+  const best = (state.auto.lastEval?.markets || []).find((m) => m.rank === 1);
+  if (best && instFor(best.strategy, best.token)) {
+    return { strat: best.strategy, asset: best.token, cfg: best.config || "A", win: FA_VIEW_WINDOW_DAYS, from: "candidate" };
+  }
+  return { strat: null, asset: null, cfg: null, win: FA_VIEW_WINDOW_DAYS, from: null };
+}
+
+// ---------------------------------------------------------------------------
 // Dataset assembly (render-contract shapes)
 // ---------------------------------------------------------------------------
-function assembleDataset(sel) {
-  const s = { ...state.settings, ...sel };
-  // Entries and the scanner are computed over the SELECTED window (s.win) so the strategy panel,
-  // the scanner ranking and the auto-chosen A/B config all describe the same rows as the hero and
-  // charts (they were full-frame 365d regardless of the window before - audit #3 W2).
+function assembleDataset() {
+  const s = faViewSelection();
+  // Окно ОДНО и равно горизонту правила (см. FA_VIEW_WINDOW_DAYS): панели рынка показывают ровно
+  // те часы, на которых бот принимает решение.
   const twoLeg = {};
   for (const inst of TWO_LEG) {
     twoLeg[inst.key] = buildTwoLegEntry(inst, state.frames.get(inst.key), state.snapshots.byKey[inst.key], s.win);
@@ -894,11 +944,10 @@ function assembleDataset(sel) {
   for (const inst of ONE_LEG) {
     oneLeg[inst.key] = buildOneLegEntry(inst, state.frames.get(`${inst.key}__oneleg`), state.snapshots.byKey[inst.key], s.win);
   }
-  const scanner = buildScanner(twoLeg);
 
   // series for the current selection, tagged so the renderer never renders it under another selection
-  const selInst = instFor(s.strat, s.asset);
-  const frame = state.frames.get(cacheKeyFor(s.strat, s.asset));
+  const selInst = s.asset ? instFor(s.strat, s.asset) : null;
+  const frame = s.asset ? state.frames.get(cacheKeyFor(s.strat, s.asset)) : null;
   const priceDaily = selInst ? (state.prices.get(selInst.token)?.daily ?? []) : [];
   const cfgUsed = s.strat === "one" ? "A" : s.cfg;
   const series = frame ? buildSeries(frame, s.strat, cfgUsed, s.win, priceDaily) : null;
@@ -939,11 +988,9 @@ function assembleDataset(sel) {
   }));
 
   return {
-    selection: { strat: s.strat, asset: s.asset, cfg: s.cfg, win: s.win },
+    selection: { strat: s.strat, asset: s.asset, cfg: s.cfg, win: s.win, from: s.from },
     twoLeg,
     oneLeg,
-    scanner,
-    scannerWinDays: Number(s.win),
     series,
     fresh,
     positions,
@@ -972,12 +1019,16 @@ function assembleDataset(sel) {
       corrupt: state.auto.corrupt,
       last: state.auto.lastTick,
       records: { ...state.auto.records, bytes: scanRecordsBytes(baseDir, FA_RECORD_PREFIX.snap) },
+      // СВОДКА ПОСЛЕДНЕЙ ОЦЕНКИ, по строке на рынок вселенной. Суточная, а не живая: снимается
+      // на цикле решения и лежит до следующего. Отметка `at` и каданс едут рядом, чтобы карточка
+      // могла назвать, КОГДА это снято и когда будет снято снова, а не выдавать сутки за «сейчас».
+      lastEval: state.auto.lastEval,
     } : null,
   };
 }
 
 function push() {
-  if (win && !win.isDestroyed()) win.webContents.send("fa:push", assembleDataset({}));
+  if (win && !win.isDestroyed()) win.webContents.send("fa:push", assembleDataset());
 }
 
 // ---------------------------------------------------------------------------
@@ -3248,17 +3299,12 @@ function wireIpcUi() {
 
 function wireIpc() {
   // Non-blocking: return what we have NOW; backfills arrive via push (audit M14).
-  ipcMain.handle("fa:getState", async () => {
-    ensureFrameAsync(state.settings.strat, state.settings.asset);
-    return assembleDataset({});
-  });
+  ipcMain.handle("fa:getState", async () => assembleDataset());
 
-  ipcMain.handle("fa:select", async (_e, sel) => {
-    state.settings = { ...state.settings, ...sel };
-    saveSettings(baseDir, state.settings);
-    ensureFrameAsync(state.settings.strat, state.settings.asset);
-    return assembleDataset({});
-  });
+  // КАНАЛА `fa:select` БОЛЬШЕ НЕТ. Он существовал ради тулбара анализа: отрисовщик слал сюда свой
+  // выбор рынка, конфигурации и окна, а главный процесс собирал датасет под него. Выбор теперь
+  // делает автомат (`faViewSelection`), и канал, которым его можно было бы переназначить снаружи,
+  // это ровно второе правило выбора. Место обновления датасета по требованию занял `fa:getState`.
 
   // РУЧНОГО ЗАПУСКА У БОТА 1 БОЛЬШЕ НЕТ, и канала `fa:startPaper` вместе с ним. Позиции открывает
   // только автомат, своим правилом входа; наружу торчит один рубильник. Двух путей запуска не
@@ -3363,7 +3409,7 @@ function wireIpc() {
 
   ipcMain.handle("fa:refreshNow", async () => {
     await pollLive();
-    return assembleDataset({});
+    return assembleDataset();
   });
 
   // ── transaction ledger (Журнал операций) ────────────────────────────────
@@ -3474,15 +3520,10 @@ app.whenReady().then(async () => {
   }
   state.settings = { ...state.settings, ...loadSettings(baseDir) };
   state.settings.costs = normalizeCosts(state.settings.costs || DEFAULT_COSTS);
-  // win gates sliceWindow via Number.isFinite: a legacy/hand-edited settings.json holding "7"
-  // (string) would silently widen every windowed stat to the full frame under a 7д label
-  state.settings.win = Number.isFinite(Number(state.settings.win)) ? Number(state.settings.win) : 1;
-  // A persisted selection may point at an instrument that no longer exists (e.g. APT removed from the
-  // universe). Fall back to a valid default so the first render isn't stuck on an empty selection.
-  if (!instFor(state.settings.strat, state.settings.asset)) {
-    state.settings.asset = state.settings.strat === "one" ? "ETH-Arb" : "ETH";
-    saveSettings(baseDir, state.settings);
-  }
+  // ЛЕЧЕНИЯ СОХРАНЁННОГО ВЫБОРА ЗДЕСЬ БОЛЬШЕ НЕТ. Лечились два поля тулбара: окно, приехавшее
+  // строкой, и инструмент, выбывший из вселенной. Ни того, ни другого в настройках не осталось -
+  // рынок называет автомат, окно фиксировано горизонтом правила. Старые ключи в settings.json
+  // просто перестают читаться; удалять их с диска незачем.
   state.positions = loadPositions(baseDir);
   // Автомат бота 1: состояние поднимается ДО первого опроса, потому что первый же тик обязан
   // знать, включён он или нет, и обязан назвать исход.
@@ -3551,24 +3592,23 @@ app.whenReady().then(async () => {
   // capped live step only ever covers the small remainder after the last historical hour.
   await gapBackfillPositions();
   await pollLive();
-  ensureFrameAsync(state.settings.strat, state.settings.asset);
   push();
   startPolling();
 
   if (!SMOKE) warmFrames();
 
   if (SMOKE && !S1_SMOKE && !SCN_SMOKE) {
-    const smokeKey = state.settings.asset; // default two-leg instrument (ETH)
-    await ensureFrame(state.settings.strat, smokeKey).catch(() => {});
-    const ds = assembleDataset({});
+    const smokeKey = TWO_LEG[0].key; // первый двуногий рынок вселенной (ETH)
+    await ensureFrame("two", smokeKey).catch(() => {});
+    const ds = assembleDataset();
     const keys = Object.keys(state.snapshots.byKey);
     const inst = ds.twoLeg[smokeKey];
     console.log("[smoke] snapshots:", keys.length, keys.join(","));
     console.log("[smoke] freshness:", JSON.stringify(ds.fresh));
     console.log(`[smoke] ${smokeKey} live now netA/netB:`, state.snapshots.byKey[smokeKey]?.netA?.toFixed(4), state.snapshots.byKey[smokeKey]?.netB?.toFixed(4));
-    console.log(`[smoke] ${smokeKey} win=${state.settings.win}d A.netMean/median:`, inst?.A?.netMean?.toFixed?.(4), inst?.A?.netMedian?.toFixed?.(4), "chosen:", inst?.chosen);
+    console.log(`[smoke] ${smokeKey} win=${FA_VIEW_WINDOW_DAYS}d A.netMean/median:`, inst?.A?.netMean?.toFixed?.(4), inst?.A?.netMedian?.toFixed?.(4), "chosen:", inst?.chosen);
     console.log("[smoke] series lens:", ds.series ? `eq=${ds.series.equityBaseCum.length} spread=${ds.series.spreadDaily.length} legs=${ds.series.legsMonthly.length} raw=${ds.series.rawRows.length} key=${ds.series.forKey}` : "none");
-    console.log("[smoke] scanner rows:", ds.scanner.length, ds.scanner.map((r) => `${r.s}:${((r.med ?? 0) * 100).toFixed(1)}%`).join(" "));
+    console.log("[smoke] selection:", JSON.stringify(ds.selection));
 
     // paper lifecycle self-test in a TEMP dir (never touches the real positions.json - audit M36):
     // open 3h ago -> gap-backfill from the real frame -> capped live accrue -> persist/reload.

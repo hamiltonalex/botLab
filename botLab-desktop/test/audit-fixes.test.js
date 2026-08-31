@@ -187,23 +187,30 @@ test("corrupted positions.json is quarantined, not silently replaced (M32)", () 
   }
 });
 
-test("hero is hypothesis-only; realized P&L lives in the trade zone (two-zone redesign)", () => {
-  // Регрессия к «застывшим −$373»: герой-«хамелеон» (позиция → t0-цифры в карточке анализа)
-  // удалён архитектурно. Герой анализа не имеет права читать позиции; реализованный P&L
-  // показывает только зона «Ⅱ · Торговля» (renderTrade).
+test("зона Ⅰ не строит гипотез вовсе: героя, матрицы и их расчёта нет", () => {
+  // ИСТОРИЯ ЭТОЙ ПРОВЕРКИ. Она стерегла регрессию к «застывшим −$373»: герой-«хамелеон» показывал
+  // в карточке анализа то гипотезу по окну, то t0-цифры открытой позиции, и на вопрос «сколько
+  // заработано» экран отвечал двумя разными числами. Тогда её починили разделением зон: герой
+  // остался ВСЕГДА гипотезой и получил запрет читать позиции.
+  //
+  // ЧТО ИЗМЕНИЛОСЬ. Гипотезы в зоне не осталось совсем: у полного автомата нет ни выбора рынка, ни
+  // капитала со плечом, ни окна, то есть нет и сценария, который герой считал. Запрет «герой не
+  // читает позиции» стал слабее того, что верно сейчас, поэтому проверка усилена до отсутствия
+  // самих органов: пока их нет, разойтись нечему.
   const html = readFileSync(new URL("../src/renderer/index.html", import.meta.url), "utf8");
-  const hero = html.match(/function renderHero\(\)\{([\s\S]*?)\nfunction /);
-  assert.ok(hero, "renderHero body found");
-  assert.ok(hero[1].includes("гипотеза"), "hero labels itself a hypothesis");
-  assert.ok(
-    !/tradeSelectedPosition|activePositionForSelection|P&L позиции/.test(hero[1]),
-    "hero never reads positions (chameleon removed)"
-  );
+  for (const fn of ["function renderHero(", "function renderMatrix(", "function computePnL(", "function buildEquity("]) {
+    assert.ok(!html.includes(fn), `гипотетический расчёт ${fn} обязан отсутствовать`);
+  }
+  for (const id of ['id="heroPnl"', 'id="matrix"', 'id="equityCanvas"', 'id="scanBody"', 'id="stratSummary"']) {
+    assert.ok(!html.includes(id), `орган гипотезы ${id} обязан отсутствовать в разметке`);
+  }
   assert.ok(html.includes('id="zoneTrade"') && html.includes('id="zoneAnalysis"'), "two zones exist");
-  // после локализации инвариантный текст героя живёт в словаре: ключ в renderHero + значение в ru.js
-  assert.ok(hero[1].includes("t('fa.hero.lbl')"), "hero label comes from the dictionary key");
-  const ruDict = readFileSync(new URL("../src/renderer/locales/ru.js", import.meta.url), "utf8");
-  assert.ok(ruDict.includes("Оценка P&L за окно · история (гипотеза)"), "hero label is the invariant hypothesis text (ru dictionary)");
+  // Зона Ⅰ называет рынок ОДНОЙ функцией, и она ничего не выбирает: читает `state`, который целиком
+  // приехал из `ds.selection` главного процесса.
+  const head = html.match(/function renderMarketHead\(\)\{([\s\S]*?)\n\}/);
+  assert.ok(head, "renderMarketHead найдена");
+  assert.ok(!/LIVE\.positions|tradeSelectedPosition/.test(head[1]),
+    "шапка рынка не читает позиции: рынок называет main, а не отрисовщик");
 });
 
 test("жетон цепочки продавца: СТОП судится кодом no-lots, разбор текста остаётся фолбэком", () => {

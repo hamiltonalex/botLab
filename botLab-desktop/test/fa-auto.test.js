@@ -26,8 +26,10 @@ import { FA_MARGIN_REFUSALS } from "../src/engine/fa/margin.js";
 import {
   AUTO_SCHEMA_VERSION, FA_AUTO_BOT_ID, FA_AUTO_INTENTS, FA_AUTO_OUTCOMES, FA_AUTO_PRECEDENCE,
   FA_AUTO_REFUSALS, armAuto, autoTick, createAutoState, defaultAutoParams, ensureAutoState,
-  explainAuto, stopAuto,
+  explainAuto, legSpreadApr, stopAuto,
 } from "../src/engine/fa/auto.js";
+import { annualizeRow } from "../src/engine/math.js";
+import { bestAlternative } from "../src/engine/fa/exit.js";
 import { hour } from "./fa-helpers.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -493,4 +495,73 @@ test("замыкание импортов автомата НЕ пересека
     const src = readFileSync(join(HERE, "..", "src", "engine", "fa", f), "utf8");
     assert.ok(!/from\s+["'][^"']*auto\.js["']/.test(src), `${f} не имеет права импортировать auto.js`);
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// СВОДКА ПОСЛЕДНЕЙ ОЦЕНКИ ПО РЫНКАМ
+//
+// Заведена ради интерфейса: пер-рыночные отказы уезжают наружу одним решающим кодом, поэтому без
+// этой сводки экран не мог ответить на вопрос «что бот увидел по КАЖДОМУ рынку». Правило показа
+// требует, чтобы ответ приходил из движка готовым, а не выводился в отрисовщике второй раз.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("сводка оценки: строка на КАЖДЫЙ рынок вселенной, включая не дошедшие до правила размера", () => {
+  // Три рынка: доходный, убыточный и такой, у которого истории меньше горизонта. Последний до
+  // правила размера не доходит вовсе, и его строка обязана существовать со своим кодом.
+  const short = market("SHORTHIST", flat({ P: 4000, bShort: 1e5, hours: 100 }));
+  const t = run({ markets: [rich("RICH"), poor("POOR"), short] });
+  assert.ok(Array.isArray(t.evalMarkets), "сводка обязана быть массивом на решённом тике");
+  assert.deepEqual(t.evalMarkets.map((m) => m.token), ["RICH", "POOR", "SHORTHIST"],
+    "порядок и состав строк повторяют вселенную, а не список кривых");
+  const byToken = Object.fromEntries(t.evalMarkets.map((m) => [m.token, m]));
+  assert.equal(byToken.SHORTHIST.refusal, "hist_short", "рынок, отсеянный воротами, назван кодом ворот");
+  assert.equal(byToken.SHORTHIST.funded, false);
+  assert.equal(byToken.SHORTHIST.coverage, null, "покрытия у него не измеряли - прочерк, а не ноль");
+  assert.equal(byToken.SHORTHIST.rank, null);
+  assert.ok(byToken.RICH.funded, "доходный рынок профинансирован");
+  assert.equal(byToken.RICH.refusal, null);
+  assert.ok(byToken.RICH.coverage > 0, "у прошедшего ворота рынка покрытие измерено");
+  assert.ok(byToken.POOR.refusal && byToken.POOR.funded === false, "убыточный назван кодом ПРАВИЛА, а не ворот");
+});
+
+test("сводка оценки: ранг ставит тот же предикат, что и выбор рынка входа", () => {
+  const t = run({ markets: [poor("POOR"), rich("RICH"), rich("RICH2")] });
+  const best = bestAlternative(t.universe.curves, t.params.capitalUsd);
+  const rank1 = t.evalMarkets.find((m) => m.rank === 1);
+  assert.ok(best && rank1, "и выбор, и ранг обязаны существовать");
+  assert.equal(rank1.token, best.token, "ранг 1 обязан совпасть с bestAlternative - иначе выбор и показ разъедутся");
+  // Ранги плотные и без дыр среди годных; непрофинансированный ранга не получает.
+  const ranks = t.evalMarkets.filter((m) => m.rank != null).map((m) => m.rank).sort((a, b) => a - b);
+  assert.deepEqual(ranks, ranks.map((_, i) => i + 1));
+  for (const m of t.evalMarkets) if (!m.funded) assert.equal(m.rank, null, `${m.token}: отказ не может иметь ранга`);
+});
+
+test("сводка оценки: рынок, не влезающий в капитал, профинансирован, но ранга не имеет", () => {
+  // Тот же предикат, что у `bestAlternative`: годная кривая обязана ВЛЕЗАТЬ в доступный капитал.
+  const t = run({ markets: [rich("RICH")], state: armed({ params: { ...defaultAutoParams(), capitalUsd: 1 } }) });
+  for (const m of t.evalMarkets) assert.equal(m.rank, null, "при потолке в доллар ранга нет ни у кого");
+});
+
+test("сводка оценки: между решениями её НЕТ, и пустотой она не притворяется", () => {
+  // Каданс не подошёл: вселенная не пересчитывалась, и выдавать прошлую сводку за новую нельзя.
+  const st = armed();
+  st.lastDecisionAt = T - 1000; // решение только что было
+  const t = run({ state: st });
+  assert.equal(t.why, "cadence_wait");
+  assert.equal(t.decided, false);
+  assert.equal(t.evalMarkets, null, "на тике без решения сводки нет вовсе");
+});
+
+test("сводка оценки: ставка ног сведена ДВИЖКОМ и совпадает с таблицей годовых", () => {
+  const rates = { f_long: -2e-9, f_short: 3e-9, b_long: 4e-10, b_short: 5e-10, hl_rate: 1e-6 };
+  const a = annualizeRow(rates);
+  assert.equal(legSpreadApr(rates, "two", "A"), a.net_A, "конфигурация A это короткая нога GMX");
+  assert.equal(legSpreadApr(rates, "two", "B"), a.net_B, "конфигурация B это длинная нога GMX");
+  assert.equal(legSpreadApr(rates, "one"), a.gmx_short_recv - a.gmx_borrow_short, "у однуногой ноги HL нет");
+  // Неполный срез это ОТСУТСТВИЕ ставки, а не ноль: ноль читался бы как измеренная нулевая ставка.
+  assert.equal(legSpreadApr({ f_short: 3e-9, b_short: 5e-10 }, "two", "A"), null);
+  assert.equal(legSpreadApr(null, "two", "A"), null);
+  // И то же число доезжает в строке сводки.
+  const t = run({ markets: [rich("RICH", { rates })] });
+  assert.equal(t.evalMarkets[0].legApr, a.net_A, "строка сводки несёт ту же величину, что и таблица");
 });

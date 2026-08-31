@@ -108,6 +108,7 @@
 // реализация непрерывности, и вторая её копия разошлась бы с архивом.
 
 import { DEFAULT_COSTS } from "../costs.js";
+import { annualizeRow } from "../math.js";
 import { legModel } from "../paper.js";
 import { FA_SIZING_DEFAULTS, FA_SIZING_REFUSALS, faSizingPreset, sizeUniverse } from "./sizing.js";
 import { FA_EXIT_DEFAULTS, FA_EXIT_REASONS, bestAlternative, decideExit, shouldDecideNow } from "./exit.js";
@@ -329,6 +330,68 @@ function precedenceDecider(codes) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// СВЕДЕНИЕ НОГ В ОДНО ЧИСЛО. Живая котируемая ставка схемы, годовых на доллар ноционала.
+//
+// СЧИТАЕТСЯ ЗДЕСЬ, А НЕ В ИНТЕРФЕЙСЕ, и это не вкусовщина: разбор схемы на ноги знает `legModel`,
+// перевод факторов в годовые знает `annualizeRow`, и обе таблицы уже есть. Вторая копия этих двух
+// правил в отрисовщике разошлась бы с движком на первой же правке знаков, а знаки у бота 1 один раз
+// уже стоили целого вывода.
+//
+// ЭТО КОТИРУЕМАЯ СТАВКА, А НЕ НАША: разбавление собственным входом здесь не применяется. Долю
+// удержания правило считает отдельно и она едет своим полем.
+// ─────────────────────────────────────────────────────────────────────────────
+export function legSpreadApr(rates, strategy, config) {
+  if (!rates) return null;
+  const need = strategy === "one"
+    ? ["f_short", "b_short"]
+    : ["f_long", "f_short", "b_long", "b_short", "hl_rate"];
+  for (const k of need) if (!Number.isFinite(rates[k])) return null;
+  const a = annualizeRow({ f_long: rates.f_long ?? 0, f_short: rates.f_short, b_long: rates.b_long ?? 0, b_short: rates.b_short, hl_rate: rates.hl_rate ?? 0 });
+  if (strategy === "one") return a.gmx_short_recv - a.gmx_borrow_short;
+  return legModel("two", config).gmxSide === "short" ? a.net_A : a.net_B;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// СВОДКА ПОСЛЕДНЕЙ ОЦЕНКИ ПО РЫНКАМ. Одна строка на рынок вселенной, ВКЛЮЧАЯ те, до правила
+// размера не дошедшие: рынок, отсеянный воротами снабжения, кривой не имеет вовсе, и без этой
+// склейки он пропал бы из сводки молча, то есть читатель решил бы, что вселенная меньше, чем есть.
+//
+// РАНГ СЧИТАЕТСЯ ТЕМ ЖЕ ПРЕДИКАТОМ, ЧТО И ВЫБОР: годная это профинансированная кривая, ВЛЕЗАЮЩАЯ в
+// доступный капитал (`bestAlternative`). Рынок профинансированный, но не влезающий, ранга не
+// получает, и его размер стоит рядом, чтобы причина была видна числом.
+// ─────────────────────────────────────────────────────────────────────────────
+function evalSummary({ markets, gateByToken, curves, capitalUsd }) {
+  const byToken = new Map();
+  for (const c of curves || []) if (c && c.token) byToken.set(c.token, c);
+  const ranked = (curves || [])
+    .filter((c) => c && !c.refusal && c.sizeUsd > 0 && c.sizeUsd <= capitalUsd)
+    .sort((a, b) => b.netUsd - a.netUsd);
+  const rankOf = new Map(ranked.map((c, i) => [c.token, i + 1]));
+  return (markets || []).map((m) => {
+    const gate = gateByToken.get(m.token) || {};
+    const cur = byToken.get(m.token) || null;
+    const refusal = gate.code ?? (cur ? cur.refusal : "hist_short");
+    return {
+      token: m.token,
+      strategy: m.strategy ?? (m.config ? "two" : "one"),
+      config: m.config ?? null,
+      refusal: refusal ?? null,
+      funded: !!(cur && !cur.refusal),
+      binding: cur ? cur.binding ?? null : null,
+      sizeUsd: cur && Number.isFinite(cur.sizeUsd) ? cur.sizeUsd : null,
+      netUsd: cur && Number.isFinite(cur.netUsd) ? cur.netUsd : null,
+      rank: rankOf.get(m.token) ?? null,
+      coverage: Number.isFinite(gate.coverage) ? gate.coverage : null,
+      dilutionRetained: cur && Number.isFinite(cur.dilutionRetained) ? cur.dilutionRetained : null,
+      // СТАВКА НА МОМЕНТ ОЦЕНКИ, а не «сейчас». Замораживается вместе со всей строкой: строка
+      // описывает ОДНО наблюдение, и живое число в ней означало бы, что часть колонок относится к
+      // суткам назад, а одна к текущей минуте. Одна строка - одно время.
+      legApr: legSpreadApr(m.rates, m.strategy ?? (m.config ? "two" : "one"), m.config),
+    };
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ТИК. Возвращает НОВОЕ состояние и намерение; ничего не исполняет и ничего не пишет.
 //
 //   now, bootAt   - метки времени; своих часов у модуля нет;
@@ -434,11 +497,17 @@ export function autoTick({
   // состояние первых недель, и без числа он неотличим от поломки. Считается здесь, потому что
   // окно нарезано здесь; второй счёт снаружи разошёлся бы с воротами на первой же правке.
   let covBest = null;
+  // Исход ворот ПО КАЖДОМУ рынку, для сводки последней оценки. Пер-рыночные отказы уезжают в
+  // журнал общим списком и наружу режутся решающим кодом, поэтому рынок, отсеянный воротами, из
+  // кривых правила пропадает целиком: без этой пометки его строка в сводке была бы пустой без
+  // причины.
+  const gateByToken = new Map();
   for (const m of markets || []) {
     const rows = m?.rows || [];
     if (rows.length < H) {
       anyShort = true;
       note("hist_short", { token: m?.token ?? null, rows: rows.length, need: H });
+      if (m?.token != null) gateByToken.set(m.token, { code: "hist_short", coverage: null });
       if (m?.token === heldToken) heldGate = "hist_short";
       continue;
     }
@@ -449,9 +518,11 @@ export function autoTick({
     if (covBest == null || cov.fraction > covBest) covBest = cov.fraction;
     if (cov.fraction < params.baseCoverageMin) {
       note("hist_no_base", { token: m.token, covered: cov.covered, hours: cov.hours, need: params.baseCoverageMin });
+      gateByToken.set(m.token, { code: "hist_no_base", coverage: cov.fraction });
       if (m.token === heldToken) heldGate = "hist_no_base";
       continue;
     }
+    gateByToken.set(m.token, { code: null, coverage: cov.fraction });
     usable.push({ ...m, rows: win, coverage: cov });
   }
   // ТИКОВЫЙ ГЕЙТ, а не пер-рыночный. Блокирует ровно два состояния: рынок, на котором мы СТОИМ,
@@ -492,7 +563,7 @@ export function autoTick({
   });
   const out = (kind, why, extra = null) => {
     st.lastRefusals = [...new Set(refusals.map((r) => r.code))];
-    return { kind, why, refusals, events, state: st, margin, gate, decided: false, intent: null, universe: null, exit: null, window: null, params, cfg, ...(extra || {}) };
+    return { kind, why, refusals, events, state: st, margin, gate, decided: false, intent: null, universe: null, exit: null, window: null, evalMarkets: null, params, cfg, ...(extra || {}) };
   };
 
   if (decider) {
@@ -530,7 +601,10 @@ export function autoTick({
     st.lastDecisionAt = now;
     // Вселенная для записи собирается ИЗ ОТВЕТА ПРАВИЛА ВЫХОДА, а не считается второй раз: оно уже
     // позвало правило входа по всем рынкам, и второй вызов дал бы другие кривые тем же данным.
-    const base = { decided: true, exit: ex, universe: { curves: ex.curves, refusals: ex.refusals, cfg: ex.cfg }, window: windowOf(held) };
+    const base = {
+      decided: true, exit: ex, universe: { curves: ex.curves, refusals: ex.refusals, cfg: ex.cfg }, window: windowOf(held),
+      evalMarkets: evalSummary({ markets, gateByToken, curves: ex.curves, capitalUsd: params.capitalUsd }),
+    };
     for (const r of ex.refusals || []) note(r.refusal, { token: r.token, from: "sizing" });
     if (ex.action === "close") return out("close", ex.reason, { ...base, intent: closeIntent(position, ex.reason) });
     if (ex.action === "switch") {
@@ -547,7 +621,10 @@ export function autoTick({
   // Слот пуст: правило ВХОДА целиком, распределитель зовётся своей единственной точкой входа.
   const uni = sizeUniverse({ markets: usable, costs, capitalTotal: params.capitalUsd, cfg, sources });
   st.lastDecisionAt = now;
-  const base = { decided: true, universe: uni, window: windowOf(usable[0]) };
+  const base = {
+    decided: true, universe: uni, window: windowOf(usable[0]),
+    evalMarkets: evalSummary({ markets, gateByToken, curves: uni.curves, capitalUsd: params.capitalUsd }),
+  };
   const best = bestAlternative(uni.curves, params.capitalUsd);
   for (const r of uni.refusals || []) note(r.refusal, { token: r.token, from: "sizing" });
   if (!best) {

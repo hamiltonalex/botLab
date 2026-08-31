@@ -4,7 +4,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("fa", {
   getState: () => ipcRenderer.invoke("fa:getState"),
-  select: (sel) => ipcRenderer.invoke("fa:select", sel),
+  // `select` из моста снят вместе с тулбаром анализа: рынок называет автомат, и канала, которым
+  // выбор можно переназначить из отрисовщика, быть не должно. Датасет по требованию берут getState.
   // Открытия у бота 1 в мосте НЕТ: позиции открывает только автомат (канал fa:auto:set).
   // Закрытие остаётся: позиция, открытая до перехода на автомат, обязана быть закрываемой.
   closePaper: (id) => ipcRenderer.invoke("fa:closePaper", id),
