@@ -136,8 +136,12 @@ export function walk({ scan, env, capital = 5000, cadence = 24, kmax = Infinity,
     log.push({ t, act: "set", n: tgt.size, usd, tokens: [...tgt.keys()].join("+") });
   };
 
+  const curve = [];
   for (const t of hours) {
     accrueTo(t);
+    // ТОЧКА КРИВОЙ пишется ПОСЛЕ начисления и ДО решения: это то, что владелец увидел бы на счёте
+    // в этот час, с уже вычтенными издержками всех совершённых кругов.
+    curve.push([t, realized - costs]);
     const ok = scan.get(t);
     const holding = pos.size > 0;
 
@@ -193,5 +197,6 @@ export function walk({ scan, env, capital = 5000, cadence = 24, kmax = Infinity,
   }
 
   accrueTo(end);
-  return { mode, capital, cadence, kmax, randomTarget, seed, first, end, decisions: hours.length, realized, costs, net: realized - costs, tally, log };
+  curve.push([end, realized - costs]);
+  return { mode, capital, cadence, kmax, randomTarget, seed, first, end, decisions: hours.length, realized, costs, net: realized - costs, tally, log, curve };
 }
