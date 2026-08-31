@@ -80,7 +80,15 @@ function target(ok, capital, kmax) {
 
 const keyOf = (token, p) => `${token}/${p.config}/${p.sizeUsd.toFixed(6)}`;
 
-export function walk({ scan, env, capital = 5000, cadence = 24, kmax = Infinity, mode = "hold-pf", first, last }) {
+// ГЕНЕРАТОР С СЕМЕНЕМ, а не Math.random: прогон обязан воспроизводиться, иначе число, полученное
+// один раз, нечем проверить.
+function rng(seed) {
+  let x = seed >>> 0;
+  return () => { x ^= x << 13; x >>>= 0; x ^= x >> 17; x ^= x << 5; x >>>= 0; return x / 4294967296; };
+}
+
+export function walk({ scan, env, capital = 5000, cadence = 24, kmax = Infinity, mode = "hold-pf", first, last, randomTarget = false, seed = 1 }) {
+  const rand = rng(seed);
   const { YEAR, grossOn, costOn } = env;
   const end = Math.min(last ?? YEAR, YEAR);
   const hours = [];
@@ -162,8 +170,20 @@ export function walk({ scan, env, capital = 5000, cadence = 24, kmax = Infinity,
     }
 
     if (tgt.size && altGross - changeCost > holdGross && altGross - changeCost > 0) {
-      applyTarget(tgt, t);
-      tally.rebalances += 1;
+      // РАЗДЕЛЕНИЕ «КОГДА» И «КУДА». Критерий выше решает, ПОРА ЛИ уходить, и он один и тот же в
+      // обеих ветках. При randomTarget место назначения выбирается СЛУЧАЙНО среди годных рынков,
+      // а не argmax. Если такая рука даёт почти то же нетто, значит ценность правила добывается
+      // самим УХОДОМ, а выбор цели ничего не добавляет, и «край перекладки не измерим» перестаёт
+      // противоречить «право уйти ценно».
+      let use = tgt;
+      if (randomTarget) {
+        const pool = ok.filter((c) => c.n > 0);
+        if (pool.length) {
+          const pick = pool[Math.floor(rand() * pool.length)];
+          use = target([pick], capital, 1);
+        }
+      }
+      if (use.size) { applyTarget(use, t); tally.rebalances += 1; } else tally.hold += 1;
     } else if (holdGross <= 0 && (!tgt.size || altGross - changeCost <= 0)) {
       for (const _ of pos) tally.close += 1;
       pos.clear();
@@ -173,5 +193,5 @@ export function walk({ scan, env, capital = 5000, cadence = 24, kmax = Infinity,
   }
 
   accrueTo(end);
-  return { mode, capital, cadence, kmax, first, end, decisions: hours.length, realized, costs, net: realized - costs, tally, log };
+  return { mode, capital, cadence, kmax, randomTarget, seed, first, end, decisions: hours.length, realized, costs, net: realized - costs, tally, log };
 }
