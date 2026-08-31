@@ -181,3 +181,33 @@ test("поле слота не имеет права звать слот сво�
     assert.ok(dict["fa.auto.slotManual"], `${code}: нет ключа fa.auto.slotManual`);
   }
 });
+
+test("ручного запуска у бота 1 нет ни одного компонента, а закрытие цело", () => {
+  // РЕШЕНИЕ ВЛАДЕЛЬЦА 2026-08-31: путь запуска у бота 1 ОДИН. Ручное открытие позиции осталось от
+  // однорежимного приложения и за один вечер дало три дефекта подряд с общей причиной: интерфейс
+  // отвечал на вопрос «работает ли бот», у которого стало ДВА разных ответа. Второй путь снят
+  // целиком, и вернуть его нельзя ни кнопкой, ни каналом: этот тест и есть запрет.
+  //
+  // ВТОРАЯ ПОЛОВИНА ТЕСТА ВАЖНЕЕ ПЕРВОЙ. Удаление ЗАПУСКА не имеет права трогать ЗАКРЫТИЕ: в
+  // боевом леджере лежит позиция, открытая ДО перехода на автомат, и незакрываемой она стать не
+  // может. Поэтому `fa:closePaper` проверяется во всех трёх файлах тракта.
+  const F = (p) => readFileSync(join(HERE, "..", "src", p), "utf8");
+  const files = { "main/main.js": F("main/main.js"), "main/preload.cjs": F("main/preload.cjs"), "renderer/index.html": HTML };
+
+  assert.ok(!/ipcMain\.handle\(\s*"fa:startPaper"/.test(files["main/main.js"]), "канал ручного запуска вернулся в main");
+  assert.ok(!/\bstartPaper\s*:/.test(files["main/preload.cjs"]), "ручной запуск вернулся в мост preload");
+  assert.ok(!/window\.fa\.startPaper/.test(HTML), "интерфейс снова зовёт ручной запуск");
+  for (const id of ["paperBtn", "launchTicket", "tradeNewBtn", "ticketConfirm", "ticketCap", "ticketLev"]) {
+    assert.ok(!HTML.includes(`id="${id}"`), `узел ручного запуска вернулся в разметку: ${id}`);
+  }
+  // Осиротевших ссылок после удаления тоже быть не должно.
+  assert.ok(!/data-help="launch"/.test(HTML), "кнопка справки ручного запуска вернулась");
+  assert.ok(!/help\.launch\./.test(HTML), "реестр справок снова ссылается на статью ручного запуска");
+
+  // ЗАКРЫТИЕ: канал, мост и оба пути кнопок.
+  assert.ok(/ipcMain\.handle\(\s*"fa:closePaper"/.test(files["main/main.js"]), "канал закрытия позиции пропал");
+  assert.ok(/closePaper\s*:/.test(files["main/preload.cjs"]), "закрытие пропало из моста");
+  assert.ok(/window\.fa\.closePaper/.test(HTML), "интерфейсу нечем закрыть позицию");
+  assert.ok(/data-close-id/.test(HTML), "мини-кнопка закрытия в таблице позиций пропала");
+  assert.ok(HTML.includes('id="tradeCloseBtn"'), "кнопка закрытия выбранной позиции пропала");
+});

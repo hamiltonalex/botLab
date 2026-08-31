@@ -3260,46 +3260,11 @@ function wireIpc() {
     return assembleDataset({});
   });
 
-  ipcMain.handle("fa:startPaper", async (_e, cfg) => {
-    const strat = cfg.strat || state.settings.strat;
-    const key = cfg.asset || state.settings.asset;
-    const inst = instFor(strat, key);
-    if (!inst) return { error: "неизвестный инструмент" };
-    const capital = Number(cfg.cap ?? state.settings.cap);
-    const leverage = Number(cfg.lev ?? state.settings.lev);
-    if (!Number.isFinite(capital) || !Number.isFinite(leverage) || !(capital > 0) || !(leverage > 0)) {
-      return { error: "капитал и плечо должны быть конечными числами > 0" };
-    }
-    const dup = state.positions.find((p) => p.status === "open" && p.instrumentKey === key && p.strategy === strat);
-    if (dup) return { error: "по этому инструменту уже есть открытая позиция - сначала закройте её" };
-    const snap = state.snapshots.byKey[key];
-    if (!snap) return { error: "нет живого снапшота по инструменту - дождитесь обновления данных" };
-    if (snap.gateOk === false) return { error: "гейт знаков не пройден - открытие заблокировано" };
-    if (snap.accrualOk === false) return { error: "обязательная живая нога недоступна - открытие заблокировано" };
-
-    const notional = capital * leverage;
-    if (!Number.isFinite(notional)) return { error: "ноционал позиции выходит за допустимый числовой диапазон" };
-    const rt = roundTripCost(state.settings.costs, notional, strat === "one");
-    const p = openPosition({
-      strategy: strat,
-      instrumentKey: key,
-      config: strat === "two" ? cfg.cfg || state.settings.cfg : null,
-      capital,
-      leverage,
-      nowMs: Date.now(),
-      roundTripCost: rt,
-      // t0 snapshots for the transaction ledger: the itemized costs actually charged (the model is
-      // user-editable later) and the mark price at open (never recomputed from current data).
-      costBreakdown: roundTripCostBreakdown(state.settings.costs, notional, strat === "one"),
-      openMarkPx: Number.isFinite(snap.price) ? snap.price : null,
-      meta: { gmxName: inst.gmxName, gmxAddr: inst.gmxAddr, chain: inst.chain, token: inst.token, hlCoin: inst.hlCoin || null, label: inst.label || key },
-    });
-    state.positions.push(p);
-    savePositions(baseDir, state.positions);
-    push();
-    return { ok: true, id: p.id };
-  });
-
+  // РУЧНОГО ЗАПУСКА У БОТА 1 БОЛЬШЕ НЕТ, и канала `fa:startPaper` вместе с ним. Позиции открывает
+  // только автомат, своим правилом входа; наружу торчит один рубильник. Двух путей запуска не
+  // осталось, потому что на вопрос «работает ли бот» у интерфейса было два разных ответа, и
+  // подписями это не чинится. ЗАКРЫТИЕ снято НЕ БЫЛО: позиция, открытая до перехода на автомат,
+  // обязана оставаться закрываемой, иначе она застревает в леджере навсегда.
   ipcMain.handle("fa:closePaper", async (_e, id) => {
     const p = state.positions.find((x) => x.id === id);
     if (p) {

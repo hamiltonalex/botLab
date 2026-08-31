@@ -5,7 +5,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("fa", {
   getState: () => ipcRenderer.invoke("fa:getState"),
   select: (sel) => ipcRenderer.invoke("fa:select", sel),
-  startPaper: (cfg) => ipcRenderer.invoke("fa:startPaper", cfg),
+  // Открытия у бота 1 в мосте НЕТ: позиции открывает только автомат (канал fa:auto:set).
+  // Закрытие остаётся: позиция, открытая до перехода на автомат, обязана быть закрываемой.
   closePaper: (id) => ipcRenderer.invoke("fa:closePaper", id),
   setCosts: (costs) => ipcRenderer.invoke("fa:setCosts", costs),
   setSettings: (s) => ipcRenderer.invoke("fa:setSettings", s),
