@@ -28,7 +28,26 @@ const lastTsOf = (rows) => {
 export function mergeFrames(cachedRows, freshRows, windowHours, endTs) {
   const byHour = new Map();
   for (const r of cachedRows || []) if (Number.isFinite(r.tsHour)) byHour.set(r.tsHour, r);
-  for (const r of freshRows || []) if (Number.isFinite(r.tsHour)) byHour.set(r.tsHour, r);
+  // БАЗЫ ФАНДИНГА ПЕРЕЖИВАЮТ ДОЛИВ, И ЭТО НЕ МЕЛОЧЬ. Свежая строка приходит из ИСТОРИЧЕСКОГО
+  // запроса, а он берёт у индексатора только ставки: полей `fbase_*` в ней нет никогда. Замена
+  // строки целиком стёрла бы базу, наблюдённую живым опросом в тот же час, и час бесшумно вернулся
+  // бы к коду `no_base`. Накопление шло бы вперёд и обнулялось каждым доливом, то есть 720 часов
+  // не набрались бы НИКОГДА, а выглядело бы это как «правило входа почему-то отказывает».
+  // Поэтому наблюдённая база переносится в свежую строку, а не наоборот: ставки берём свежие,
+  // базу сохраняем ту, что видели своими глазами.
+  for (const r of freshRows || []) {
+    if (!Number.isFinite(r.tsHour)) continue;
+    const prev = byHour.get(r.tsHour);
+    const keepLong = prev && Number.isFinite(prev.fbase_long) && !Number.isFinite(r.fbase_long);
+    const keepShort = prev && Number.isFinite(prev.fbase_short) && !Number.isFinite(r.fbase_short);
+    if (keepLong || keepShort) {
+      byHour.set(r.tsHour, {
+        ...r,
+        fbase_long: keepLong ? prev.fbase_long : r.fbase_long,
+        fbase_short: keepShort ? prev.fbase_short : r.fbase_short,
+      });
+    } else byHour.set(r.tsHour, r);
+  }
   const minTs = endTs - windowHours * HOUR;
   const rows = [...byHour.values()].filter((r) => r.tsHour >= minTs && r.tsHour <= endTs);
   rows.sort((a, b) => a.tsHour - b.tsHour);
