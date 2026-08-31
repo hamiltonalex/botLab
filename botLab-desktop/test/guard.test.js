@@ -24,12 +24,12 @@ const B = "70d2fa2c98026572e8b6725b511b56765b7a2be4636957c0a48799a32dea0f3e";
 // СОСТАВ ФАЙЛА ЗАКРЕПЛЁН СПИСКОМ, а не размером: книга, снимаемая охраной без эталонной строки,
 // сверяется ни с чем (см. checkDigests ниже), а эталонная строка без книги молча не проверяется.
 // Список ловит обе стороны, поэтому его правка обязана быть осознанной.
-test("файл эталонов репозитория разбирается и описывает пять книг: две продавца и три бота 1", () => {
+test("файл эталонов репозитория разбирается и описывает шесть книг: две продавца и четыре бота 1", () => {
   const text = readFileSync(join(HERE, "baselines", "books.sha256"), "utf8");
   const { entries, errors } = parseBaselines(text);
   assert.deepEqual(errors, [], "файл эталонов обязан разбираться без ошибок");
   assert.deepEqual([...entries.keys()].sort(),
-    ["base-eng.tsv", "base-fa-dil.tsv", "base-fa-size.tsv", "base-fa.tsv", "base-ref.tsv"]);
+    ["base-eng.tsv", "base-fa-dil.tsv", "base-fa-exit.tsv", "base-fa-size.tsv", "base-fa.tsv", "base-ref.tsv"]);
   assert.equal(entries.get("base-ref.tsv"), A);
   assert.equal(entries.get("base-eng.tsv"), B);
   assert.equal(entries.get("base-fa.tsv").length, 64);
@@ -41,6 +41,10 @@ test("файл эталонов репозитория разбирается и
   // о размере и об отборе рынка.
   assert.equal(entries.get("base-fa-size.tsv").length, 64);
   assert.notEqual(entries.get("base-fa-size.tsv"), entries.get("base-fa-dil.tsv"));
+  // Книга ПРАВИЛА ВЫХОДА снимается четвёртым скриптом и стережёт ЦЕПОЧКУ решений, а не одиночный
+  // выбор: держать, уйти в кэш или переложиться, и так раз за разом.
+  assert.equal(entries.get("base-fa-exit.tsv").length, 64);
+  assert.notEqual(entries.get("base-fa-exit.tsv"), entries.get("base-fa-size.tsv"));
 });
 
 test("parseBaselines пропускает комментарии и пустые строки", () => {

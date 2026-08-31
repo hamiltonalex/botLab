@@ -32,6 +32,7 @@
     "replay:sellhedge": "node --max-old-space-size=12000 scripts/replay-sellhedge.mjs",
     "replay:funding": "node scripts/replay-funding.mjs",
     "replay:funding-size": "node scripts/replay-funding-size.mjs",
+    "replay:funding-exit": "node scripts/replay-funding-exit.mjs",
     "compare:books": "node --max-old-space-size=12000 scripts/compare-books.mjs",
     "hist:repack": "node scripts/hist-repack.mjs",
     "e2e:ui": "node scripts/e2e-ui.mjs",
