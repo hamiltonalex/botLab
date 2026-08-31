@@ -14,6 +14,16 @@ contextBridge.exposeInMainWorld("fa", {
   getLedger: (req) => ipcRenderer.invoke("fa:getLedger", req),
   exportLedger: (req) => ipcRenderer.invoke("fa:exportLedger", req),
   deletePaper: (id) => ipcRenderer.invoke("fa:deletePaper", id),
+  // АВТОМАТ БОТА 1 (фаза 4 завела каналы, фаза 6 завела кнопку). Ровно два канала: снять состояние
+  // и взвести или остановить. Решения принимает движок, интерфейс их только показывает и передаёт
+  // подтверждение оператора.
+  auto: {
+    get: () => ipcRenderer.invoke("fa:auto:get"),
+    set: (req) => ipcRenderer.invoke("fa:auto:set", req),
+    // Журналы фазы 5 по требованию: история сделок и журнал решений. Тот же приём, что у леджера,
+    // и по той же причине - архив не имеет права ехать на каждом пуше.
+    records: (req) => ipcRenderer.invoke("fa:auto:records", req),
+  },
   // main -> renderer live pushes (poll ticks, accrual updates, freshness)
   onPush: (cb) => {
     const h = (_e, ds) => cb(ds);

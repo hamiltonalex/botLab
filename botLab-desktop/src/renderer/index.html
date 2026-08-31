@@ -412,12 +412,11 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible{
 
 .botgrid{ display:grid; gap:14px; margin-top:14px;
   grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); }
-.botcard{ text-align:left; width:100%; cursor:pointer; font-family:var(--f-sans);
+.botcard{ text-align:left; width:100%; font-family:var(--f-sans);
   background:linear-gradient(180deg, var(--panel-2), var(--panel));
   border:1px solid var(--line); border-radius:var(--r); padding:var(--pad);
   box-shadow:0 1px 0 var(--edge-hi) inset, 0 6px 22px -16px var(--shadow-3);
   transition:border-color .18s, box-shadow .18s, transform .18s; }
-.botcard:hover{ border-color:var(--line-2); box-shadow:0 10px 30px -18px var(--shadow-4); }
 .botcard .bc-top{ display:flex; align-items:center; gap:9px; }
 .botcard .bc-name{ font:600 14px var(--f-mono); color:var(--txt); }
 .botcard .bc-tag{ margin-left:auto; font:600 10px var(--f-mono); letter-spacing:.6px;
@@ -433,7 +432,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible{
   font:500 12px var(--f-mono); font-variant-numeric:tabular-nums; color:var(--txt-dim); }
 .botcard .bc-open{ margin-left:auto; color:var(--accent); font-weight:600; white-space:nowrap; }
 .botcard .bc-open .arw{ display:inline-block; transition:transform .22s cubic-bezier(.2,.7,.2,1); }
-.botcard:hover .bc-open .arw{ transform:translateX(2px); }
+button.botcard:hover .bc-open .arw{ transform:translateX(2px); }
 .botcard.soon{ border-style:dashed; opacity:.9; }
 .botcard.soon .bc-name{ color:var(--txt-dim); }
 .botcard.soon .bc-foot{ color:var(--txt-faint); }
@@ -1006,6 +1005,98 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
 #optConformTable tr.ok td.price{ color:var(--txt-faint); font-weight:500; }
 #optConformTable td.was{ color:var(--txt-faint); }
 #optConformCard .paperbtn[disabled]{ opacity:.5; cursor:not-allowed; }
+
+/* ══════════ АВТОМАТ БОТА 1 · ПУЛЬТ И ЧЕСТНОСТЬ СЧЁТА (фаза 6) ══════════
+   Своя сетка колонок, а не `.opt-chain`: та описывает цепочку бота 2, у которого идёт живой
+   прогон, и общий селектор связал бы два пульта одной правкой. Геометрия повторена намеренно -
+   одинаковые пульты обязаны читаться одинаково. */
+.fa-auto-cols{ display:grid; grid-template-columns:1fr 1.15fr .95fr; gap:14px; }
+/* fr-колонки не сжимаются ниже max-content без min-width:0: широкий жетон («СОСТОЯНИЕ БИТО»)
+   иначе распирает первую колонку и крадёт ширину у соседних (капкан цепочки бота 2). */
+.fa-auto-cols > div{ min-width:0; }
+.fa-auto-cols .decision-token{ white-space:nowrap; font-size:clamp(22px,2.2vw,34px); }
+.fa-auto-cols .stamp{ white-space:normal; }
+.fa-auto-cols .fa-col-3{ border-left:1px solid var(--line); padding-left:14px; }
+@media (max-width:1080px){
+  .fa-auto-cols{ grid-template-columns:1fr; }
+  .fa-auto-cols .fa-col-3{ border-left:0; padding-left:0; border-top:1px solid var(--line); padding-top:10px; } }
+/* `.trade-empty` живёт под `.zone.idle`, а пульту нужен свой показ - отсюда явная пара правил.
+   Правило класса с `display` перебивает атрибут `hidden`, поэтому второе обязательно. */
+#faAutoEmpty{ display:flex; }
+#faAutoEmpty[hidden]{ display:none; }
+#faAutoCard{ position:relative; overflow:hidden; }
+#faAutoCard::before{ content:""; position:absolute; inset:0 0 auto 0; height:2px;
+  background:linear-gradient(90deg,transparent,var(--neu),var(--neu),transparent); opacity:.8; }
+#faAutoStamp .blip{ display:inline-block; width:6px; height:6px; border-radius:50%;
+  background:var(--txt-faint); margin-right:6px; vertical-align:1px; }
+#faAutoCard[data-state="live"] #faAutoStamp .blip{ background:var(--pos); }
+#faAutoCard[data-state="hunting"] #faAutoStamp .blip{ background:var(--accent); }
+#faAutoCard[data-state="corrupt"] #faAutoStamp .blip{ background:var(--neg); }
+
+/* РАЗБАВЛЕНИЕ: обратная иерархия. Слева мелко и приглушённо то, что котирует рынок, справа крупно
+   и знаковым цветом то, что достаётся нам. Крупное это НАШЕ - иначе читатель уносит с экрана
+   чужое число как своё, и ровно на этом проект однажды сгорел. */
+/* ОБРАТНАЯ ИЕРАРХИЯ ЧИТАЕТСЯ, ТОЛЬКО КОГДА ПОДПИСИ СТОЯТ НА ОДНОЙ СТРОКЕ, А ЧИСЛА НА ОДНОЙ
+   БАЗОВОЙ ЛИНИИ. Шрифты у пары разной высоты (13px против 32px), и flex с выравниванием по низу
+   разводил подписи по вертикали: на пустом состоянии, где оба числа прочерк, блок читался как
+   сломанная вёрстка. Сетка в две строки держит подписи и числа каждое на своём ряду. */
+.fa-flow{ display:grid; grid-template-columns:auto auto; justify-content:start;
+  column-gap:24px; row-gap:3px; align-items:end; margin:4px 0 10px; }
+.fa-flow > .q, .fa-flow > .g{ display:contents; }
+.fa-flow > .q > .lbl{ grid-column:1; grid-row:1; }
+.fa-flow > .g > .lbl{ grid-column:2; grid-row:1; }
+.fa-flow > .q > b{ grid-column:1; grid-row:2; align-self:baseline; }
+.fa-flow > .g > span{ grid-column:2; grid-row:2; align-self:baseline; }
+.fa-flow .lbl{ display:block; font:500 10px var(--f-sans); letter-spacing:.8px;
+  text-transform:uppercase; color:var(--txt-faint); align-self:end; }
+.fa-flow .q{ font:500 13px var(--f-mono); font-variant-numeric:tabular-nums; color:var(--txt-dim); }
+.fa-flow .g{ font:700 clamp(22px,2.4vw,32px)/1 var(--f-mono); font-variant-numeric:tabular-nums;
+  letter-spacing:-.4px; color:var(--txt); }
+/* Полоса разбавления: трек это котируемый поток целиком, заливка - доля, которая досталась нам.
+   Ширина процентом, а не scaleX: при доле 8.8% нужна ГАРАНТИРОВАННАЯ минимальная ширина (max с
+   3px), иначе «мало» на узкой карточке читается как «ноль», а это разные утверждения.
+   Акцент на инсете различим и в тёмной, и в светлой теме. */
+.opt-bar.dilute .track{ background:var(--inset); }
+.opt-bar.dilute .fill{ background:var(--accent); transform:none; width:0;
+  transition:width .32s cubic-bezier(.2,.7,.2,1); }
+@media (prefers-reduced-motion:reduce){ .opt-bar.dilute .fill{ transition:none; } }
+.fa-hon-cols{ display:grid; grid-template-columns:1fr 1fr; gap:14px 22px; }
+.fa-hon-cols > div{ min-width:0; }
+@media (max-width:1080px){ .fa-hon-cols{ grid-template-columns:1fr; } }
+.fa-hon-sec{ margin-top:12px; padding-top:12px; border-top:1px solid var(--line-soft); }
+.fa-hon-sec .stamp{ white-space:normal; }
+#faHonestyCard .fa-flow + .opt-bar{ margin-top:0; }
+
+/* ══════════ ТУМБЛЕР ПИТАНИЯ НА КАРТОЧКЕ БОТА 1 («Обзор», фаза 6) ══════════
+   Карточка funding-arb перестала быть одной большой кнопкой. Тумблер внутри `<button>` дал бы
+   вложенный интерактив: невалидную разметку, сломанный обход с клавиатуры и одну кнопку с двумя
+   действиями для скрин-ридера. Цена названа вслух: контейнер больше не кликается целиком, вид
+   открывает явная кнопка в подвале, и делегированный обработчик `[data-open]` срабатывает только
+   на ней. Карточки ботов 2 и 3 остались `<button>` и правил ниже не касаются. */
+button.botcard{ cursor:pointer; }
+button.botcard:hover{ border-color:var(--line-2); box-shadow:0 10px 30px -18px var(--shadow-4); }
+div.botcard:focus-within{ border-color:var(--line-2); }
+/* ПОДВАЛ КАРТОЧКИ БОТА 1 НЕСЁТ ДВЕ КНОПКИ, и статусной строке рядом с ними оставалось около
+   двенадцати символов: на узкой карточке она рвалась в пять строк по одному слову. Статус занимает
+   свою строку целиком, кнопки встают под ним справа. Подвалы карточек-кнопок соседей не меняются. */
+#botcard-funding-arb .bc-foot{ flex-wrap:wrap; row-gap:10px; }
+#botcard-funding-arb .bc-foot > #card-status-funding-arb{ flex:1 1 100%; }
+.botcard .bc-acts{ margin-left:auto; display:flex; align-items:center; gap:12px; }
+.botcard .bc-acts .bc-open{ margin-left:0; }
+button.bc-open{ font:inherit; font-weight:600; background:none; border:0; padding:0; cursor:pointer; }
+button.bc-open:hover .arw{ transform:translateX(2px); }
+.botcard .bc-power{ font:600 11px var(--f-mono); letter-spacing:.4px; white-space:nowrap;
+  padding:4px 10px; border-radius:20px; cursor:pointer; color:var(--txt-dim);
+  background:var(--inset); border:1px solid var(--line-2);
+  transition:color .15s, border-color .15s, background .15s; }
+.botcard .bc-power:hover{ color:var(--txt); border-color:var(--accent); }
+.botcard .bc-power[aria-pressed="true"]{ color:var(--pos); background:var(--pos-bg);
+  border-color:color-mix(in srgb, var(--pos) 45%, transparent); }
+/* взведённое подтверждение остановки: красное - это единственный необратимый шаг на карточке */
+.botcard .bc-power.armed{ color:var(--neg-bri); background:var(--neg-bg);
+  border-color:color-mix(in srgb, var(--neg) 55%, transparent); }
+@media (prefers-reduced-motion:reduce){ .botcard .bc-power{ transition:none; } }
+
 </style>
 </head>
 <body>
@@ -1081,7 +1172,12 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
     </div>
 
     <div class="botgrid">
-      <button class="botcard" type="button" data-open="funding-arb">
+      <!-- КАРТОЧКА БОТА 1 - НЕ КНОПКА, И ЭТО ОСОЗНАННАЯ ЦЕНА. Тумблер питания внутри <button> дал бы
+           вложенный интерактив: невалидную разметку, сломанный обход с клавиатуры и одну кнопку с
+           двумя действиями для скрин-ридера. Поэтому контейнер стал <div> без data-open, а в подвале
+           стоят ДВЕ настоящие кнопки. Делегированный обработчик [data-open] срабатывает ровно на
+           явной кнопке, и stopPropagation не нужен вовсе. Карточки ботов 2 и 3 остались кнопками. -->
+      <div class="botcard" id="botcard-funding-arb">
         <div class="bc-top">
           <span class="bot-dot idle" id="card-dot-funding-arb" aria-hidden="true"></span>
           <span class="bc-name">Funding-arb</span>
@@ -1090,9 +1186,12 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
         <p class="bc-desc" data-i18n="home.fa.desc">Дельта-нейтральный арбитраж ставок финансирования · GMX&nbsp;V2 (Arbitrum) × Hyperliquid</p>
         <div class="bc-foot">
           <span id="card-status-funding-arb" data-i18n="home.fa.idle">○ не запущен - нет открытых позиций</span>
-          <span class="bc-open"><span data-i18n="home.card.open">Открыть</span> <span class="arw">→</span></span>
+          <span class="bc-acts">
+            <button class="bc-power" type="button" id="faPowerBtn" aria-pressed="false" data-i18n="home.fa.powerOn"></button>
+            <button class="bc-open" type="button" data-open="funding-arb"><span data-i18n="home.card.open">Открыть</span> <span class="arw">→</span></button>
+          </span>
         </div>
-      </button>
+      </div>
 
       <button class="botcard" type="button" data-open="btc-options">
         <div class="bc-top">
@@ -1139,6 +1238,252 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
     <span data-i18n="fa.zt.emptyText">○ стратегия не запущена - выберите инструмент, конфигурацию, период и плечо в зоне «Анализ стратегий» ниже и запустите бумажную торговлю. Реализованный P&amp;L появится здесь.</span>
     <button class="goto" id="tradeGoto" data-i18n="fa.zt.goto">▶ Запустить стратегию (Paper Trading)</button>
   </div>
+  <!-- ПУЛЬТ И ЧЕСТНОСТЬ ЖИВУТ В СВОЕЙ СЕТКЕ, А НЕ В `.trade-grid`, И ЭТО НЕ КОСМЕТИКА.
+       Правило `.zone.idle .trade-grid{display:none}` гасит сетку результата, пока на счёте нет ни
+       одной позиции. Но пульт нужен ИМЕННО ТОГДА: выключенный автомат и отказ «баз ещё мало» это
+       ответ, а пустое место вместо них читается как поломка. Идиома `#optChainGrid` бота 2.
+
+       ПРАВИЛО ЭТОГО ПЛАСТА: НОЛЬ КИРИЛЛИЦЫ ВНЕ КОММЕНТАРИЕВ. Ни запасных текстов внутри
+       `data-i18n`, ни русских `aria-label`, `title` и `placeholder` рядом с `data-i18n-*`, ни
+       русских строковых литералов в скриптах. Элементы стоят пустыми и заполняются `applyI18n`
+       и на старте, и при смене локали; весь текст приходит через `t()`. Комментарии по-русски
+       писать можно и нужно: ратчет их не считает.
+
+       ЭТО СОЗНАТЕЛЬНОЕ РАСХОЖДЕНИЕ С ИДИОМОЙ БОТА 2, А НЕ НЕБРЕЖНОСТЬ, и «чинить» его обратно
+       нельзя. `test/i18n-ratchet.test.js` считает видимую кириллицу вне словарей и держит потолок
+       830. Эти 830 почти целиком и есть запасные строки бота 2, оставшиеся от времени до ратчета:
+       запаса под новый пласт в потолке нет НИ ОДНОЙ строки. Первая же попытка написать «как у
+       бота 2» роняет тест, и чинить её надо переносом строки в словари, а не потолком вверх. -->
+  <div class="opt-grid" id="faAutoGrid">
+
+    <!-- ══ АВТОМАТ БОТА 1 · ПУЛЬТ ══
+         Стоит ПЕРВОЙ и видна ВСЕГДА. Состояние выводится ОДНОЙ функцией `faAutoState`: жетон,
+         чип шапки и точка «Обзора» обязаны иметь один источник, иначе они разойдутся на первой
+         же правке, и оператор увидит два разных ответа на один вопрос. -->
+    <div class="card span2" id="faAutoCard" data-state="nodata">
+      <div class="sec-head">
+        <h2 data-i18n="fa.auto.title"></h2>
+        <span class="tag amber" id="faAutoChip" data-i18n="fa.auto.tokNoData"></span>
+        <button class="help-btn" data-help="fa-auto">?</button>
+        <span class="cfg-pill" id="faAutoPollPill"><span data-i18n="chrome.poll.lbl"></span> <b>-</b></span>
+        <span class="rule"></span>
+        <button id="faAutoUndoBtn" class="paperbtn mini" hidden data-i18n="fa.auto.undoBtn"></button>
+        <button id="faAutoStopBtn" class="paperbtn mini" hidden data-i18n="fa.auto.stopBtn"></button>
+        <span class="stamp" id="faAutoStamp"><span class="blip" aria-hidden="true"></span><span aria-live="polite" id="faAutoStampTxt" data-i18n="fa.auto.stamp0"></span></span>
+      </div>
+
+      <div class="trade-empty" id="faAutoEmpty" role="status">
+        <span data-i18n="fa.auto.emptyText"></span>
+        <button class="goto" id="faAutoArmBtn" aria-expanded="false" aria-controls="faAutoArmTicket" data-i18n="fa.auto.armBtn"></button>
+      </div>
+
+      <!-- ТЕЛО ВИДНО И В ВЫКЛЮЧЕННОМ СОСТОЯНИИ, в отличие от цепочки бота 2. Причина в данных:
+           ворота снабжения и счётчик непрерывности движок считает КАЖДЫЙ тик независимо от
+           тумблера, поэтому спрятать их значило бы спрятать готовый ответ. -->
+      <div class="fa-auto-cols" id="faAutoBody">
+        <div aria-live="polite" aria-atomic="true">
+          <div class="subhdr" data-i18n="fa.auto.stateHdr"></div>
+          <div class="decision-token neu hollow" id="faAutoToken"><span class="dot"></span><span data-i18n="fa.auto.tokNoData"></span></div>
+          <div class="mono" id="faAutoReason" style="font-size:12px;color:var(--txt-dim)">-</div>
+          <div class="stamp" id="faAutoReasonNums" style="margin-top:7px" hidden>-</div>
+        </div>
+
+        <div>
+          <div class="subhdr" data-i18n="fa.auto.gateHdr"></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="fa.auto.gMarkets"></span><span class="v num" id="faAutoGMarkets">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.auto.gUsable"></span><span class="v num" id="faAutoGUsable">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.auto.gCov"></span><span class="v num" id="faAutoGCov">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.auto.gHorizon"></span><span class="v num" id="faAutoGHorizon">-</span></div>
+          </div>
+          <div class="stamp" id="faAutoGateNote" style="margin-top:8px" hidden>-</div>
+        </div>
+
+        <div class="fa-col-3">
+          <div class="subhdr" data-i18n="fa.auto.contHdr"></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="fa.auto.uTicks"></span><span class="v num" id="faAutoUTicks">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.auto.uGap"></span><span class="v num" id="faAutoUGap">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.auto.uTick"></span><span class="v num" id="faAutoUTick">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.auto.uDec"></span><span class="v num" id="faAutoUDec">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.auto.uSlot"></span><span class="v num" id="faAutoUSlot">-</span></div>
+          </div>
+          <div class="stamp" id="faAutoCadenceNote" style="margin-top:8px">-</div>
+          <div class="stamp" style="margin-top:10px;color:var(--txt-faint)" data-i18n="fa.auto.stopNote"></div>
+        </div>
+      </div>
+
+      <div class="why-box warn" id="faAutoWarn" hidden style="margin-top:12px"></div>
+
+      <!-- ТИКЕТ ВКЛЮЧЕНИЯ. Не модалка, Escape закрывает. Первым блоком стоит то, чего нет у
+           одноразового тикета и что обязано быть здесь: что автомат делает БЕЗ оператора.
+           Числа приходят из замороженных параметров, а до первого взвода - из `defaultAutoParams()`
+           движка. Вписывать их в разметку запрещено: вторая копия разошлась бы с движком молча. -->
+      <div id="faAutoArmTicket" class="ticket" role="group" data-i18n-aria="fa.auto.tktAria" hidden>
+        <div class="why-box" style="margin-bottom:10px">
+          <b data-i18n="fa.auto.tktWhatB"></b> <span data-i18n="fa.auto.tktWhat"></span>
+        </div>
+        <div class="trow"><span class="k" data-i18n="fa.auto.tktRule"></span><span class="num mono" id="faAutoTktRule">-</span></div>
+        <div class="trow"><span class="k" data-i18n="fa.auto.tktCap"></span><span class="num" id="faAutoTktCap">-</span></div>
+        <div class="trow"><span class="k" data-i18n="fa.auto.tktLev"></span><span class="num" id="faAutoTktLev">-</span></div>
+        <div class="trow"><span class="k" data-i18n="fa.auto.tktRoom"></span><span class="num" id="faAutoTktRoom">-</span></div>
+        <div class="trow"><span class="k" data-i18n="fa.auto.tktCadence"></span><span class="num" id="faAutoTktCadence">-</span></div>
+        <div class="trow"><span class="k" data-i18n="fa.auto.tktAge"></span><span class="num" id="faAutoTktAge">-</span></div>
+        <div class="trow"><span class="k" data-i18n="fa.auto.tktCov"></span><span class="num" id="faAutoTktCov">-</span></div>
+        <div class="trow"><span class="k" data-i18n="fa.auto.tktLoss"></span><span class="num neg" data-i18n="fa.auto.tktLossV"></span></div>
+        <div class="trow"><span class="k" data-i18n="fa.auto.tktBoot"></span><span class="num" data-i18n="fa.auto.tktBootV"></span></div>
+        <div id="faAutoTktErr" class="ticket-err" role="alert" hidden></div>
+        <div class="ticket-actions">
+          <button id="faAutoTktConfirm" class="paperbtn open" data-i18n="fa.auto.tktConfirm"></button>
+          <button id="faAutoTktCancel" class="paperbtn" data-i18n="fa.ticket.cancel"></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ ЧЕСТНОСТЬ СЧЁТА ══
+         ПРОВЕРКА, КОТОРУЮ КАРТОЧКА ОБЯЗАНА ПРОЙТИ: если человек смотрит на экран и делает вывод
+         «стратегия зарабатывает столько-то», а на настоящем счёте вышло бы меньше, интерфейс
+         неверен - даже когда каждое отдельное число в нём верно. Проект на этом уже горел: модель
+         насчитала $651 526 там, где весь рынок заплатил $6 812. Поэтому четыре замера стоят
+         постоянно, не мелким шрифтом и не во всплывашке. -->
+    <div class="card span2" id="faHonestyCard">
+      <div class="sec-head">
+        <h2 data-i18n="fa.hon.title"></h2>
+        <span class="tag amber" data-i18n="fa.hon.chip"></span>
+        <button class="help-btn" data-help="fa-honesty">?</button>
+        <span class="rule"></span>
+        <span class="hint" data-i18n="fa.hon.hint"></span>
+      </div>
+
+      <!-- (1) РАЗБАВЛЕНИЕ СОБСТВЕННЫМ ВХОДОМ. Обратная иерархия намеренная: крупно и цветом идёт
+           НАШЕ число, котируемое рынком стоит рядом мелким. Движок считает обе суммы и долю
+           удержания, интерфейс их только подписывает. -->
+      <div class="fa-flow" aria-live="polite" aria-atomic="true">
+        <div class="q"><span class="lbl" data-i18n="fa.hon.quotedLbl"></span><b id="faHonQuoted">-</b></div>
+        <div class="g"><span class="lbl" data-i18n="fa.hon.gotLbl"></span><span id="faHonGot">-</span></div>
+      </div>
+      <div class="opt-bar dilute" aria-hidden="true">
+        <div class="lbl"><span data-i18n="fa.hon.barTrack"></span><span id="faHonBarPct">-</span></div>
+        <div class="track"><div class="fill" id="faHonBarFill"></div></div>
+      </div>
+      <p class="sr-only" id="faHonBarSr">-</p>
+      <div class="dl">
+        <div class="row"><span class="k" data-i18n="fa.hon.rowQuoted"></span><span class="v num" id="faHonRowQuoted">-</span></div>
+        <div class="row"><span class="k" data-i18n="fa.hon.rowGot"></span><span class="v num" id="faHonRowGot">-</span></div>
+        <div class="row"><span class="k" data-i18n="fa.hon.rowKept"></span><span class="v num" id="faHonRowKept">-</span></div>
+      </div>
+      <div class="stamp" style="margin-top:8px" data-i18n="fa.hon.dilNote"></div>
+      <div class="stamp" id="faHonDilNone" hidden style="margin-top:6px" data-i18n="fa.hon.dilNone"></div>
+
+      <div class="fa-hon-cols">
+        <!-- (2) ЗАЯВЛЕННЫЙ И ФАКТИЧЕСКИЙ РАЗМЕР. Разница НЕ вычисляется здесь: показаны оба
+             числа рядом, и читатель видит её сам. -->
+        <div class="fa-hon-sec">
+          <div class="subhdr" data-i18n="fa.hon.sizeHdr"></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="fa.hon.sizeWant"></span><span class="v num" id="faHonWant">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.hon.sizeGot"></span><span class="v num" id="faHonSize">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.hon.sizeBind"></span><span class="v" id="faHonBind">-</span></div>
+          </div>
+          <div class="stamp" style="margin-top:8px" data-i18n="fa.hon.sizeNote"></div>
+          <div class="stamp" id="faHonSizeNone" hidden style="margin-top:6px" data-i18n="fa.hon.sizeNone"></div>
+        </div>
+
+        <!-- (3) РИСК ЛИКВИДАЦИИ НОГИ. Леджер его не моделирует ПО ПОСТРОЕНИЮ (шапка paper.js),
+             поэтому запас показывается отдельно, а строка про отсутствие риска в P&L постоянна. -->
+        <div class="fa-hon-sec">
+          <div class="subhdr" data-i18n="fa.hon.liqHdr"></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="fa.hon.liqWorst"></span><span class="v num" id="faHonRoom">-</span></div>
+          </div>
+          <div class="dl" id="faHonLegs"></div>
+          <div class="stamp" id="faHonRoomNone" hidden style="margin-top:6px" data-i18n="fa.hon.liqNone"></div>
+          <div class="why-box warn" style="margin-top:10px">
+            <b data-i18n="fa.hon.liqWarnB"></b> <span data-i18n="fa.hon.liqWarn"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- (4) ДОХОДНОСТЬ ВНЕ ВЫБОРКИ НЕ ВОСПРОИЗВЕДЕНА. Постоянная строка: правило формулируется
+           как правило, а не как предсказание, и годовой экстраполяции на карточке нет вовсе. -->
+      <div class="why-box" style="margin-top:14px">
+        <b data-i18n="fa.hon.oosB"></b> <span data-i18n="fa.hon.oos"></span>
+      </div>
+    </div>
+
+    <!-- ══ ИСТОРИЯ СДЕЛОК АВТОМАТА ══
+         Одна строка на СДЕЛКУ: вход сшит с выходом главным процессом, перекладка закрывает прежнюю
+         и открывает следующую. Размер стоит ДВУМЯ числами (заявлено и работает) - это второй замер
+         честности, и разница между ними здесь не вычисляется, а показывается. Открытая сделка несёт
+         чип «идёт» и прочерк вместо итога: итога у неё ещё нет, а ноль был бы неправдой. -->
+    <div class="card flush span2" id="faHistoryCard">
+      <div class="sec-head" style="padding:16px 16px 0;margin-bottom:10px">
+        <h2 data-i18n="fa.hist.title"></h2>
+        <button class="help-btn" data-help="fa-history">?</button>
+        <span class="rule"></span>
+        <span class="hint" data-i18n="fa.hist.hint"></span>
+      </div>
+      <div class="table-scroll" style="max-height:300px" tabindex="0" role="region" data-i18n-aria="fa.hist.tableAria">
+        <table class="scan" id="faHistoryTable">
+          <caption class="sr-only" data-i18n="fa.hist.caption"></caption>
+          <thead><tr>
+            <th scope="col">№</th>
+            <th class="lft" scope="col" data-i18n="fa.pos.thInstr"></th>
+            <th class="lft" scope="col" data-i18n="fa.pos.thCfg"></th>
+            <th scope="col" data-i18n="fa.hist.thSize"></th>
+            <th scope="col" data-i18n="fa.hist.thIn"></th>
+            <th scope="col" data-i18n="fa.hist.thOut"></th>
+            <th scope="col" data-i18n="fa.hist.thHours"></th>
+            <th scope="col" data-i18n="fa.hist.thCost"></th>
+            <th scope="col" data-i18n="fa.hist.thNetUsd"></th>
+            <th scope="col" data-i18n="fa.hist.thNetPct"></th>
+            <th class="lft" scope="col" data-i18n="fa.hist.thWhy"></th>
+          </tr></thead>
+          <tbody id="faHistoryBody"></tbody>
+        </table>
+        <div class="ledger-empty" id="faHistoryEmpty" data-i18n="fa.hist.empty"></div>
+      </div>
+      <div class="ledger-foot"><span class="hint" id="faHistoryFoot">-</span></div>
+    </div>
+
+    <!-- ══ ЖУРНАЛ РЕШЕНИЙ И СКАНИРОВАНИЯ ══
+         Одна строка на ЦИКЛ РЕШЕНИЯ. Пары «котируемая ставка · наша» здесь НЕТ, и это отступление
+         названо вслух: поток решений годовой котируемой ставки не пишет вовсе, а вывести её в
+         отрисовщике значило бы завести второй расчёт мимо движка. Вместо неё стоят два числа,
+         которые движок действительно записал: доля удержания лучшего кандидата и база встречной
+         стороны. Смысл замера сохраняется - видно, какая часть потока досталась бы нам. -->
+    <div class="card flush span2" id="faJournalCard">
+      <div class="sec-head" style="padding:16px 16px 0;margin-bottom:10px">
+        <h2 data-i18n="fa.jr.title"></h2>
+        <button class="help-btn" data-help="fa-journal">?</button>
+        <span class="rule"></span>
+        <span class="hint" data-i18n="fa.jr.hint"></span>
+      </div>
+      <div class="table-scroll" style="max-height:320px" tabindex="0" role="region" data-i18n-aria="fa.jr.tableAria">
+        <table class="scan" id="faJournalTable">
+          <caption class="sr-only" data-i18n="fa.jr.caption"></caption>
+          <thead><tr>
+            <th class="lft" scope="col" data-i18n="fa.jr.thTime"></th>
+            <th scope="col" data-i18n="fa.jr.thCands"></th>
+            <th class="lft" scope="col" data-i18n="fa.jr.thBest"></th>
+            <th scope="col" data-i18n="fa.jr.thSize"></th>
+            <th scope="col" data-i18n="fa.jr.thKept"></th>
+            <th scope="col" data-i18n="fa.jr.thBase"></th>
+            <th class="lft" scope="col" data-i18n="fa.jr.thAct"></th>
+            <th class="lft" scope="col" data-i18n="fa.jr.thWhy"></th>
+          </tr></thead>
+          <tbody id="faJournalBody"></tbody>
+        </table>
+        <div class="ledger-empty" id="faJournalEmpty" data-i18n="fa.jr.empty"></div>
+      </div>
+      <div class="ledger-foot">
+        <span class="hint" id="faJournalFoot">-</span>
+        <span class="hint" id="faJournalBroken" hidden>-</span>
+      </div>
+      <div class="ledger-foot" style="padding-top:0"><span class="stamp" data-i18n="fa.jr.note"></span></div>
+    </div>
+  </div>
+
   <div class="trade-grid">
     <!-- кокпит: главный P&L с момента запуска -->
     <div class="card" id="tradeCockpit">
@@ -2961,7 +3306,7 @@ const COST_LIMITS = { gmxOpen:100, gmxClose:100, gmxImpact:100, gmxGas:1000000, 
    хранит серию графиков С МЕТКОЙ ВЫБОРА (series.forKey), бумажные позиции,
    сводку счёта и штамп свежести. Всё остальное (render/draw) - без изменений.
    ========================================================================== */
-const LIVE = { ready:false, series:null, positions:[], fresh:null, account:null, scannerWinDays:null };
+const LIVE = { ready:false, series:null, positions:[], fresh:null, account:null, auto:null, scannerWinDays:null };
 
 // Ключ текущего выбора - серия рендерится ТОЛЬКО если её forKey совпадает (аудит D5).
 function selKey(){
@@ -2987,6 +3332,7 @@ function applyDataset(ds){
   LIVE.positions = ds.positions || [];
   LIVE.fresh     = ds.fresh || LIVE.fresh;
   LIVE.account   = ds.account || null;
+  LIVE.auto      = ds.auto || null;   // null очищает: состояния автомата может не быть вовсе
   LIVE.ready     = true;
   // гидратация сохранённой модели издержек (аудит D8) - не во время редактирования
   if(ds.settings && ds.settings.costs && !costFocusActive()) Object.assign(COSTS, ds.settings.costs);
@@ -3804,6 +4150,9 @@ function render(){
   renderScanner();
   renderCharts();
   renderTrade(); // зона Ⅱ: кокпит/таблица/детали - нетто-первично, от режима анализа не зависит
+  renderFaAuto();    // пульт автомата: состояние, ворота снабжения, непрерывность
+  renderFaHonesty(); // четыре замера, каждый из которых занижает показанную прибыль до настоящей
+  renderFaJournals(); // история сделок и журнал решений (данные тянутся отдельно, по требованию)
 }
 
 /* ============================================================================
@@ -4468,6 +4817,606 @@ function gotoLaunch(){
 if($('tradeGoto')) $('tradeGoto').onclick = gotoLaunch;
 if($('tradeNewBtn')) $('tradeNewBtn').onclick = gotoLaunch;
 
+/* ════════════════════════════════════════════════════════════════════════════════════════════════
+   АВТОМАТ БОТА 1 (фаза 6): ПУЛЬТ, ЧЕСТНОСТЬ СЧЁТА, ТУМБЛЕР НА «ОБЗОРЕ»
+   ────────────────────────────────────────────────────────────────────────────────────────────────
+   ЗАКОН, КОТОРОМУ ЗДЕСЬ ПОДЧИНЕНО ВСЁ: интерфейс НЕ СЧИТАЕТ то, что считает движок. Ни разбавления,
+   ни запаса залога, ни покрытия баз, ни ранга, ни окупаемости. Все эти числа приезжают готовыми в
+   `ds.auto` и `ds.account`, а отрисовка их только форматирует и подписывает. Второй счёт разошёлся
+   бы с движком на первой же правке правила, и разошёлся бы МОЛЧА.
+   ════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/* КОДЫ ОТКАЗА НАЗЫВАЮТСЯ СЛОВАМИ, ВСЕ ДО ЕДИНОГО. Таблица написана ЯВНЫМИ вызовами `t()`, а не
+   склейкой `t('fa.code.'+code)`, и это не стиль: склейку не видит ни проверка ссылочной целостности
+   словарей, ни проверка мёртвых ключей, поэтому первый же неназванный код показал бы оператору
+   машинную строку. Заодно таблица становится доказуемой - `test/fa-ui.test.js` сверяет её с
+   реестрами движка В ОБЕ СТОРОНЫ, и «своих кодов не заводить» перестаёт быть обещанием. */
+const FA_CODE_TEXT = {
+  state_corrupt:            () => t('fa.code.stateCorrupt'),
+  off:                      () => t('fa.code.off'),
+  orphan_position:          () => t('fa.code.orphanPosition'),
+  state_stale:              () => t('fa.code.stateStale'),
+  boot_warmup:              () => t('fa.code.bootWarmup'),
+  poll_gap:                 () => t('fa.code.pollGap'),
+  margin_thin:              () => t('fa.code.marginThin'),
+  margin_unknown:           () => t('fa.code.marginUnknown'),
+  capital_missing:          () => t('fa.code.capitalMissing'),
+  hist_short:               () => t('fa.code.histShort'),
+  hist_no_base:             () => t('fa.code.histNoBase'),
+  no_slot:                  () => t('fa.code.noSlot'),
+  stop_pending:             () => t('fa.code.stopPending'),
+  cadence_wait:             () => t('fa.code.cadenceWait'),
+  funded:                   () => t('fa.code.funded'),
+  no_capital_cap:           () => t('fa.code.noCapitalCap'),
+  horizon_missing:          () => t('fa.code.horizonMissing'),
+  src_gmx_down:             () => t('fa.code.srcGmxDown'),
+  src_hl_down:              () => t('fa.code.srcHlDown'),
+  no_base:                  () => t('fa.code.noBase'),
+  stale_base:               () => t('fa.code.staleBase'),
+  base_identity_broken:     () => t('fa.code.baseIdentityBroken'),
+  no_book:                  () => t('fa.code.noBook'),
+  stale_book:               () => t('fa.code.staleBook'),
+  no_funding:               () => t('fa.code.noFunding'),
+  no_room:                  () => t('fa.code.noRoom'),
+  below_min_ticket:         () => t('fa.code.belowMinTicket'),
+  decreasing_at_every_size: () => t('fa.code.decreasingAtEverySize'),
+  negative_at_every_size:   () => t('fa.code.negativeAtEverySize'),
+  below_fund_ratio:         () => t('fa.code.belowFundRatio'),
+  no_capital_left:          () => t('fa.code.noCapitalLeft'),
+  hold_best:                () => t('fa.code.holdBest'),
+  gross_negative:           () => t('fa.code.grossNegative'),
+  alt_beats_hold:           () => t('fa.code.altBeatsHold'),
+  no_position:              () => t('fa.code.noPosition'),
+  short_history:            () => t('fa.code.shortHistory'),
+};
+/* Неизвестный код показывается КАК ЕСТЬ. Подменить его знакомой подписью значило бы соврать про то,
+   почему автомат поступил так, а не иначе (идиома `sellPresetLabel` бота 2). */
+const faCodeText = c => (FA_CODE_TEXT[c] ? FA_CODE_TEXT[c]() : String(c || '-'));
+
+/* Чем СВЯЗАН размер. Это не отказ: рынок профинансирован, но упёрся во что-то одно. `null` в реестре
+   движка означает «ничего не связывает», и у него своя строка - прочерк здесь был бы неправдой. */
+const FA_BIND_TEXT = {
+  gmx:                   () => t('fa.bind.gmx'),
+  book:                  () => t('fa.bind.book'),
+  exhausted:             () => t('fa.bind.exhausted'),
+  dilution:              () => t('fa.bind.dilution'),
+  extrapolation_blocked: () => t('fa.bind.extrapolationBlocked'),
+  flip:                  () => t('fa.bind.flip'),
+  ticket_cap:            () => t('fa.bind.ticketCap'),
+  grid:                  () => t('fa.bind.grid'),
+  capital:               () => t('fa.bind.capital'),
+};
+const faBindText = c => (c == null ? t('fa.bind.none') : (FA_BIND_TEXT[c] ? FA_BIND_TEXT[c]() : String(c)));
+
+/* Причина перерыва опроса (реестр `FA_GAP_CAUSES` бота 1). «Причина не установлена» это честный код,
+   а не заглушка, поэтому и у него есть своя строка. */
+const FA_GAP_CAUSE_TEXT = {
+  'sleep':       () => t('fa.gap.sleep'),
+  'app-down':    () => t('fa.gap.appDown'),
+  'no-response': () => t('fa.gap.noResponse'),
+  'unknown':     () => t('fa.gap.unknown'),
+};
+const faGapCause = c => (FA_GAP_CAUSE_TEXT[c] ? FA_GAP_CAUSE_TEXT[c]() : String(c || '-'));
+const faSideText = s => (s === 'long' ? t('fa.side.long') : s === 'short' ? t('fa.side.short') : String(s || '-'));
+
+const faAutoDate = ms => Number.isFinite(ms) ? new Date(ms).toISOString().slice(0,16).replace('T',' ')+' UTC' : '-';
+/* Состояние UI пульта. Взводы и остановки живут в движке; здесь только то, чего у движка нет:
+   замеренные дефолты для тикета и таймеры двухшаговых подтверждений. */
+const FA_AUTO_UI = { defaults:null, stopArmed:false, stopTimer:null, powerArmed:false, powerTimer:null };
+
+/* ОДНА ФУНКЦИЯ СОСТОЯНИЯ НА ВЕСЬ ИНТЕРФЕЙС (идиома `optChainState` бота 2). Жетон пульта, чип в его
+   шапке, чип и точка карточки «Обзора» читают ЕЁ. Вывести состояние из набора флагов в трёх местах
+   значило бы завести три источника истины, которые разойдутся на первой правке. */
+function faAutoState(ds){
+  const a = ds && ds.auto ? ds.auto : null;
+  if(!a) return { key:'nodata', token:t('fa.auto.tokNoData'), cls:'neu hollow', code:null };
+  const why = a.last && a.last.why ? a.last.why : null;
+  if(a.corrupt) return { key:'corrupt', token:t('fa.auto.tokCorrupt'), cls:'neg', code:why || 'state_corrupt' };
+  if(!a.on)     return { key:'off',     token:t('fa.auto.tokOff'),     cls:'dim hollow', code:why || 'off' };
+  if(a.positionId) return a.stopRequested
+    ? { key:'winddown', token:t('fa.auto.tokWinddown'), cls:'neu hollow', code:why }
+    : { key:'live',     token:t('fa.auto.tokLive'),     cls:'pos',        code:why };
+  return a.stopRequested
+    ? { key:'stopping', token:t('fa.auto.tokStopping'), cls:'neu hollow',    code:why }
+    : { key:'hunting',  token:t('fa.auto.tokHunting'),  cls:'accent hollow', code:why };
+}
+/* Чип шапки повторяет цвет жетона. Красный занят СЛОМАННЫМ: отказ `hist_no_base` это штатное
+   состояние первых недель, и красный чип на нём читался бы как поломка исправного бота. */
+function faChipCls(cls){
+  if(cls.indexOf('neg') === 0) return 'tag red';
+  if(cls.indexOf('pos') === 0) return 'tag green';
+  if(cls.indexOf('dim') === 0) return 'tag';
+  return 'tag amber';
+}
+
+/* ПРИЧИНА ПИШЕТСЯ ЧИСЛАМИ, А НЕ СЛОВОМ «МАЛО». Числа приходят внутри записи решающего отказа и
+   зависят от кода; берётся ПЕРВАЯ запись, у которой они есть (пер-рыночные заметки лежат раньше
+   блокирующей, и только у них есть покрытие и токен рынка). Ничего не считается. */
+function faRefusalNums(last){
+  if(!last || !Array.isArray(last.refusals) || !last.refusals.length) return '';
+  const withNums = last.refusals.find(x => x && (x.covered != null || x.rows != null || x.ms != null
+    || x.roomFrac != null || x.silenceH != null || x.positionId != null));
+  const r = withNums || last.refusals[0];
+  const c = last.why, tok = r.token != null ? String(r.token) : null;
+  if(c === 'hist_no_base' && Number.isFinite(r.covered))
+    return t('fa.num.histNoBase', { tok:tok || '-', cov:r.covered, h:r.hours, need:fmtPctNS(r.need, 0) });
+  if(c === 'hist_short' && Number.isFinite(r.rows))
+    return t('fa.num.histShort', { tok:tok || '-', rows:r.rows, need:r.need });
+  if(c === 'poll_gap' && Number.isFinite(r.ms))
+    return t('fa.num.pollGap', { d:ledgerDur(r.ms / 1000), c:faGapCause(r.cause) });
+  if((c === 'margin_thin' || c === 'margin_unknown'))
+    return t('fa.num.margin', { v:Number.isFinite(r.roomFrac) ? fmtPctNS(r.roomFrac, 1) : '-' });
+  if(c === 'state_stale' && Number.isFinite(r.silenceH))
+    return t('fa.num.stateStale', { h:r.silenceH.toFixed(1) });
+  if(c === 'orphan_position' && r.positionId)
+    return t('fa.num.orphan', { id:String(r.positionId) });
+  return tok ? t('fa.num.market', { tok:tok }) : '';
+}
+
+/* Разворачиваемое объяснение под телом. Разворачивается ровно на тех кодах, где молчание дороже
+   всего: штатный отказ первых недель, перерыв опроса, протухшее состояние, сторож залога и
+   расхождение бухгалтерии. Число покрытия берётся из ворот снабжения, а не считается. */
+const FA_WARN_CODES = { hist_no_base:1, poll_gap:1, state_stale:1, margin_thin:1, margin_unknown:1, orphan_position:1 };
+function faWarnHtml(code, a){
+  const g = a && a.last && a.last.gate ? a.last.gate : null;
+  const pair = (b, body) => '<b>' + ledgerEsc(b) + '</b> ' + ledgerEsc(body);
+  if(code === 'hist_no_base') return pair(t('fa.warn.histNoBaseB'), t('fa.warn.histNoBase', {
+    h: g && Number.isFinite(g.horizonH) ? g.horizonH : '-',
+    need: g && Number.isFinite(g.covNeed) ? fmtPctNS(g.covNeed, 0) : '-',
+    cov: g && Number.isFinite(g.covBest) ? fmtPctNS(g.covBest, 1) : '-' }));
+  if(code === 'poll_gap')        return pair(t('fa.warn.pollGapB'), t('fa.warn.pollGap'));
+  if(code === 'state_stale')     return pair(t('fa.warn.stateStaleB'), t('fa.warn.stateStale'));
+  if(code === 'margin_thin')     return pair(t('fa.warn.marginThinB'), t('fa.warn.marginThin'));
+  if(code === 'margin_unknown')  return pair(t('fa.warn.marginUnknownB'), t('fa.warn.marginUnknown'));
+  return pair(t('fa.warn.orphanB'), t('fa.warn.orphan'));
+}
+
+function renderFaAuto(){
+  // Тикет перезаполняется вместе с карточкой, и СКРЫТЫЙ ТОЖЕ. Иначе он застывает на языке и на
+  // числах, которые были в момент открытия (см. комментарий у `faFillTicket`), а спрятанный текст
+  // на чужом языке живёт в DOM и достаётся скрин-ридеру и поиску по странице. Семь записей в DOM
+  // раз в опрос дешевле такой неопределённости.
+  faFillTicket();
+  const card = $('faAutoCard'); if(!card) return;
+  const a = LIVE.auto || null;
+  const s = faAutoState(LIVE);
+  card.dataset.state = s.key;
+
+  const tok = $('faAutoToken');
+  if(tok){ tok.className = 'decision-token ' + s.cls; tok.innerHTML = '<span class="dot"></span>' + ledgerEsc(s.token); }
+  const chip = $('faAutoChip');
+  if(chip){ chip.removeAttribute('data-i18n'); chip.textContent = s.token; chip.className = faChipCls(s.cls); }
+  /* ПУСТАЯ ПРИЧИНА ЭТО ДЕФЕКТ. До первого тика причины ещё нет физически, и это говорится словами,
+     а не прочерком: прочерк неотличим от сломанного рендера. */
+  const rs = $('faAutoReason');
+  if(rs) rs.textContent = s.code ? faCodeText(s.code) : t('fa.auto.noTick');
+  const nums = $('faAutoReasonNums');
+  if(nums){ const txt = faRefusalNums(a && a.last ? a.last : null); nums.textContent = txt || '-'; nums.hidden = !txt; }
+
+  // ── ворота снабжения: всё готовым из `last.gate` ──
+  const g = a && a.last && a.last.gate ? a.last.gate : null;
+  const gm = $('faAutoGMarkets'), gu = $('faAutoGUsable'), gc = $('faAutoGCov'), gh = $('faAutoGHorizon');
+  if(gm) gm.textContent = g && Number.isFinite(g.markets) ? String(g.markets) : '-';
+  if(gu) gu.textContent = g ? t('fa.auto.ofN', { n:g.usable, total:g.markets }) : '-';
+  if(gc) gc.textContent = g && Number.isFinite(g.covBest)
+    ? t('fa.auto.covOf', { v:fmtPctNS(g.covBest, 1), need:fmtPctNS(g.covNeed, 0) }) : '-';
+  if(gh) gh.textContent = g && Number.isFinite(g.horizonH) ? t('fa.unit.hoursN', { h:g.horizonH }) : '-';
+  const gn = $('faAutoGateNote');
+  if(gn){
+    const note = !g ? '' : g.usable === 0 ? t('fa.auto.gateZero')
+      : g.held ? t('fa.auto.gateHeld', { code:faCodeText(g.held) }) : '';
+    gn.textContent = note || '-'; gn.hidden = !note;
+  }
+
+  // ── непрерывность и слот ──
+  const u = a && a.uptime ? a.uptime : null;
+  const ut = $('faAutoUTicks'), ug = $('faAutoUGap'), uk = $('faAutoUTick'), ud = $('faAutoUDec'), us = $('faAutoUSlot');
+  if(ut) ut.textContent = u && Number.isFinite(u.ticks) ? u.ticks.toLocaleString('en-US') : '-';
+  if(ug) ug.textContent = !u ? '-' : (u.maxGapMs > 0 ? ledgerDur(u.maxGapMs / 1000) : t('fa.auto.noGap'));
+  if(uk) uk.textContent = a && Number.isFinite(a.lastTickAt) ? faAutoDate(a.lastTickAt) : '-';
+  if(ud) ud.textContent = !a ? '-' : (Number.isFinite(a.lastDecisionAt) ? faAutoDate(a.lastDecisionAt) : t('fa.auto.decNever'));
+  if(us){
+    const p = a && a.positionId ? (LIVE.positions || []).find(x => x.id === a.positionId) : null;
+    us.textContent = !a ? '-' : !a.positionId ? t('fa.auto.slotFree')
+      : p ? ((p.meta && p.meta.label) || p.instrumentKey || '-') : t('fa.auto.slotOrphan');
+  }
+  const pill = $('faAutoPollPill'), pb = pill && pill.querySelector('b');
+  if(pb) pb.textContent = u && Number.isFinite(u.ticks)
+    ? t('fa.auto.pollPillV', { n:u.ticks.toLocaleString('en-US'),
+        s:Number.isFinite(u.nominalSec) ? ledgerDur(u.nominalSec) : '-' })
+    : '-';
+  /* КАДАНС ФАКТОМ, А НЕ ОБРАТНЫМ ОТСЧЁТОМ: предикат `shouldDecideNow` живёт в движке, и второй
+     таймер в интерфейсе рано или поздно показал бы «пора», когда движок ещё ждёт. */
+  const cn = $('faAutoCadenceNote'), pp = a && a.params ? a.params : FA_AUTO_UI.defaults;
+  if(cn) cn.textContent = t('fa.auto.cadenceNote', {
+    h: pp && Number.isFinite(pp.cadenceH) ? t('fa.unit.hoursN', { h:pp.cadenceH }) : '-' });
+
+  // ── тумблеры, штамп, объяснение ──
+  const on = !!(a && a.on);
+  const stopBtn = $('faAutoStopBtn'), undoBtn = $('faAutoUndoBtn');
+  if(stopBtn){
+    stopBtn.hidden = !on || !!(a && a.stopRequested);
+    if(!FA_AUTO_UI.stopArmed) stopBtn.textContent = t('fa.auto.stopBtn');
+  }
+  if(undoBtn) undoBtn.hidden = !(on && a && a.stopRequested && a.params);
+  const empty = $('faAutoEmpty'); if(empty) empty.hidden = on;
+  const stamp = $('faAutoStampTxt');
+  if(stamp){
+    stamp.removeAttribute('data-i18n');
+    stamp.textContent = !a ? t('fa.auto.stampNoData')
+      : a.on ? t('fa.auto.stampArmed', { d:faAutoDate(a.armedAt) })
+      : (Number.isFinite(a.stoppedAt) ? t('fa.auto.stampStopped', { d:faAutoDate(a.stoppedAt) }) : t('fa.auto.stamp0'));
+  }
+  const warn = $('faAutoWarn');
+  if(warn){
+    const wc = s.code && FA_WARN_CODES[s.code] ? s.code : null;
+    warn.hidden = !wc;
+    if(wc) warn.innerHTML = faWarnHtml(wc, a);
+  }
+  /* Журналы перечитываются, только когда движок ДЕЙСТВИТЕЛЬНО дописал строки: сигнатура это
+     счётчики записей, и на кликах по контролам она не меняется, значит запроса не будет. */
+  if(FA_JOURNAL.loaded && FA_JOURNAL.sig !== faRecordsSig()) faLoadRecords(true);
+}
+
+/* ── ЧЕСТНОСТЬ СЧЁТА. Четыре замера, и каждый означает одно: показанная прибыль БОЛЬШЕ настоящей.
+   Отсутствующее число здесь всегда прочерк со штампом, а не ноль: ноль вместо неизвестного это то
+   же завышение, только тихое. Годовой экстраполяции нет ни в одном виде. ── */
+function renderFaHonesty(){
+  const card = $('faHonestyCard'); if(!card) return;
+  const acc = LIVE.account || null, a = LIVE.auto || null;
+
+  // (1) РАЗБАВЛЕНИЕ. Обе суммы и доля удержания приходят готовыми из леджера.
+  const keep = acc && acc.dilutionRetained != null ? acc.dilutionRetained : null;
+  const has = keep != null;
+  const q = has ? fmtUSDfull(acc.flowQuoted) : '-', got = has ? fmtUSDfull(acc.flowReceived) : '-';
+  const kept = has ? fmtPctNS(keep, 1) : '-';
+  const eq = $('faHonQuoted'); if(eq) eq.textContent = q;
+  const eg = $('faHonGot');
+  if(eg){ eg.textContent = got; eg.className = has ? clsSign(acc.flowReceived) : 'faint'; }
+  const rq = $('faHonRowQuoted'); if(rq) rq.textContent = q;
+  const rg = $('faHonRowGot');    if(rg) rg.textContent = got;
+  const rk = $('faHonRowKept');   if(rk) rk.textContent = kept;
+  const bp = $('faHonBarPct');    if(bp) bp.textContent = kept;
+  /* Ширина через max(3px, …): при доле 8.8% и тем более 2% полоса обязана остаться ВИДИМОЙ, иначе
+     «мало» читается как «ноль», а это разные утверждения о деньгах. */
+  const fill = $('faHonBarFill');
+  if(fill) fill.style.width = has ? 'max(3px, ' + (Math.max(0, Math.min(1, keep)) * 100).toFixed(1) + '%)' : '0';
+  const sr = $('faHonBarSr'); if(sr) sr.textContent = t('fa.hon.barSr', { v:kept });
+  const dn = $('faHonDilNone'); if(dn) dn.hidden = has;
+
+  // (2) ЗАЯВЛЕННЫЙ И ФАКТИЧЕСКИЙ РАЗМЕР. Разница НЕ вычисляется: два числа стоят рядом.
+  const autos = (LIVE.positions || []).filter(p => p.meta && p.meta.auto);
+  const pos = autos.find(p => p.status === 'open')
+    || autos.slice().sort((x, y) => (y.createdAt || 0) - (x.createdAt || 0))[0] || null;
+  const want = pos ? pos.meta.wantUsd : (a && a.params ? a.params.capitalUsd : null);
+  const ew = $('faHonWant'); if(ew) ew.textContent = Number.isFinite(want) ? fmtUSDfull(want) : '-';
+  const es = $('faHonSize'); if(es) es.textContent = pos && Number.isFinite(pos.notional) ? fmtUSDfull(pos.notional) : '-';
+  const eb = $('faHonBind'); if(eb) eb.textContent = pos ? faBindText(pos.meta.binding) : '-';
+  const sn = $('faHonSizeNone'); if(sn) sn.hidden = !!pos;
+
+  // (3) ЗАПАС ДО ЛИКВИДАЦИИ. Леджер этого риска не моделирует ПО ПОСТРОЕНИЮ (шапка paper.js),
+  //     поэтому вердикт сторожа залога показывается ОТДЕЛЬНО от P&L, а не внутри него.
+  const m = a && a.last && a.last.margin ? a.last.margin : null;
+  const roomOk = m && Number.isFinite(m.roomFrac);
+  const er = $('faHonRoom');
+  if(er){
+    er.textContent = roomOk
+      ? t('fa.hon.liqRoomV', { v:fmtPctNS(m.roomFrac, 1), need:Number.isFinite(m.need) ? fmtPctNS(m.need, 1) : '-' })
+      : '-';
+    er.className = 'v num' + (roomOk ? (m.ok ? ' pos' : ' neg') : ' faint');
+  }
+  const legs = $('faHonLegs');
+  if(legs){
+    const rows = (m && Array.isArray(m.legs) ? m.legs : []).map(l =>
+      '<div class="row"><span class="k mono">' + ledgerEsc(((l.venue === 'hl' ? 'Hyperliquid' : 'GMX')) + ' · ' + faSideText(l.side)) + '</span>' +
+      '<span class="v num">' + ledgerEsc(t('fa.hon.liqLegV', {
+        v: Number.isFinite(l.roomFrac) ? fmtPctNS(l.roomFrac, 1) : '-',
+        px: Number.isFinite(l.liquidationPx) ? ledgerPx(l.liquidationPx) : '-' })) + '</span></div>');
+    legs.innerHTML = rows.join('');
+  }
+  const rn = $('faHonRoomNone'); if(rn) rn.hidden = !!roomOk;
+}
+
+/* ── ЖУРНАЛЫ АВТОМАТА: ИСТОРИЯ СДЕЛОК И ЖУРНАЛ РЕШЕНИЙ ───────────────────────────────────────────
+   Читаются ПО ТРЕБОВАНИЮ каналом `fa.auto.records`, а не приезжают в пуше: архив за год это
+   мегабайты, и возить их каждые пять минут значило бы платить за то, на что никто не смотрит.
+   Триггера ровно два - первый показ вкладки и рост счётчиков записей движка (`ds.auto.records`).
+   Строки приходят готовыми: `netPct`, `grossUsd`, `hours` и ранг считает главный процесс. */
+const FA_JOURNAL = { loaded:false, fetching:false, data:null, err:null, sig:null };
+
+/* Решение цикла. Тот же приём, что у кодов отказа: явные вызовы `t()`, реестр движка сверяется
+   тестом в обе стороны. `null` означает ЧИСТЫЙ СКАН - цикл был, решения не принималось, и у этого
+   исхода своя строка: прочерк здесь читался бы как «данные потерялись». */
+const FA_ACTION_TEXT = {
+  hold:   () => t('fa.act.hold'),
+  close:  () => t('fa.act.close'),
+  switch: () => t('fa.act.switch'),
+  defer:  () => t('fa.act.defer'),
+};
+const faActionText = a => (a == null ? t('fa.act.scan') : (FA_ACTION_TEXT[a] ? FA_ACTION_TEXT[a]() : String(a)));
+
+const faRecordsSig = () => {
+  const r = LIVE.auto && LIVE.auto.records ? LIVE.auto.records : null;
+  return r ? [r.trade, r.dec].join('|') : null;
+};
+async function faLoadRecords(force){
+  if(!window.fa || !window.fa.auto || typeof window.fa.auto.records !== 'function'){
+    FA_JOURNAL.err = t('fa.jr.noBridge'); FA_JOURNAL.loaded = true; renderFaJournals(); return;
+  }
+  if(FA_JOURNAL.fetching) return;
+  const sig = faRecordsSig();
+  if(!force && FA_JOURNAL.loaded && FA_JOURNAL.sig === sig) return;
+  FA_JOURNAL.fetching = true; renderFaJournals();
+  try{
+    const r = await window.fa.auto.records({});
+    if(r && r.error){ FA_JOURNAL.err = r.error; FA_JOURNAL.data = null; }
+    else { FA_JOURNAL.data = r || null; FA_JOURNAL.err = null; }
+  }catch(e){
+    console.warn('fa.auto.records', e);
+    FA_JOURNAL.err = t('fa.err.ipc') + String(e && e.message || e).slice(0, 80); FA_JOURNAL.data = null;
+  }
+  FA_JOURNAL.fetching = false; FA_JOURNAL.loaded = true; FA_JOURNAL.sig = sig;
+  renderFaJournals();
+}
+/* Первый показ вкладки: журналы и ЗАМЕРЕННЫЕ ДЕФОЛТЫ движка. Дефолты нужны не только тикету -
+   до первого взвода параметров у автомата нет вовсе, и каданс решения на пульте показывался бы
+   прочерком, хотя число известно и лежит в `defaultAutoParams()`. Спрашиваем один раз. */
+function faOnShow(){
+  faLoadRecords(false);
+  if(!FA_AUTO_UI.defaults){
+    faAutoGet().then(g => { if(g && g.defaults){ FA_AUTO_UI.defaults = g.defaults; renderFaAuto(); } });
+  }
+}
+
+const faJrUsd = v => Number.isFinite(v) ? fmtUSDfull(v) : '-';
+const faJrPct = (v, dp) => Number.isFinite(v) ? fmtPctNS(v, dp) : '-';
+const faJrCfg = row => {
+  const c = row.config || row.strategy || null;
+  return c ? '<span class="chip ' + (c === 'A' ? 'A' : 'B') + '">' + ledgerEsc(String(c)) + '</span>' : '-';
+};
+
+function renderFaJournals(){
+  const hb = $('faHistoryBody'); if(!hb) return;
+  const d = FA_JOURNAL.data, err = FA_JOURNAL.err;
+  const tr = d && d.trades ? d.trades : null, dec = d && d.decisions ? d.decisions : null;
+
+  // ── карточка 5: история сделок ──
+  const trows = tr && Array.isArray(tr.rows) ? tr.rows : [];
+  hb.innerHTML = trows.map(r => {
+    const live = !!r.live;
+    /* Открытая сделка: итог ПРОЧЕРК, а не ноль. Ноль вместо неизвестного это то же завышение,
+       только тихое, и на этой карточке оно было бы особенно дорогим. */
+    const net = live ? '-' : faJrUsd(r.netUsd), pct = live ? '-' : faJrPct(r.netPct, 2);
+    const cls = live || !Number.isFinite(r.netUsd) ? '' : ' ' + clsSign(r.netUsd);
+    return '<tr>'
+      + '<td class="n">' + ledgerEsc(String(r.n != null ? r.n : '-')) + '</td>'
+      + '<td class="lft sym">' + ledgerEsc(String(r.token || '-')) + '</td>'
+      + '<td class="lft">' + faJrCfg(r) + '</td>'
+      + '<td class="n"><span class="faint">' + ledgerEsc(faJrUsd(r.wantUsd)) + '</span> · <b>'
+        + ledgerEsc(faJrUsd(r.gotUsd)) + '</b></td>'
+      + '<td class="n">' + ledgerEsc(faAutoDate(r.openedAt)) + '</td>'
+      + '<td class="n">' + (live ? '<span class="chip B">' + ledgerEsc(t('fa.hist.live')) + '</span>'
+          : ledgerEsc(faAutoDate(r.closedAt))) + '</td>'
+      + '<td class="n">' + ledgerEsc(Number.isFinite(r.hours) ? r.hours.toFixed(1) : '-') + '</td>'
+      + '<td class="n">' + ledgerEsc(faJrUsd(r.costUsd)) + '</td>'
+      + '<td class="n' + cls + '">' + ledgerEsc(net) + '</td>'
+      + '<td class="n' + cls + '">' + ledgerEsc(pct) + '</td>'
+      + '<td class="lft">' + ledgerEsc(r.why ? faCodeText(r.why) : '-') + '</td>'
+      + '</tr>';
+  }).join('');
+  const he = $('faHistoryEmpty');
+  if(he){
+    he.hidden = trows.length > 0;
+    he.removeAttribute('data-i18n');
+    he.textContent = err ? t('fa.jr.err', { e:err })
+      : FA_JOURNAL.fetching ? t('fa.jr.loading') : t('fa.hist.empty');
+  }
+  const hf = $('faHistoryFoot');
+  if(hf) hf.textContent = tr
+    ? t('fa.hist.foot', { k:trows.length.toLocaleString('en-US'),
+        n:Number.isFinite(tr.total) ? tr.total.toLocaleString('en-US') : '-' })
+    : '-';
+
+  // ── карточка 6: журнал решений и сканирования ──
+  const jb = $('faJournalBody'); if(!jb) return;
+  const drows = dec && Array.isArray(dec.rows) ? dec.rows : [];
+  jb.innerHTML = drows.map(r => '<tr>'
+    + '<td class="lft n">' + ledgerEsc(faAutoDate(r.at)) + '</td>'
+    + '<td class="n">' + ledgerEsc(t('fa.jr.ofN', { p:r.passed != null ? r.passed : '-',
+        c:r.checked != null ? r.checked : '-' })) + '</td>'
+    + '<td class="lft sym">' + ledgerEsc(String(r.bestToken || '-'))
+      + (r.bestConfig ? ' <span class="chip ' + (r.bestConfig === 'A' ? 'A' : 'B') + '">'
+          + ledgerEsc(String(r.bestConfig)) + '</span>' : '') + '</td>'
+    + '<td class="n">' + ledgerEsc(faJrUsd(r.bestSizeUsd)) + '</td>'
+    + '<td class="n">' + ledgerEsc(faJrPct(r.bestRetained, 1)) + '</td>'
+    + '<td class="n">' + ledgerEsc(faJrUsd(r.bestBaseUsd)) + '</td>'
+    + '<td class="lft">' + ledgerEsc(faActionText(r.action)) + '</td>'
+    + '<td class="lft">' + ledgerEsc(r.why ? faCodeText(r.why) : '-') + '</td>'
+    + '</tr>').join('');
+  const je = $('faJournalEmpty');
+  if(je){
+    je.hidden = drows.length > 0;
+    je.removeAttribute('data-i18n');
+    je.textContent = err ? t('fa.jr.err', { e:err })
+      : FA_JOURNAL.fetching ? t('fa.jr.loading') : t('fa.jr.empty');
+  }
+  const jf = $('faJournalFoot');
+  if(jf) jf.textContent = dec
+    ? t('fa.jr.foot', { n:drows.length.toLocaleString('en-US'), d:(d && d.days != null) ? d.days : '-' })
+    : '-';
+  /* НЕЧИТАЕМЫЕ СТРОКИ АРХИВА НЕ ЗАМАЛЧИВАЮТСЯ. Оборванный хвост после падения означает, что часть
+     решений не видна вовсе, и молча показать неполный журнал значило бы соврать про его полноту. */
+  const jbk = $('faJournalBroken');
+  if(jbk){
+    const broken = (tr && tr.broken || 0) + (dec && dec.broken || 0);
+    jbk.hidden = !broken;
+    jbk.className = 'hint neg';
+    jbk.textContent = t('fa.jr.broken', { n:broken.toLocaleString('en-US') });
+  }
+}
+
+/* ── МОСТ АВТОМАТА. Ровно два канала преложения: снять состояние и взвести или остановить. ── */
+async function faAutoGet(){
+  if(!window.fa || !window.fa.auto) return null;
+  try{ return await window.fa.auto.get(); }
+  catch(e){ console.warn('fa.auto.get', e); return null; }
+}
+async function faAutoSet(req){
+  if(!window.fa || !window.fa.auto) return { error:t('fa.ticket.noBridge') };
+  try{
+    const r = await window.fa.auto.set(req);
+    const ds = await window.fa.getState(); if(ds) applyDataset(ds);
+    return r;
+  }catch(e){ console.warn('fa.auto.set', e);
+    return { error:t('fa.err.ipc') + String(e && e.message || e).slice(0, 80) }; }
+}
+/* Параметры тикета: ЗАМОРОЖЕННЫЕ, если автомат уже взводили, иначе `defaultAutoParams()` движка.
+   Вписывать числа в разметку запрещено: тикет обязан показывать то, чем автомат ДЕЙСТВИТЕЛЬНО
+   будет работать, а вторая копия этих чисел разошлась бы с движком молча. */
+const faTicketParams = () => ((LIVE.auto && LIVE.auto.params) ? LIVE.auto.params : FA_AUTO_UI.defaults);
+
+/* ЗАПОЛНЕНИЕ ОТДЕЛЕНО ОТ ОТКРЫТИЯ НАРОЧНО. Тикет, заполненный один раз при открытии, застывает:
+   смена языка при ОТКРЫТОМ тикете оставила бы значения на прежнем языке, потому что `setLocale`
+   перерисовывает карточки, а не его. Поймано живым прогоном на английской локали. Заполнение
+   идемпотентно и зовётся и из открытия, и из отрисовки карточки. */
+function faFillTicket(){
+  const tk = $('faAutoArmTicket'); if(!tk) return null;
+  const p = faTicketParams();
+  const set = (id, v) => { const el = $(id); if(el) el.textContent = v; };
+  set('faAutoTktRule', p ? String(p.presetId) : '-');
+  set('faAutoTktCap', p && Number.isFinite(p.capitalUsd) ? fmtUSDfull(p.capitalUsd) : '-');
+  set('faAutoTktLev', p && Number.isFinite(p.leverage) ? t('fa.auto.tktLevV', { v:p.leverage }) : '-');
+  set('faAutoTktRoom', p && Number.isFinite(p.minRoomFraction) ? fmtPctNS(p.minRoomFraction, 0) : '-');
+  set('faAutoTktCadence', p && Number.isFinite(p.cadenceH) ? t('fa.unit.hoursN', { h:p.cadenceH }) : '-');
+  set('faAutoTktAge', p && Number.isFinite(p.decisionMaxAgeH) ? t('fa.unit.hoursN', { h:p.decisionMaxAgeH }) : '-');
+  set('faAutoTktCov', p && Number.isFinite(p.baseCoverageMin) ? fmtPctNS(p.baseCoverageMin, 0) : '-');
+  const cf = $('faAutoTktConfirm'); if(cf) cf.disabled = !p;
+  return p;
+}
+
+async function openFaAutoTicket(){
+  const tk = $('faAutoArmTicket'), b = $('faAutoArmBtn'); if(!tk) return;
+  const err = $('faAutoTktErr'); if(err){ err.hidden = true; err.textContent = ''; }
+  if(!FA_AUTO_UI.defaults){ const gres = await faAutoGet(); if(gres && gres.defaults) FA_AUTO_UI.defaults = gres.defaults; }
+  const p = faFillTicket();
+  if(!p && err){ err.hidden = false; err.textContent = t('fa.ticket.noBridge'); }
+  tk.hidden = false; if(b) b.setAttribute('aria-expanded', 'true');
+  const cf = $('faAutoTktConfirm'); if(cf) cf.focus({ preventScroll:true });
+}
+function closeFaAutoTicket(){
+  const tk = $('faAutoArmTicket'), b = $('faAutoArmBtn');
+  if(tk) tk.hidden = true;
+  if(b){ b.setAttribute('aria-expanded', 'false'); if(!b.hidden && !b.closest('[hidden]')) b.focus({ preventScroll:true }); }
+}
+async function confirmFaAuto(){
+  const cf = $('faAutoTktConfirm'); if(cf) cf.disabled = true;
+  const p = faTicketParams();
+  const r = await faAutoSet({ on:true, params:p ? { ...p } : null, mode:'continuous' });
+  if(r && r.error){
+    const err = $('faAutoTktErr');
+    if(err){ err.hidden = false; err.textContent = t('fa.auto.armFail', { e:r.error }); }
+    if(cf) cf.disabled = false; return;
+  }
+  closeFaAutoTicket();
+  if(cf) cf.disabled = false;
+}
+
+/* ДВУХШАГОВАЯ ОСТАНОВКА, свой помощник рядом с помощником бота 2, а не общий на двоих: общий
+   потребовал бы правки его кода, а у бота 2 идёт живой прогон. Три с половиной секунды на отмену -
+   тот же интервал, что у закрытия структуры, чтобы жест был один на всё приложение. */
+function faDisarmAutoStop(){
+  const b = $('faAutoStopBtn');
+  FA_AUTO_UI.stopArmed = false;
+  if(FA_AUTO_UI.stopTimer){ clearTimeout(FA_AUTO_UI.stopTimer); FA_AUTO_UI.stopTimer = null; }
+  if(b) b.textContent = t('fa.auto.stopBtn');
+}
+function faArmAutoStop(){
+  const b = $('faAutoStopBtn'); if(!b) return;
+  if(!FA_AUTO_UI.stopArmed){
+    FA_AUTO_UI.stopArmed = true; b.textContent = t('fa.auto.stopConfirm');
+    if(FA_AUTO_UI.stopTimer) clearTimeout(FA_AUTO_UI.stopTimer);
+    FA_AUTO_UI.stopTimer = setTimeout(faDisarmAutoStop, 3500);
+    return;
+  }
+  faDisarmAutoStop();
+  faAutoSet({ on:false });
+}
+/* ОТМЕНА ОСТАНОВКИ снимает именно ЗАПРОС остановки, а канал такого не умеет: у него только
+   `on:true/false`. Поэтому повторный взвод ТЕМИ ЖЕ замороженными параметрами - `armAuto` сбрасывает
+   `stopRequested`. Дефолты сюда подставлять нельзя: это переморозило бы параметры работающей сделки
+   и было бы враньём про то, чем она открыта. Без `params` кнопка не показывается вовсе. */
+function faUndoAutoStop(){
+  const a = LIVE.auto;
+  if(a && a.params) faAutoSet({ on:true, params:{ ...a.params }, mode:a.mode === 'once' ? 'once' : 'continuous' });
+}
+
+/* ── ТУМБЛЕР НА «ОБЗОРЕ». Точка и чип карточки следуют состоянию автомата, а не только наличию
+   открытой позиции: бот, который ищет вход неделями, иначе значился бы «НЕ ЗАПУЩЕН». ── */
+function faOverviewAuto(){
+  const a = LIVE.auto || null, btn = $('faPowerBtn');
+  const on = !!(a && a.on);
+  if(btn){
+    btn.removeAttribute('data-i18n');
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    if(!on && FA_AUTO_UI.powerArmed) faDisarmPower();
+    if(!FA_AUTO_UI.powerArmed) btn.textContent = on ? t('home.fa.powerOff') : t('home.fa.powerOn');
+  }
+  if(!a || !(on || a.corrupt)) return;
+  const s = faAutoState(LIVE);
+  const tag = $('card-tag-funding-arb');
+  if(tag){ tag.removeAttribute('data-i18n'); tag.textContent = s.token;
+    tag.className = 'bc-tag' + (a.corrupt ? ' alert' : s.key === 'live' ? ' run' : ''); }
+  const tab = tabEl('funding-arb');
+  const cls = 'bot-dot' + (a.corrupt ? ' alert' : a.positionId ? ' run' : ' pending');
+  [$('card-dot-funding-arb'), tab && tab.querySelector('.bot-dot')].forEach(d => { if(d) d.className = cls; });
+  /* СТАТУСНАЯ СТРОКА ТОЖЕ ОБЯЗАНА СЛЕДОВАТЬ АВТОМАТУ. Без этого чип говорил «ИЩЕТ ВХОД», а строка
+     под ним «не запущен - нет открытых позиций», то есть карточка отвечала на один вопрос дважды и
+     по-разному. Пока сделки нет, содержательна причина; как только она появится, строку забирает
+     P&L, потому что деньги важнее состояния. */
+  if(on && !a.positionId){
+    const st = $('card-status-funding-arb');
+    if(st){ st.removeAttribute('data-i18n');
+      st.textContent = t('home.fa.auto', { state:s.token, why:faCodeText(s.code) }); }
+  }
+}
+function faDisarmPower(){
+  const b = $('faPowerBtn');
+  FA_AUTO_UI.powerArmed = false;
+  if(FA_AUTO_UI.powerTimer){ clearTimeout(FA_AUTO_UI.powerTimer); FA_AUTO_UI.powerTimer = null; }
+  if(b){ b.classList.remove('armed');
+    b.textContent = (LIVE.auto && LIVE.auto.on) ? t('home.fa.powerOff') : t('home.fa.powerOn'); }
+}
+function faPowerClick(){
+  const a = LIVE.auto || null, b = $('faPowerBtn'); if(!b) return;
+  /* ВКЛЮЧЕНИЕ С «ОБЗОРА» НЕ ОДНОКЛИК. Автономная торговля включается тем же тикетом, что и на
+     вкладке бота: подтверждение оператора не имеет права зависеть от того, откуда он нажал. */
+  if(!(a && a.on)){
+    faDisarmPower();
+    setView('funding-arb', { focusView:true });
+    const card = $('faAutoCard');
+    if(card) card.scrollIntoView({ behavior:smoothOk() ? 'smooth' : 'auto', block:'center' });
+    openFaAutoTicket();
+    return;
+  }
+  if(!FA_AUTO_UI.powerArmed){
+    FA_AUTO_UI.powerArmed = true; b.classList.add('armed'); b.textContent = t('home.fa.powerConfirm');
+    if(FA_AUTO_UI.powerTimer) clearTimeout(FA_AUTO_UI.powerTimer);
+    FA_AUTO_UI.powerTimer = setTimeout(faDisarmPower, 3500);
+    return;
+  }
+  faDisarmPower();
+  faAutoSet({ on:false });
+}
+
+if($('faAutoArmBtn')) $('faAutoArmBtn').onclick = () => {
+  const tk = $('faAutoArmTicket'); (tk && tk.hidden) ? openFaAutoTicket() : closeFaAutoTicket(); };
+if($('faAutoTktCancel')) $('faAutoTktCancel').onclick = closeFaAutoTicket;
+if($('faAutoTktConfirm')) $('faAutoTktConfirm').onclick = confirmFaAuto;
+if($('faAutoArmTicket')) $('faAutoArmTicket').addEventListener('keydown', e => { if(e.key === 'Escape') closeFaAutoTicket(); });
+if($('faAutoStopBtn')) $('faAutoStopBtn').onclick = faArmAutoStop;
+if($('faAutoUndoBtn')) $('faAutoUndoBtn').onclick = faUndoAutoStop;
+if($('faPowerBtn')) $('faPowerBtn').onclick = faPowerClick;
+
 /* ============================================================================
    КОНТЕКСТНАЯ СПРАВКА - «?» у каждого раздела. Клик открывает поповер с
    подробным объяснением: зачем раздел и что означает каждый его элемент.
@@ -4500,6 +5449,11 @@ const HELP_FUNDING_ARB = {
   costs: { tk:'help.costs.t', bk:'help.costs.b' },
   raw: { tk:'help.raw.t', bk:'help.raw.b' },
   scanner: { tk:'help.scanner.t', bk:'help.scanner.b' },
+  // фаза 6: пульт автомата и карточка честности счёта
+  'fa-auto': { tk:'help.fa-auto.t', bk:'help.fa-auto.b' },
+  'fa-honesty': { tk:'help.fa-honesty.t', bk:'help.fa-honesty.b' },
+  'fa-history': { tk:'help.fa-history.t', bk:'help.fa-history.b' },
+  'fa-journal': { tk:'help.fa-journal.t', bk:'help.fa-journal.b' },
 };
 
 // HELP_BTC_OPTIONS = the «BTC-опционы» bot's panels (Strategy One), namespaced `opt-*` so they never
@@ -4584,7 +5538,8 @@ document.addEventListener('click', (e)=>{
   if(UPD.pop && !UPD.pop.contains(e.target) && !e.target.closest('#verPill')) closeUpdaterPop();
 });
 document.addEventListener('keydown', (e)=>{ if(e.key==='Escape'){ closeHelp(); closeUpdaterPop(); closeTicket(true); closeOptTicket(true);
-  if(typeof closeOptChainTicket==='function' && $('optChainArmTicket') && !$('optChainArmTicket').hidden) closeOptChainTicket(); } });
+  if(typeof closeOptChainTicket==='function' && $('optChainArmTicket') && !$('optChainArmTicket').hidden) closeOptChainTicket();
+  if(typeof closeFaAutoTicket==='function' && $('faAutoArmTicket') && !$('faAutoArmTicket').hidden) closeFaAutoTicket(); } });
 window.addEventListener('resize', ()=>{ closeHelp(); closeUpdaterPop(); });
 // прокрутка страницы закрывает поповер (позиция бы «уехала»); прокрутка ВНУТРИ поповера - нет
 window.addEventListener('scroll', (e)=>{
@@ -4749,6 +5704,7 @@ function setView(id, opts){
   //    у бота 2 свой кластер подключения #optConnCluster в самом виде
   const bt=$('botTools'); if(bt) bt.hidden = (id!=='funding-arb');
   syncTopbarH(); // высота шапки меняется вместе с видимостью botTools
+  if(id==='funding-arb' && typeof faOnShow==='function') faOnShow(); // журналы автомата: тянутся при первом показе
   if(id==='btc-options' && typeof optOnShow==='function') optOnShow(); // ленивая загрузка цепочки при первом показе
   if(id==='otm-scanner' && typeof scnOnShow==='function') scnOnShow(); // А4: автостарт опроса при первом показе, дальше фон
   // 4) мотив: один корневой rise (реплей как в кодовой базе), без повторных внутренних каскадов
@@ -4868,6 +5824,9 @@ function refreshOverview(){
   // словарь карточки сканера: «СКАНИРУЕТ» вместо «ЗАПУЩЕН» - у сканера нет позиций, он наблюдает
   const scnTag=$('card-tag-otm-scanner'); if(scnTag && scnRun) scnTag.textContent=t('home.tag.scan');
   const scnSr=$('tabStatus-otm-scanner'); if(scnSr) scnSr.textContent = scnRun ? t('chrome.tabst.scan') : t('chrome.tabst.idle');
+  // Автомат бота 1 идёт ПОСЛЕ overviewCard: тот знает только про открытые позиции, а бот,
+  // неделями ищущий вход, при этом значился бы «НЕ ЗАПУЩЕН» (тот же урок, что у цепочки бота 2).
+  faOverviewAuto();
 }
 // общий апдейт карточки/точки/вкладки бота в «Обзоре»
 function overviewCard(id, running, pnl, statusHtml){

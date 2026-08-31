@@ -32,8 +32,8 @@ import {
   FA_RECORD_SIZE, FA_RECORD_SOURCES, FA_RECORD_VERSION, FA_SNAP_LEG_FIELDS, FA_SNAP_MISSING,
   FA_TRADE_EVENTS,
   buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord,
-  classifyFaGap, faCoverage, faHeldRank, faLiqRoom, faRecordDayKey, faRecordsToPrune,
-  faUnknownCodes, faVanishedMarkets, faVolumePerDay,
+  classifyFaGap, faCoverage, faDecisionsFromRecords, faHeldRank, faLiqRoom, faRecordDayKey,
+  faRecordsToPrune, faTradesFromRecords, faUnknownCodes, faVanishedMarkets, faVolumePerDay,
 } from "../src/engine/fa/record.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -723,4 +723,117 @@ test("в модуле записи нет длинных тире и нет ст
   // что запрещает, и проверка не выдержала бы применения к себе.
   assert.equal(src.match(/[\u2014\u2013]/g), null, "длинных тире быть не должно");
   assert.equal(src.match(/\u2192/g), null, "стрелок в прозе быть не должно");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 12. Сшивка архива в ответы оператору (фаза 6)
+//
+// ЗАЧЕМ ЭТИ ТЕСТЫ. Карточки истории и журнала читают ИМЕННО ЭТИ функции, и ошибка в них не падает,
+// а тихо рисует оператору другую сделку: не тот размер, не тот круг издержек, не тот итог. Такую
+// ошибку на экране не отличить от правды, поэтому она ловится здесь.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const H = 3600_000;
+
+test("сшивка: вход и выход становятся ОДНОЙ сделкой с обоими размерами", () => {
+  const rows = [
+    buildFaTradeRecord({ t: T0, event: "open", opened: tradeSide("BTC"), costs: COSTS }),
+    buildFaTradeRecord({ t: T0 + 5 * H, event: "close", why: "gross_negative",
+      closed: tradeSide("BTC", { realizedUsd: 12.5 }), costs: COSTS }),
+  ];
+  const [tr] = faTradesFromRecords(rows);
+  assert.equal(tr.token, "BTC");
+  assert.equal(tr.wantUsd, 2500, "заявленный размер обязан доехать до экрана");
+  assert.equal(tr.gotUsd, 1995.26, "и фактический рядом с ним: разница 20.2% и есть замер честности");
+  assert.equal(tr.hours, 5);
+  assert.equal(tr.netUsd, 12.5);
+  assert.equal(tr.live, false);
+  assert.equal(tr.why, "gross_negative");
+  // Круг издержек снимается со строки ВХОДА: на стороне сделки его нет вовсе.
+  // 7.20, а не 7.18531: запись округляет статьи до цента, и читатель обязан складывать ЗАПИСАННОЕ,
+  // а не исходные числа. Иначе экран разошёлся бы с архивом на копейку и объяснить это было бы нечем.
+  assert.equal(tr.costUsd, 7.2, "круг издержек складывается из статей ЗАПИСИ");
+  // Брутто это тождество «нетто плюс круг», а не второй способ счёта.
+  assert.ok(Math.abs(tr.grossUsd - (12.5 + tr.costUsd)) < 1e-9);
+  assert.ok(Math.abs(tr.netPct - 12.5 / 1995.26) < 1e-9, "процент считается к КАПИТАЛУ, а не к ноционалу");
+});
+
+test("сшивка: перекладка закрывает прежнюю и открывает следующую ОДНИМ событием", () => {
+  const rows = [
+    buildFaTradeRecord({ t: T0, event: "open", opened: tradeSide("BTC"), costs: COSTS }),
+    buildFaTradeRecord({ t: T0 + 2 * H, event: "switch", why: "alt_beats_hold",
+      opened: tradeSide("ETH"), closed: tradeSide("BTC", { realizedUsd: 4.25 }), costs: COSTS }),
+    buildFaTradeRecord({ t: T0 + 9 * H, event: "close", why: "gross_negative",
+      closed: tradeSide("ETH", { realizedUsd: -3.5 }), costs: COSTS }),
+  ];
+  const out = faTradesFromRecords(rows);
+  assert.equal(out.length, 2, "две сделки, а не три события и не одна");
+  // Свежая сверху: оператор смотрит на последнюю, а не листает до неё.
+  assert.equal(out[0].token, "ETH");
+  assert.equal(out[0].hours, 7);
+  assert.equal(out[0].netUsd, -3.5);
+  assert.equal(out[1].token, "BTC");
+  assert.equal(out[1].hours, 2);
+  assert.equal(out[1].why, "alt_beats_hold");
+  assert.deepEqual(out.map((r) => r.n), [2, 1], "нумерация идёт от первой сделки, а не от верха экрана");
+});
+
+test("сшивка: открытая сделка идёт строкой без итога, а не пропадает", () => {
+  const out = faTradesFromRecords([
+    buildFaTradeRecord({ t: T0, event: "open", opened: tradeSide("BTC"), costs: COSTS }),
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].live, true);
+  assert.equal(out[0].netUsd, null, "итога у открытой сделки нет: это прочерк, а не ноль");
+  assert.equal(out[0].grossUsd, null);
+  assert.equal(out[0].hours, null);
+  assert.equal(out[0].closedAt, null);
+});
+
+test("сшивка: выход без входа в окне читается ИЗ закрывающей стороны, а не теряется", () => {
+  // Архив начат с середины (приложение перезапускалось, сутки вышли за окно чтения): строка обязана
+  // выйти полной, потому что паспорт закрываемой стороны несёт её собственный вход.
+  const out = faTradesFromRecords([
+    buildFaTradeRecord({ t: T0 + H, event: "close", why: "hold_best",
+      closed: tradeSide("BTC", { realizedUsd: 1.75 }), costs: COSTS }),
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].token, "BTC");
+  assert.equal(out[0].gotUsd, 1995.26);
+  assert.equal(out[0].netUsd, 1.75);
+  assert.equal(out[0].openedAt, null, "времени входа в окне нет, и выдумывать его нельзя");
+  assert.equal(out[0].hours, null);
+  assert.equal(out[0].costUsd, null, "круга входа в окне тоже нет: прочерк, а не чужое число");
+});
+
+test("журнал решений: лучший кандидат тем же порядком, что и ранг занятого", () => {
+  const uni = universe([curve("BTC", { netUsd: 10 }), curve("ETH", { netUsd: 40 }), curve("SOL", { netUsd: 25 })]);
+  const row = buildFaDecisionRecord({ t: T0, capitalUsd: 2500, universe: uni, hold: "SOL" });
+  const [d] = faDecisionsFromRecords([row]);
+  assert.equal(d.bestToken, "ETH", "лучший это максимум нетто");
+  assert.equal(d.heldRank, faHeldRank(row), "ранг берётся у движка, а не считается второй раз");
+  assert.equal(d.heldRank, 2, "SOL второй из трёх");
+  assert.equal(d.passed, 3);
+  assert.equal(d.hold, "SOL");
+});
+
+test("журнал решений: доля удержания едет как есть, годовой ставки в записи нет вовсе", () => {
+  const uni = universe([curve("BTC", { netUsd: 10, dilutionRetained: 0.088 })]);
+  const [d] = faDecisionsFromRecords([buildFaDecisionRecord({ t: T0, capitalUsd: 2500, universe: uni })]);
+  assert.equal(d.bestRetained, 0.088,
+    "показывается ДОЛЯ УДЕРЖАНИЯ: котируемой годовой ставки поток решений не пишет");
+  const keys = Object.keys(d);
+  for (const k of keys) assert.ok(!/apr|annual|year/i.test(k), `${k}: годовой оценки в журнале быть не может`);
+});
+
+test("журнал решений: свежие сверху, чужие строки не подмешиваются", () => {
+  const uni = universe([curve("BTC")]);
+  const rows = [
+    buildFaDecisionRecord({ t: T0, capitalUsd: 2500, universe: uni }),
+    buildFaDecisionRecord({ t: T0 + 2 * H, capitalUsd: 2500, universe: uni }),
+    buildFaGapRecord({ fromMs: T0, toMs: T0 + H, nominalSec: 300 }),
+  ];
+  const out = faDecisionsFromRecords(rows);
+  assert.equal(out.length, 2, "строка пропуска в журнал решений не попадает");
+  assert.ok(out[0].at > out[1].at, "свежая сверху");
 });

@@ -711,3 +711,99 @@ export function faRecordsToPrune(dayKeys, keepDays, todayKey) {
     return fin(ms) && ms < cutoff;
   }).sort();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// СШИВКА АРХИВА В ОТВЕТЫ ОПЕРАТОРУ (фаза 6). Чистые функции над УЖЕ ПРОЧИТАННЫМИ строками: файлы
+// читает вызывающий, здесь только разбор. Живут тут, а не в главном процессе, ровно потому, что
+// разбор архива обязан быть проверяемым тестом, а код в главном процессе тестом не накрыт.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ЗАЧЕМ СШИВКА. Поток пишет СОБЫТИЯ (вход, выход, перекладка), а оператор спрашивает про СДЕЛКИ.
+// Перекладка это ОДНО событие с обеими сторонами: она закрывает прежнюю и открывает следующую, и
+// разложить её на две строки значит потерять то, что круг заплачен ради этой альтернативы. Слот
+// один, поэтому открытых сделок в каждый момент не больше одной и сшивка линейна.
+//
+// ЗАКРЫВАЮЩАЯ СТОРОНА ГЛАВНЕЕ ПАМЯТИ ЧИТАТЕЛЯ. Паспорт `prev` несёт полный вход закрываемой сделки,
+// поэтому при разрыве ленты (архив начат с середины, приложение перезапускалось) строка всё равно
+// выходит полной, а не теряется.
+export function faTradesFromRecords(rows) {
+  const evs = (rows || []).filter((r) => r?.k === "trade" && fin(r.t)).sort((a, b) => a.t - b.t);
+  const out = [];
+  let open = null;
+  let openAt = null;
+  let openCost = null;
+  for (const e of evs) {
+    if (e.prev) {
+      out.push(faTradeRow(e.prev, openAt, openCost, e.prev, e.t, e.why ?? null));
+      open = null;
+      openAt = null;
+      openCost = null;
+    }
+    // ИЗДЕРЖКИ ЛЕЖАТ НА СТРОКЕ, А НЕ НА СТОРОНЕ, и снимаются они со строки ВХОДА: у перекладки
+    // `cost` посчитан по размеру ОТКРЫВАЕМОЙ стороны, поэтому он принадлежит следующей сделке, а
+    // не закрываемой. Перепутать это значило бы приписать круг не той сделке.
+    if (e.pos) { open = e.pos; openAt = e.t; openCost = e.cost || null; }
+  }
+  if (open) out.push(faTradeRow(open, openAt, openCost, null, null, null));
+  // Номер идёт от ПЕРВОЙ сделки, а не от верха экрана: сделка №1 обязана остаться первой, когда
+  // над ней появится следующая. Нумерация в хронологии, переворот только для показа.
+  return out.map((r, i) => ({ ...r, n: i + 1 })).reverse();
+}
+
+// Одна строка истории. ОБА размера кладутся рядом: соседние достижимые размеры отличаются на 26%,
+// и одно число из этих двух второго не восстанавливает.
+function faTradeRow(side, openAt, c, close, closeAt, why) {
+  const cap = fin(side?.got) && fin(side?.lev) && side.lev > 0 ? side.got / side.lev : null;
+  const net = fin(close?.real) ? close.real : null;
+  let cost = null;
+  if (c) {
+    for (const v of [c.o, c.cl, c.i, c.gas, c.hl]) if (fin(v)) cost = (cost ?? 0) + v;
+  }
+  return {
+    token: side?.t ?? null, config: side?.c ?? null, strategy: side?.st ?? null,
+    wantUsd: side?.want ?? null, gotUsd: side?.got ?? null, leverage: side?.lev ?? null,
+    capitalUsd: cap,
+    openedAt: fin(openAt) ? openAt : null, closedAt: fin(closeAt) ? closeAt : null,
+    hours: fin(openAt) && fin(closeAt) ? (closeAt - openAt) / 3600000 : null,
+    costUsd: cost,
+    netUsd: net,
+    // Брутто это ТОЖДЕСТВО леджера «нетто плюс круг», а не второй способ счёта: круг вычтен ровно
+    // один раз, и обратное сложение возвращает то же число, а не новую оценку.
+    grossUsd: fin(net) && fin(cost) ? net + cost : null,
+    netPct: fin(net) && fin(cap) && cap > 0 ? net / cap : null,
+    why: why ?? null,
+    live: !close,
+  };
+}
+
+// ЖУРНАЛ РЕШЕНИЙ. Строка на ЦИКЛ, а не на сделку: именно этого не хватало интерфейсу, который
+// показывал только сделки и молчал о том, почему их нет.
+//
+// ЛУЧШИЙ КАНДИДАТ БЕРЁТСЯ ТЕМ ЖЕ ПОРЯДКОМ, ЧТО У `faHeldRank`: нетто по убыванию, имя как разрыв
+// ничьей. Два порядка на один список разошлись бы на первой же ничьей, и ранг перестал бы отвечать
+// на вопрос, который задаёт колонка рядом.
+export function faDecisionsFromRecords(rows) {
+  const out = [];
+  for (const r of rows || []) {
+    if (r?.k !== "dec" || !fin(r.t)) continue;
+    const mk = Array.isArray(r.mk) ? r.mk : [];
+    const rf = Array.isArray(r.rf) ? r.rf : [];
+    const best = mk.filter((c) => fin(c?.n))
+      .sort((a, b) => b.n - a.n || String(a.t).localeCompare(String(b.t)))[0] || null;
+    out.push({
+      at: r.t, ageSec: r.age ?? null, capitalUsd: r.cap ?? null, presetId: r.pre ?? null,
+      horizonH: r.hz ?? null,
+      passed: mk.length, checked: mk.length + rf.length,
+      hold: r.hold ?? null, heldRank: faHeldRank(r),
+      bestToken: best?.t ?? null, bestConfig: best?.c ?? null,
+      bestSizeUsd: best?.s ?? null, bestNetUsd: best?.n ?? null, bestGrossUsd: best?.g ?? null,
+      // ДОЛЯ УДЕРЖАНИЯ, А НЕ ПАРА СТАВОК. Котируемой годовой ставки поток решений НЕ ПИШЕТ, и
+      // выводить её здесь значило бы завести второй расчёт мимо правила размера. Записано `dr`.
+      bestRetained: best?.dr ?? null, bestBaseUsd: best?.wb ?? null, bestBinding: best?.b ?? null,
+      action: r.ex?.a ?? null, why: r.ex?.w ?? null,
+      holdGrossUsd: r.ex?.hg ?? null, switchNetUsd: r.ex?.sn ?? null, gainUsd: r.ex?.gn ?? null,
+      usedUsd: r.us ?? null, netTotalUsd: r.nt ?? null,
+    });
+  }
+  return out.sort((a, b) => b.at - a.at);
+}

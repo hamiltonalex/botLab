@@ -430,6 +430,10 @@ export function autoTick({
   const heldToken = position?.token ?? null;
   let heldGate = null;
   let anyShort = false;
+  // Лучшее наблюдённое покрытие баз на окне. Нужно ИНТЕРФЕЙСУ: отказ `hist_no_base` это штатное
+  // состояние первых недель, и без числа он неотличим от поломки. Считается здесь, потому что
+  // окно нарезано здесь; второй счёт снаружи разошёлся бы с воротами на первой же правке.
+  let covBest = null;
   for (const m of markets || []) {
     const rows = m?.rows || [];
     if (rows.length < H) {
@@ -442,6 +446,7 @@ export function autoTick({
     // Сторона ноги GMX берётся у `legModel` леджера, а не выводится здесь по конфигурации: это
     // единственное место в проекте, которое знает разбор схемы на ноги.
     const cov = baseCoverage(win, legModel(m.strategy || "two", m.config).gmxSide);
+    if (covBest == null || cov.fraction > covBest) covBest = cov.fraction;
     if (cov.fraction < params.baseCoverageMin) {
       note("hist_no_base", { token: m.token, covered: cov.covered, hours: cov.hours, need: params.baseCoverageMin });
       if (m.token === heldToken) heldGate = "hist_no_base";
@@ -478,9 +483,16 @@ export function autoTick({
 
   // ── РЕШЕНИЕ. Блокирующий код автомата решает раньше любого правила.
   const decider = precedenceDecider(blocking);
+  // ВОРОТА СНАБЖЕНИЯ ЧИСЛОМ, на КАЖДОМ исходе. Заведено для интерфейса фазы 6: правило показа
+  // требует причину числами («покрытие 0.87 при требуемых 0.95»), а считать её второй раз снаружи
+  // запрещено законом проекта. Ничего не решает и ни на одну ветку не влияет.
+  const gate = Object.freeze({
+    markets: (markets || []).length, usable: usable.length, held: heldGate,
+    covBest, covNeed: params.baseCoverageMin, horizonH: H,
+  });
   const out = (kind, why, extra = null) => {
     st.lastRefusals = [...new Set(refusals.map((r) => r.code))];
-    return { kind, why, refusals, events, state: st, margin, decided: false, intent: null, universe: null, exit: null, window: null, params, cfg, ...(extra || {}) };
+    return { kind, why, refusals, events, state: st, margin, gate, decided: false, intent: null, universe: null, exit: null, window: null, params, cfg, ...(extra || {}) };
   };
 
   if (decider) {

@@ -24,7 +24,7 @@ import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts } 
 import { ledgerView, buildLedger } from "../engine/ledger.js";
 import { toLedgerCsv, toLedgerSheet, toLedgerJson, ledgerFileName, dialogFiltersFor } from "./export.js";
 import { buildXlsxBuffer } from "./xlsx-writer.js";
-import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes, writeCache, loadFaBases, saveFaBases } from "../engine/store.js";
+import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes, readScanRecords, listScanRecordDays, writeCache, loadFaBases, saveFaBases } from "../engine/store.js";
 // Бот 1, автомат (фаза 4): чистые правила живут в src/engine/fa/, здесь только снабжение,
 // исполнение намерения и диск. Ни одной строки решения в главном процессе нет намеренно - иначе
 // книга охраны прогоняла бы не ту систему, которая работает живьём.
@@ -32,7 +32,7 @@ import * as faauto from "../engine/fa/auto.js";
 import { FA_BOOK_NODES_USD, bookSlippageNodes } from "../engine/fa/sizing.js";
 import { marginGuard as faMarginGuard, positionLegs as faPositionLegs } from "../engine/fa/margin.js";
 import { applyObservedBases, emptyBaseJournal, observeBases } from "../engine/fa/bases.js";
-import { FA_RECORD_PREFIX, buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord, faRecordDayKey } from "../engine/fa/record.js";
+import { FA_RECORD_PREFIX, buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord, faDecisionsFromRecords, faRecordDayKey, faTradesFromRecords } from "../engine/fa/record.js";
 import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
 import { buildStructure as s1buildStructure, buildSellStructure as s1buildSellStructure, buildSellStrangleStructure as s1buildSellStrangle, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry, sellRowsFromSnapshot as s1sellRows } from "../engine/btcopt/structure.js";
@@ -627,6 +627,27 @@ async function faClosePaperPosition(p, nowMs) {
   return p;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ЧТЕНИЕ АРХИВА ФАЗЫ 5 ДЛЯ ИНТЕРФЕЙСА. Потоки `fa-dec` и `fa-trade` пишутся на диск построчно, а
+// карточкам истории и журнала нужны СТРОКИ, а не файлы. Здесь ТОЛЬКО работа с диском: разбор
+// строк в ответы живёт чистыми функциями в `fa/record.js`, где он накрыт тестом, а не здесь.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FA_JOURNAL_DAYS = 30; // сколько суток архива поднимать по умолчанию
+const FA_JOURNAL_ROWS = 500; // потолок строк на поток: журнал за год иначе поедет в отрисовщик целиком
+
+// Последние `days` суток, по которым на диске ЕСТЬ файлы. Диапазон читается с диска, а не гадается.
+function faRecordDays(prefix, days) {
+  const all = listScanRecordDays(baseDir, prefix);
+  return days > 0 ? all.slice(-days) : all;
+}
+
+function faJournal(prefix, days, limit, parse) {
+  const { rows, broken } = readScanRecords(baseDir, prefix, faRecordDays(prefix, days));
+  const parsed = parse(rows);
+  return { rows: parsed.slice(0, limit), total: parsed.length, broken };
+}
+
 // ── ТИК. Зовётся в конце каждого опроса, ПОСЛЕ начисления: решение по недоначисленному счёту это
 // решение по другим данным.
 async function faAutoStep(sources) {
@@ -672,7 +693,27 @@ async function faAutoStep(sources) {
   });
   const prev = state.auto.lastTick;
   state.auto.engine = tick.state;
-  state.auto.lastTick = { at: nowMs, kind: tick.kind, why: tick.why, line: faauto.explainAuto(tick) };
+  // ЧТО ИЗ ТИКА ВИДИТ ИНТЕРФЕЙС. Код исхода, отказы С ЧИСЛАМИ, вердикт сторожа залога и счёт ворот
+  // снабжения. Строка `line` остаётся для ЛОГА и наружу не показывается: она по-русски всегда, а
+  // перевод кодов живёт в словарях локализации (см. комментарий блока `auto` в assembleDataset).
+  // Пер-рыночные отказы режутся: их до трёх на рынок при 60+ рынках, а на экране нужен решающий и
+  // его числа, а не весь журнал (полный журнал пишет фаза 5).
+  state.auto.lastTick = {
+    at: nowMs, kind: tick.kind, why: tick.why, line: faauto.explainAuto(tick),
+    refusals: (tick.refusals || []).filter((r) => r.code === tick.why).slice(0, 8),
+    codes: [...new Set((tick.refusals || []).map((r) => r.code))],
+    margin: tick.margin ? {
+      ok: !!tick.margin.ok, code: tick.margin.code ?? null,
+      roomFrac: Number.isFinite(tick.margin.roomFrac) ? tick.margin.roomFrac : null,
+      need: Number.isFinite(tick.margin.need) ? tick.margin.need : null,
+      legs: (tick.margin.legs || []).map((l) => ({
+        venue: l.venue ?? null, side: l.side ?? null,
+        roomFrac: Number.isFinite(l.roomFrac) ? l.roomFrac : null,
+        liquidationPx: Number.isFinite(l.liquidationPx) ? l.liquidationPx : null,
+      })),
+    } : null,
+    gate: tick.gate || null,
+  };
   // Лог пишется на СМЕНЕ исхода, а не каждый тик: при опросе раз в пять минут одинаковая строка
   // 288 раз в сутки прячет ту единственную, которая изменилась. Смена исхода это и есть событие.
   if (!prev || prev.kind !== tick.kind || prev.why !== tick.why) console.log(`[fa-auto] ${state.auto.lastTick.line}`);
@@ -3311,6 +3352,22 @@ function wireIpc() {
     persistFaAuto();
     push();
     return { ok: true, state: state.auto.engine };
+  });
+
+  // ЖУРНАЛЫ АВТОМАТА. Запрос по требованию, как у леджера: архив за год это мегабайты, и возить их
+  // на каждом пуше нельзя. Читает и агрегирует ГЛАВНЫЙ процесс, наружу едут готовые строки.
+  ipcMain.handle("fa:auto:records", async (_e, req) => {
+    const days = Number.isFinite(req?.days) && req.days > 0 ? Math.min(365, Math.floor(req.days)) : FA_JOURNAL_DAYS;
+    const limit = Number.isFinite(req?.limit) && req.limit > 0 ? Math.min(5000, Math.floor(req.limit)) : FA_JOURNAL_ROWS;
+    try {
+      return {
+        trades: faJournal(FA_RECORD_PREFIX.trade, days, limit, faTradesFromRecords),
+        decisions: faJournal(FA_RECORD_PREFIX.dec, days, limit, faDecisionsFromRecords),
+        days, limit,
+      };
+    } catch (e) {
+      return { error: "журналы не прочитаны: " + String(e && e.message ? e.message : e).slice(0, 120) };
+    }
   });
 
   ipcMain.handle("fa:setCosts", async (_e, costs) => {
