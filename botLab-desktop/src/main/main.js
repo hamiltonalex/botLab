@@ -741,9 +741,25 @@ function faArchiveBytes() {
   return { snap, dec, trade, total: snap + dec + trade };
 }
 
-function faArchiveRows(prefix, days) {
-  const { rows, broken } = readScanRecords(baseDir, prefix, faRecordDays(prefix, days));
+// Список суток приходит ГОТОВЫМ, а не строится здесь: за один ответ он нужен четырежды (строки,
+// глубина архива, число прочитанных суток, предпросмотр срока хранения), и каждый вызов
+// `listScanRecordDays` это обход каталога.
+function faArchiveRows(prefix, dayKeys) {
+  const { rows, broken } = readScanRecords(baseDir, prefix, dayKeys);
   return { rows, broken };
+}
+
+// СКОЛЬКО СУТОК БЕЗОПАСНО ПРОЧИТАТЬ ЗА ОДИН РАЗ. Разбор синхронный и держит цикл событий главного
+// процесса, а вес суток задаёт период опроса: при опросе раз в минуту сутки это 1440 строк снимков,
+// при пятиминутном 288. Бюджет строк поэтому переводится в сутки, а не назначается сутками:
+// тридцать суток минутного опроса это 43 200 строк и около 90 МБ разбора одним всплеском.
+// Сколько суток вышло на самом деле, едет наружу полем `days` и стоит на карточке рядом с числом
+// прочитанных, поэтому урезание видно, а не спрятано.
+const FA_ARCHIVE_ROW_BUDGET = 12000;
+function faArchiveDays(requested, nominalSec) {
+  const perDay = nominalSec > 0 ? 86400 / nominalSec : 0;
+  if (!(perDay > 0)) return requested;
+  return Math.max(1, Math.min(requested, Math.floor(FA_ARCHIVE_ROW_BUDGET / perDay)));
 }
 
 // ── ТИК. Зовётся в конце каждого опроса, ПОСЛЕ начисления: решение по недоначисленному счёту это
@@ -3500,12 +3516,20 @@ function wireIpc() {
   // отвечает, что ВЫШЛО БЫ за срок, а решения об удалении владелец не принимал. Канала на удаление
   // нет ни здесь, ни в мосте, и это стережёт тест.
   ipcMain.handle("fa:auto:archive", async (_e, req) => {
-    const days = Number.isFinite(req?.days) && req.days > 0 ? Math.min(365, Math.floor(req.days)) : FA_JOURNAL_DAYS;
+    const asked = Number.isFinite(req?.days) && req.days > 0 ? Math.min(365, Math.floor(req.days)) : FA_JOURNAL_DAYS;
     try {
-      const snap = faArchiveRows(FA_RECORD_PREFIX.snap, days);
-      const dec = faArchiveRows(FA_RECORD_PREFIX.dec, days);
-      const trade = faArchiveRows(FA_RECORD_PREFIX.trade, days);
       const nominalSec = pollSec();
+      const days = faArchiveDays(asked, nominalSec);
+      // Каталог обходится по разу на поток, а не по разу на потребителя.
+      const all = {
+        snap: listScanRecordDays(baseDir, FA_RECORD_PREFIX.snap),
+        dec: listScanRecordDays(baseDir, FA_RECORD_PREFIX.dec),
+        trade: listScanRecordDays(baseDir, FA_RECORD_PREFIX.trade),
+      };
+      const win = (k) => (days > 0 ? all[k].slice(-days) : all[k]);
+      const snap = faArchiveRows(FA_RECORD_PREFIX.snap, win("snap"));
+      const dec = faArchiveRows(FA_RECORD_PREFIX.dec, win("dec"));
+      const trade = faArchiveRows(FA_RECORD_PREFIX.trade, win("trade"));
       // ОКНО СРАВНЕНИЯ ДЛЯ СМЕРТНОСТИ РЫНКОВ - час ленты с каждого конца, а не одна строка против
       // одной: на ленте в тысячи строк одиночная строка ловит любую икоту опроса как исчезновение.
       // Число часа это ДОПУЩЕНИЕ, сеткой по нему никто не гонял, и окно едет наружу вместе с ответом.
@@ -3515,16 +3539,12 @@ function wireIpc() {
           snapRows: snap.rows, decRows: dec.rows, tradeRows: trade.rows,
           nominalSec, warmupRows: edge, tailRows: edge,
           bytes: faArchiveBytes(),
-          dayKeys: {
-            snap: listScanRecordDays(baseDir, FA_RECORD_PREFIX.snap),
-            dec: listScanRecordDays(baseDir, FA_RECORD_PREFIX.dec),
-            trade: listScanRecordDays(baseDir, FA_RECORD_PREFIX.trade),
-          },
+          dayKeys: all,
           todayKey: faRecordDayKey(Date.now()),
           broken: { snap: snap.broken, dec: dec.broken, trade: trade.broken },
-          daysRead: faRecordDays(FA_RECORD_PREFIX.snap, days).length,
+          daysRead: win("snap").length,
         }),
-        days,
+        days, asked,
       };
     } catch (e) {
       // ПРИЧИНА ГОЛАЯ, БЕЗ ПРИСТАВКИ. Обрамление («архив не прочитан: …») живёт в словаре
