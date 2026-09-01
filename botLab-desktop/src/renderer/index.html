@@ -1558,6 +1558,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
           </div>
           <div class="dl" id="faArcLiqLegs"></div>
           <div class="stamp" id="faArcLiqNone" hidden style="margin-top:6px" data-i18n="fa.arc.liqNone"></div>
+          <div class="stamp" id="faArcLiqNoLevel" hidden style="margin-top:6px" data-i18n="fa.arc.liqNoLevel"></div>
           <div class="stamp" style="margin-top:8px" data-i18n="fa.arc.liqNote"></div>
         </div>
       </div>
@@ -5171,7 +5172,7 @@ function renderFaArchive(){
       'faArcCovLost','faArcCovExp','faArcCovUnexp','faArcVanN','faArcVanWin','faArcCodeN','faArcLiqN',
       'faArcLiqSrc','faArcVolDay','faArcVolDisk','faArcVolInputs','faArcRetOldest']) set(id, '-');
     for(const id of ['faArcCauses','faArcGaps','faArcVanList','faArcCodeList','faArcLiqLegs','faArcVolParts','faArcRetList']) box(id, '');
-    for(const id of ['faArcCovNone','faArcBroken','faArcVanEmpty','faArcVanShort','faArcCodeEmpty','faArcLiqNone','faArcVolNone']) show(id, false);
+    for(const id of ['faArcCovNone','faArcBroken','faArcVanEmpty','faArcVanShort','faArcCodeEmpty','faArcLiqNone','faArcLiqNoLevel','faArcVolNone']) show(id, false);
     return;
   }
 
@@ -5240,7 +5241,10 @@ function renderFaArchive(){
     })));
   }
   box('faArcLiqLegs', legs.join(''));
+  /* ДВА РАЗНЫХ ПУСТЫХ ОТВЕТА. «Открытой сделки в окне не было» и «сделка была, а цен ликвидации в
+     записи нет» это разные состояния, и молчание вместо второго читается как потеря данных. */
   show('faArcLiqNone', !(l.snapsWithPos > 0));
+  show('faArcLiqNoLevel', l.snapsWithPos > 0 && legs.length === 0);
 
   const vol = d.volume || {}, pd = vol.perDay, od = vol.onDisk, m = vol.measured || {};
   set('faArcVolDay', pd ? faArcMb(pd.total) : '-');

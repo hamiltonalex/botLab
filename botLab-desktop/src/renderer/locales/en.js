@@ -1695,6 +1695,7 @@ registerLocale('en', {
   'fa.arc.legHl': 'Hyperliquid leg',
   'fa.arc.liqLegV': 'latest point {v} ({lat}) · lowest {m} ({at})',
   'fa.arc.liqNone': 'there is no snapshot with an open position in the window',
+  'fa.arc.liqNoLevel': 'there was a trade in the window but no liquidation levels in the record: the observation was incomplete, which is not the same as there being no trade',
   'fa.arc.liqNote': 'Here the distance is ABSOLUTE and has no threshold: whether it is enough is decided by the guard on the account honesty card. This is only the observation, recomputed from the recorded price and liquidation level.',
   'fa.arc.volHdr': 'Recording volume',
   'fa.arc.volPerDay': 'Per day, measured',

@@ -130,7 +130,13 @@ function measuredInputs({ snaps, gaps, decRows, tradeRows, pollSec, fromAt, toAt
 function retentionPreview(dayKeys, todayKey, horizons) {
   const streams = Object.entries(dayKeys || {});
   const oldest = {};
-  for (const [k, days] of streams) oldest[k] = days && days.length ? days[0] : null;
+  // Порядок входа НЕ берётся на веру. Сегодня его гарантирует диск, но чистая функция, объявленная
+  // не знающей диска, не имеет права на это опираться, тем более что соседний вызов
+  // `faRecordsToPrune` тот же массив сортирует у себя.
+  for (const [k, days] of streams) {
+    const sorted = [...(days || [])].sort();
+    oldest[k] = sorted.length ? sorted[0] : null;
+  }
   const preview = (horizons || []).map((keepDays) => {
     const expire = {};
     // СЧИТАЮТСЯ СУТКИ, А НЕ ПАРЫ «ПОТОК-СУТКИ». Одни и те же сутки лежат во всех трёх потоках, и
@@ -176,6 +182,7 @@ export function faArchiveSummary({
   const worst = [...(cov.unexplained || [])].sort((a, b) => b.ms - a.ms).slice(0, FA_ARCHIVE_CAP);
 
   const van = faVanishedMarkets(snapRows || [], { warmupRows, tailRows });
+  const vanRows = (snapRows || []).filter((r) => r?.k === "snap" && r.m);
   const codes = unknownCodes([["snap", snapRows], ["dec", decs], ["trade", trades]]);
   const measured = measuredInputs({ snaps, gaps, decRows: decs, tradeRows: trades, pollSec: nominalSec, fromAt, toAt });
   // Замер объёма имеет смысл только когда есть чем его кормить: без рынков и без периода опроса
@@ -213,8 +220,11 @@ export function faArchiveSummary({
       // когда никто не исчез, и когда строк меньше, чем требует окно сравнения. Живой прогон
       // показал цену молчания: пять снимков против окна в 60 строк с каждого конца дали на экране
       // «ни одно имя не исчезло», то есть отсутствие наблюдения выглядело как наблюдение.
-      enough: snaps.length >= warmupRows + tailRows,
-      snaps: snaps.length,
+      // Считается ТЕМ ЖЕ предикатом, что и сам читатель (`k === "snap" && r.m`), а не соседним:
+      // два разных условия на один вопрос расходятся на первой же строке без блока рынков, и
+      // расходятся ровно в ту сторону, против которой признак заведён.
+      enough: vanRows.length >= warmupRows + tailRows,
+      snaps: vanRows.length,
     },
     codes: { n: codes.length, items: codes.slice(0, FA_ARCHIVE_CAP) },
     liq: liqSummary(snaps),
