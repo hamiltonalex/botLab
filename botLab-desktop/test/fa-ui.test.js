@@ -18,7 +18,7 @@
 // они попадают в приложение, и подмена разбора импортом проверяла бы не то, что исполняется.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -119,7 +119,7 @@ test("fa-ui: в текстах карточки честности нет год
   const dicts = loadDicts();
   for (const [code, dict] of Object.entries(dicts)) {
     for (const [k, v] of Object.entries(dict)) {
-      if (!/^fa\.(hon|hist|jr|ev)\./.test(k) && !/^help\.fa-(honesty|eval)\./.test(k)) continue;
+      if (!/^fa\.(hon|hist|jr|ev|arc)\./.test(k) && !/^help\.fa-(honesty|eval|history|journal|archive)\./.test(k)) continue;
       for (const re of PROMISES[code]) {
         assert.ok(!re.test(v), `${code}[${k}]: обещание будущего дохода (${re}) на карточке честности`);
       }
@@ -135,8 +135,8 @@ test("fa-ui: длинных тире нет ни в разметке, ни в с
     assert.equal((text.match(/\u2014/g) || []).length, 0, `${name}: длинное тире (U+2014)`);
   }
   const dicts = loadDicts();
-  const isPhase6 = (k) => /^fa\.(code|bind|gap|side|auto|num|warn|hon|act|hist|jr|ev|za)\./.test(k)
-    || /^help\.fa-(auto|honesty|eval)\./.test(k) || /^home\.fa\.power/.test(k);
+  const isPhase6 = (k) => /^fa\.(code|bind|gap|side|auto|num|warn|hon|act|hist|jr|ev|za|arc)\./.test(k)
+    || /^help\.fa-(auto|honesty|eval|history|journal|archive)\./.test(k) || /^home\.fa\.power/.test(k);
   for (const [code, dict] of Object.entries(dicts)) {
     for (const [k, v] of Object.entries(dict)) {
       if (!isPhase6(k)) continue;
@@ -149,13 +149,13 @@ test("fa-ui: длинных тире нет ни в разметке, ни в с
   assert.ok(!/[\u2013\u2014]/.test(block), "разметка карточек фазы 6: тире вместо дефиса");
 });
 
-test("fa-ui: все пять карточек фазы 6 на месте и у каждой своя справка", () => {
-  for (const id of ["faAutoCard", "faEvalCard", "faHonestyCard", "faHistoryCard", "faJournalCard"]) {
+test("fa-ui: все шесть карточек фазы 6 на месте и у каждой своя справка", () => {
+  for (const id of ["faAutoCard", "faEvalCard", "faHonestyCard", "faHistoryCard", "faJournalCard", "faArchiveCard"]) {
     assert.ok(HTML.includes(`id="${id}"`), `нет карточки ${id}`);
   }
   // Оракул селекторов держит биекцию кнопка-статья, но он требует Electron и в быстрый цикл не
   // заходит; здесь проверяется дешёвая половина: и кнопка, и запись реестра существуют.
-  for (const h of ["fa-auto", "fa-eval", "fa-honesty", "fa-history", "fa-journal"]) {
+  for (const h of ["fa-auto", "fa-eval", "fa-honesty", "fa-history", "fa-journal", "fa-archive"]) {
     assert.ok(HTML.includes(`data-help="${h}"`), `нет кнопки справки ${h}`);
     assert.ok(HTML.includes(`'${h}': { tk:'help.${h}.t', bk:'help.${h}.b' }`), `нет записи реестра справок ${h}`);
   }
@@ -210,6 +210,69 @@ test("ручного запуска у бота 1 нет ни одного ко�
   assert.ok(/window\.fa\.closePaper/.test(HTML), "интерфейсу нечем закрыть позицию");
   assert.ok(/data-close-id/.test(HTML), "мини-кнопка закрытия в таблице позиций пропала");
   assert.ok(HTML.includes('id="tradeCloseBtn"'), "кнопка закрытия выбранной позиции пропала");
+});
+
+test("архив читается, но удалять его нечем: канал только на чтение", () => {
+  // ЧИТАТЕЛИ АРХИВА ПОДКЛЮЧЕНЫ, УДАЛЕНИЕ НЕТ, И ЭТО РАЗНЫЕ РЕШЕНИЯ. Шесть читателей движка до сих
+  // пор не звались приложением ни разу, и «главный контроль записи» считался только в тестах.
+  // Подключение их к экрану не даёт права заодно завести удаление: срок хранения владельцем НЕ
+  // НАЗНАЧЕН, а `faRecordsToPrune` отвечает лишь на вопрос «что вышло БЫ за срок».
+  //
+  // Запрет стоит на трёх уровнях сразу, потому что удаление можно вернуть любым из них: каналом в
+  // главном процессе, стрелкой в мосте и кнопкой в разметке.
+  const F = (p) => readFileSync(join(HERE, "..", "src", p), "utf8");
+  const main = F("main/main.js"), pre = F("main/preload.cjs"), store = F("engine/store.js");
+
+  // Чтение обязано БЫТЬ: без него карточка нарисует прочерки и никто не заметит, что канал пропал.
+  assert.ok(/ipcMain\.handle\(\s*"fa:auto:archive"/.test(main), "канал сводки архива пропал из main");
+  assert.ok(/\barchive\s*:/.test(pre), "сводка архива пропала из моста preload");
+  assert.ok(/window\.fa\.auto\.archive/.test(HTML), "интерфейсу нечем запросить сводку архива");
+  assert.ok(HTML.includes('id="faArchiveCard"'), "карточка архива пропала из разметки");
+
+  // Удаления обязано НЕ БЫТЬ ни в одном из трёх мест.
+  assert.ok(!/ipcMain\.handle\(\s*"fa:auto:(prune|clear|delete)/.test(main), "в main завёлся канал удаления записей");
+  assert.ok(!/\b(prune|clearRecords|deleteRecords)\s*:/.test(pre), "в мосте завелась стрелка удаления записей");
+  assert.ok(!/window\.fa\.auto\.(prune|clearRecords|deleteRecords)/.test(HTML), "интерфейс зовёт удаление записей");
+
+  // ЗАПРЕТ ПО СПОСОБНОСТИ, А НЕ ПО ИМЕНИ. Проверка имён каналов ловит только тот способ, который мы
+  // уже придумали: чистка по сроку, написанная прямо в главном процессе, не нуждается ни в канале,
+  // ни в стрелке моста, а `renameSync(p, p + ".pruned")` или запись пустой строки уничтожают ленту,
+  // не будучи удалением ни по одному имени. Поэтому проверяется ВЕСЬ src и обе половины: чем можно
+  // удалить файл и кто вообще знает путь к каталогу записей.
+  const SRC = join(HERE, "..", "src");
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
+  const sources = walk(SRC).filter((f) => /\.(js|cjs|mjs|html)$/.test(f));
+  const rel = (f) => f.slice(SRC.length + 1);
+  // Единственные два места во всём src, где вообще есть удаление, сносят ВРЕМЕННЫЙ каталог,
+  // созданный тут же через mkdtempSync (профиль дымового прогона). Расширять список нельзя.
+  const ALLOW_RM = new Set(["main/main.js", "main/smoke-profile.js"]);
+  for (const f of sources) {
+    const text = readFileSync(f, "utf8");
+    assert.ok(!/\b(unlinkSync|unlink|rmdirSync|truncateSync|ftruncateSync)\b/.test(text),
+      `${rel(f)}: появился примитив удаления файла`);
+    if (/\brmSync\b/.test(text)) {
+      assert.ok(ALLOW_RM.has(rel(f)), `${rel(f)}: rmSync вне списка временных каталогов`);
+      assert.ok(/mkdtempSync/.test(text), `${rel(f)}: rmSync без mkdtempSync рядом, то есть сносит не временное`);
+    }
+    // Путь к каталогу записей знает ТОЛЬКО склад: любой другой файл, узнавший его, сможет писать
+    // туда мимо единственного писателя.
+    if (/scan-records/.test(text)) {
+      assert.equal(rel(f), "engine/store.js", `${rel(f)}: каталог записей стал известен ещё одному файлу`);
+    }
+  }
+  // В самом складе перезапись записей тоже невозможна: путь к файлу записи строит `recordPath`, и
+  // ни один разрушающий примитив его не принимает.
+  for (const call of ["atomicWrite(recordPath", "writeFileSync(recordPath", "renameSync(recordPath"]) {
+    assert.ok(!store.includes(call), `в store.js появилась перезапись записей: ${call}`);
+  }
+
+  // Сослагательная формулировка и постоянная сноска про отсутствие удаления обязаны стоять рядом.
+  const dicts = loadDicts();
+  for (const [code, dict] of Object.entries(dicts)) {
+    assert.ok(dict["fa.arc.retSafe"], `${code}: пропала сноска о том, что удаления нет`);
+    assert.ok(dict["fa.arc.retRow"].includes("{k}"), `${code}: строка срока хранения перестала быть сослагательной`);
+  }
 });
 
 test("переключателей у полного автомата не осталось ни одного, и вернуть их нечем", () => {

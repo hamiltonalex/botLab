@@ -1469,6 +1469,132 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
       </div>
     </div>
 
+    <!-- ══ АРХИВ ЗАПИСИ ══
+         ЗАЧЕМ КАРТОЧКА ЕСТЬ. Шесть читателей архива в движке были написаны и покрыты тестами, но
+         приложением не звались НИ РАЗУ. Главный из них движок называет «главным контролем записи»:
+         перерыв без строки пропуска попадает в необъяснённые, а молчаливая дыра в ленте неотличима
+         от рынка, которого не было. Контроль, который считается только в тестах, оператора ни от
+         чего не защищает, поэтому он вынесен сюда.
+         ЧЕГО ЗДЕСЬ НЕТ. Ни одного порога и ни одного вердикта о риске: запас до ликвидации показан
+         расстоянием без знака, а хватает его или нет, решает сторож на карточке честности.
+         И ни одной кнопки удаления: срок хранения показан СОСЛАГАТЕЛЬНО. -->
+    <div class="card span2" id="faArchiveCard">
+      <div class="sec-head">
+        <h2 data-i18n="fa.arc.title"></h2>
+        <span class="tag amber" data-i18n="fa.arc.chip"></span>
+        <button class="help-btn" data-help="fa-archive">?</button>
+        <button id="faArcRefresh" class="paperbtn mini" data-i18n="fa.arc.refresh"></button>
+        <span class="rule"></span>
+        <span class="hint" data-i18n="fa.arc.hint"></span>
+      </div>
+
+      <div class="fa-hon-cols">
+        <!-- (1) ОКНО. Берётся с диска: это последние сутки, по которым файлы ЕСТЬ, а не календарный
+             отрезок. На прерывистой ленте это разные вещи, и молчать об этом нельзя. -->
+        <div class="fa-hon-sec">
+          <div class="subhdr" data-i18n="fa.arc.winHdr"></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="fa.arc.winDays"></span><span class="v num" id="faArcWinDays">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.arc.winFrom"></span><span class="v num" id="faArcWinFrom">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.arc.winTo"></span><span class="v num" id="faArcWinTo">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.arc.winPoll"></span><span class="v num" id="faArcWinPoll">-</span></div>
+          </div>
+          <div class="stamp" style="margin-top:8px" data-i18n="fa.arc.winNote"></div>
+        </div>
+
+        <!-- (2) НЕПРЕРЫВНОСТЬ ОПРОСА. Необъяснённый перерыв стоит ОТДЕЛЬНОЙ строкой от объяснённого:
+             «бот был выключен» и «данные потеряны» это разные события, и складывать их нельзя. -->
+        <div class="fa-hon-sec">
+          <div class="subhdr" data-i18n="fa.arc.covHdr"></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="fa.arc.covPct"></span><span class="v num" id="faArcCovPct">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.arc.covPolls"></span><span class="v num" id="faArcCovPolls">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.arc.covLost"></span><span class="v num" id="faArcCovLost">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.arc.covExplained"></span><span class="v num" id="faArcCovExp">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.arc.covUnexplained"></span><span class="v num" id="faArcCovUnexp">-</span></div>
+          </div>
+          <div class="subhdr" style="margin-top:10px" data-i18n="fa.arc.covCauseHdr"></div>
+          <div class="dl" id="faArcCauses"></div>
+          <div class="subhdr" style="margin-top:10px" data-i18n="fa.arc.covGapHdr"></div>
+          <div class="dl" id="faArcGaps"></div>
+          <div class="stamp" id="faArcCovNone" hidden style="margin-top:6px" data-i18n="fa.arc.covNone"></div>
+          <div class="stamp neg" id="faArcBroken" hidden style="margin-top:6px">-</div>
+          <div class="stamp" style="margin-top:8px" data-i18n="fa.arc.covNote"></div>
+        </div>
+      </div>
+
+      <div class="fa-hon-cols">
+        <!-- (3) СМЕРТНОСТЬ ВСЕЛЕННОЙ И КОДЫ ВНЕ РЕЕСТРОВ. Первое это подступ к вопросу «что стало с
+             рынками, которые мы видели»; второе ловит строковую константу, заведённую мимо словарей
+             движка, пока она не разъехалась с реестром окончательно. -->
+        <div class="fa-hon-sec">
+          <div class="subhdr" data-i18n="fa.arc.vanHdr"></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="fa.arc.vanCount"></span><span class="v num" id="faArcVanN">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.arc.vanWindow"></span><span class="v" id="faArcVanWin">-</span></div>
+          </div>
+          <div class="dl" id="faArcVanList"></div>
+          <div class="stamp" id="faArcVanEmpty" hidden style="margin-top:6px" data-i18n="fa.arc.vanEmpty"></div>
+          <div class="stamp" id="faArcVanShort" hidden style="margin-top:6px">-</div>
+          <div class="stamp" style="margin-top:8px" data-i18n="fa.arc.vanNote"></div>
+
+          <div class="subhdr" style="margin-top:14px" data-i18n="fa.arc.codeHdr"></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="fa.arc.codeCount"></span><span class="v num" id="faArcCodeN">-</span></div>
+          </div>
+          <div class="dl" id="faArcCodeList"></div>
+          <div class="stamp" id="faArcCodeEmpty" hidden style="margin-top:6px" data-i18n="fa.arc.codeEmpty"></div>
+          <div class="stamp" style="margin-top:8px" data-i18n="fa.arc.codeNote"></div>
+        </div>
+
+        <!-- (4) ЗАПАС ДО ЛИКВИДАЦИИ ПО ЗАПИСИ. НЕ дубль карточки честности: там живой запас со
+             знаком, порогом и вердиктом сторожа, здесь расстояние по модулю, пересчитанное из
+             записанных цены и уровня, плюс история и ярлык источника уровня. -->
+        <div class="fa-hon-sec">
+          <div class="subhdr" data-i18n="fa.arc.liqHdr"></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="fa.arc.liqSnaps"></span><span class="v num" id="faArcLiqN">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.arc.liqSrc"></span><span class="v" id="faArcLiqSrc">-</span></div>
+          </div>
+          <div class="dl" id="faArcLiqLegs"></div>
+          <div class="stamp" id="faArcLiqNone" hidden style="margin-top:6px" data-i18n="fa.arc.liqNone"></div>
+          <div class="stamp" style="margin-top:8px" data-i18n="fa.arc.liqNote"></div>
+        </div>
+      </div>
+
+      <div class="fa-hon-cols">
+        <!-- (5) ОБЪЁМ. Замер размеров строк заморожен тестом, а частоты взяты из прочитанного окна,
+             поэтому рядом стоит длина окна: частота, снятая с окна короче суток, это оценка по
+             одному-двум событиям. Занятое на диске стоит рядом фактом. -->
+        <div class="fa-hon-sec">
+          <div class="subhdr" data-i18n="fa.arc.volHdr"></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="fa.arc.volPerDay"></span><span class="v num" id="faArcVolDay">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.arc.volDisk"></span><span class="v num" id="faArcVolDisk">-</span></div>
+          </div>
+          <div class="dl" id="faArcVolParts"></div>
+          <div class="stamp" id="faArcVolInputs" style="margin-top:6px">-</div>
+          <div class="stamp" id="faArcVolNone" hidden style="margin-top:6px" data-i18n="fa.arc.volNone"></div>
+          <div class="stamp" style="margin-top:8px" data-i18n="fa.arc.volNote"></div>
+        </div>
+
+        <!-- (6) СРОК ХРАНЕНИЯ, СОСЛАГАТЕЛЬНО. Функция движка ничего не удаляет и удалять не умеет;
+             канала на удаление нет ни в главном процессе, ни в мосте, и это стережёт тест. -->
+        <div class="fa-hon-sec">
+          <div class="subhdr" data-i18n="fa.arc.retHdr"></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="fa.arc.retOldest"></span><span class="v num" id="faArcRetOldest">-</span></div>
+          </div>
+          <div class="dl" id="faArcRetList"></div>
+          <div class="why-box warn" style="margin-top:10px">
+            <b data-i18n="fa.arc.retSafeB"></b> <span data-i18n="fa.arc.retSafe"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="ledger-empty" id="faArcEmpty" hidden>-</div>
+    </div>
+
     <!-- ══ ИСТОРИЯ СДЕЛОК АВТОМАТА ══
          Одна строка на СДЕЛКУ: вход сшит с выходом главным процессом, перекладка закрывает прежнюю
          и открывает следующую. Размер стоит ДВУМЯ числами (заявлено и работает) - это второй замер
@@ -1525,9 +1651,13 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
             <th scope="col" data-i18n="fa.jr.thCands"></th>
             <th class="lft" scope="col" data-i18n="fa.jr.thBest"></th>
             <th scope="col" data-i18n="fa.jr.thSize"></th>
+            <th scope="col" data-i18n="fa.jr.thNet"></th>
             <th scope="col" data-i18n="fa.jr.thKept"></th>
             <th scope="col" data-i18n="fa.jr.thBase"></th>
+            <th class="lft" scope="col" data-i18n="fa.jr.thBind"></th>
+            <th scope="col" data-i18n="fa.jr.thRank"></th>
             <th class="lft" scope="col" data-i18n="fa.jr.thAct"></th>
+            <th class="n" scope="col" data-i18n="fa.jr.thExit"></th>
             <th class="lft" scope="col" data-i18n="fa.jr.thWhy"></th>
           </tr></thead>
           <tbody id="faJournalBody"></tbody>
@@ -3966,6 +4096,7 @@ function render(){
   renderFaHonesty(); // четыре замера, каждый из которых занижает показанную прибыль до настоящей
   renderFaEval();     // последняя оценка по рынкам: что бот увидел по каждому в цикле решения
   renderFaJournals(); // история сделок и журнал решений (данные тянутся отдельно, по требованию)
+  renderFaArchive(); // сводка архива записи (свой канал и свой триггер, см. FA_ARCHIVE)
 }
 
 /* ============================================================================
@@ -4868,6 +4999,7 @@ async function faLoadRecords(force){
    прочерком, хотя число известно и лежит в `defaultAutoParams()`. Спрашиваем один раз. */
 function faOnShow(){
   faLoadRecords(false);
+  faLoadArchive(false);
   if(!FA_AUTO_UI.defaults){
     faAutoGet().then(g => { if(g && g.defaults){ FA_AUTO_UI.defaults = g.defaults; renderFaAuto(); } });
   }
@@ -4875,6 +5007,14 @@ function faOnShow(){
 
 const faJrUsd = v => Number.isFinite(v) ? fmtUSDfull(v) : '-';
 const faJrPct = (v, dp) => Number.isFinite(v) ? fmtPctNS(v, dp) : '-';
+/* Тройка правила выхода одной ячейкой. У чистого скана её нет вовсе: сделки не было, и правилу
+   выхода решать было не о чем, поэтому прочерк, а не три нуля. */
+const faJrExit = r => {
+  if(!Number.isFinite(r.holdGrossUsd) && !Number.isFinite(r.switchNetUsd)) return '-';
+  const g = Number.isFinite(r.gainUsd) ? '<b class="' + clsSign(r.gainUsd) + '">' + ledgerEsc(faJrUsd(r.gainUsd)) + '</b>' : '-';
+  return '<span class="faint">' + ledgerEsc(faJrUsd(r.holdGrossUsd)) + '</span> · <span class="faint">'
+    + ledgerEsc(faJrUsd(r.switchNetUsd)) + '</span> · ' + g;
+};
 const faJrCfg = row => {
   const c = row.config || row.strategy || null;
   return c ? '<span class="chip ' + (c === 'A' ? 'A' : 'B') + '">' + ledgerEsc(String(c)) + '</span>' : '-';
@@ -4933,9 +5073,21 @@ function renderFaJournals(){
       + (r.bestConfig ? ' <span class="chip ' + (r.bestConfig === 'A' ? 'A' : 'B') + '">'
           + ledgerEsc(String(r.bestConfig)) + '</span>' : '') + '</td>'
     + '<td class="n">' + ledgerEsc(faJrUsd(r.bestSizeUsd)) + '</td>'
+    /* НЕТТО ЛУЧШЕГО КАНДИДАТА это то число, по которому правило и ранжирует. Оно считалось главным
+       процессом и не показывалось: столбцы «размер, удержание, база» отвечали чем угодно, кроме
+       того, ПОЧЕМУ этот рынок оказался лучшим. */
+    + '<td class="n">' + ledgerEsc(faJrUsd(r.bestNetUsd)) + '</td>'
     + '<td class="n">' + ledgerEsc(faJrPct(r.bestRetained, 1)) + '</td>'
     + '<td class="n">' + ledgerEsc(faJrUsd(r.bestBaseUsd)) + '</td>'
+    + '<td class="lft">' + ledgerEsc(r.bestBinding ? faBindText(r.bestBinding) : '-') + '</td>'
+    /* РАНГ УДЕРЖИВАЕМОГО РЫНКА. Пусто, когда сделки не было: ранжировать нечего, и ноль здесь
+       читался бы как «первый», то есть как утверждение вместо его отсутствия. */
+    + '<td class="n">' + ledgerEsc(r.heldRank != null ? String(r.heldRank) : '-') + '</td>'
     + '<td class="lft">' + ledgerEsc(faActionText(r.action)) + '</td>'
+    /* ТРИ ЧИСЛА ПРАВИЛА ВЫХОДА, И ИМЕННО ОНИ ОБЪЯСНЯЮТ РЕШЕНИЕ: брутто удержания против нетто
+       перекладки и разность между ними. Разность печатается всегда, в том числе отрицательная:
+       «переложились бы, но не хватило» и «альтернативы нет вовсе» это разные состояния. */
+    + '<td class="n">' + faJrExit(r) + '</td>'
     + '<td class="lft">' + ledgerEsc(r.why ? faCodeText(r.why) : '-') + '</td>'
     + '</tr>').join('');
   const je = $('faJournalEmpty');
@@ -4958,6 +5110,156 @@ function renderFaJournals(){
     jbk.className = 'hint neg';
     jbk.textContent = t('fa.jr.broken', { n:broken.toLocaleString('en-US') });
   }
+}
+
+/* ── АРХИВ ЗАПИСИ: НЕПРЕРЫВНОСТЬ ЛЕНТЫ, СМЕРТНОСТЬ ВСЕЛЕННОЙ, ОБЪЁМ, СРОК ХРАНЕНИЯ ──────────────
+   Читается ПО ТРЕБОВАНИЮ каналом `fa.auto.archive` и СВОИМ триггером, а не сигнатурой журналов:
+   покрытие ленты зависит от счётчика снимков, который растёт КАЖДЫЙ опрос, и слив его в чужую
+   сигнатуру заставил бы перечитывать весь поток снимков раз в пять минут ради карточки, на которую
+   в это время никто не смотрит.
+   ЗДЕСЬ НЕ СЧИТАЕТСЯ НИЧЕГО: проценты, списки причин, минимумы, счётчики кодов и обрезка приходят
+   готовыми из `main/fa-archive.js`, где они под тестом. Отрисовщик только подписывает. */
+const FA_ARCHIVE = { loaded:false, fetching:false, data:null, err:null };
+
+async function faLoadArchive(force){
+  if(!window.fa || !window.fa.auto || typeof window.fa.auto.archive !== 'function'){
+    FA_ARCHIVE.err = t('fa.arc.noBridgeE'); FA_ARCHIVE.loaded = true; renderFaArchive(); return;
+  }
+  if(FA_ARCHIVE.fetching) return;
+  if(!force && FA_ARCHIVE.loaded) return;
+  FA_ARCHIVE.fetching = true; renderFaArchive();
+  try{
+    const r = await window.fa.auto.archive({});
+    /* Причина приходит ГОЛОЙ, без своей приставки: обрамление живёт в словаре, и приставка из
+       главного процесса печаталась бы поверх словарной, да ещё по-русски в английском интерфейсе. */
+    if(r && r.error){ FA_ARCHIVE.err = r.error; FA_ARCHIVE.data = null; }
+    else { FA_ARCHIVE.data = r || null; FA_ARCHIVE.err = null; }
+  }catch(e){
+    console.warn('fa.auto.archive', e);
+    FA_ARCHIVE.err = String(e && e.message || e).slice(0, 100); FA_ARCHIVE.data = null;
+  }
+  FA_ARCHIVE.fetching = false; FA_ARCHIVE.loaded = true;
+  renderFaArchive();
+}
+
+const faArcInt = v => Number.isFinite(v) ? v.toLocaleString('en-US') : '-';
+const faArcNum = v => Number.isFinite(v) ? (Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(2)) : '-';
+const faArcPct = (v, dp=1) => Number.isFinite(v) ? v.toFixed(dp) + '%' : '-';
+/* Единица измерения живёт в словаре: подпись в литерале отрисовщика это ровно тот случай, ради
+   которого заведён храповик локализации. */
+const faArcMb = v => Number.isFinite(v) ? t('fa.arc.mb', { v:(v/1048576).toFixed(2) }) : '-';
+const faArcRow = (k, v) => '<div class="row"><span class="k">' + ledgerEsc(k)
+  + '</span><span class="v num">' + ledgerEsc(v) + '</span></div>';
+
+function renderFaArchive(){
+  if(!$('faArchiveCard')) return;
+  const d = FA_ARCHIVE.data, err = FA_ARCHIVE.err;
+  const set = (id, v) => { const e = $(id); if(e) e.textContent = v; };
+  const box = (id, html) => { const e = $(id); if(e) e.innerHTML = html; };
+  const show = (id, on) => { const e = $(id); if(e) e.hidden = !on; };
+
+  const emp = $('faArcEmpty');
+  if(emp){
+    emp.hidden = !!(d && !err) && !FA_ARCHIVE.fetching;
+    emp.textContent = err ? t('fa.arc.err', { e:err }) : t('fa.arc.loading');
+  }
+  /* ЧИСЛА ПОД ОШИБКОЙ ОБЯЗАНЫ ГАСНУТЬ. Ранний выход оставлял на экране показания прошлого удачного
+     чтения рядом со строкой «архив не прочитан», и читались они как текущие: карточка про полноту
+     записи сама показывала бы данные, которых у неё в этот момент нет. */
+  if(!d || err){
+    for(const id of ['faArcWinDays','faArcWinFrom','faArcWinTo','faArcWinPoll','faArcCovPct','faArcCovPolls',
+      'faArcCovLost','faArcCovExp','faArcCovUnexp','faArcVanN','faArcVanWin','faArcCodeN','faArcLiqN',
+      'faArcLiqSrc','faArcVolDay','faArcVolDisk','faArcVolInputs','faArcRetOldest']) set(id, '-');
+    for(const id of ['faArcCauses','faArcGaps','faArcVanList','faArcCodeList','faArcLiqLegs','faArcVolParts','faArcRetList']) box(id, '');
+    for(const id of ['faArcCovNone','faArcBroken','faArcVanEmpty','faArcVanShort','faArcCodeEmpty','faArcLiqNone','faArcVolNone']) show(id, false);
+    return;
+  }
+
+  const w = d.window || {};
+  set('faArcWinDays', t('fa.arc.winDaysV', { a:faArcInt(w.daysRead), b:faArcInt(d.days) }));
+  set('faArcWinFrom', faAutoDate(w.fromAt));
+  set('faArcWinTo', faAutoDate(w.toAt));
+  set('faArcWinPoll', Number.isFinite(w.pollSec) ? t('fa.arc.sec', { n:faArcInt(w.pollSec) }) : '-');
+
+  const c = d.coverage || {};
+  set('faArcCovPct', faArcPct(c.coveragePct));
+  set('faArcCovPolls', t('fa.arc.ofN', { a:faArcInt(c.polls), b:faArcInt(c.expected) }));
+  set('faArcCovLost', faArcInt(c.lostSlots));
+  set('faArcCovExp', faArcInt(c.explained && c.explained.n));
+  set('faArcCovUnexp', faArcInt(c.unexplained && c.unexplained.n));
+  show('faArcCovNone', c.coveragePct == null);
+  /* Причины перерывов подписываются ТОЙ ЖЕ таблицей, что и всюду: реестр движка сверяется с ней
+     тестом в обе стороны, и второй словарь причин разъехался бы с первым на первой же правке. */
+  box('faArcCauses', (c.byCause || []).map(x => faArcRow(faGapCause(x.cause), faArcInt(x.n))).join(''));
+  box('faArcGaps', ((c.unexplained && c.unexplained.worst) || []).map(g =>
+    faArcRow(faAutoDate(g.from), t('fa.arc.min', { n:faArcInt(Math.round(g.ms / 60000)) }))).join(''));
+  const broken = w.broken ? (w.broken.snap || 0) + (w.broken.dec || 0) + (w.broken.trade || 0) : 0;
+  show('faArcBroken', broken > 0);
+  set('faArcBroken', t('fa.arc.broken', { n:faArcInt(broken) }));
+
+  const v = d.vanished || {};
+  set('faArcVanN', faArcInt(v.n));
+  set('faArcVanWin', t('fa.arc.vanWindowV', { a:faArcInt(v.warmupRows), b:faArcInt(v.tailRows) }));
+  box('faArcVanList', (v.markets || []).map(m => faArcRow(m, '')).join(''));
+  /* ПУСТОЙ СПИСОК ЗНАЧИТ ДВА РАЗНЫХ. «Никто не исчез» это наблюдение, «ленты не хватило» это его
+     отсутствие, и печатать второе как первое значит выдавать неведение за результат. */
+  show('faArcVanEmpty', !(v.n > 0) && v.enough === true);
+  show('faArcVanShort', v.enough === false);
+  set('faArcVanShort', t('fa.arc.vanShort', {
+    n:faArcInt((v.warmupRows || 0) + (v.tailRows || 0)), m:faArcInt(v.snaps),
+  }));
+
+  const cd = d.codes || {};
+  set('faArcCodeN', faArcInt(cd.n));
+  box('faArcCodeList', (cd.items || []).map(x =>
+    faArcRow(x.code, t('fa.arc.codeRow', { n:faArcInt(x.rows) }))).join(''));
+  show('faArcCodeEmpty', !(cd.n > 0));
+
+  /* ЗАПАС ПОКАЗЫВАЕТСЯ БЕЗ ЦВЕТА И БЕЗ ПОРОГА НАМЕРЕННО. Живой вердикт выносит сторож на карточке
+     честности; второй вердикт о риске, посчитанный мимо него, начал бы противоречить движку. */
+  const l = d.liq || {};
+  set('faArcLiqN', faArcInt(l.snapsWithPos));
+  const sc = l.srcCount || {};
+  /* ТРЕТЬЯ КОРЗИНА ОБЯЗАТЕЛЬНА. В неё попадает нога, у которой расстояние есть, а ярлыка источника
+     нет: это пропуск наблюдения, и без него сумма пары молча не сходится с числом ног. */
+  set('faArcLiqSrc', t('fa.arc.liqSrcV', {
+    a:faArcInt(sc.venue || 0), b:faArcInt(sc.model || 0), c:faArcInt(sc.unknown || 0) }));
+  const legs = [];
+  for(const leg of ['gmx','hl']){
+    const last = l.last ? l.last[leg] : null;
+    const min = l.min ? l.min[leg] : null;
+    if(!Number.isFinite(last) && !min) continue;
+    /* Имя ноги берётся ДВУМЯ явными вызовами, а не тернарником внутри `t(...)`: ссылку на ключ
+       тест ищет регэкспом по `t('...`, и ключ, спрятанный за условием, он посчитает мёртвым. */
+    const legName = leg === 'gmx' ? t('fa.arc.legGmx') : t('fa.arc.legHl');
+    legs.push(faArcRow(legName, t('fa.arc.liqLegV', {
+      v:Number.isFinite(last) ? faArcPct(last * 100) : '-',
+      lat:(l.last && faAutoDate(l.last.at)) || '-',
+      m:min ? faArcPct(min.v * 100) : '-',
+      at:min ? faAutoDate(min.at) : '-',
+    })));
+  }
+  box('faArcLiqLegs', legs.join(''));
+  show('faArcLiqNone', !(l.snapsWithPos > 0));
+
+  const vol = d.volume || {}, pd = vol.perDay, od = vol.onDisk, m = vol.measured || {};
+  set('faArcVolDay', pd ? faArcMb(pd.total) : '-');
+  set('faArcVolDisk', od ? faArcMb(od.total) : '-');
+  box('faArcVolParts', pd ? [
+    faArcRow(t('fa.arc.volSnap'), faArcMb(pd.snap)),
+    faArcRow(t('fa.arc.volDec'), faArcMb(pd.dec)),
+    faArcRow(t('fa.arc.volTrade'), faArcMb(pd.trade)),
+  ].join('') : '');
+  set('faArcVolInputs', t('fa.arc.volInputsV', {
+    m:faArcInt(m.markets), p:faArcInt(m.pollSec), d:faArcNum(m.decisionsPerDay),
+    r:faArcNum(m.tradesPerDay), g:faArcNum(m.gapsPerDay), s:faArcNum(m.spanDays),
+  }));
+  show('faArcVolNone', !pd);
+
+  const r = d.retention || {};
+  set('faArcRetOldest', (r.oldest && r.oldest.snap) || '-');
+  box('faArcRetList', (r.preview || []).map(x =>
+    faArcRow(t('fa.arc.retRow', { k:faArcInt(x.keepDays) }), faArcInt(x.n))).join(''));
 }
 
 /* ══ ПОСЛЕДНЯЯ ОЦЕНКА ПО РЫНКАМ ══════════════════════════════════════════════════════════════════
@@ -5213,6 +5515,9 @@ if($('faAutoTktCancel')) $('faAutoTktCancel').onclick = closeFaAutoTicket;
 if($('faAutoTktConfirm')) $('faAutoTktConfirm').onclick = confirmFaAuto;
 if($('faAutoArmTicket')) $('faAutoArmTicket').addEventListener('keydown', e => { if(e.key === 'Escape') closeFaAutoTicket(); });
 if($('faAutoStopBtn')) $('faAutoStopBtn').onclick = faArmAutoStop;
+// Перечитать архив: свой триггер, потому что счётчик снимков растёт каждый опрос и втягивать
+// поток снимков в общую сигнатуру журналов значило бы перечитывать его раз в пять минут.
+if($('faArcRefresh')) $('faArcRefresh').onclick = () => faLoadArchive(true);
 if($('faAutoUndoBtn')) $('faAutoUndoBtn').onclick = faUndoAutoStop;
 if($('faPowerBtn')) $('faPowerBtn').onclick = faPowerClick;
 
@@ -5249,6 +5554,7 @@ const HELP_FUNDING_ARB = {
   'fa-history': { tk:'help.fa-history.t', bk:'help.fa-history.b' },
   'fa-journal': { tk:'help.fa-journal.t', bk:'help.fa-journal.b' },
   'fa-eval': { tk:'help.fa-eval.t', bk:'help.fa-eval.b' },
+  'fa-archive': { tk:'help.fa-archive.t', bk:'help.fa-archive.b' },
 };
 
 // HELP_BTC_OPTIONS = the «BTC-опционы» bot's panels (Strategy One), namespaced `opt-*` so they never

@@ -34,6 +34,9 @@ import { marginGuard as faMarginGuard, positionLegs as faPositionLegs } from "..
 import { applyObservedBases, emptyBaseJournal, observeBases } from "../engine/fa/bases.js";
 import { FA_RECORD_PREFIX, buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord, faDecisionsFromRecords, faRecordDayKey, faTradesFromRecords } from "../engine/fa/record.js";
 import { faEvalClears, faEvalFromDisk, faEvalOfTick, faEvalToDisk } from "./fa-eval.js";
+// Сводка архива записи (фаза 6). Шесть читателей архива движка зовутся ТОЛЬКО оттуда: здесь диск
+// и склейка, счёт под тестом.
+import { faArchiveSummary } from "./fa-archive.js";
 import * as s1engine from "../engine/btcopt/engine.js";
 import * as deribit from "../engine/btcopt/deribit.js";
 import { buildStructure as s1buildStructure, buildSellStructure as s1buildSellStructure, buildSellStrangleStructure as s1buildSellStrangle, validateStructure as s1validateStructure, pickExpiry as s1pickExpiry, sellRowsFromSnapshot as s1sellRows } from "../engine/btcopt/structure.js";
@@ -725,6 +728,22 @@ function faJournal(prefix, days, limit, parse) {
   const { rows, broken } = readScanRecords(baseDir, prefix, faRecordDays(prefix, days));
   const parsed = parse(rows);
   return { rows: parsed.slice(0, limit), total: parsed.length, broken };
+}
+
+// Строки потока БЕЗ СРЕЗА и без разбора. Журналу нужны последние `limit` строк, а сводке архива
+// нужны ВСЕ: покрытие ленты, посчитанное по обрезанному хвосту, отвечало бы на другой вопрос.
+// Занято на диске по трём потокам И СУММОЙ. Сумма считается здесь, а не в отрисовщике: складывать
+// три числа это счёт, и место ему по закону проекта в главном процессе.
+function faArchiveBytes() {
+  const snap = scanRecordsBytes(baseDir, FA_RECORD_PREFIX.snap);
+  const dec = scanRecordsBytes(baseDir, FA_RECORD_PREFIX.dec);
+  const trade = scanRecordsBytes(baseDir, FA_RECORD_PREFIX.trade);
+  return { snap, dec, trade, total: snap + dec + trade };
+}
+
+function faArchiveRows(prefix, days) {
+  const { rows, broken } = readScanRecords(baseDir, prefix, faRecordDays(prefix, days));
+  return { rows, broken };
 }
 
 // ── ТИК. Зовётся в конце каждого опроса, ПОСЛЕ начисления: решение по недоначисленному счёту это
@@ -3468,6 +3487,50 @@ function wireIpc() {
       };
     } catch (e) {
       return { error: "журналы не прочитаны: " + String(e && e.message ? e.message : e).slice(0, 120) };
+    }
+  });
+
+  // СВОДКА АРХИВА ЗАПИСИ. Отдельный канал, а НЕ расширение `fa:auto:records`, и причина числовая:
+  // журналы перезапрашиваются по сигнатуре из счётчиков `trade` и `dec`, которые растут на сделке и
+  // на цикле решения, а покрытие ленты зависит от счётчика снимков, растущего КАЖДЫЙ опрос. Слив их
+  // в одну сигнатуру заставил бы перечитывать поток снимков раз в пять минут ради карточки, на
+  // которую в это время никто не смотрит (при пяти рынках это 632 КБ в сутки, замер `FA_RECORD_SIZE`).
+  //
+  // УДАЛЕНИЯ ЗДЕСЬ НЕТ И БЫТЬ НЕ МОЖЕТ. Срок хранения показывается сослагательно: `faRecordsToPrune`
+  // отвечает, что ВЫШЛО БЫ за срок, а решения об удалении владелец не принимал. Канала на удаление
+  // нет ни здесь, ни в мосте, и это стережёт тест.
+  ipcMain.handle("fa:auto:archive", async (_e, req) => {
+    const days = Number.isFinite(req?.days) && req.days > 0 ? Math.min(365, Math.floor(req.days)) : FA_JOURNAL_DAYS;
+    try {
+      const snap = faArchiveRows(FA_RECORD_PREFIX.snap, days);
+      const dec = faArchiveRows(FA_RECORD_PREFIX.dec, days);
+      const trade = faArchiveRows(FA_RECORD_PREFIX.trade, days);
+      const nominalSec = pollSec();
+      // ОКНО СРАВНЕНИЯ ДЛЯ СМЕРТНОСТИ РЫНКОВ - час ленты с каждого конца, а не одна строка против
+      // одной: на ленте в тысячи строк одиночная строка ловит любую икоту опроса как исчезновение.
+      // Число часа это ДОПУЩЕНИЕ, сеткой по нему никто не гонял, и окно едет наружу вместе с ответом.
+      const edge = Math.max(1, Math.round(3600 / nominalSec));
+      return {
+        ...faArchiveSummary({
+          snapRows: snap.rows, decRows: dec.rows, tradeRows: trade.rows,
+          nominalSec, warmupRows: edge, tailRows: edge,
+          bytes: faArchiveBytes(),
+          dayKeys: {
+            snap: listScanRecordDays(baseDir, FA_RECORD_PREFIX.snap),
+            dec: listScanRecordDays(baseDir, FA_RECORD_PREFIX.dec),
+            trade: listScanRecordDays(baseDir, FA_RECORD_PREFIX.trade),
+          },
+          todayKey: faRecordDayKey(Date.now()),
+          broken: { snap: snap.broken, dec: dec.broken, trade: trade.broken },
+          daysRead: faRecordDays(FA_RECORD_PREFIX.snap, days).length,
+        }),
+        days,
+      };
+    } catch (e) {
+      // ПРИЧИНА ГОЛАЯ, БЕЗ ПРИСТАВКИ. Обрамление («архив не прочитан: …») живёт в словаре
+      // отрисовщика: приставка отсюда печаталась бы поверх словарной и по-русски даже в английском
+      // интерфейсе, то есть в единственном месте карточки, которое обязано себя объяснить.
+      return { error: String(e && e.message ? e.message : e).slice(0, 120) };
     }
   });
 

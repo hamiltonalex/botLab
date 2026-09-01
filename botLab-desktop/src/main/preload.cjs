@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld("fa", {
     // Журналы фазы 5 по требованию: история сделок и журнал решений. Тот же приём, что у леджера,
     // и по той же причине - архив не имеет права ехать на каждом пуше.
     records: (req) => ipcRenderer.invoke("fa:auto:records", req),
+    // Сводка архива записи: непрерывность ленты, пропавшие рынки, коды вне реестров, запас до
+    // ликвидации по записи, объём и сослагательный срок хранения. Канала на УДАЛЕНИЕ здесь нет.
+    archive: (req) => ipcRenderer.invoke("fa:auto:archive", req),
   },
   // main -> renderer live pushes (poll ticks, accrual updates, freshness)
   onPush: (cb) => {
