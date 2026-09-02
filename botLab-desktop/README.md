@@ -1,207 +1,236 @@
-# BotLab - Desktop (funding-arb x BTC-options x OTM-scanner)
+# BotLab Desktop
 
-A cross-platform desktop app (Windows `.exe` today; the macOS build is code-ready but not yet
-wired into CI - see "Build installers" below) that hosts several paper-trading bots as tabs. This
-file's walkthrough covers the original **funding-rate arbitrage** bot; see
-[CHANGELOG.md](CHANGELOG.md) for the BTC-options and OTM-scanner bots and the full version history.
-Bot 1 (funding-arb) mechanics guide, in three phases of a trade's life:
-[docs/bot1-funding-arb-how-it-works.en.md](docs/bot1-funding-arb-how-it-works.en.md)
-([по-русски](docs/bot1-funding-arb-how-it-works.ru.md)).
-Bot 2 (BTC options) mechanics guide:
-[docs/bot2-btc-options-how-it-works.en.md](docs/bot2-btc-options-how-it-works.en.md)
-([по-русски](docs/bot2-btc-options-how-it-works.ru.md)).
+A cross-platform desktop app (Electron) that hosts three paper-trading bots as tabs: a
+funding-rate arbitrage bot on GMX V2 and Hyperliquid, a BTC options seller on Deribit, and an
+observational scanner of out-of-the-money option entries. Everything runs on live public market
+data and trades on paper only.
 
-It runs a delta-neutral **funding-rate arbitrage** strategy on **live GMX V2 (Arbitrum/Avalanche)
-x Hyperliquid** data and **forward-tests paper trading from "now"**. It shows the strategy's
-profitability on *current* market data and accrues a realized equity curve from the moment the
-automaton opens a paper position. Bot 1 has ONE control: the automaton switch. There is no manual
-launch path any more.
+> **No real money, no private keys, no order execution, no custody.** Public read-only endpoints
+> only. Every screen keeps its honesty notes: paper, liquidation risk of a leg, quoted flow against
+> received flow, data freshness.
 
-> **Phase 1 handles NO real money, NO private keys, NO order execution, NO custody.**
-> Public read-only endpoints only. Every screen keeps the honest disclaimers (PAPER · liquidation
-> risk at leverage · median-vs-mean robustness · data freshness).
+Guides, one per bot, in three phases of a trade's life:
+
+- Bot 1, funding-rate arbitrage: [ru](docs/bot1-funding-arb-how-it-works.ru.md),
+  [en](docs/bot1-funding-arb-how-it-works.en.md).
+- Bot 2, BTC options: [ru](docs/bot2-btc-options-how-it-works.ru.md),
+  [en](docs/bot2-btc-options-how-it-works.en.md), also as [PDF](docs/bot2-btc-options-how-it-works.ru.pdf).
+
+Version history and the impact of every release: [CHANGELOG.md](CHANGELOG.md). The interface is
+in Russian and English (a switch in the top bar), dark and light theme.
 
 ---
 
-## What it does
+## Bot 1: funding-rate arbitrage (GMX V2 x Hyperliquid)
 
-- **Live snapshot** - every poll (default 5 min, ≤15 min staleness OK) it fetches current funding,
-  borrow, open interest and prices and shows the **net APR now**, per-leg APRs, spread and OI skew
-  for ETH/BTC (two-leg) and the ETH-Arb / BTC-Arb / ETH-Avax one-leg GMX carries. (APT was
-  dropped 2026-07-02: top historical spread ~47% median, but its live GMX market is inactive (~$0 OI).)
-- **Forward paper test** - the automaton picks the market by the entry rule and records `t0`,
-  instrument, strategy, config, capital and leverage; then at each poll it accrues the modelled
-  funding/borrow P&L from live data:
-  GMX funding+borrow **continuously per second** (`factor × elapsed_s × notional`), Hyperliquid
-  funding **discretely at each top-of-hour settlement**. The forward equity curve is drawn from `t0`
-  and **persists to disk** - close and reopen the app and the test resumes.
-- **Trailing history** - backfills ~365d of hourly funding/borrow from GMX Subsquid + HL
-  `fundingHistory` to compute robust summary stats (median/mean net APR, per-leg contribution,
-  drawdown, config choice) and the trailing equity / spread / legs / price charts.
-- **Min-set scanner** - ranks the tracked instruments by **median** net APR (robust to the funding
-  spikes that inflate means on thin markets). The full ~90-token scan is P2.
+Rents out the side of a perpetual market that is short of takers and collects the hourly funding
+fee. Universe of five markets: two-leg ETH and BTC (GMX V2 on Arbitrum against Hyperliquid) and
+one-leg ETH-Arb, BTC-Arb and ETH-Avax (a short on GMX with collateral in the same asset, neutral to
+price at leverage 1). The bot does not care which scheme, coin or venue it enters: the entry rule
+prices every market with the same economics and funds the best net.
+
+- **One control.** The automaton switch in the app, or the `FA_AUTO=1` environment variable that
+  arms it at boot on a remote machine. There is no manual trade opening; a position opened before
+  the switch to the automaton can still be closed by hand.
+- **Every 5 minutes: a tick.** Both exchanges are read, open positions are accrued first, the
+  funding base of the current hour is observed for every market, a snapshot goes to the archive,
+  then the cheap gates run: continuity, supply gate, margin guard.
+- **Bases and the gate.** Dilution by our own entry needs the funding base of our side for every
+  hour of the 720 hour evaluation window (the product of rate and base is the same for both sides
+  on GMX, and that identity is checked on every hour). The current hour is observed live; window
+  hours the app has not seen are backfilled from the indexer history on every frame refresh, a live
+  observation is never overwritten, and every hour remembers where its base came from. The gate
+  requires a known base in 684 of 720 hours and normally passes while the frames warm up at launch.
+- **Entry rule** (`src/engine/fa/sizing.js`). For every eligible market a net curve by size over
+  the horizon after the full round trip, with ceilings (free GMX liquidity, order book, dilution cap,
+  ticket cap brought down to the trade capital), named refusal codes, and rank by net. Round trip at
+  $2500 per leg: $8.75.
+- **Exit rule** (`src/engine/fa/exit.js`). Once a day the maximum of three numbers in the same
+  units: hold gross, zero, net of the best alternative; the hysteresis band is one round trip wide.
+  Between cadences the rule is called on events (`src/engine/fa/events.js`): the rate of our leg
+  against us for six hours in a row, the market flow halved, the room to liquidation shrank by ten
+  points, each measured against the snapshot of the last decision.
+- **Margin guard** (`src/engine/fa/margin.js`) on every tick: the legs sit on different venues
+  with no cross margin, so the worst leg's room to liquidation is compared with the required 50%,
+  and a thin room closes the trade without waiting for the cadence.
+- **Record** (`src/engine/fa/record.js`): three append-only NDJSON streams under
+  `userData/scan-records/`, one file per UTC day: `fa-snap` (every poll, plus gap rows with a
+  cause), `fa-dec` (every decision with its trigger, window, horizon and supply gate), `fa-trade`
+  (entry, exit and switch passports). About 0.63 MB a day at five markets and five-minute polling.
+- **Honesty card**: quoted flow against received flow and the retained share (about 8.4% of the
+  quoted flow at $2500 per market over 63 markets and a year), requested and working size side by
+  side, room to liquidation per leg, and the note that the rule did not reproduce out of sample.
+
+What the research behind it found is recorded in `scripts/funding-arb-study/` and in the headers
+of the engine modules: the receiving side of these markets carries very little money, the
+customer's yearly threshold is not reached at any capital, and out of sample the rule lost to
+"enter once and hold". The automaton exists to collect live data about the rule, not because the
+rule is known to earn.
+
+## Bot 2: BTC options (Deribit)
+
+Sells insurance against large moves of the Bitcoin price and keeps a counterweight in the
+perpetual future, adjusted as the market moves (delta hedging), in a continuous chain of trades:
+a call (or a strangle) 14 to 28 days from expiry with delta near 0.45, quote sanity gates, size
+from a stress rule (maintenance margin at a 45% spot move must stay under 80% of the account),
+settlement and immediate re-entry. Live Deribit public data, paper account. The seller scheme is
+measured against five years of recorded market in two books (see the guard below).
+
+## OTM scanner
+
+Observational: signals, never trades. The original buy checklist was refuted on five years of
+restored history (no profitable cell at any thresholds), so its silence is the gates working. The
+sell mode signals the leg bot 2 would open at the same moment, through the same function, and
+adds only the life cycle of a signal: dwell, TTL, cooldown, journal. While it runs it writes the
+option surface every 5 minutes and one context row per tick to `userData/scan-records/`, about
+80 MB per 72 hours; nothing reads those files at runtime. `SCN_AUTOSTART=1` starts it at boot.
+
+---
 
 ## Correctness
-
-The strategy math is a direct port of the audited Python engine (`funding_spread_core.py`).
-It is **golden-tested** against the cached `spread_cache` CSVs before any live data is trusted:
 
 ```
 npm test
 ```
 
-reproduces the audited numbers (APT config A **53.39% mean / 47.24% median**, P&L **+$1,067.95** at
-1×/$2000; ETH A +2.97% / +$59.36; BTC B +3.02% / −1.54% / +$60.43; one-leg ETH-Arb +10.55%) and
-verifies the forward accrual engine + persistence. (APT is retained here only as a **historical
-golden fixture** for the math port; it is no longer a live tradable instrument - see above.)
+975 tests in 71 files, about 15 seconds, pure Node, no Electron. They include golden fixtures of
+the funding math (APT, BTC and ETH yearly frames), the paper ledger with and without dilution, the
+entry and exit rules, the automaton, the record streams, the dictionaries against the engine
+registries (every refusal code, binding, gap cause, decision trigger and outcome must be named in
+words in both languages, and nothing may be named that the engine cannot produce), and the
+isolation of the bots: the import closures of bot 1 and bot 2 intersect in the empty set.
 
-### Pre-merge guard
-
-`npm test` is the fast loop (15 s) and stays that way. The **behavioural** guard - the one that
-notices when a trading rule moved - is a separate, slower command:
+### The guard
 
 ```
 npm run guard
 ```
 
-It runs the unit tests, then takes **three** trade books and checks the sha256 of each against the
-frozen sums in `test/baselines/books.sha256`:
+The behavioural guard notices when a trading rule moved. It runs the unit tests, then takes six
+trade books and checks the sha256 of each against the frozen sums in `test/baselines/books.sha256`:
 
-- `base-ref.tsv` - the seller scheme through the offline reference (`hist-sellhedge.mjs`), five
-  years of recorded market;
-- `base-eng.tsv` - the same five years through bot 2's live engine (`replay-sellhedge.mjs`);
-- `base-fa.tsv` - bot 1's paper ledger over the year of cached funding fixtures
-  (`replay-funding.mjs`), three instruments on three leg models, one row per day.
+- `base-ref.tsv`: the seller scheme through the offline reference (`hist-sellhedge.mjs`), five
+  years of recorded market, 84 trades;
+- `base-eng.tsv`: the same five years through bot 2's live engine (`replay-sellhedge.mjs`);
+- `base-fa.tsv`: bot 1's paper ledger over the year of cached funding fixtures, three instruments;
+- `base-fa-dil.tsv`: the same ledger with dilution by our own entry;
+- `base-fa-size.tsv`: the entry rule, 33 decisions on non-overlapping 720 hour blocks;
+- `base-fa-exit.tsv`: the exit rule chain, 336 daily decisions at $5000 per trade.
 
-It finishes with the column-by-column comparison of the two seller books, fails on the first
-discrepancy and names what to look at. Around a minute on a warm cache; the two seller books need
-the 2.4 GB record in `data/hist-records/rec-5y-maxdays30-logm045` and the command says so plainly
-if it is missing. Bot 1's book needs nothing beyond the repo and takes a fifth of a second.
-
-The books are byte-comparable because they are printed with `toFixed`: a rule change moves a
-printed digit, float noise below that digit does not. To confirm the guard can still fail, silence
-one rule and watch that bot's book break - `band-off` for bot 2, `config-flip` for bot 1:
-
-```
-npm run guard -- --drop-rule band-off
-```
-
-Note what the seller comparison does *not* claim. The two seller books legitimately disagree on
-funding, perp turnover and totals: the engine accrues funding on position notional the way the
-exchange does, while the reference approximates it by delta, and the reference does not model whole
-inverse perp contracts at all. Instrument, entry, exit, lot count and margin match on all 84 trades.
-The gate is each book against **its own** frozen sum; the column table exists to name which rule
-moved when a sum breaks.
-
-The renderer selector/state oracle runs the production DOM against a fixed 400-day frame and
-checks all strategy/instrument/config/window/mode/capital/leverage combinations plus stale-push fuzz:
+The books are byte-comparable because they are printed with fixed decimals: a rule change moves a
+printed digit, float noise below it does not. The two seller books legitimately disagree on
+funding, perp turnover and totals (the engine accrues funding on notional as the exchange does, the
+reference approximates by delta), which is why the gate is each book against its own frozen sum;
+the column table only names which rule moved. The seller books need the 2.4 GB record in
+`data/hist-records/rec-5y-maxdays30-logm045` and the command says so if it is missing; the bot 1
+books need nothing beyond the repository. To prove the guard can fail, silence one rule and watch
+that book break:
 
 ```
-npm run oracle
+npm run guard -- --drop-rule band-off        # bot 2: no hedge band
+npm run guard -- --drop-rule dilution-off    # bot 1: no dilution
+npm run guard -- --drop-rule sunk-in         # bot 1: round trip subtracted twice in the exit rule
 ```
 
-### The live sign gate (important)
-GMX `markets/info` returns **annualized** rates in a **cost frame** (positive = that side pays),
-which is **opposite-signed** to the raw Subsquid factors the math expects. The app converts them
-(`signs.js`) - flipping funding, keeping borrow - and verifies the identity
-`netRateSide == fundingRateSide + borrowingRateSide` on every fetch. The standalone live smoke check
-also compares the current sign with the latest Subsquid snapshot; continuous in-app cross-source
-reconciliation remains a P2 item. Gate failures and incomplete required legs are surfaced in the
-freshness status and block paper opening/accrual for the affected instrument.
+The full list of controls is printed by `npm run guard -- --help`.
 
-Run a live end-to-end check (hits the real exchanges):
+### Live checks (they hit the real exchanges)
 
 ```
-npm run smoke        # prints current net APR + sign-gate status for the min-set
+npm run smoke          # current net APR and the sign gate of the five markets
+npm run smoke:size     # the entry rule on a live slice of 25 coins, with a --fail ladder
+npm run smoke:bases    # funding base history of the five markets from the indexer, identity residuals
+npm run smoke:scan     # the scanner cycle on live Deribit data
+npm run verify:loris   # the Hyperliquid leg against loris.tools and the official API, report to reports/
+npm run oracle         # the renderer against a fixed 400-day frame in Electron
 ```
 
-### External verification against loris.tools
+The live sign gate: GMX `markets/info` returns annualized rates in a cost frame, opposite in sign
+to the raw indexer factors the math expects; `signs.js` converts them and verifies the identity
+`netRate = funding + borrow` on every fetch, and a market that fails it is shown but not accrued.
 
-The gates above check the app against **its own** sources. `verify:loris` compares the HL leg
-against an independent aggregator ([loris.tools](https://loris.tools)) and the Hyperliquid official
-API, three-way and in common units (per-hour decimal / 8h-normalized bps / APR): live predicted
-funding, plus exact settled-history reconciliation of the frame cache. loris does not list GMX, so
-the GMX leg is covered by the net-identity gate, a Subsquid reconcile and a cache-vs-refetch sweep.
-Writes a per-coin markdown report to `reports/`.
-
-```
-npm run verify:loris -- --loris-json <captured.json>   # and/or set LORIS_API_KEY (free: BTC,ETH)
-```
+---
 
 ## Architecture
 
-- **`src/engine/`** - pure JS (no Electron, no DOM), unit-testable in Node:
-  `math.js` (annualize/scan), `signs.js` (live sign/scale gate), `sources.js` (fetchers),
-  `backfill.js` (cached history), `assemble.js` (render-shaped datasets), `paper.js` (forward
-  accrual), `store.js` (atomic persistence), `costs.js`, `universe.js`.
-- **`src/main/main.js`** - Electron main: does **all** fetching + compute + `fs` persistence in Node
-  (zero CORS, robust resume), polls on a timer, accrues open paper positions, pushes ready-to-render
-  datasets to the renderer over IPC. `preload.cjs` is the only bridge (context-isolated, sandboxed).
-- **`src/renderer/index.html`** - the professional Russian dashboard UI, reused verbatim; its mock
-  data layer is replaced by an IPC-fed live adapter feeding the *same* render/draw functions.
+- **`src/engine/`**: pure JavaScript, no Electron, no DOM, no clock of its own; everything that
+  decides lives here and is unit-tested in Node. Shared: `math.js`, `signs.js`, `sources.js`
+  (all external data access), `backfill.js` (frame cache), `format.js`, `assemble.js`, `paper.js`
+  (the paper ledger), `store.js` (atomic persistence, append-only records), `costs.js`,
+  `universe.js`. Bot 1: `fa/` (sizing, exit, margin, events, bases, dilution, auto, record).
+  Bot 2: `btcopt/`. Scanner: `otmscan/`. The scanner calls bot 2's structure code; bot 1 imports
+  nothing from bot 2 and bot 2 nothing from bot 1, under test.
+- **`src/main/main.js`**: the Electron main process does all fetching, computing and disk work,
+  polls on a timer, accrues open positions, runs the automaton tick, executes its intent, writes the
+  records and pushes render-ready datasets over IPC. `preload.cjs` is the only bridge (context
+  isolated, sandboxed). Helpers: `fa-eval.js`, `fa-archive.js`, `scn-boot.js`, `scn-stats.js`,
+  `updater.js`, `export.js`, `xlsx-writer.js`.
+- **`src/renderer/index.html`** with `locales/ru.js` and `locales/en.js`: the dashboard, fed by
+  IPC; it formats what the engine computed and computes nothing of its own.
 
-**Why Electron:** it ships Chromium on both macOS and Windows, so the approved UI (HiDPI `<canvas>`
-charts, `backdrop-filter`, font handling, all navigation) renders identically to where it was
-designed - the UI-fidelity guarantee that drove the shell choice. Trade-off: ~150 MB binaries.
+Electron ships Chromium on both macOS and Windows, so the canvas charts and layout render
+identically on both; the cost is a binary of about 150 MB.
 
 ## Run from source
 
 ```
 npm install
-npm start            # launches the app against live data
+npm start
 ```
 
-## Build installers
+Environment flags: `FA_AUTO=1` arms bot 1 at boot if it is not armed yet (parameters are frozen at
+the default values), `SCN_AUTOSTART=1` starts the scanner. The poll interval (1, 5 or 15 minutes),
+language and theme are set in the app and persist in `settings.json`.
+
+## Build installers and release
 
 ```
-npm run dist:mac     # -> release/*-universal.dmg  (native on Apple Silicon + Intel)
-npm run dist:win     # -> release/*.exe  (NSIS installer)
+npm run dist:win     # release/*.exe, NSIS installer
+npm run dist:mac     # release/*-universal.dmg
 npm run dist         # current platform
 ```
 
-Output lands in `release/`. **Production builds are made in CI from a tag**: `git push --tags`
-triggers GitHub Actions, which runs the tests, builds, and attaches a signed Windows NSIS installer
-to a draft release - see the maintainer's `RELEASING.md` notes (kept outside the repo). The macOS
-CI job is code-ready (icon, entitlements, electron-builder target all committed) but not yet
-enabled - it needs an Apple Developer ID signing setup first (see CHANGELOG.md Known Issues).
-Local `npm run dist:*` builds are **unsigned**; to run one:
+Production builds are made in CI from a version tag: pushing `v*` runs `.github/workflows/release.yml`,
+which checks that the tag matches `package.json`, runs the test suite, builds and uploads the
+Windows installer to a draft GitHub release; the draft is published by hand after a smoke check of
+the installer. The macOS job is written but disabled until Apple Developer ID signing secrets
+exist, so macOS builds are local and unsigned: build with `CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac`,
+then open the app once through the context menu or clear the quarantine attribute with
+`xattr -dr com.apple.quarantine "/Applications/BotLab.app"`. Windows local builds are unsigned too
+and SmartScreen asks for confirmation. `npm run check:tag` and `npm run check:changelog` are the
+release gates the workflow runs.
 
-- **macOS** - `CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac` builds unsigned; then right-click
-  the app → **Open** → **Open**, or `xattr -dr com.apple.quarantine "/Applications/BotLab.app"`.
-- **Windows** - SmartScreen → **More info** → **Run anyway** (Windows signing is deferred).
+## Updates
 
-## Updates (OTA)
+The app updates over the air from GitHub Releases through `electron-updater`: a version pill in the
+top bar shows the state, downloads happen only on click, a downloaded update installs on the next
+quit of the app, and positions, ledgers and records survive updates.
 
-BotLab updates over the air from GitHub Releases via `electron-updater`: a **version pill** in the top
-bar shows the update state, downloads happen only on click, and installs are silent with a restart.
-macOS updates are gated on Developer ID signature + notarization and a SHA-512 integrity check;
-**positions and the ledger survive updates**. Version history lives in [CHANGELOG.md](CHANGELOG.md);
-the full release process is in the maintainer’s `RELEASING.md` notes (kept outside the repo).
+## Data and persistence
 
-## Data & persistence
+- **Sources** (all public): GMX Subsquid GraphQL (rate, borrow and funding base history), GMX
+  `markets/info` (live rates, open interest, funding bases), Hyperliquid `metaAndAssetCtxs`,
+  `fundingHistory` and `l2Book`, Binance klines (price context), Deribit public API (options,
+  perpetual, DVOL, funding).
+- **User data** (`app.getPath('userData')`): `positions.json` and `settings.json`, `frame-cache/`
+  (hourly frames, 365 days, with funding bases and their origin), `fa-bases/` (journals of live base
+  observations), `funding-arb-auto.json` (automaton state, frozen parameters, decision snapshot),
+  `funding-arb-auto-eval.json`, `btc-options.json` and `btc-options-history.json`,
+  `otm-scanner.json`, and the append-only `scan-records/`. Writes are atomic; a corrupt state file
+  is quarantined, never silently replaced; the app cannot delete records.
+- **Repository data** (`../data/`): the Deribit cache the offline computations of bot 2 and the
+  scanner run on, and the GMX and Hyperliquid data of the bot 1 study, both with their own README.
 
-- Sources (all public, CORS=\*): GMX Subsquid GraphQL (history), GMX `markets/info` (live rates +
-  OI), Hyperliquid `metaAndAssetCtxs` (live funding/OI/premium/maxLev) + `fundingHistory` (backfill),
-  Binance klines (price context).
-- **OTM-scanner market records** (append-only NDJSON under `userData/scan-records/`): while the
-  scanner runs it writes a snapshot of the whole option surface every 5 minutes plus one context row
-  per poll tick, split into one file per UTC day. Budget roughly **80 MB per 72 h of scanning**. The
-  files are the raw material for `npm run report:records` and `npm run eval:sell`; nothing reads them
-  at runtime, so they are safe to delete once a run is archived.
-- Paper positions, settings and the trailing-history CSV cache are stored in the OS user-data dir
-  (`app.getPath('userData')`), so restarts resume the forward test and don't refetch the window.
+## Research record
 
-## Roadmap
+`scripts/funding-arb-study/` holds every script of the bot 1 study with an index of runs and their
+results, including the refuted models, and `scripts/` holds the tools that produce the guard books,
+the historical seller-scheme runs (`hist:*`, `replay:sellhedge`, `parity:sellhedge`), the scanner
+reports (`report:scan`, `report:records`, `eval:*`) and the end-to-end checks (`e2e:ui`,
+`e2e:chain`).
 
-- **P1 (this):** live-data paper simulator + forward test. Done.
-- **P2 Robustness:** full ~90-token live scanner, source reconciliation, alerting, logging.
-- **P3 Execution fidelity:** live position-fee/price-impact modeling, exact settlement timing,
-  liquidation at leverage, borrow-utilization curve.
-- **P4 Read-only accounts:** connect exchange API keys **read-only**, reconcile paper vs would-be.
-- **P5 Real execution (guarded):** GMX on-chain + HL API orders, hard risk limits, kill-switch,
-  delta-hedge rebalancing, secrets management, testnet → tiny canary.
-- **P6 Productionization:** monitoring, ops runbook, security review, code-signing/notarization.
-
-## Safety (Phase 1 hard rules)
+## Safety
 
 No real orders. No private keys or wallet integration. No custody. Public read-only endpoints only.
+The bots cannot lose money; what they can do is show a profit a real account would not have, and
+the guard, the honesty cards and the records exist against exactly that.
