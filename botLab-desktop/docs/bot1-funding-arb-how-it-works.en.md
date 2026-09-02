@@ -107,16 +107,16 @@ sequenceDiagram
     E->>D: the hour's base observation to the journal (first in the hour wins)
     opt automaton armed
         E->>H: order book for two coins (ETH, BTC)
-        E->>D: snapshot row to the archive; a gap row if there was a break
+        E->>D: snapshot row to the archive, plus a gap row if there was a break
     end
     E->>E: continuity, supply gate, margin guard
     alt room to liquidation is thin
-        E->>D: the trade is closed without waiting for the cadence; a trade passport
+        E->>D: the trade is closed without waiting for the cadence, and a trade passport
     else cadence is due (once per 24 h)
         E->>E: entry rule or exit rule
-        E->>D: decision row; a trade passport if there is a trade
+        E->>D: decision row, plus a trade passport if there is a trade
     end
-    E-->>D: tick outcome with a reason code; a log line only when the code changes
+    E-->>D: tick outcome with a reason code, a log line only when the code changes
 ```
 
 What matters about ticks:
