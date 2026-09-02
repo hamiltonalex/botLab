@@ -48,6 +48,10 @@ let idCounter = 0;
 
 // Per-second GMX net factor and per-hour HL settlement sign for a given strategy/config.
 export function legModel(strategy, config) {
+  // Одна нога: короткая на GMX с залогом в том же активе. Ноги Hyperliquid нет, и ценового
+  // результата леджер по ней не книжит НАМЕРЕННО: при плече 1 залог дорожает ровно на ход против
+  // шорта, позиция нейтральна к цене в долларах, и её результат это фандинг минус заимствование
+  // короткой стороны (шапка `universe.js`).
   if (strategy === "one") return { gmxSide: "short", hlPerHourSign: 0 };
   return config === "A"
     ? { gmxSide: "short", hlPerHourSign: -1 } // A: short GMX (recv funding, pay borrow) + long HL (pays +hl_rate)

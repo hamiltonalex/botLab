@@ -193,7 +193,9 @@ export function scanTwoLeg(rows, meta = {}, { minRows = 24 } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// scanOneLeg - GMX one-leg carry: short the asset with collateral in the asset.
+// scanOneLeg - GMX one-leg carry: short the asset with collateral in the asset. Delta-neutral in
+// USD at leverage 1: the same-asset collateral is the counterweight, so only funding and borrow
+// enter the net (universe.js header).
 // net = gmx_short_recv - gmx_borrow_short (audit single-leg identity). Matches the
 // mock ONE_LEG[market] shape.
 // ---------------------------------------------------------------------------

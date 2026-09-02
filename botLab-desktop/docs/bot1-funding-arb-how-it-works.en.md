@@ -24,9 +24,14 @@ hourly fee for it.
   exchange makes the crowded side **pay the missing side** for every hour of holding. That fee is
   called funding.
 - The bot takes the missing side on GMX V2 (which one exactly, the sign of the rates says each time)
-  and receives the fee. To stay independent of price, it
-  takes the opposite side of the same asset on Hyperliquid at the same time. The two positions are
-  called **legs**; together they are neutral to price.
+  and receives the fee. To stay independent of price, it either takes the opposite side of the same
+  asset on Hyperliquid at the same time (the two-leg scheme) or holds the collateral in the asset
+  itself at leverage 1 (the one-leg scheme: the collateral is the counterweight). The positions are
+  called **legs**; in both schemes the result is neutral to price.
+- The bot does not care where it enters: which scheme, which coin, which venue. Before a trade the
+  entry rule prices every market of the universe with the same economics, the net over the horizon
+  after the round trip, and funds the best one; the exit rule compares the trade with all the
+  alternatives, the other scheme included.
 - The fee is split among everyone standing on the receiving side. Our entry adds one more landlord,
   and each gets less. This is **dilution**, and without it any income estimate would be a phantom.
   To compute it the bot needs a **base**: how much money already stands on our side in each hour.
@@ -133,7 +138,8 @@ What matters about ticks:
   armed. The bot sends no orders and authenticates nowhere.
 - **The universe is fixed.** Five markets: two-leg ETH and BTC (GMX V2 on Arbitrum against
   Hyperliquid) and one-leg ETH-Arb, BTC-Arb (Arbitrum) and ETH-Avax (Avalanche), where there is a
-  single leg: short on GMX with no counterweight.
+  single leg: short on GMX with collateral in the asset itself, and at leverage 1 the collateral is
+  the counterweight. For the entry rule all five markets are peers.
 - **Accrual goes first.** Open positions are accrued before the automaton decides: a decision on an
   under-accrued account would be a decision on different data.
 - **Bases are observed always, and the backfill does not replace that.** The base journal is written
@@ -218,6 +224,12 @@ next frame refresh, and no earlier than what moment the threshold can be reached
 Once at least one market has passed the gate, the automaton waits for the cadence: a decision is
 taken no more often than once every 24 hours (the first one is allowed at once). Between decisions
 the tick computes only the cheap gates; the expensive rules are called on the decision tick.
+
+The bot does not care where it enters. All five markets of the universe, two-leg and one-leg, on
+Arbitrum and on Avalanche, are priced by one rule with one economics: the net curve by size over
+the horizon after the round trip. Scheme, coin and venue are not part of the criterion, only the
+net is, and rank 1 gets funded. The exit rule compares the open trade with the same alternatives,
+the other scheme included.
 
 ```mermaid
 %%{init: {"themeVariables": {"fontSize": "12px"}, "flowchart": {"nodeSpacing": 26, "rankSpacing": 18, "diagramPadding": 4, "wrappingWidth": 380}}}%%
@@ -312,8 +324,12 @@ The two-leg scheme has two legs on different exchanges. Configuration A: a short
 (receives funding, pays borrowing) and a long one on Hyperliquid; configuration B: the other way
 round. Which configuration is chosen is decided by the sign of the rates at the moment of
 evaluation: the one where the quoted net is higher. The one-leg scheme has one leg: short on GMX with
-collateral in the asset itself, no counterweight. Leverage is 1 on each leg, and the leg notional
-equals the trade size.
+collateral in the asset itself, and the collateral is the counterweight. At leverage 1 a price rise
+adds to the collateral exactly what the short loses, and a fall takes away exactly what the short
+gains, so in dollars the position is neutral to price, like the two-leg one. That is why the ledger
+books no price result for it: its result is the funding minus the borrowing of the short side, and
+nothing else. The neutrality holds exactly at leverage 1, which is frozen by the owner's parameter.
+Leverage is 1 on each leg, and the leg notional equals the trade size.
 
 The result drips in hour by hour, and the ledger keeps it in three items:
 
@@ -340,6 +356,11 @@ the liquidation price:
   leverage of 25);
 - the maintenance margin of the GMX leg is taken as zero: there is no measured value in the
   repository, and this is an optimistic assumption named in the code;
+- the guard values the collateral of the GMX leg in dollars in both schemes. In the one-leg scheme
+  the collateral sits in the asset itself and appreciates by exactly the move against the short, so
+  at leverage 1 price alone cannot wipe the collateral; for that scheme the guard's figure is the
+  pessimistic side (a 100% room instead of an unbounded one), and the 50% threshold is untouched
+  either way;
 - the room is computed from the **current** price, not the entry price: for a position halfway to
   liquidation the room from entry would not have changed at all;
 - the worst leg decides: its room is compared with the required 50%.
@@ -683,7 +704,7 @@ are no toggles in either.
 | Funding | The hourly fee that the crowded side of a perpetual market pays to the missing side; the sign can be either |
 | Leg | One position of the trade on one exchange; the two-leg scheme has two in opposite directions, the one-leg scheme has one |
 | Two-leg scheme | A short leg on GMX and a long one on Hyperliquid (configuration A) or the reverse (B); neutral to price |
-| One-leg scheme | A short leg on GMX with collateral in the asset itself; no counterweight |
+| One-leg scheme | A short leg on GMX with collateral in the asset itself; at leverage 1 the collateral is the counterweight, the position is neutral to price in dollars, the result is funding minus borrowing |
 | Funding base | How many dollars already stand on a side of the market, among which the fee is split; on GMX the product of rate and base is the same for both sides |
 | Dilution | The reduction of the received rate by our own entry: we get a share equal to the previous base within the base together with our size |
 | Retained share | What part of the quoted flow arrived after dilution; counted only over the receiving hours |
