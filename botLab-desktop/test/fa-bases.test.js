@@ -111,7 +111,11 @@ test("перенос ИДЕМПОТЕНТЕН и не трогает строк�
 test("годность часа определяет resolveBase, а не собственная проверка покрытия", () => {
   // Конструктор `hour` держит тождество сторон по построению, поэтому час с базами годен.
   const good = [hour(0, { pot: 1e-4, bShort: 1e5, bLong: 1e6 }), hour(1, { pot: 1e-4, bShort: 1e5, bLong: 1e6 })];
-  assert.deepEqual(baseCoverage(good, "short"), { hours: 2, covered: 2, missing: 0, fraction: 1 });
+  // Строки конструктора метки происхождения не несут: покрытие идёт в счётчик «без метки», а не
+  // приписывается живому (разбивку по источникам стережёт test/fa-backfill-bases.test.js).
+  assert.deepEqual(baseCoverage(good, "short"), {
+    hours: 2, covered: 2, missing: 0, fraction: 1, coveredLive: 0, coveredIndexer: 0, coveredUnknown: 2,
+  });
   // Час без баз не покрыт, и это ровно тот час, на котором правило входа обнулит доход.
   const mixed = [...good, hour(2, { pot: 1e-4, bShort: 1e5, bLong: 1e6, bases: false })];
   const cov = baseCoverage(mixed, "short");

@@ -3,6 +3,8 @@
 // (Node 18+/Electron main). All endpoints are public, read-only, CORS=*. No keys, no orders.
 
 import { gmxMarketToCanonical, hlCtxToCanonical, subsquidFactor } from "./signs.js";
+// Масштаб базы фандинга берётся у правила разбавления, а не заводится здесь второй константой.
+import { baseUsd } from "./fa/dilution.js";
 
 // Per-chain GMX endpoints. Arbitrum is the primary chain; Avalanche is needed for the
 // ETH-Avalanche one-leg carry. Backup host gmxinfra2 can be swapped in on failure later.
@@ -119,6 +121,48 @@ export async function fetchGmxHistory(market, startTs, endTs, chain = "arbitrum"
     });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// БАЗЫ ФАНДИНГА ОБЕИХ СТОРОН из индексатора: часовые снимки `fundingBalanceOiSnapshots`, тот же
+// эндпоинт и та же пагинация, что у ставок выше. Исследование качало эту сущность теми же
+// запросами (scripts/funding-arb-study/truth-a-15-fetch-oi2.mjs, y2-1-fetch-oi.mjs).
+//
+// КОМУ ЭТО СЛУЖИТ, И ЭТО ГРАНИЦА. Только ДОЛИВУ ЖИВОГО ОКНА ВОРОТ бота 1 (`fa/bases.js`,
+// `backfillBases`; решение владельца 2026-09-02). Бектест и книги охраны этим запросом не
+// пересобираются: запрет 7 исследования («старый кэш вернее свежего запроса») остаётся в силе.
+//
+// ДОЛЛАРЫ ЧЕРЕЗ `baseUsd()`: поля приходят строкой в неподвижной точке 1e30, той же, что
+// `openInterestLong/Short` в `markets/info`. Отрицательные и неконечные значения в карту НЕ
+// попадают: это не наблюдение, а мусор, и ноль вместо него утверждал бы «стороны нет», то есть
+// другое сообщение. Снимки часовые, на :00; первый снимок часа выигрывает.
+//
+// Флаг `useOpenInterestInTokensForBalance` едет полем `useTokens` для смоука (печать эпохи расчёта
+// базы) и в кадр не пишется: тождество сторон держится на долларовых полях в обеих эпохах флага
+// (README `data/funding-arb/`). Разбор отделён от сети, чтобы проверяться на фикстуре ответа.
+// ---------------------------------------------------------------------------
+export function parseGmxFundingBalanceSnapshots(snaps) {
+  const out = new Map();
+  for (const r of snaps || []) {
+    const ts = Number(r?.snapshotTimestamp);
+    if (!Number.isFinite(ts)) continue;
+    const fbase_long = baseUsd(r.longFundingBalanceOiUsd);
+    const fbase_short = baseUsd(r.shortFundingBalanceOiUsd);
+    if (!Number.isFinite(fbase_long) || !Number.isFinite(fbase_short)) continue;
+    if (fbase_long < 0 || fbase_short < 0) continue;
+    const h = floorHour(ts);
+    if (out.has(h)) continue;
+    out.set(h, { fbase_long, fbase_short, useTokens: r.useOpenInterestInTokensForBalance === true });
+  }
+  return out;
+}
+
+// Returns Map(tsHour -> { fbase_long, fbase_short, useTokens }) for the market over [startTs, endTs].
+// 720 часов это один запрос: страница пагинации вмещает 1000 снимков.
+export async function fetchGmxFundingBalanceHistory(market, startTs, endTs, chain = "arbitrum") {
+  const snaps = await paginateGmx(chain, "fundingBalanceOiSnapshots", "marketAddress", market, startTs, endTs,
+    "useOpenInterestInTokensForBalance longFundingBalanceOiUsd shortFundingBalanceOiUsd");
+  return parseGmxFundingBalanceSnapshots(snaps);
 }
 
 // ---------------------------------------------------------------------------

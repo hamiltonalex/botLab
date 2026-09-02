@@ -682,6 +682,41 @@ test("ворота называют порог в часах и дату его 
   assert.equal(short.gate.covNeedH, need, "порог назван и без рынков: он свойство параметров, а не вселенной");
 });
 
+test("ворота делят покрытие лучшего рынка по происхождению и не называют долитое наблюдённым", () => {
+  // РЕШЕНИЕ ВЛАДЕЛЬЦА 2026-09-02: часы окна без живого наблюдения доливаются историей индексатора
+  // (`fa/bases.js`). Ворота смотрят на СУММУ покрытия, а разбивка едет интерфейсу и в запись
+  // решения готовой, потому что считать её снаружи запрещено, а называть долитое наблюдённым нельзя.
+  const need = 684;
+  const marked = (withBase, src) => partlyBased({ P: 4000, bShort: 1e5, withBase })
+    .map((r, h) => (h < withBase ? { ...r, fbase_src: src(h) } : r));
+  // 300 часов живьём, 400 долито, 5 с базой без метки: сумма 705 проходит порог.
+  const t = run({ markets: [market("MIX", marked(705, (h) => (h < 300 ? "live" : h < 700 ? "indexer" : null)))] });
+  assert.notEqual(t.why, "hist_no_base", "ворота смотрят на сумму: долитые часы это покрытие");
+  assert.equal(t.gate.covBestH, 705);
+  assert.equal(t.gate.covLiveH, 300);
+  assert.equal(t.gate.covIndexerH, 400);
+  assert.equal(t.gate.covUnknownH, 5, "база без метки идёт в «неизвестно», а не приписывается живому");
+  assert.equal(t.gate.covLiveH + t.gate.covIndexerH + t.gate.covUnknownH, t.gate.covBestH);
+  assert.equal(t.gate.covMissingH, 0);
+  assert.equal(t.gate.covEtaMs, null, "порог взят: даты нет");
+  // Ниже порога: запись отказа несёт ту же разбивку, чтобы интерфейс не считал её сам.
+  const f = run({ markets: [market("LOW", marked(100, (h) => (h < 30 ? "live" : "indexer")))] });
+  assert.equal(f.why, "hist_no_base");
+  const n = f.refusals.find((r) => r.code === "hist_no_base" && r.token === "LOW");
+  assert.equal(n.covered, 100);
+  assert.equal(n.live, 30);
+  assert.equal(n.indexer, 70);
+  assert.equal(n.unknown, 0);
+  assert.equal(f.gate.covLiveH, 30);
+  assert.equal(f.gate.covIndexerH, 70);
+  assert.equal(f.gate.covMissingH, need - 100, "порог и недостача считаются от суммы");
+  // Все рынки короче горизонта: разбивки нет, как и покрытия, и нулём она не притворяется.
+  const short = run({ markets: [market("S", flat({ P: 4000, bShort: 1e5, hours: H - 1 }))] });
+  assert.equal(short.gate.covLiveH, null);
+  assert.equal(short.gate.covIndexerH, null);
+  assert.equal(short.gate.covUnknownH, null);
+});
+
 test("горизонт и окно панелей выводятся из движка тем же выражением, что и cfg тика", () => {
   assert.equal(autoHorizonH(), H, "по умолчанию горизонт это горизонт правила размера");
   assert.equal(autoViewWindowDays(), H / 24, "окно панелей это горизонт в сутках, и ничего больше");

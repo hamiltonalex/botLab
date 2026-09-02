@@ -435,9 +435,13 @@ function curveCell(c) {
 //   window   - { firstTsHour, lastTsHour, rows } трейлинга, поданного правилу. Сам трейлинг не
 //              дублируется: он и есть накопленный поток снимков, а эти три числа пришпиливают,
 //              какие именно часы участвовали.
+//
+//   gate - объект ворот снабжения тика (`autoTick().gate`) либо null. Пишутся счётчики окна баз
+//          ЛУЧШЕГО рынка с разбивкой по происхождению: без неё задним числом нельзя отличить решение
+//          на наблюдённых базах от решения на долитых из индексатора, а это разные наблюдения.
 export function buildFaDecisionRecord({
   t, source = "live", ageSec, capitalUsd, presetId = null, cfg = null,
-  universe = null, exit = null, hold = null, window: win = null,
+  universe = null, exit = null, hold = null, window: win = null, gate = null,
 } = {}) {
   if (!fin(t)) return null;
   const xc = [];
@@ -466,6 +470,12 @@ export function buildFaDecisionRecord({
     cfgd: cfgDiff(cfg ?? universe?.cfg),
     hz: int((cfg ?? universe?.cfg)?.horizonH),
     hw: win ? [int(win.firstTsHour), int(win.lastTsHour), int(win.rows)] : null,
+    // ВОРОТА СНАБЖЕНИЯ на момент решения: рынков в обходе, прошло ворота, покрытых часов лучшего
+    // рынка против порога, и те же часы по происхождению (живьём, долито, без метки).
+    gt: gate ? {
+      m: int(gate.markets), u: int(gate.usable), cb: int(gate.covBestH), cn: int(gate.covNeedH),
+      cl: int(gate.covLiveH), ci: int(gate.covIndexerH), cu: int(gate.covUnknownH),
+    } : null,
     hold: hold ?? null,
     mk: curves.map(curveCell),
     rf,
@@ -675,7 +685,7 @@ export const FA_RECORD_SIZE = Object.freeze({
   snapPos: 167, // блок открытой позиции: две ноги по пять полей
   snapMarket: 389, // один рынок со стаканом на восьми узлах
   gap: 113, // строка пропуска
-  decFixed: 220, // строка решения без рынков и без блока выхода
+  decFixed: 282, // строка решения без рынков и без блока выхода, с блоком ворот снабжения `gt`
   decExit: 101, // блок правила выхода
   decMarket: 167, // один профинансированный рынок
   decRefusal: 42, // один отказ

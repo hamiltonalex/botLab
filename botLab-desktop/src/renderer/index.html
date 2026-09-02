@@ -1312,6 +1312,9 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
             <div class="row"><span class="k" data-i18n="fa.auto.gUsable"></span><span class="v num" id="faAutoGUsable">-</span></div>
             <div class="row"><span class="k" data-i18n="fa.auto.gCov"></span><span class="v num" id="faAutoGCov">-</span></div>
             <div class="row"><span class="k" data-i18n="fa.auto.gHorizon"></span><span class="v num" id="faAutoGHorizon">-</span></div>
+            <!-- ДОЛИТЫЕ ЧАСЫ НАЗВАНЫ ОТДЕЛЬНО: число приходит из ворот движка (`covIndexerH`), и
+                 интерфейс не имеет права записать их в наблюдённые. -->
+            <div class="row"><span class="k" data-i18n="fa.auto.gIdx"></span><span class="v num" id="faAutoGIdx">-</span></div>
           </div>
           <div class="stamp" id="faAutoGateNote" style="margin-top:8px" hidden>-</div>
         </div>
@@ -4787,8 +4790,11 @@ function faRefusalNums(last){
     || x.roomFrac != null || x.silenceH != null || x.positionId != null));
   const r = withNums || last.refusals[0];
   const c = last.why, tok = r.token != null ? String(r.token) : null;
+  /* ЖИВЬЁМ И ДОЛИТО ПОРОЗНЬ: оба числа приходят в записи отказа из ворот движка (`baseCoverage`).
+     Сумма стоит рядом, но словом «наблюдено» она не называется: часть её долита из индексатора. */
   if(c === 'hist_no_base' && Number.isFinite(r.covered))
-    return t('fa.num.histNoBase', { tok:tok || '-', cov:r.covered, h:r.hours, need:fmtPctNS(r.need, 0) });
+    return t('fa.num.histNoBase', { tok:tok || '-', cov:r.covered, h:r.hours, need:fmtPctNS(r.need, 0),
+      live:Number.isFinite(r.live) ? r.live : '-', idx:Number.isFinite(r.indexer) ? r.indexer : '-' });
   if(c === 'hist_short' && Number.isFinite(r.rows))
     return t('fa.num.histShort', { tok:tok || '-', rows:r.rows, need:r.need });
   if(c === 'poll_gap' && Number.isFinite(r.ms))
@@ -4818,7 +4824,9 @@ function faWarnHtml(code, a){
     return pair(t('fa.warn.histNoBaseB'), t('fa.warn.histNoBase', {
       h: g && Number.isFinite(g.horizonH) ? g.horizonH : '-',
       need: g && Number.isFinite(g.covNeed) ? fmtPctNS(g.covNeed, 0) : '-',
-      cov: g && Number.isFinite(g.covBest) ? fmtPctNS(g.covBest, 1) : '-' })) + eta;
+      cov: g && Number.isFinite(g.covBest) ? fmtPctNS(g.covBest, 1) : '-',
+      live: g && Number.isFinite(g.covLiveH) ? g.covLiveH : '-',
+      idx: g && Number.isFinite(g.covIndexerH) ? g.covIndexerH : '-' })) + eta;
   }
   if(code === 'poll_gap')        return pair(t('fa.warn.pollGapB'), t('fa.warn.pollGap'));
   if(code === 'state_stale')     return pair(t('fa.warn.stateStaleB'), t('fa.warn.stateStale'));
@@ -4857,6 +4865,9 @@ function renderFaAuto(){
   if(gc) gc.textContent = g && Number.isFinite(g.covBest)
     ? t('fa.auto.covOf', { v:fmtPctNS(g.covBest, 1), need:fmtPctNS(g.covNeed, 0) }) : '-';
   if(gh) gh.textContent = g && Number.isFinite(g.horizonH) ? t('fa.unit.hoursN', { h:g.horizonH }) : '-';
+  const gi = $('faAutoGIdx');
+  if(gi) gi.textContent = g && Number.isFinite(g.covIndexerH) && Number.isFinite(g.horizonH)
+    ? t('fa.auto.gIdxV', { n:g.covIndexerH, h:g.horizonH }) : '-';
   const gn = $('faAutoGateNote');
   if(gn){
     const note = !g ? '' : g.usable === 0 ? t('fa.auto.gateZero')
@@ -5510,7 +5521,8 @@ function faOverviewAuto(){
          не считается, и на прочих кодах строка остаётся словесной. */
       const g = a.last && a.last.gate ? a.last.gate : null;
       st.textContent = (s.code === 'hist_no_base' && g && Number.isFinite(g.covBestH) && Number.isFinite(g.covNeedH))
-        ? t('home.fa.autoBases', { state:s.token, have:g.covBestH, need:g.covNeedH })
+        ? t('home.fa.autoBases', { state:s.token, have:g.covBestH, need:g.covNeedH,
+            live:Number.isFinite(g.covLiveH) ? g.covLiveH : '-', idx:Number.isFinite(g.covIndexerH) ? g.covIndexerH : '-' })
         : t('home.fa.auto', { state:s.token, why:faCodeText(s.code) }); }
   }
 }

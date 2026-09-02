@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
-import { fetchGmxCurrent, fetchHlCurrent, fetchHlBook, fetchBinancePrices } from "../engine/sources.js";
+import { fetchGmxCurrent, fetchHlCurrent, fetchHlBook, fetchBinancePrices, fetchGmxFundingBalanceHistory } from "../engine/sources.js";
 import { getTwoLegFrame, getOneLegFrame, nowHourTs, WINDOW_DAYS, STALE_AFTER_SEC } from "../engine/backfill.js";
 import { buildSnapshot, buildTwoLegEntry, buildOneLegEntry, buildSeries } from "../engine/assemble.js";
 import { openPosition, accrue, accrueFromRows, settlePosition, recordUnpricedGap, closePosition, positionSummary, accountSummary, legModel } from "../engine/paper.js";
@@ -31,7 +31,7 @@ import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState,
 import * as faauto from "../engine/fa/auto.js";
 import { FA_BOOK_NODES_USD, bookSlippageNodes } from "../engine/fa/sizing.js";
 import { marginGuard as faMarginGuard, positionLegs as faPositionLegs } from "../engine/fa/margin.js";
-import { applyObservedBases, emptyBaseJournal, observeBases } from "../engine/fa/bases.js";
+import { applyObservedBases, backfillBases, baseBackfillWindow, emptyBaseJournal, observeBases } from "../engine/fa/bases.js";
 import { FA_RECORD_PREFIX, buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord, faDecisionsFromRecords, faRecordDayKey, faTradesFromRecords } from "../engine/fa/record.js";
 import { faEvalClears, faEvalFromDisk, faEvalOfTick, faEvalToDisk } from "./fa-eval.js";
 // Сводка архива записи (фаза 6). Шесть читателей архива движка зовутся ТОЛЬКО оттуда: здесь диск
@@ -264,8 +264,10 @@ async function pollLive() {
   // frame first (refreshed on over-cap gaps - R2), the remainder from the current factors.
   await settleOpenPositions(pollSec() * 3);
 
-  // Базы наблюдаются КАЖДЫЙ опрос и независимо от тумблера: окно правила входа 720 часов, и
-  // журнал, начинающийся с момента взвода, обрёк бы взведённый автомат на месяц отказов.
+  // Базы наблюдаются КАЖДЫЙ опрос и независимо от тумблера. Живое наблюдение это единственный
+  // источник базы ТЕКУЩЕГО часа и главный источник любого часа: долив истории индексатора
+  // (`faBackfillBases`, на обновлении кадра) закрывает только часы, которых опрос не видел, и
+  // наблюдённое не перезаписывает никогда.
   faObserveBases();
   // Автомат зовётся ПОСЛЕ начисления и после наблюдения баз. Порядок значим в обе стороны:
   // решение по недоначисленному счёту это решение по другим данным.
@@ -464,10 +466,12 @@ function persistFaAuto() {
   }
 }
 
-// ── ЖУРНАЛ НАБЛЮДЁННЫХ БАЗ. Копится ВСЕГДА, а не только под взведённым автоматом, и это тоже
-// решение с ценой: окно правила входа 720 часов, то есть 30 суток накопления, и если бы журнал
-// начинался с момента взвода, взведённый автомат месяц отказывал бы кодом `hist_no_base`. Цена
-// обратного выбора мала: файл на инструмент это неделя часов, меняется он не чаще раза в час.
+// ── ЖУРНАЛ НАБЛЮДЁННЫХ БАЗ. Копится ВСЕГДА, а не только под взведённым автоматом: журнал это
+// единственный источник базы текущего часа и главный источник каждого часа, который приложение
+// видело своими глазами. С решения владельца 2026-09-02 часы окна ворот БЕЗ наблюдения
+// закрываются доливом истории индексатора (`faBackfillBases`), поэтому взведённый автомат больше
+// не ждёт 30 суток накопления; наблюдение при этом главнее долива и им не перезаписывается. Цена
+// журнала мала: файл на инструмент это неделя часов, меняется он не чаще раза в час.
 function faBaseJournal(cacheKey) {
   let j = state.auto.bases.get(cacheKey);
   if (!j) {
@@ -510,6 +514,41 @@ function faApplyBases(cacheKey, rows) {
       console.warn(`[fa-auto] кадр ${cacheKey} с базами не записан: ${String(e.message || e).slice(0, 80)}`);
     }
   }
+  return r.rows;
+}
+
+// ── ДОЛИВ БАЗ ИЗ ИНДЕКСАТОРА В ОКНО ВОРОТ. Зеркально `faApplyBases` и СРАЗУ ПОСЛЕ него: сначала
+// журнал (живое главнее), потом история в то, что осталось без базы. Решение владельца 2026-09-02;
+// условия и граница названы в шапке `fa/bases.js`.
+//
+// КОГДА. На каждом обновлении кадра, то есть при старте и не чаще раза в `STALE_AFTER_SEC` (2 ч)
+// на инструмент: чаще `ensureFrame` сюда не заходит. Независимо от тумблера, как и наблюдение баз.
+// Окно `[nowHour - горизонт, nowHour - 1]`: если в нём нет часа без базы, сети нет вовсе. Иначе
+// ОДИН запрос от первого недостающего часа до последнего; пять инструментов дают три различных
+// рынка GMX, и дедуплицировать их заранее незачем: пять запросов в два часа это ничто.
+//
+// ОТКАЗ СЕТИ: одна строка в лог, кадр остаётся прежним, исключение наружу не идёт, отказ не
+// кэшируется (идиома аудита D7): следующее обновление кадра попробует снова.
+async function faBackfillBases(cacheKey, inst, rows) {
+  if (!rows || !rows.length || !inst) return rows;
+  const win = baseBackfillWindow(rows, { nowHour: nowHourTs(), horizonH: faHorizonH() });
+  if (!win) return rows;
+  let hist;
+  try {
+    hist = await fetchGmxFundingBalanceHistory(inst.gmxAddr, win.fromHour, win.toHour, inst.chain);
+  } catch (e) {
+    console.warn(`[fa-auto] долив баз ${cacheKey}: индексатор не ответил (${String(e.message || e).slice(0, 80)}), кадр прежний`);
+    return rows;
+  }
+  const r = backfillBases(rows, hist, { fromHour: win.fromHour, toHour: win.toHour });
+  if (r.filled) {
+    try {
+      writeCache(baseDir, cacheKey, r.rows);
+    } catch (e) {
+      console.warn(`[fa-auto] кадр ${cacheKey} с долитыми базами не записан: ${String(e.message || e).slice(0, 80)}`);
+    }
+  }
+  console.log(`[fa-auto] долив баз ${cacheKey}: без базы ${win.hours} ч окна, долито ${r.filled} (нулевых ${r.zero}), отвергнуто тождеством ${r.rejected}, осталось без базы ${r.missing}`);
   return r.rows;
 }
 
@@ -861,7 +900,7 @@ async function faAutoStep(sources) {
     faAppendRecord("dec", nowMs, buildFaDecisionRecord({
       t: nowMs, source: "live", ageSec: gmxAgeSec, capitalUsd: params.capitalUsd,
       presetId: params.presetId, cfg: tick.cfg, universe: tick.universe, exit: tick.exit,
-      hold: posBefore?.token ?? null, window: tick.window,
+      hold: posBefore?.token ?? null, window: tick.window, gate: tick.gate,
     }));
   }
 
@@ -941,9 +980,10 @@ async function ensureFrame(strat, key) {
     state.backfilling.add(cacheKey);
     try {
       const fetched = strat === "one" ? await getOneLegFrame(baseDir, inst) : await getTwoLegFrame(baseDir, inst);
-      // ЕДИНСТВЕННАЯ ТОЧКА, ГДЕ НАБЛЮДЁННЫЕ БАЗЫ ПОПАДАЮТ В КАДР. Здесь, а не в `backfill.js`:
+      // ЕДИНСТВЕННАЯ ТОЧКА, ГДЕ БАЗЫ ПОПАДАЮТ В КАДР: сначала наблюдённые из журнала, потом долив
+      // истории индексатора в часы окна ворот, оставшиеся без базы. Здесь, а не в `backfill.js`:
       // журнал наблюдений это состояние приложения, а модуль истории обязан оставаться про историю.
-      const rows = faApplyBases(cacheKey, fetched);
+      const rows = await faBackfillBases(cacheKey, inst, faApplyBases(cacheKey, fetched));
       if (rows && rows.length) state.frames.set(cacheKey, rows); // never cache an empty result
       await ensurePrices(inst);
       return rows || [];

@@ -216,7 +216,7 @@ export const FA_AUTO_REFUSALS = Object.freeze([
   ...FA_MARGIN_REFUSALS, // сторож залога заводит свои коды сам, здесь они переиспользуются ССЫЛКОЙ
   "capital_missing", // потолок капитала не назван: правило размера обязано отказать, а не занять всё
   "hist_short", // трейлинга меньше горизонта: оценка была бы в других единицах
-  "hist_no_base", // баз фандинга на окне меньше требуемого: накопление вперёд ещё идёт
+  "hist_no_base", // баз фандинга на окне меньше требуемого: ни наблюдение, ни долив истории окно ещё не закрыли
   "no_slot", // слот занят позицией, которую автомат не открывал
   "stop_pending", // запрошена остановка: новых входов нет
   "cadence_wait", // каданс решения не подошёл
@@ -259,7 +259,7 @@ const REFUSAL_TEXT = Object.freeze({
   margin_unknown: "запас до ликвидации посчитать нечем",
   capital_missing: "потолок капитала не назван",
   hist_short: "истории меньше горизонта",
-  hist_no_base: "наблюдённых баз фандинга на окне не хватает",
+  hist_no_base: "баз фандинга на окне не хватает",
   no_slot: "слот занят чужой позицией",
   stop_pending: "запрошена остановка: новых входов нет",
   cadence_wait: "каданс решения не подошёл",
@@ -577,7 +577,11 @@ export function autoTick({
   // состояние первых недель, и без числа он неотличим от поломки. Считается здесь, потому что
   // окно нарезано здесь; второй счёт снаружи разошёлся бы с воротами на первой же правке.
   let covBest = null;
-  let covBestH = null; // наблюдённых часов у рынка с лучшим покрытием: порог в часах меряется от него
+  let covBestH = null; // покрытых часов у рынка с лучшим покрытием: порог в часах меряется от него
+  // РАЗБИВКА ПОКРЫТИЯ ЛУЧШЕГО РЫНКА ПО ПРОИСХОЖДЕНИЮ (`baseCoverage`): наблюдено живьём, долито из
+  // индексатора, без метки. Ворота смотрят на сумму; разбивка едет интерфейсу и в запись решения,
+  // потому что назвать долитое наблюдённым они не имеют права.
+  let covBestSplit = null;
   // Исход ворот ПО КАЖДОМУ рынку, для сводки последней оценки. Пер-рыночные отказы уезжают в
   // журнал общим списком и наружу режутся решающим кодом, поэтому рынок, отсеянный воротами, из
   // кривых правила пропадает целиком: без этой пометки его строка в сводке была бы пустой без
@@ -597,9 +601,16 @@ export function autoTick({
     // Сторона ноги GMX берётся у `legModel` леджера, а не выводится здесь по конфигурации: это
     // единственное место в проекте, которое знает разбор схемы на ноги.
     const cov = baseCoverage(win, legModel(m.strategy || "two", m.config).gmxSide);
-    if (covBest == null || cov.fraction > covBest) { covBest = cov.fraction; covBestH = cov.covered; }
+    if (covBest == null || cov.fraction > covBest) {
+      covBest = cov.fraction;
+      covBestH = cov.covered;
+      covBestSplit = { live: cov.coveredLive, indexer: cov.coveredIndexer, unknown: cov.coveredUnknown };
+    }
     if (cov.fraction < params.baseCoverageMin) {
-      note("hist_no_base", { token: m.token, covered: cov.covered, hours: cov.hours, need: params.baseCoverageMin });
+      note("hist_no_base", {
+        token: m.token, covered: cov.covered, hours: cov.hours, need: params.baseCoverageMin,
+        live: cov.coveredLive, indexer: cov.coveredIndexer, unknown: cov.coveredUnknown,
+      });
       gates.push({ code: "hist_no_base", coverage: cov.fraction });
       if (isHeld(m.token)) heldGate = "hist_no_base";
       continue;
@@ -644,8 +655,11 @@ export function autoTick({
   // вопрос «сколько ещё ждать», и интерфейс не имеет права ответить на него сам: окно, покрытие и
   // порог живут здесь. Порог в часах выводится из ТОГО ЖЕ предиката, что и отказ (`covered / hours`
   // против `baseCoverageMin`), а не из округления произведения: иначе на границе они разошлись бы.
-  // Дата это ОЦЕНКА СНИЗУ: час наблюдения прибавляет ровно один покрытый час, быстрее набрать
-  // нельзя, а любой перерыв опроса сдвигает её вправо. Полное покрытие даёт `null`: ждать нечего.
+  // Дата это ОЦЕНКА СНИЗУ, а не срок: час наблюдения прибавляет ровно один покрытый час, быстрее
+  // наблюдением набрать нельзя, а любой перерыв опроса сдвигает её вправо. Долив истории
+  // индексатора (решение владельца 2026-09-02) закрывает недостающие часы раньше даты, на ближайшем
+  // обновлении кадра, если у индексатора эти часы есть; сколько их закрылось, видно по разбивке
+  // `covLiveH` / `covIndexerH` / `covUnknownH`. Порог взят: `covMissingH` равен 0 и даты нет.
   const covNeedH = minCoveredHours(H, params.baseCoverageMin);
   const covMissingH = covBestH == null ? null : Math.max(0, covNeedH - covBestH);
   const covEtaMs = covMissingH == null || covMissingH === 0 ? null : now + covMissingH * HOUR_MS;
@@ -653,6 +667,9 @@ export function autoTick({
     markets: (markets || []).length, usable: usable.length, held: heldGate,
     covBest, covNeed: params.baseCoverageMin, horizonH: H,
     covBestH, covNeedH, covMissingH, covEtaMs,
+    covLiveH: covBestSplit ? covBestSplit.live : null,
+    covIndexerH: covBestSplit ? covBestSplit.indexer : null,
+    covUnknownH: covBestSplit ? covBestSplit.unknown : null,
   });
   const out = (kind, why, extra = null) => {
     st.lastRefusals = [...new Set(refusals.map((r) => r.code))];

@@ -10,6 +10,7 @@
     "oracle": "electron scripts/selector-oracle.mjs",
     "smoke": "node scripts/smoke-live.mjs",
     "smoke:size": "node scripts/smoke-fa-size.mjs",
+    "smoke:bases": "node scripts/smoke-fa-bases.mjs",
     "smoke:scan": "node scripts/smoke-scan.mjs",
     "report:scan": "node scripts/report-scan.mjs",
     "report:records": "node scripts/report-records.mjs",

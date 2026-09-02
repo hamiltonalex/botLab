@@ -30,8 +30,9 @@ hourly fee for it.
 - The fee is split among everyone standing on the receiving side. Our entry adds one more landlord,
   and each gets less. This is **dilution**, and without it any income estimate would be a phantom.
   To compute it the bot needs a **base**: how much money already stands on our side in each hour.
-- The bot accumulates the bases itself, hour by hour, and **does not enter during the first four
-  weeks**: until a base has been observed in 684 of 720 hours there is nothing to compute. Then,
+- The bot observes the current hour's base itself on every poll, and backfills the window hours it
+  has not seen from the indexer history under the side identity check: **the gate (684 hours of
+  720) passes on the first frame refresh**, within two hours of launch, not after four weeks. Then,
   once a day, it picks the market and the size with the entry rule, holds the position, and once a
   day asks the exit rule: hold, go to cash or switch.
 
@@ -46,8 +47,8 @@ it and watches; there is no manual trade opening in the application.
 %%{init: {"themeVariables": {"fontSize": "12px"}, "flowchart": {"nodeSpacing": 26, "rankSpacing": 18, "diagramPadding": 4, "wrappingWidth": 380}}}%%
 flowchart TD
     A["App start: automaton state, positions and base journals<br/>are read from disk; polling starts by itself"] --> B["Arming: the arming ticket or the FA_AUTO=1 flag;<br/>parameters are frozen"]
-    B --> C["Accumulation: every 5 minutes a tick writes a snapshot<br/>and observes the hour's funding base for every market"]
-    C --> D{{"Gate: on a 720 h window is the base observed<br/>in at least 684 h (95%)?"}}
+    B --> C["Accumulation: every 5 minutes a tick writes a snapshot and observes the hour's base,<br/>every 2 hours the frame backfills hours without a base from the indexer"]
+    C --> D{{"Gate: on a 720 h window is the base known<br/>in at least 684 h (95%)?"}}
     D -- "no: HUNTING ENTRY, refusal hist_no_base" --> C
     D -- "yes" --> E["Decision cycle once a day: the entry rule builds a curve<br/>by size for every market and takes rank 1"]
     E -- "no market repays the round trip" --> C
@@ -67,10 +68,12 @@ Eight steps, one line each; the details are in the three parts below.
 2. **Arming.** The operator confirms the arming ticket (or the machine was launched with the
    `FA_AUTO=1` flag). Parameters are frozen at that moment and accompany the trade until it closes.
 3. **Accumulation.** Every 5 minutes the bot reads both exchanges, writes a snapshot to the archive
-   and records the funding base of the current hour for every market. Bases accumulate forward only.
-4. **Gate.** On a 720 hour window the base must be observed in at least 684 hours. Until then the
-   market does not enter the decision, and for the first four weeks of observation there will be no
-   trades.
+   and records the funding base of the current hour for every market. Window hours the polling has
+   not seen are backfilled from the indexer history on every frame refresh (once per two hours)
+   under the side identity check; a live observation ranks above history and is never overwritten.
+4. **Gate.** On a 720 hour window the base must be known in at least 684 hours, live or backfilled.
+   Until then the market does not enter the decision; normally the gate passes on the first frame
+   refresh, within two hours of launch.
 5. **Decision.** Once a day the entry rule computes, for every eligible market, the optimal size and
    the net over 720 hours, sifts markets by refusal codes and funds the rank 1 market.
 6. **Trade.** A paper position opens: two legs for the two-leg scheme (GMX and Hyperliquid), one for
@@ -105,6 +108,10 @@ sequenceDiagram
     H-->>E: snapshot of five markets
     E->>E: accrue open positions (first, before deciding)
     E->>D: the hour's base observation to the journal (first in the hour wins)
+    opt history frame is stale (once per 2 h)
+        E->>G: rates and bases of the window hours without an observation are taken from the indexer
+        E->>D: the frame with backfilled bases, every hour marked live or indexer
+    end
     opt automaton armed
         E->>H: order book for two coins (ETH, BTC)
         E->>D: snapshot row to the archive, plus a gap row if there was a break
@@ -129,9 +136,12 @@ What matters about ticks:
   single leg: short on GMX with no counterweight.
 - **Accrual goes first.** Open positions are accrued before the automaton decides: a decision on an
   under-accrued account would be a decision on different data.
-- **Bases are observed always.** The base journal is written on every poll, even with the automaton
-  off: otherwise the 720 hour window would never fill. Within an hour polling runs twelve times, and
-  the first observation wins: the journal is appended, not rewritten.
+- **Bases are observed always, and the backfill does not replace that.** The base journal is written
+  on every poll, even with the automaton off: it is the only source of the current hour's base and
+  the primary source of any hour. Within an hour polling runs twelve times, and the first
+  observation wins: the journal is appended, not rewritten. Window hours without an observation are
+  backfilled from the indexer history on a frame refresh and marked as backfilled; history never
+  touches an observed hour.
 - **No tick is silent.** Every tick has an outcome code: either an automaton refusal, or a rule code,
   or the single positive outcome `funded`. A log line goes out only when the code changes: a steady
   `hist_no_base` gives one line and then silence; liveness is visible in the tick counter and the
@@ -157,14 +167,23 @@ any income estimate without bases is fiction. The three dilution rules in the le
 is computed hour by hour, not as an average over the window; it applies only to the receiving GMX
 leg (borrowing and the Hyperliquid leg are untouched); an hour in which we pay is not scaled at all.
 
-Bases cannot be taken from history: over 71 days the indexer shifted 40.4% of hours on reindexing,
-and backfill is forbidden by the owner's decision of 2026-08-31. The only way is to observe forward,
-hour by hour, from live `markets/info`.
+Where the bases come from. The bot observes the current hour's base itself from live `markets/info`
+on every poll. Window hours the polling has not seen (before launch, while the machine slept, during
+a gap) are backfilled on a frame refresh from the `fundingBalanceOiSnapshots` history of the same
+GMX indexer the frame already takes its rates from; the owner's decision of 2026-09-02, the earlier
+ban of 2026-08-31 is lifted. The conditions of the backfill are not relaxed: a live observation
+ranks above history and is never overwritten; only past full hours of the horizon window are
+backfilled; every hour is checked by the side identity against the row's own rates, and an hour
+where it fails (indexer zeros on a live market) stays a hole; every hour remembers where its base
+came from, and the interface never calls a backfilled hour observed. The reindexing drift (40.4% of
+hours by the last bit over 71 days) is below decision precision for bases: a check of the live base
+against the indexer gives a median of 0.38% and a maximum of 3.36%.
 
 ## The gate: 684 hours of 720
 
 Every tick the automaton takes the last 720 hours of the frame for every market and asks: in how
-many of them is the base of our side observed? The threshold is 95%, that is 684 hours. A market
+many of them is the base of our side known, live or backfilled? The threshold is 95%, that is 684
+hours. A market
 below the threshold does not pass the gate and does not enter the decision: no size, no net, no rank
 is computed for it. If no market passes the gate, the tick ends with the code `hist_no_base` (or
 `hist_short` when a market has fewer than 720 rows of history).
@@ -178,19 +197,21 @@ by the owner, not measured: a threshold of 1.0 would carry the risk of never ent
 postpones the decision until it leaves the window), 0.95 tolerates 36 holes per window at the cost
 of understating gross by up to 5%.
 
-Timing. An hour of observation adds exactly one covered hour, and there is no faster way: from the
-start of observation to the first possible entry is about 28.5 days. Any polling gap (the machine
-asleep, the application closed) moves the date later. **For the first four weeks after the
-application started observing bases there will be no trade, and that is normal, not a failure.**
-Observation runs with the automaton off too, so if the application was running before arming, part
-of the window is already filled.
+Timing. The backfill closes the window hours without an observation on the first frame refresh, that
+is no later than two hours after launch, provided the indexer has those hours; the 28.5 day wait is
+gone. Holes remain where the indexer did not return an hour or the identity failed, and the gate
+tolerates them up to 5% of the window (36 hours); beyond that an hour of observation adds exactly
+one covered hour, and the date on the console is a lower bound. **The first decision comes on the
+first tick after the gate passes, and the 24 hour cadence counts from it; so the first paper trade
+is possible within the first two hours after launch.** Observation runs with the automaton off too.
 
 What is visible meanwhile. On the Overview the bot card shows the token and the line "HUNTING ENTRY
-· bases observed in N of 684 h". On the automaton console: the reason in words ("not enough observed
-funding bases on the window") and in numbers ("market: base observed in N of 720 h of the window,
-95% required"), the "Supply gate" column (markets polled, passed the gate, best coverage against the
-required 95%, window horizon 720 h) and a notice with the date: how many hours are missing and no
-earlier than what moment the threshold can be reached.
+· bases N of 684 h · live L, backfilled I". On the automaton console: the reason in words ("not
+enough funding bases on the window") and in numbers ("market: the base is present in N of the 720 h
+window (live L, backfilled I), 95% required"), the "Supply gate" column (markets polled, passed the
+gate, best coverage against the required 95%, window horizon 720 h, window hours backfilled from the
+indexer N of 720) and a notice: how many hours are missing, that the backfill closes them on the
+next frame refresh, and no earlier than what moment the threshold can be reached by observation.
 
 ## The decision cycle once a day
 
@@ -201,7 +222,7 @@ the tick computes only the cheap gates; the expensive rules are called on the de
 ```mermaid
 %%{init: {"themeVariables": {"fontSize": "12px"}, "flowchart": {"nodeSpacing": 26, "rankSpacing": 18, "diagramPadding": 4, "wrappingWidth": 380}}}%%
 flowchart TD
-    A["Universe: 5 markets"] --> B{{"Supply gate: 720 rows of history,<br/>base observed in 684 h?"}}
+    A["Universe: 5 markets"] --> B{{"Supply gate: 720 rows of history,<br/>base known in 684 h?"}}
     B -- "no: hist_short or hist_no_base" --> X["Market is not evaluated; the code is visible in the summary"]
     B -- "yes" --> C{{"Rule data gate: base fresher than 120 s, side identity<br/>checks out, order book present and fresher than 30 s?"}}
     C -- "no: no_base, stale_base, base_identity_broken,<br/>no_book, stale_book" --> X
@@ -270,8 +291,9 @@ rank 1 market as the candidate while there is no trade.
 
 - **It does not enter manually.** There is no manual launch channel in the interface or in the main
   process; this is under test. Positions are opened only by the entry rule.
-- **It does not take bases from history.** Backfill is forbidden; the base journal is written only by
-  live polling.
+- **It does not overwrite an observed base with history.** The indexer backfill closes only hours
+  without an observation, only inside the gate window and only under the side identity check; the
+  base journal is written only by live polling.
 - **It does not compute annual return.** Neither on the cards nor in the journal; the interface
   dictionaries are tested for the absence of promises of future income.
 - **It does not decide more often than once a day.** Except the margin guard: its refusal cannot be
@@ -466,9 +488,10 @@ What follows from this and what is measured:
   the universe is empty or has refused.
 - **The gate is the same as at entry.** A source failure defers the whole decision, not only the
   switch branch: without a source "no alternatives" would look like "hold". Base coverage is checked
-  on the trade's market too: if observation was interrupted for long and coverage fell below 684
-  hours, the exit rule does not decide until the hole leaves the window (up to 30 days), while the
-  margin guard keeps working on every tick.
+  on the trade's market too: if observation was interrupted and the backfill did not close the hole
+  (the indexer did not return the hour or the identity failed), coverage can fall below 684 hours,
+  and then the exit rule does not decide until the hole is closed by a backfill or leaves the
+  window, while the margin guard keeps working on every tick.
 
 ## Three outcomes and the journal
 
@@ -624,7 +647,7 @@ are no toggles in either.
 | Zone Ⅰ · The bot's market | The pill "trade: market" or "candidate: market", an honest empty state until the first cycle; market data of both exchanges, net spread by intervals, decomposition by legs, reference price (Binance), raw hourly data; a 30 day window equal to the rule's horizon |
 | Transaction costs · model | Editable items of the round trip (GMX fees, GMX slippage, gas, Hyperliquid fee, number of sides) at the bot's size; the net over the horizon is taken ready-made from the rule's evaluation |
 | Freshness stamp and polling | The LIVE pill blinks on the arrival of a snapshot, "STALE" after 15 minutes without data, the stamp "data as of UTC"; polling interval 1, 5 or 15 minutes; clicking the pill refreshes the data now |
-| Overview | The bot card with a dot, a chip and a state line ("HUNTING ENTRY · bases observed in N of 684 h"), the "Automaton console" button (leads to the ticket) or "Stop the automaton" (two steps) |
+| Overview | The bot card with a dot, a chip and a state line ("HUNTING ENTRY · bases N of 684 h · live L, backfilled I"), the "Automaton console" button (leads to the ticket) or "Stop the automaton" (two steps) |
 | Persistence | Automaton state, evaluation summary, positions with journals, base journals and history frames on disk; a restart resumes where it stopped, a corrupt state goes to quarantine |
 | Languages and theme | Russian and English dictionaries, dark and light theme; refusal codes are translated by the dictionaries, not by the main process |
 | Arming on a remote machine | The `FA_AUTO=1` flag arms the automaton at boot if it is not armed yet; parameters are frozen at the default values |
@@ -638,8 +661,9 @@ are no toggles in either.
 - **It offers no manual launch.** The only control is the automaton switch; the market and the size
   are named by the entry rule. A position opened before the switch to the automaton is closed
   manually.
-- **It takes no bases from history.** Only live observation forward; for the first four weeks of
-  observation there are no trades.
+- **It takes no bases from history beyond the gate window and lets no history override an
+  observation.** The backfill closes only window hours without a live observation, each under the
+  side identity check.
 - **It sets no stops, caps no loss, does not exit on time.** Exit only by the exit rule and by the
   margin guard.
 - **It does not adjust the size and does not hedge price inside a trade.** The notional is frozen at
@@ -665,8 +689,9 @@ are no toggles in either.
 | Retained share | What part of the quoted flow arrived after dilution; counted only over the receiving hours |
 | GMX borrowing | The fee for borrowed liquidity on GMX; always a cost, untouched by dilution |
 | Window, horizon | 720 hours (30 days): that many past hours the rule takes and that many hours ahead it estimates income |
-| Supply gate | Checks without which a market does not enter the decision: 720 rows of history and a base observed in 684 hours |
-| Base coverage | The share of the window's hours in which the base of our side is observed; threshold 95% |
+| Supply gate | Checks without which a market does not enter the decision: 720 rows of history and a base known (live or backfilled) in 684 hours |
+| Base coverage | The share of the window's hours in which the base of our side is known, live or backfilled from the indexer; threshold 95%; the console shows live and backfilled separately |
+| Base backfill | Filling the window hours without a live observation from the indexer history on a frame refresh, under the side identity check; an observed hour is never overwritten |
 | Tick | One poll of the exchanges with accrual, recording and a named outcome; every 5 minutes by default |
 | Cadence | How often the expensive rules are called: once every 24 hours |
 | Decision expiry | 72 hours of silence after which the first tick takes no decisions |
@@ -691,7 +716,7 @@ are no toggles in either.
 | Module | Role |
 |---|---|
 | `src/engine/fa/auto.js` | The automaton: tick, continuity, supply gate, refusal code precedence, arming parameters, threshold in hours and date, evaluation summary, intent |
-| `src/engine/fa/bases.js` | The journal of observed bases, transfer into the frame, window coverage; the backfill ban |
+| `src/engine/fa/bases.js` | The journal of observed bases, transfer into the frame, the history backfill of the gate window, window coverage by origin |
 | `src/engine/fa/dilution.js` | Entry dilution: the multiplier, the GMX side identity, the three application rules |
 | `src/engine/fa/sizing.js` | The entry size rule: curve by size, ceilings, refusal codes and bindings, the allocator, presets |
 | `src/engine/fa/exit.js` | The exit rule: three numbers, cadence, the best alternative |
@@ -699,7 +724,7 @@ are no toggles in either.
 | `src/engine/fa/record.js` | Live recording: three streams, gap causes, archive readers, volume |
 | `src/engine/paper.js` | The paper ledger: opening, hourly accrual with dilution, closing, summaries |
 | `src/engine/costs.js` | The round trip cost model |
-| `src/engine/assemble.js`, `src/engine/sources.js`, `src/engine/universe.js` | Snapshots and frames, access to GMX and Hyperliquid, the universe of five markets |
+| `src/engine/assemble.js`, `src/engine/sources.js`, `src/engine/universe.js` | Snapshots and frames, access to GMX and Hyperliquid, the rate and base history from the indexer, the universe of five markets |
 | `src/engine/store.js` | State files, base journals, NDJSON records |
 | `src/main/main.js` | The polling timer, arming by flag, the slice for the rules, intent execution, persistence, the `fa:*` channels |
 | `src/main/fa-eval.js`, `src/main/fa-archive.js` | The last evaluation summary on disk; archive aggregates for the card |

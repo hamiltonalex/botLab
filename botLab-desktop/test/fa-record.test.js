@@ -116,6 +116,11 @@ const exitOf = (over = {}) => ({
   best: { token: "ALT", config: "A", sizeUsd: 1995.2623, netUsd: 12.3456 }, ...over,
 });
 
+// Ворота снабжения тика: покрытие лучшего рынка с разбивкой по происхождению (живьём, долито, без метки).
+const gateOf = (over = {}) => ({
+  markets: 5, usable: 3, covBestH: 705, covNeedH: 684, covLiveH: 300, covIndexerH: 400, covUnknownH: 5, ...over,
+});
+
 const decision = (over = {}) => note(buildFaDecisionRecord({
   t: T0, source: "live", ageSec: 2.1, capitalUsd: 5000, presetId: "fa-per-market-h720-v1",
   cfg: { ...FA_SIZING_DEFAULTS }, universe: universe([curve("BTC")]), exit: exitOf(), hold: "BTC",
@@ -517,6 +522,18 @@ test("решение без метки времени не пишется вов
   assert.equal(buildFaDecisionRecord({}), null);
 });
 
+test("решение несёт ворота снабжения с разбивкой покрытия по происхождению", () => {
+  // РЕШЕНИЕ ВЛАДЕЛЬЦА 2026-09-02: часы окна без наблюдения доливаются историей индексатора. Задним
+  // числом надо уметь отличить решение на наблюдённых базах от решения на долитых: это разные
+  // наблюдения, и объект ворот раньше в запись не ехал вовсе.
+  const row = decision({ gate: gateOf() });
+  assert.deepEqual(row.gt, { m: 5, u: 3, cb: 705, cn: 684, cl: 300, ci: 400, cu: 5 });
+  assert.equal(decision().gt, null, "без ворот блока нет, а не нули");
+  // Рынки короче горизонта: покрытия нет, и null остаётся null, а не превращается в ноль.
+  const empty = decision({ gate: gateOf({ usable: 0, covBestH: null, covLiveH: null, covIndexerH: null, covUnknownH: null }) });
+  assert.deepEqual(empty.gt, { m: 5, u: 0, cb: null, cn: 684, cl: null, ci: null, cu: null });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. История сделок: полный паспорт
 // ─────────────────────────────────────────────────────────────────────────────
@@ -654,6 +671,7 @@ test("FA_RECORD_SIZE сверяется с ДЛИНОЙ настоящих ст�
       Array.from({ length: refused }, (_, i) => ({ token: `R${i}`, config: "B", refusal: "below_fund_ratio" })),
     ),
     exit, hold: funded ? "T0" : null, window: { firstTsHour: 1_697_400_000, lastTsHour: 1_699_992_000, rows: 720 },
+    gate: gateOf(), // полный вид строки: ворота снабжения пишутся на каждом решении
   });
   assert.equal(bytes(dec(0, 0, null)), FA_RECORD_SIZE.decFixed, "строка решения без рынков и без выхода");
   assert.equal(bytes(dec(0, 0, exitOf())) - bytes(dec(0, 0, null)), FA_RECORD_SIZE.decExit, "блок выхода");

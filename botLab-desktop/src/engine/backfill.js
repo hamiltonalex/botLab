@@ -34,7 +34,12 @@ export function mergeFrames(cachedRows, freshRows, windowHours, endTs) {
   // бы к коду `no_base`. Накопление шло бы вперёд и обнулялось каждым доливом, то есть 720 часов
   // не набрались бы НИКОГДА, а выглядело бы это как «правило входа почему-то отказывает».
   // Поэтому наблюдённая база переносится в свежую строку, а не наоборот: ставки берём свежие,
-  // базу сохраняем ту, что видели своими глазами.
+  // базу сохраняем ту, что видели своими глазами. То же относится к базе, ДОЛИТОЙ из истории
+  // индексатора (`fa/bases.js`): долив идёт после долива ставок и тем же путём стирался бы.
+  //
+  // МЕТКА ПРОИСХОЖДЕНИЯ `fbase_src` ЕДЕТ ВМЕСТЕ С БАЗОЙ. Потеряв её при доливе, долитые часы стали
+  // бы неотличимы от наблюдённых, и интерфейс назвал бы наблюдённым то, чего никто не видел; на
+  // это стоит тест. Свежая строка со своей меткой сохраняет свою.
   for (const r of freshRows || []) {
     if (!Number.isFinite(r.tsHour)) continue;
     const prev = byHour.get(r.tsHour);
@@ -45,6 +50,7 @@ export function mergeFrames(cachedRows, freshRows, windowHours, endTs) {
         ...r,
         fbase_long: keepLong ? prev.fbase_long : r.fbase_long,
         fbase_short: keepShort ? prev.fbase_short : r.fbase_short,
+        fbase_src: r.fbase_src ?? prev.fbase_src ?? null,
       });
     } else byHour.set(r.tsHour, r);
   }

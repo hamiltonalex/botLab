@@ -127,6 +127,32 @@ test("fa-ui: в текстах карточки честности нет год
   }
 });
 
+test("fa-ui: долитые часы не названы наблюдёнными ни в одной строке с числом покрытия", () => {
+  // РЕШЕНИЕ ВЛАДЕЛЬЦА 2026-09-02: часы окна без живого наблюдения доливаются историей индексатора,
+  // и число покрытия включает долитые часы. Строка, называющая такое число «наблюдённым», лгала бы,
+  // а заметить это при ревью почти невозможно: она выглядит как обычная подпись. Поэтому запрет
+  // механический, и живое с долитым обязаны стоять порознь везде, где есть число покрытия.
+  const dicts = loadDicts();
+  const KEYS = ["home.fa.autoBases", "fa.num.histNoBase", "fa.warn.histNoBase", "fa.warn.histNoBaseEta",
+    "fa.code.histNoBase", "fa.auto.gCov", "fa.auto.gIdx", "fa.auto.gIdxV"];
+  // «наблюдена», «наблюдены», «наблюдённых» ловятся; «наблюдение» как процесс остаётся законным.
+  const OBSERVED = { ru: /наблюд[её]н(?!и)/i, en: /\bobserved\b/i };
+  for (const [code, dict] of Object.entries(dicts)) {
+    for (const k of KEYS) {
+      assert.ok(k in dict, `${code}: нет строки ${k}`);
+      assert.ok(!OBSERVED[code].test(dict[k]), `${code}[${k}]: число с долитыми часами названо наблюдённым`);
+    }
+    for (const k of ["home.fa.autoBases", "fa.num.histNoBase", "fa.warn.histNoBase"]) {
+      assert.ok(dict[k].includes("{live}") && dict[k].includes("{idx}"), `${code}[${k}]: живьём и долито обязаны стоять порознь`);
+    }
+  }
+  assert.ok(HTML.includes('id="faAutoGIdx"'), "строка долитых часов пропала из колонки ворот снабжения");
+  for (const call of ["t('fa.auto.gIdxV', { n:g.covIndexerH", "Number.isFinite(g.covLiveH) ? g.covLiveH",
+    "Number.isFinite(g.covIndexerH) ? g.covIndexerH", "live:Number.isFinite(r.live) ? r.live"]) {
+    assert.ok(HTML.includes(call), `отрисовщик не передаёт разбивку: ${call}`);
+  }
+});
+
 test("бесконечных анимаций на постоянных состояниях в разметке нет", () => {
   // Светодиод пилюли LIVE пульсировал `infinite`, и пока вкладка бота была на экране, страница
   // компоновалась 60 раз в секунду: на программной отрисовке это 60 EGL-ошибок в секунду в логе
