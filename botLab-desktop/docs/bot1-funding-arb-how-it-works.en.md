@@ -323,7 +323,10 @@ the liquidation price:
 - the worst leg decides: its room is compared with the required 50%.
 
 At leverage 1 the 50% threshold never binds at entry (room 98% and above); it starts binding at
-leverage 2 or during holding, when the price has moved against a leg. Thin room on an open trade
+leverage 2 or during holding, when the price has moved against a leg. At leverage 1, for any scheme,
+that happens when the price has risen by about a third from the entry price: the short leg dies when
+the price doubles, and from a price a third higher the distance to the doubling is exactly half of
+that price. Thin room on an open trade
 (`margin_thin`) is not "do nothing" but a demand to close: the guard's refusal cannot be repaired by
 the next decision, and waiting for the cadence means waiting for liquidation. Unknown room
 (`margin_unknown`: no price, leverage or maintenance margin) does not demand closing: it is a supply
@@ -462,7 +465,10 @@ What follows from this and what is measured:
   empty, a switch covers cash. The branch remains the third element of the maximum and is needed when
   the universe is empty or has refused.
 - **The gate is the same as at entry.** A source failure defers the whole decision, not only the
-  switch branch: without a source "no alternatives" would look like "hold".
+  switch branch: without a source "no alternatives" would look like "hold". Base coverage is checked
+  on the trade's market too: if observation was interrupted for long and coverage fell below 684
+  hours, the exit rule does not decide until the hole leaves the window (up to 30 days), while the
+  margin guard keeps working on every tick.
 
 ## Three outcomes and the journal
 
@@ -617,7 +623,7 @@ are no toggles in either.
 | Ledger | Every accrual and position event as a row with filters and CSV, XLSX, JSON export |
 | Zone Ⅰ · The bot's market | The pill "trade: market" or "candidate: market", an honest empty state until the first cycle; market data of both exchanges, net spread by intervals, decomposition by legs, reference price (Binance), raw hourly data; a 30 day window equal to the rule's horizon |
 | Transaction costs · model | Editable items of the round trip (GMX fees, GMX slippage, gas, Hyperliquid fee, number of sides) at the bot's size; the net over the horizon is taken ready-made from the rule's evaluation |
-| Freshness stamp and polling | The LIVE pill blinks on the arrival of a snapshot, "STALE" after 15 minutes without data, the stamp "data as of UTC"; polling interval 1, 5 or 15 minutes; a refresh now button |
+| Freshness stamp and polling | The LIVE pill blinks on the arrival of a snapshot, "STALE" after 15 minutes without data, the stamp "data as of UTC"; polling interval 1, 5 or 15 minutes; clicking the pill refreshes the data now |
 | Overview | The bot card with a dot, a chip and a state line ("HUNTING ENTRY · bases observed in N of 684 h"), the "Automaton console" button (leads to the ticket) or "Stop the automaton" (two steps) |
 | Persistence | Automaton state, evaluation summary, positions with journals, base journals and history frames on disk; a restart resumes where it stopped, a corrupt state goes to quarantine |
 | Languages and theme | Russian and English dictionaries, dark and light theme; refusal codes are translated by the dictionaries, not by the main process |
