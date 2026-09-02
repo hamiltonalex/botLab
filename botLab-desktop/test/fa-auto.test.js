@@ -654,6 +654,34 @@ test("сводка оценки: ставка ног сведена ДВИЖКО
 // обещать прежнее окно. Тест держит обе стороны - число выводится отсюда, и снаружи его копий нет.
 // ─────────────────────────────────────────────────────────────────────────────
 
+test("ворота называют порог в часах и дату его достижения тем же счётом, что и отказ", () => {
+  // Интерфейс спрашивает «сколько ещё ждать», и ответ обязан прийти из ворот готовым: окно,
+  // покрытие и порог живут в тике, второй счёт снаружи разошёлся бы с ними на границе.
+  const need = 684; // 95% от 720: наименьшее k, при котором k / 720 >= 0.95
+  const based = (withBase) => market("PART", partlyBased({ P: 4000, bShort: 1e5, withBase }));
+  const t = run({ markets: [based(100)] });
+  assert.equal(t.why, "hist_no_base");
+  assert.equal(t.gate.covBestH, 100, "покрытых часов у лучшего рынка");
+  assert.equal(t.gate.covNeedH, need, "порог в часах");
+  assert.equal(t.gate.covMissingH, need - 100, "недостающих часов");
+  assert.equal(t.gate.covEtaMs, T + (need - 100) * 3600 * 1000, "дата: час наблюдения даёт один покрытый час");
+  // Порог в часах согласован с САМИМ предикатом ворот: need часов проходят, need - 1 нет.
+  const pass = run({ markets: [based(need)] });
+  assert.notEqual(pass.why, "hist_no_base", "ровно порог проходит ворота");
+  assert.equal(pass.gate.covMissingH, 0);
+  assert.equal(pass.gate.covEtaMs, null, "полное покрытие: ждать нечего, даты нет");
+  const fail = run({ markets: [based(need - 1)] });
+  assert.equal(fail.why, "hist_no_base", "на час меньше порога ворота не проходят");
+  assert.equal(fail.gate.covMissingH, 1);
+  assert.equal(fail.gate.covEtaMs, T + 3600 * 1000);
+  // Все рынки короче горизонта: покрытия нет ни у кого, и дата не выдумывается.
+  const short = run({ markets: [market("S", flat({ P: 4000, bShort: 1e5, hours: H - 1 }))] });
+  assert.equal(short.gate.covBestH, null);
+  assert.equal(short.gate.covMissingH, null);
+  assert.equal(short.gate.covEtaMs, null);
+  assert.equal(short.gate.covNeedH, need, "порог назван и без рынков: он свойство параметров, а не вселенной");
+});
+
 test("горизонт и окно панелей выводятся из движка тем же выражением, что и cfg тика", () => {
   assert.equal(autoHorizonH(), H, "по умолчанию горизонт это горизонт правила размера");
   assert.equal(autoViewWindowDays(), H / 24, "окно панелей это горизонт в сутках, и ничего больше");

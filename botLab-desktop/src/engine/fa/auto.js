@@ -469,6 +469,17 @@ function evalSummary({ markets, gates, curves, capitalUsd, sliceRefusal = null }
 //   foreignOpen   - в леджере есть открытая позиция, которую автомат не открывал;
 //   nominalSec    - номинальный интервал опроса, для порога перерыва.
 // ─────────────────────────────────────────────────────────────────────────────
+// Наименьшее число покрытых часов, при котором окно из `hours` часов проходит порог `min`. Сравнение
+// то же, что у ворот (`covered / hours` против `min`): порог в часах обязан совпадать с отказом на
+// границе, а `Math.ceil(min * hours)` на плавающей точке этого не гарантирует.
+function minCoveredHours(hours, min) {
+  if (!(hours > 0) || !Number.isFinite(min)) return null;
+  let k = Math.min(hours, Math.max(0, Math.ceil(min * hours)));
+  while (k > 0 && (k - 1) / hours >= min) k -= 1;
+  while (k < hours && k / hours < min) k += 1;
+  return k;
+}
+
 export function autoTick({
   now, bootAt = null, state = null, corrupt = false,
   markets = [], sources = null, costs = DEFAULT_COSTS,
@@ -566,6 +577,7 @@ export function autoTick({
   // состояние первых недель, и без числа он неотличим от поломки. Считается здесь, потому что
   // окно нарезано здесь; второй счёт снаружи разошёлся бы с воротами на первой же правке.
   let covBest = null;
+  let covBestH = null; // наблюдённых часов у рынка с лучшим покрытием: порог в часах меряется от него
   // Исход ворот ПО КАЖДОМУ рынку, для сводки последней оценки. Пер-рыночные отказы уезжают в
   // журнал общим списком и наружу режутся решающим кодом, поэтому рынок, отсеянный воротами, из
   // кривых правила пропадает целиком: без этой пометки его строка в сводке была бы пустой без
@@ -585,7 +597,7 @@ export function autoTick({
     // Сторона ноги GMX берётся у `legModel` леджера, а не выводится здесь по конфигурации: это
     // единственное место в проекте, которое знает разбор схемы на ноги.
     const cov = baseCoverage(win, legModel(m.strategy || "two", m.config).gmxSide);
-    if (covBest == null || cov.fraction > covBest) covBest = cov.fraction;
+    if (covBest == null || cov.fraction > covBest) { covBest = cov.fraction; covBestH = cov.covered; }
     if (cov.fraction < params.baseCoverageMin) {
       note("hist_no_base", { token: m.token, covered: cov.covered, hours: cov.hours, need: params.baseCoverageMin });
       gates.push({ code: "hist_no_base", coverage: cov.fraction });
@@ -627,9 +639,20 @@ export function autoTick({
   // ВОРОТА СНАБЖЕНИЯ ЧИСЛОМ, на КАЖДОМ исходе. Заведено для интерфейса фазы 6: правило показа
   // требует причину числами («покрытие 0.87 при требуемых 0.95»), а считать её второй раз снаружи
   // запрещено законом проекта. Ничего не решает и ни на одну ветку не влияет.
+  //
+  // ПОРОГ В ЧАСАХ И ДАТА ЕГО ДОСТИЖЕНИЯ, тем же счётом. Доля «1.5% при требуемых 95%» не отвечает на
+  // вопрос «сколько ещё ждать», и интерфейс не имеет права ответить на него сам: окно, покрытие и
+  // порог живут здесь. Порог в часах выводится из ТОГО ЖЕ предиката, что и отказ (`covered / hours`
+  // против `baseCoverageMin`), а не из округления произведения: иначе на границе они разошлись бы.
+  // Дата это ОЦЕНКА СНИЗУ: час наблюдения прибавляет ровно один покрытый час, быстрее набрать
+  // нельзя, а любой перерыв опроса сдвигает её вправо. Полное покрытие даёт `null`: ждать нечего.
+  const covNeedH = minCoveredHours(H, params.baseCoverageMin);
+  const covMissingH = covBestH == null ? null : Math.max(0, covNeedH - covBestH);
+  const covEtaMs = covMissingH == null || covMissingH === 0 ? null : now + covMissingH * HOUR_MS;
   const gate = Object.freeze({
     markets: (markets || []).length, usable: usable.length, held: heldGate,
     covBest, covNeed: params.baseCoverageMin, horizonH: H,
+    covBestH, covNeedH, covMissingH, covEtaMs,
   });
   const out = (kind, why, extra = null) => {
     st.lastRefusals = [...new Set(refusals.map((r) => r.code))];

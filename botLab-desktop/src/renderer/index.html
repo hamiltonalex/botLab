@@ -4792,10 +4792,17 @@ const FA_WARN_CODES = { hist_no_base:1, poll_gap:1, state_stale:1, margin_thin:1
 function faWarnHtml(code, a){
   const g = a && a.last && a.last.gate ? a.last.gate : null;
   const pair = (b, body) => '<b>' + ledgerEsc(b) + '</b> ' + ledgerEsc(body);
-  if(code === 'hist_no_base') return pair(t('fa.warn.histNoBaseB'), t('fa.warn.histNoBase', {
-    h: g && Number.isFinite(g.horizonH) ? g.horizonH : '-',
-    need: g && Number.isFinite(g.covNeed) ? fmtPctNS(g.covNeed, 0) : '-',
-    cov: g && Number.isFinite(g.covBest) ? fmtPctNS(g.covBest, 1) : '-' }));
+  if(code === 'hist_no_base'){
+    /* СКОЛЬКО ЖДАТЬ, ДАТОЙ. Доля покрытия не отвечает на этот вопрос, а считать дату здесь нельзя:
+       недостающие часы и дату приносят ворота движка готовыми (`covMissingH`, `covEtaMs`), и пока
+       их нет (все рынки короче горизонта), предложения про дату нет вовсе, а не прочерк в нём. */
+    const eta = g && Number.isFinite(g.covMissingH) && Number.isFinite(g.covEtaMs)
+      ? ' ' + ledgerEsc(t('fa.warn.histNoBaseEta', { missing:g.covMissingH, eta:faAutoDate(g.covEtaMs) })) : '';
+    return pair(t('fa.warn.histNoBaseB'), t('fa.warn.histNoBase', {
+      h: g && Number.isFinite(g.horizonH) ? g.horizonH : '-',
+      need: g && Number.isFinite(g.covNeed) ? fmtPctNS(g.covNeed, 0) : '-',
+      cov: g && Number.isFinite(g.covBest) ? fmtPctNS(g.covBest, 1) : '-' })) + eta;
+  }
   if(code === 'poll_gap')        return pair(t('fa.warn.pollGapB'), t('fa.warn.pollGap'));
   if(code === 'state_stale')     return pair(t('fa.warn.stateStaleB'), t('fa.warn.stateStale'));
   if(code === 'margin_thin')     return pair(t('fa.warn.marginThinB'), t('fa.warn.marginThin'));
@@ -5481,7 +5488,13 @@ function faOverviewAuto(){
   if(on && !a.positionId){
     const st = $('card-status-funding-arb');
     if(st){ st.removeAttribute('data-i18n');
-      st.textContent = t('home.fa.auto', { state:s.token, why:faCodeText(s.code) }); }
+      /* ПОРОГ ЧИСЛОМ И НА ОБЗОРЕ. Словесная причина «баз не хватает» не говорит, сколько ждать, и
+         с экрана читалась как «порог неясен». Часы приходят из ворот движка готовыми; здесь ничего
+         не считается, и на прочих кодах строка остаётся словесной. */
+      const g = a.last && a.last.gate ? a.last.gate : null;
+      st.textContent = (s.code === 'hist_no_base' && g && Number.isFinite(g.covBestH) && Number.isFinite(g.covNeedH))
+        ? t('home.fa.autoBases', { state:s.token, have:g.covBestH, need:g.covNeedH })
+        : t('home.fa.auto', { state:s.token, why:faCodeText(s.code) }); }
   }
 }
 function faDisarmPower(){

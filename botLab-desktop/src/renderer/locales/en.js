@@ -1549,6 +1549,7 @@ registerLocale('en', {
   // the expandable explanation under the console body
   'fa.warn.histNoBaseB': 'This is the normal state of the first weeks, not a failure.',
   'fa.warn.histNoBase': 'The entry rule requires the funding base to be observed in {need} of the hours of a {h} h window; the best coverage right now is {cov}. Bases accumulate forward, as polling goes on, so there is nothing to wait for here except time. The automaton will enter on its own once coverage reaches the threshold.',
+  'fa.warn.histNoBaseEta': '{missing} h are still missing. With uninterrupted polling the threshold is reached no earlier than {eta}: an hour of observation adds exactly one covered hour, and any gap moves the date later.',
   'fa.warn.pollGapB': 'The polling gap is already in the past.',
   'fa.warn.pollGap': 'The snapshot and the trailing window are not continuous on this tick, so the decision is deferred to the next one. An open trade is untouched: the margin guard runs on the same tick.',
   'fa.warn.stateStaleB': 'The automaton stayed silent longer than the decision expiry.',
@@ -1742,4 +1743,5 @@ registerLocale('en', {
   'help.fa-eval.t': 'Last evaluation by market',
   'help.fa-eval.b': '<p>One row per market of the universe: what the entry rule saw on it in the last DECISION CYCLE. The rank-1 market is the one the bot would enter if it entered - and it is the one shown in zone "Ⅰ · The bot\'s market".</p><ul><li><b>The evaluation is daily, not live.</b> The decision cadence is 24 hours: between cycles the universe is not re-evaluated at all, so the header carries two times - when it was taken and when it will be taken again.</li><li><b>Outcome</b> is either "funded" or a refusal code in words. A supply-gate refusal ("history too short", "too few bases") is the normal state of the first weeks, not a fault.</li><li><b>What binds the size</b> answers what the optimum ran into: free room on the venue, the order book, the dilution cap or the ticket cap.</li><li><b>Net over the horizon</b> is computed by the engine at the TRADED size and already net of the round-trip cost. The interface does not recompute it.</li><li><b>Base coverage</b> is the share of window hours for which the market\'s funding base is known: without it dilution cannot be computed and the market does not enter the evaluation.</li><li><b>Scheme rate</b> is the rate the market quotes for the legs at evaluation time, before dilution. Our share of it stands in its own column.</li></ul>',
   'home.fa.auto': '{state} · {why}',
+  'home.fa.autoBases': '{state} · bases observed in {have} of {need} h',
 });
