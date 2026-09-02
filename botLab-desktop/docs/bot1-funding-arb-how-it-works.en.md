@@ -37,9 +37,10 @@ hourly fee for it.
   To compute it the bot needs a **base**: how much money already stands on our side in each hour.
 - The bot observes the current hour's base itself on every poll, and backfills the window hours it
   has not seen from the indexer history under the side identity check: **the gate (684 hours of
-  720) passes on the first frame refresh**, within two hours of launch, not after four weeks. Then,
-  once a day, it picks the market and the size with the entry rule, holds the position, and once a
-  day asks the exit rule: hold, go to cash or switch.
+  720) passes while the frames warm up at launch**, usually within minutes and at the latest
+  within two hours, not after four weeks. Then, once a day, it picks the market and the size with
+  the entry rule, holds the position, and once a day, or earlier on an event, asks the exit rule:
+  hold, go to cash or switch.
 
 The bot does all of this by itself. There is one control: the automaton switch. The operator arms
 it and watches; there is no manual trade opening in the application.
@@ -77,8 +78,8 @@ Eight steps, one line each; the details are in the three parts below.
    not seen are backfilled from the indexer history on every frame refresh (once per two hours)
    under the side identity check; a live observation ranks above history and is never overwritten.
 4. **Gate.** On a 720 hour window the base must be known in at least 684 hours, live or backfilled.
-   Until then the market does not enter the decision; normally the gate passes on the first frame
-   refresh, within two hours of launch.
+   Until then the market does not enter the decision; normally the gate passes while the frames
+   warm up at launch, within minutes, at the latest within two hours.
 5. **Decision.** Once a day the entry rule computes, for every eligible market, the optimal size and
    the net over 720 hours, sifts markets by refusal codes and funds the rank 1 market.
 6. **Trade.** A paper position opens: two legs for the two-leg scheme (GMX and Hyperliquid), one for
@@ -204,13 +205,15 @@ by the owner, not measured: a threshold of 1.0 would carry the risk of never ent
 postpones the decision until it leaves the window), 0.95 tolerates 36 holes per window at the cost
 of understating gross by up to 5%.
 
-Timing. The backfill closes the window hours without an observation on the first frame refresh, that
-is no later than two hours after launch, provided the indexer has those hours; the 28.5 day wait is
-gone. Holes remain where the indexer did not return an hour or the identity failed, and the gate
+Timing. The backfill closes the window hours without an observation while the frames warm up at
+launch, within seconds, and repeats on every frame refresh, that is at the latest within two hours,
+provided the indexer has those hours; the 28.5 day wait is gone. Holes remain where the indexer did not return an hour or the identity failed, and the gate
 tolerates them up to 5% of the window (36 hours); beyond that an hour of observation adds exactly
 one covered hour, and the date on the console is a lower bound. **The first decision comes on the
-first tick after the gate passes, and the 24 hour cadence counts from it; so the first paper trade
-is possible within the first two hours after launch.** Observation runs with the automaton off too.
+first tick after the gate passes, and the 24 hour cadence counts from it; the first tick after
+launch is taken by the warm-up, so the first paper trade is possible on the second tick, one
+polling interval later.** Live run of 2026-09-02: an entry five minutes after the restart.
+Observation runs with the automaton off too.
 
 What is visible meanwhile. On the Overview the bot card shows the token and the line "HUNTING ENTRY
 · bases N of 684 h · live L, backfilled I". On the automaton console: the reason in words ("not
