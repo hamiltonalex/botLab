@@ -55,7 +55,17 @@ export const FA_SIZING_DEFAULTS = Object.freeze({
   // 30 суток пер-рыночный размер лучше единого на всех капиталах; при 90 сутках на малом капитале
   // уже хуже ($629 против $1124 при $10k); при 270 сутках отрицателен всюду. 720 часов это
   // единственный горизонт, на котором правило измерено и не проигрывает базе.
+  //
+  // ГОРИЗОНТ ВПЕРЁД: на столько часов амортизируется круг издержек. С 2026-09-02 это ОДНА из двух
+  // ролей прежнего числа; вторая роль, окно оценки назад, живёт в `windowH` ниже.
   horizonH: 720,
+  // ОКНО ОЦЕНКИ НАЗАД: столько последних часов ставок и баз берёт правило, чтобы оценить поток.
+  // Разнесено с горизонтом решением владельца 2026-09-02: одно число в двух ролях нельзя было
+  // проверить порознь. Брутто окна масштабируется множителем `horizonH / windowH` (`horizonScale`);
+  // при равных значениях множитель равен единице ПОБИТОВО, и шесть книг охраны стоят на этом.
+  // НИ ОДНО НЕРАВНОЕ СОЧЕТАНИЕ НЕ ЗАМЕРЕНО: 720 на 720 это единственная точка, где правило
+  // измерено, любое другое значение это допущение до замера.
+  windowH: 720,
 
   // ЗАМЕР цены потолка: `S <= B` снимает 14% головного числа ($20 831 против $24 297 при $100k).
   // Без него S*/B доходит до 367% (BERA), 193% (FET), 167% (RENDER), то есть оптимизатор
@@ -142,6 +152,7 @@ export const FA_BOOK_NODES_USD = Object.freeze([1000, 5000, 10000, 25000, 50000,
 export const FA_SIZING_REFUSALS = Object.freeze([
   "no_capital_cap", // потолок капитала не конечен: размеров не возвращается вовсе
   "horizon_missing", // горизонт удержания не назван
+  "window_missing", // окно оценки назад названо, но непригодно: молча подставлять горизонт нельзя
   "src_gmx_down", // markets/info недоступен: размер не считается НИ НА ОДНОМ рынке
   "src_hl_down", // metaAndAssetCtxs недоступен: то же для двуногих схем
   "no_base", // базы фандинга на рынке нет
@@ -430,6 +441,28 @@ export function costAtSize({ sizeUsd, costs = DEFAULT_COSTS, impact = null, isOn
   return base + (sizeUsd * extraBps) / 1e4;
 }
 
+// ОКНО ОЦЕНКИ В ЧАСАХ. Отсутствующее окно читается как равное горизонту, и это единственная
+// молчаливая подстановка модуля: она сохраняет прежнее поведение вызывающих, у которых окна не
+// было. Окно, названное непригодным числом, подстановки не получает: это отказ `window_missing`.
+export function windowHours(cfg = FA_SIZING_DEFAULTS) {
+  const w = cfg?.windowH;
+  return w === undefined || w === null ? cfg?.horizonH : w;
+}
+export function windowValid(cfg = FA_SIZING_DEFAULTS) {
+  const w = cfg?.windowH;
+  return w === undefined || w === null || (Number.isFinite(w) && w > 0);
+}
+
+// МНОЖИТЕЛЬ ГОРИЗОНТА. Брутто считается по окну назад (`windowH` часов) и амортизируется на
+// горизонт вперёд (`horizonH` часов): гросс окна умножается на `horizonH / windowH`. При равных
+// значениях единица, и умножение на единицу не двигает число ни на бит.
+export function horizonScale(cfg = FA_SIZING_DEFAULTS) {
+  const H = Number(cfg?.horizonH);
+  const W = Number(windowHours(cfg));
+  if (!(H > 0) || !(W > 0)) return 1;
+  return H === W ? 1 : H / W;
+}
+
 // Нетто на горизонте при размере S. Начисление считает ДВИЖОК (`paper.js` с флагом `dilute`), а не
 // этот модуль: своей арифметики начисления здесь нет ни строки, иначе правило имело бы вторую
 // реализацию и доказывало бы само себя.
@@ -461,13 +494,16 @@ export function netAtSize({ rows, config, strategy = "two", sizeUsd, costs = DEF
   // зарабатывает на GMX больше, чем портфель полного периметра ($36 998 против $33 778 при $200k).
   // То есть портфель полного периметра проигрывает на самой цели исследования, и режим обязан быть
   // достижим, а не считаться экзотикой.
-  const gross = cfg.gmxOnlyPerimeter ? gmxFundingUsd + gmxBorrowUsd : s.grossPnl;
+  // БРУТТО ОКНА ПЕРЕВОДИТСЯ НА ГОРИЗОНТ множителем `horizonH / windowH` (см. `horizonScale`): круг
+  // платится один раз и не масштабируется. Части ноги едут в тех же единицах, что и брутто.
+  const k = horizonScale(cfg);
+  const gross = (cfg.gmxOnlyPerimeter ? gmxFundingUsd + gmxBorrowUsd : s.grossPnl) * k;
   return {
     sizeUsd,
     net: gross - cost,
     gross,
     cost,
-    parts: { gmxFundingUsd, gmxBorrowUsd, hlUsd },
+    parts: { gmxFundingUsd: gmxFundingUsd * k, gmxBorrowUsd: gmxBorrowUsd * k, hlUsd: hlUsd * k },
     flowQuoted: s.flowQuoted,
     flowReceived: s.flowReceived,
     dilutionRetained: s.dilutionRetained,
@@ -556,6 +592,7 @@ function goldenRefine(evalNet, loLog, hiLog, iters) {
 export function bestSizeForMarket({ token, config, strategy = "two", rows, live, costs = DEFAULT_COSTS, impact = null, cfg = FA_SIZING_DEFAULTS, uniformSizeUsd = null }) {
   const c = { ...FA_SIZING_DEFAULTS, ...cfg };
   if (!Number.isFinite(c.horizonH) || c.horizonH <= 0) return refuse(token, config, "horizon_missing");
+  if (!windowValid(c)) return refuse(token, config, "window_missing");
   const gate = dataGate(live, c);
   if (gate) return refuse(token, config, gate);
   if (!rows || !rows.length) return refuse(token, config, "no_base");
@@ -773,6 +810,9 @@ export function sizeUniverse({ markets, costs = DEFAULT_COSTS, capitalTotal, cfg
   if (!Number.isFinite(c.horizonH) || c.horizonH <= 0) {
     return { alloc: new Map(), usedUsd: 0, netTotal: 0, curves: [], refusals: [{ token: null, refusal: "horizon_missing" }], cfg: c };
   }
+  if (!windowValid(c)) {
+    return { alloc: new Map(), usedUsd: 0, netTotal: 0, curves: [], refusals: [{ token: null, refusal: "window_missing" }], cfg: c };
+  }
   if (!Number.isFinite(capitalTotal) || capitalTotal <= 0) {
     return { alloc: new Map(), usedUsd: 0, netTotal: 0, curves: [], refusals: [{ token: null, refusal: "no_capital_cap" }], cfg: c };
   }
@@ -853,6 +893,7 @@ export function faSizingPreset(id) {
 const REFUSAL_TEXT = Object.freeze({
   no_capital_cap: "потолок капитала не задан",
   horizon_missing: "горизонт удержания не назван",
+  window_missing: "окно оценки не названо",
   src_gmx_down: "источник GMX недоступен",
   src_hl_down: "источник Hyperliquid недоступен",
   no_base: "базы фандинга нет",

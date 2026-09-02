@@ -26,6 +26,7 @@ import { FA_AUTO_REFUSALS, FA_AUTO_OUTCOMES } from "../src/engine/fa/auto.js";
 import { FA_SIZING_REFUSALS, FA_SIZING_BINDINGS } from "../src/engine/fa/sizing.js";
 import { FA_EXIT_REASONS, FA_EXIT_ACTIONS } from "../src/engine/fa/exit.js";
 import { FA_GAP_CAUSES } from "../src/engine/fa/record.js";
+import { FA_DECISION_TRIGGERS } from "../src/engine/fa/events.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const R = (p) => readFileSync(join(HERE, "..", "src", "renderer", p), "utf8");
@@ -80,6 +81,27 @@ test("fa-ui: каждое связывающее ограничение назв
 test("fa-ui: каждая причина перерыва опроса названа словами, и лишних нет", () => {
   assert.deepEqual([...GAP_TEXT.keys()].sort(), FA_GAP_CAUSES.slice().sort(),
     "FA_GAP_CAUSE_TEXT обязан совпадать с FA_GAP_CAUSES в обе стороны");
+});
+
+test("fa-ui: каждый повод решения назван словами, и лишних поводов нет", () => {
+  // Решение владельца 2026-09-02: между кадансами правило зовётся по событию, и повод каждого
+  // решения виден в журнале решений. Реестр поводов `FA_DECISION_TRIGGERS` и таблица интерфейса
+  // обязаны совпадать в обе стороны, как коды и связывающие.
+  const TRIG_TEXT = tableOf("FA_TRIGGER_TEXT");
+  assert.deepEqual([...TRIG_TEXT.keys()].sort(), FA_DECISION_TRIGGERS.slice().sort(),
+    "FA_TRIGGER_TEXT обязан совпадать с FA_DECISION_TRIGGERS в обе стороны");
+  const { ru, en } = loadDicts();
+  const camel = (c) => c.split("_").map((w, i) => (i === 0 ? w : w[0].toUpperCase() + w.slice(1))).join("");
+  for (const [code, key] of TRIG_TEXT) {
+    assert.equal(key, "fa.trig." + camel(code), `ключ повода ${code}`);
+    assert.ok(key in ru && key in en, `нет строки ${key}`);
+  }
+  // Окно назад и горизонт вперёд стоят двумя строками, пороги событий в тикете, повод в журнале.
+  for (const id of ["faAutoGHorizon", "faAutoGFwd", "faAutoTktEvents"]) assert.ok(HTML.includes(`id="${id}"`), `нет узла ${id}`);
+  assert.ok(HTML.includes("faTriggerText(r.trigger)"), "журнал решений не показывает повод");
+  for (const k of ["fa.auto.tktEvents", "fa.auto.cadenceNote"]) {
+    assert.ok(/событи/i.test(ru[k]) && /event/i.test(en[k]), `${k}: тикет и подпись каданса обязаны назвать события`);
+  }
 });
 
 test("fa-ui: каждое решение цикла названо словами, и лишних нет", () => {

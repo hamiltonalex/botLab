@@ -36,7 +36,7 @@ import {
   allocateCapital, bestSizeForMarket, concaveHull, costAtSize, explainSize, faSizingPreset,
   bookFillBps, bookSlippageNodes, flowWeightedBase, hasFunding, interpBps, logGrid, netAtSize,
   roomCeiling, sizeCeiling,
-  sizeUniverse, uniformSizeFor,
+  sizeUniverse, uniformSizeFor, horizonScale, windowHours, windowValid,
 } from "../src/engine/fa/sizing.js";
 import { hour, row } from "./fa-helpers.mjs";
 
@@ -479,6 +479,7 @@ test("каждый код отказа ДОСТИЖИМ, и ни одна вет
   const take = (d) => { if (d && d.refusal) seen.add(d.refusal); };
 
   take(bestSizeForMarket({ ...marketOf(rows), cfg: { ...FA_SIZING_DEFAULTS, horizonH: NaN } }));
+  take(bestSizeForMarket({ ...marketOf(rows), cfg: { ...FA_SIZING_DEFAULTS, windowH: NaN } }));
   take(bestSizeForMarket({ ...marketOf(rows, { bOwnUsd: 0 }) }));
   take(bestSizeForMarket({ ...marketOf(rows, { baseAgeSec: 999 }) }));
   take(bestSizeForMarket({ ...marketOf(rows, { baseIdentityOk: false }) }));
@@ -495,6 +496,7 @@ test("каждый код отказа ДОСТИЖИМ, и ни одна вет
   }));
   for (const r of sizeUniverse({ markets: [marketOf(rows)], capitalTotal: Infinity }).refusals) seen.add(r.refusal);
   for (const r of sizeUniverse({ markets: [marketOf(rows)], capitalTotal: 1e4, cfg: { ...FA_SIZING_DEFAULTS, horizonH: 0 } }).refusals) seen.add(r.refusal);
+  for (const r of sizeUniverse({ markets: [marketOf(rows)], capitalTotal: 1e4, cfg: { ...FA_SIZING_DEFAULTS, windowH: 0 } }).refusals) seen.add(r.refusal);
   for (const r of sizeUniverse({ markets: [marketOf(rows)], capitalTotal: 1e4, sources: { gmxDown: true } }).refusals) seen.add(r.refusal);
   for (const r of sizeUniverse({ markets: [marketOf(rows)], capitalTotal: 1e4, sources: { hlDown: true } }).refusals) seen.add(r.refusal);
   // Капитала хватает ровно на один рынок из двух: второй обязан назвать причину, а не исчезнуть.
@@ -631,4 +633,40 @@ test("APT, BTC и ETH: размер и нетто на блоке 720 часов
     near(d.dilutionRetained, w.keep, 1e-5, `${token}: доля удержания потока`);
     near(d.costUsd, roundTripCost(DEFAULT_COSTS, w.size, false), 1e-9, `${token}: круг при торгуемом размере`);
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ОКНО ОЦЕНКИ НАЗАД И ГОРИЗОНТ ВПЕРЁД (решение владельца 2026-09-02)
+//
+// Одно число в двух ролях разнесено на два: по окну режется кадр и считается поток, на горизонт
+// амортизируется круг. Брутто окна умножается на `horizonH / windowH`. При равных значениях ничего
+// не двигается ни на бит, и на этом стоят шесть книг охраны.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("окно и горизонт: при равных значениях число не двигается ни на бит, при разных брутто масштабируется, круг нет", () => {
+  const rows = flatMarket({ P: 16438, bShort: 1e6 });
+  const at = (cfg) => netAtSize({ rows, config: "A", strategy: "two", sizeUsd: 2000, cfg });
+  const base = at({ ...FA_SIZING_DEFAULTS });
+  assert.equal(FA_SIZING_DEFAULTS.windowH, FA_SIZING_DEFAULTS.horizonH, "по умолчанию равны: единственное замеренное сочетание");
+  assert.equal(horizonScale(FA_SIZING_DEFAULTS), 1);
+  assert.equal(at({ ...FA_SIZING_DEFAULTS, windowH: undefined }).gross, base.gross, "без окна: окно равно горизонту, множитель единица");
+  assert.equal(at({ ...FA_SIZING_DEFAULTS, windowH: FA_SIZING_DEFAULTS.horizonH }).net, base.net, "явное равное окно: побитово то же");
+  const dbl = at({ ...FA_SIZING_DEFAULTS, horizonH: 2 * FA_SIZING_DEFAULTS.windowH });
+  assert.ok(Math.abs(dbl.gross - 2 * base.gross) < 1e-9, "вдвое длиннее горизонт вперёд: вдвое больше брутто окна");
+  assert.equal(dbl.cost, base.cost, "круг не масштабируется: платится один раз");
+  assert.ok(Math.abs(dbl.net - (2 * base.gross - base.cost)) < 1e-9);
+  assert.ok(Math.abs(dbl.parts.gmxFundingUsd - 2 * base.parts.gmxFundingUsd) < 1e-9, "части ноги в тех же единицах, что и брутто");
+  assert.equal(windowHours({ horizonH: 5 }), 5);
+  assert.equal(windowHours({ horizonH: 5, windowH: 3 }), 3);
+  assert.equal(windowValid({ windowH: 0 }), false);
+  assert.equal(windowValid({ windowH: NaN }), false);
+  assert.equal(windowValid({}), true);
+  assert.equal(horizonScale({ horizonH: 0, windowH: 720 }), 1, "непригодный горизонт масштаба не даёт: отказ выше по стеку");
+  // Правило по рынку с явным окном 720 даёт побитово то же, что по умолчанию.
+  const a = bestSizeForMarket({ ...marketOf(rows) });
+  const b = bestSizeForMarket({ ...marketOf(rows), cfg: { ...FA_SIZING_DEFAULTS, windowH: 720 } });
+  assert.equal(a.netUsd, b.netUsd);
+  assert.equal(a.sizeUsd, b.sizeUsd);
+  // Пресеты несут оба числа: окно нельзя выводить из горизонта молча.
+  for (const p of Object.values(FA_SIZING_PRESETS)) assert.equal(p.cfg.windowH, p.cfg.horizonH, `${p.id}: окно и горизонт пресета`);
 });

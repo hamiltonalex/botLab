@@ -110,7 +110,8 @@
 import { DEFAULT_COSTS } from "../costs.js";
 import { annualizeRow } from "../math.js";
 import { legModel } from "../paper.js";
-import { FA_SIZING_DEFAULTS, FA_SIZING_REFUSALS, faSizingPreset, sizeUniverse } from "./sizing.js";
+import { FA_SIZING_DEFAULTS, FA_SIZING_REFUSALS, faSizingPreset, sizeUniverse, windowHours } from "./sizing.js";
+import { FA_EVENT_DEFAULTS, decisionContext, detectDecisionEvents } from "./events.js";
 import { FA_EXIT_DEFAULTS, FA_EXIT_REASONS, bestAlternative, decideExit, shouldDecideNow } from "./exit.js";
 import { FA_MARGIN_DEFAULTS, FA_MARGIN_REFUSALS, marginGuard, positionLegs } from "./margin.js";
 import { baseCoverage } from "./bases.js";
@@ -163,11 +164,21 @@ export function defaultAutoParams() {
     // правило выхода в кэш (`gross_negative`) и в перекладку, а каждое такое решение стоит круга.
     // Ворота обязаны быть одни и те же, поэтому гейт стоит на обеих ветках.
     baseCoverageMin: 0.95,
+    // СОБЫТИЯ ВНЕОЧЕРЕДНОГО РЕШЕНИЯ (решение владельца 2026-09-02, `events.js`). ДОПУЩЕНИЯ, все три:
+    // цена внеочередных решений в кругах не замерена, снимать её по живой записи `fa-dec` (повод `tr`).
+    eventNegHours: FA_EVENT_DEFAULTS.eventNegHours,
+    eventPotDropFrac: FA_EVENT_DEFAULTS.eventPotDropFrac,
+    eventRoomDropFrac: FA_EVENT_DEFAULTS.eventRoomDropFrac,
   };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ГОРИЗОНТ, КОТОРЫМ АВТОМАТ ДЕЙСТВИТЕЛЬНО РАБОТАЕТ, И ОКНО ПАНЕЛЕЙ, ВЫВЕДЕННОЕ ИЗ НЕГО.
+// ГОРИЗОНТ И ОКНО, КОТОРЫМИ АВТОМАТ ДЕЙСТВИТЕЛЬНО РАБОТАЕТ, И ОКНО ПАНЕЛЕЙ, ВЫВЕДЕННОЕ ИЗ НИХ.
+//
+// С 2026-09-02 это ДВА числа (`sizing.js`): `windowH` это окно оценки назад, по нему режется кадр,
+// считается покрытие баз и ворота, и его же показывают панели; `horizonH` это горизонт амортизации
+// круга вперёд, по нему масштабируется брутто. По умолчанию оба 720, и только это сочетание
+// замерено.
 //
 // ЗАЧЕМ ЭТИ ДВЕ СТРОКИ СУЩЕСТВУЮТ. Число 720 (и его пересчёт в 30 суток) было ВПИСАНО РУКАМИ в
 // пяти местах снаружи движка: потолок окна панелей в главном процессе, начальное значение в
@@ -185,12 +196,21 @@ export function autoHorizonH(state = null) {
   return Number.isFinite(h) && h > 0 ? h : FA_SIZING_DEFAULTS.horizonH;
 }
 
+// Окно оценки назад в часах, тем же выражением, что и `cfg` тика. Пресет без окна читается как
+// окно, равное горизонту (правило `windowHours`).
+export function autoWindowH(state = null) {
+  const params = state && state.params ? { ...defaultAutoParams(), ...state.params } : defaultAutoParams();
+  const preset = faSizingPreset(params.presetId) || {};
+  const w = windowHours({ ...FA_SIZING_DEFAULTS, ...preset });
+  return Number.isFinite(w) && w > 0 ? w : FA_SIZING_DEFAULTS.windowH;
+}
+
 // Окно панелей рынка в СУТКАХ. Не выбор оператора и не второе число: панели обязаны показывать те
-// же часы, на которых бот принимает решение, поэтому окно это горизонт, делённый на 24, и ничего
-// больше. Дробный результат не округляется: горизонт, не кратный суткам, обязан быть виден таким,
-// какой он есть, а не подогнанным под красивую подпись.
+// же часы, на которых бот принимает решение, поэтому окно это окно оценки назад, делённое на 24, и
+// ничего больше. Дробный результат не округляется: окно, не кратное суткам, обязано быть видно
+// таким, какое оно есть, а не подогнанным под красивую подпись.
 export function autoViewWindowDays(state = null) {
-  return autoHorizonH(state) / 24;
+  return autoWindowH(state) / 24;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -298,6 +318,9 @@ export function ensureAutoState(st) {
   if (s.positionId === undefined) s.positionId = null;
   if (s.lastTickAt === undefined) s.lastTickAt = null;
   if (s.lastDecisionAt === undefined) s.lastDecisionAt = null;
+  // СНИМОК ПРОШЛОГО РЕШЕНИЯ для событий внеочередного решения (`events.js`). Переживает перезапуск
+  // вместе с меткой решения: событие меряется от решения, а не от старта процесса.
+  if (s.lastDecisionCtx === undefined) s.lastDecisionCtx = null;
   if (s.lastRefusals === undefined || !Array.isArray(s.lastRefusals)) s.lastRefusals = [];
   if (!s.uptime || typeof s.uptime !== "object") {
     s.uptime = { ticks: 0, firstAt: null, lastAt: null, maxGapMs: 0, gaps: [], nominalSec: null };
@@ -517,6 +540,9 @@ export function autoTick({
       : (preset.ticketCapUsd ?? FA_SIZING_DEFAULTS.ticketCapUsd),
   };
   const H = cfg.horizonH;
+  // ОКНО ОЦЕНКИ НАЗАД. По нему режется кадр и считаются ворота; горизонт `H` вперёд остаётся у
+  // правил как масштаб брутто и едет в `gate` для интерфейса и записи.
+  const W = windowHours(cfg);
 
   // ── ШАГ 1. НЕПРЕРЫВНОСТЬ. Считается ДО всего остального и независимо от тумблера: перерыв это
   // свойство опроса, а не свойство решения, и оценивать его задним числом будет нечем.
@@ -590,14 +616,14 @@ export function autoTick({
   const gates = [];
   for (const m of markets || []) {
     const rows = m?.rows || [];
-    if (rows.length < H) {
+    if (rows.length < W) {
       anyShort = true;
-      note("hist_short", { token: m?.token ?? null, rows: rows.length, need: H });
+      note("hist_short", { token: m?.token ?? null, rows: rows.length, need: W });
       gates.push({ code: "hist_short", coverage: null });
       if (isHeld(m?.token ?? null)) heldGate = "hist_short";
       continue;
     }
-    const win = rows.slice(rows.length - H);
+    const win = rows.slice(rows.length - W);
     // Сторона ноги GMX берётся у `legModel` леджера, а не выводится здесь по конфигурации: это
     // единственное место в проекте, которое знает разбор схемы на ноги.
     const cov = baseCoverage(win, legModel(m.strategy || "two", m.config).gmxSide);
@@ -640,10 +666,22 @@ export function autoTick({
     if (margin.code) add(margin.code, { where: "position", roomFrac: margin.roomFrac });
   }
 
-  // ── ШАГ 5. КАДАНС. Сторож залога его перебивает: его отказ невосстановим следующим решением.
+  // ── ШАГ 5. КАДАНС И СОБЫТИЯ. Сторож залога перебивает каданс: его отказ невосстановим следующим
+  // решением. СОБЫТИЕ (`events.js`) тоже перебивает каданс, но двигает только момент решения:
+  // правило и полоса гистерезиса те же, и на неизменившихся данных перекладки от события не будет.
+  // События меряются от снимка прошлого решения, поэтому одно условие не зовёт правило тик за тиком.
   const marginForces = !!(position && margin && margin.code);
+  const heldMarket = position ? usable.find((m) => m.token === position.token) || null : null;
+  const decisionEvents = detectDecisionEvents({
+    position, rows: heldMarket ? heldMarket.rows : null, market: heldMarket, margin, ctx: st.lastDecisionCtx, params,
+  });
+  for (const e of decisionEvents) events.push({ kind: "event", ...e });
+  const eventForces = decisionEvents.length > 0;
   const cadenceOk = shouldDecideNow(st.lastDecisionAt, now, params.cadenceH);
-  if (!cadenceOk && !marginForces) add("cadence_wait");
+  if (!cadenceOk && !marginForces && !eventForces) add("cadence_wait");
+  // ПОВОД РЕШЕНИЯ, для журнала и записи: первое из событий или каданс. Без решения повода нет.
+  // Закрытие по сторожу поводом не считается: это блокирующий отказ, правила при нём не зовутся.
+  const trigger = eventForces ? decisionEvents[0].code : cadenceOk ? "cadence" : null;
 
   // ── РЕШЕНИЕ. Блокирующий код автомата решает раньше любого правила.
   const decider = precedenceDecider(blocking);
@@ -660,12 +698,12 @@ export function autoTick({
   // индексатора (решение владельца 2026-09-02) закрывает недостающие часы раньше даты, на ближайшем
   // обновлении кадра, если у индексатора эти часы есть; сколько их закрылось, видно по разбивке
   // `covLiveH` / `covIndexerH` / `covUnknownH`. Порог взят: `covMissingH` равен 0 и даты нет.
-  const covNeedH = minCoveredHours(H, params.baseCoverageMin);
+  const covNeedH = minCoveredHours(W, params.baseCoverageMin);
   const covMissingH = covBestH == null ? null : Math.max(0, covNeedH - covBestH);
   const covEtaMs = covMissingH == null || covMissingH === 0 ? null : now + covMissingH * HOUR_MS;
   const gate = Object.freeze({
     markets: (markets || []).length, usable: usable.length, held: heldGate,
-    covBest, covNeed: params.baseCoverageMin, horizonH: H,
+    covBest, covNeed: params.baseCoverageMin, horizonH: H, windowH: W,
     covBestH, covNeedH, covMissingH, covEtaMs,
     covLiveH: covBestSplit ? covBestSplit.live : null,
     covIndexerH: covBestSplit ? covBestSplit.indexer : null,
@@ -673,8 +711,15 @@ export function autoTick({
   });
   const out = (kind, why, extra = null) => {
     st.lastRefusals = [...new Set(refusals.map((r) => r.code))];
-    return { kind, why, refusals, events, state: st, margin, gate, decided: false, intent: null, universe: null, exit: null, window: null, evalMarkets: null, params, cfg, ...(extra || {}) };
+    return {
+      kind, why, refusals, events, state: st, margin, gate, decided: false, intent: null, universe: null, exit: null,
+      window: null, evalMarkets: null, params, cfg, trigger: null, decisionEvents, ...(extra || {}),
+    };
   };
+  // Снимок для событий: рынок, который будет удерживаться ПОСЛЕ исполнения намерения.
+  const ctxOf = (m, { token, config, sizeUsd, roomFrac }) => decisionContext({
+    token, strategy: m?.strategy || "two", config: config ?? null, sizeUsd, rows: m?.rows ?? null, market: m, roomFrac,
+  });
 
   if (decider) {
     // ТОНКИЙ ЗАПАС НА ОТКРЫТОЙ СДЕЛКЕ ЭТО НЕ «НИЧЕГО НЕ ДЕЛАЕМ», А ТРЕБОВАНИЕ ЗАКРЫТИЯ: отказ
@@ -709,10 +754,12 @@ export function autoTick({
       markets: usable, capitalAvailableUsd: params.capitalUsd, costs, cfg, sources,
     });
     st.lastDecisionAt = now;
+    // Снимок по умолчанию это удержание; ветки закрытия и перекладки заменяют его ниже.
+    st.lastDecisionCtx = ctxOf(held, { token: position.token, config: position.config, sizeUsd: position.sizeUsd, roomFrac: margin?.roomFrac });
     // Вселенная для записи собирается ИЗ ОТВЕТА ПРАВИЛА ВЫХОДА, а не считается второй раз: оно уже
     // позвало правило входа по всем рынкам, и второй вызов дал бы другие кривые тем же данным.
     const base = {
-      decided: true, exit: ex, universe: { curves: ex.curves, refusals: ex.refusals, cfg: ex.cfg }, window: windowOf(held),
+      decided: true, trigger, exit: ex, universe: { curves: ex.curves, refusals: ex.refusals, cfg: ex.cfg }, window: windowOf(held),
       // Правило выхода, отложившее решение (`defer`), кривых не возвращает ВООБЩЕ, и своего списка
       // отказов у него в этом случае нет: причину оно называет одним полем `reason`. Она и едет в
       // сводку как отказ всего среза - в отличие от прежней подстановки, это код САМОГО правила.
@@ -722,14 +769,19 @@ export function autoTick({
       }),
     };
     for (const r of ex.refusals || []) note(r.refusal, { token: r.token, from: "sizing" });
-    if (ex.action === "close") return out("close", ex.reason, { ...base, intent: closeIntent(position, ex.reason) });
+    if (ex.action === "close") {
+      st.lastDecisionCtx = null; // сделки не будет: событиям не от чего меряться
+      return out("close", ex.reason, { ...base, intent: closeIntent(position, ex.reason) });
+    }
     if (ex.action === "switch") {
       const guard = entryGuard(ex.best, byToken.get(ex.best.token), params);
       if (guard.code) {
         add(guard.code, { where: "candidate", token: ex.best.token, roomFrac: guard.roomFrac });
         return out("none", guard.code, { ...base, margin: guard });
       }
-      return out("switch", ex.reason, { ...base, margin: guard, intent: switchIntent(position, ex.best, byToken.get(ex.best.token), params, ex.reason) });
+      const next = byToken.get(ex.best.token);
+      st.lastDecisionCtx = ctxOf(next, { token: ex.best.token, config: ex.best.config, sizeUsd: ex.best.sizeUsd, roomFrac: guard.roomFrac });
+      return out("switch", ex.reason, { ...base, margin: guard, intent: switchIntent(position, ex.best, next, params, ex.reason) });
     }
     return out("none", ex.reason, base);
   }
@@ -737,8 +789,9 @@ export function autoTick({
   // Слот пуст: правило ВХОДА целиком, распределитель зовётся своей единственной точкой входа.
   const uni = sizeUniverse({ markets: usable, costs, capitalTotal: params.capitalUsd, cfg, sources });
   st.lastDecisionAt = now;
+  st.lastDecisionCtx = null; // пустой слот: снимок появится вместе со сделкой
   const base = {
-    decided: true, universe: uni, window: windowOf(usable[0]),
+    decided: true, trigger, universe: uni, window: windowOf(usable[0]),
     evalMarkets: evalSummary({
       markets, gates, curves: uni.curves, capitalUsd: params.capitalUsd,
       sliceRefusal: sliceRefusalOf(uni.refusals),
@@ -756,7 +809,9 @@ export function autoTick({
     add(guard.code, { where: "candidate", token: best.token, roomFrac: guard.roomFrac });
     return out("none", guard.code, { ...base, margin: guard });
   }
-  return out("open", "funded", { ...base, margin: guard, intent: openIntent(best, byToken.get(best.token), params) });
+  const entered = byToken.get(best.token);
+  st.lastDecisionCtx = ctxOf(entered, { token: best.token, config: best.config, sizeUsd: best.sizeUsd, roomFrac: guard.roomFrac });
+  return out("open", "funded", { ...base, margin: guard, intent: openIntent(best, entered, params) });
 }
 
 // Сторож залога для КАНДИДАТА на вход. Гипотетическая позиция стоит по текущей цене, поэтому цена
@@ -801,15 +856,18 @@ export function explainAuto(tick) {
   // разошлась бы с оригиналом на первой правке.
   const text = REFUSAL_TEXT[tick.why];
   const why = text ? `${text} (${tick.why})` : tick.why;
+  // Повод внеочередного решения печатается рядом с исходом: решение по событию и решение по
+  // кадансу это разные события ленты, и в логе они обязаны различаться.
+  const trig = tick.decided && tick.trigger && tick.trigger !== "cadence" ? ` [повод: ${tick.trigger}]` : "";
   if (tick.kind === "open") {
     const i = tick.intent;
-    return `ВХОД ${i.token}/${i.config} $${i.gotUsd.toFixed(0)} из заявленных $${i.wantUsd.toFixed(0)}, нетто $${i.netUsd.toFixed(2)} (${tick.why})`;
+    return `ВХОД ${i.token}/${i.config} $${i.gotUsd.toFixed(0)} из заявленных $${i.wantUsd.toFixed(0)}, нетто $${i.netUsd.toFixed(2)} (${tick.why})${trig}`;
   }
-  if (tick.kind === "close") return `ВЫХОД ${tick.intent.token}: ${why}`;
+  if (tick.kind === "close") return `ВЫХОД ${tick.intent.token}: ${why}${trig}`;
   if (tick.kind === "switch") {
     const i = tick.intent;
-    return `ПЕРЕКЛАДКА ${i.closeToken} в ${i.token}/${i.config} $${i.gotUsd.toFixed(0)}: ${why}`;
+    return `ПЕРЕКЛАДКА ${i.closeToken} в ${i.token}/${i.config} $${i.gotUsd.toFixed(0)}: ${why}${trig}`;
   }
   const hidden = [...new Set((tick.refusals || []).map((r) => r.code))].filter((c) => c !== tick.why);
-  return `без действия: ${why}${hidden.length ? `; тише этого: ${hidden.join(", ")}` : ""}`;
+  return `без действия: ${why}${hidden.length ? `; тише этого: ${hidden.join(", ")}` : ""}${trig}`;
 }

@@ -320,7 +320,7 @@
 // ботов пересекаются по пустому множеству, и это стережёт тест-ратчет, а не обещание.
 
 import { DEFAULT_COSTS } from "../costs.js";
-import { FA_SIZING_DEFAULTS, netAtSize, sizeUniverse } from "./sizing.js";
+import { FA_SIZING_DEFAULTS, netAtSize, sizeUniverse, windowHours, windowValid } from "./sizing.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // НАСТРОЙКИ. У критерия свободных параметров НЕТ вовсе: он собран из чисел правила входа и нуля.
@@ -370,6 +370,7 @@ export const FA_EXIT_REASONS = Object.freeze([
   "src_gmx_down", // источник GMX недоступен: альтернатив не видно НИ ОДНОЙ
   "src_hl_down", // источник Hyperliquid недоступен, то же для двуногих схем
   "horizon_missing", // горизонт не назван
+  "window_missing", // окно оценки назад названо непригодным числом
 ]);
 
 const REASON_TEXT = Object.freeze({
@@ -381,6 +382,7 @@ const REASON_TEXT = Object.freeze({
   src_gmx_down: "источник GMX недоступен",
   src_hl_down: "источник Hyperliquid недоступен",
   horizon_missing: "горизонт удержания не назван",
+  window_missing: "окно оценки не названо",
 });
 
 const defer = (reason, extra = {}) => ({
@@ -426,11 +428,13 @@ export function shouldDecideNow(lastAtMs, nowMs, intervalH = FA_EXIT_DEFAULTS.de
 export function holdGross({ position, rows, costs = DEFAULT_COSTS, cfg = FA_SIZING_DEFAULTS }) {
   const c = { ...FA_SIZING_DEFAULTS, ...cfg };
   if (!position || !(position.sizeUsd > 0)) return null;
-  if (!rows || rows.length < c.horizonH) return null;
-  // Берётся ПОСЛЕДНИЙ horizonH часов. Более длинный трейлинг дал бы брутто в других единицах, чем
-  // нетто альтернативы, а сравнение разных единиц это и есть тот дефект, ради которого горизонт у
-  // системы один.
-  const seg = rows.slice(rows.length - c.horizonH);
+  const W = windowHours(c);
+  if (!(W > 0) || !rows || rows.length < W) return null;
+  // Берутся ПОСЛЕДНИЕ `windowH` часов, окно оценки назад. Более длинный трейлинг дал бы брутто в
+  // других единицах, чем нетто альтернативы, а сравнение разных единиц это и есть тот дефект, ради
+  // которого окно у системы одно. На горизонт вперёд брутто переводит `netAtSize` тем же
+  // множителем `horizonH / windowH`, что и у альтернатив: единицы совпадают по построению.
+  const seg = rows.slice(rows.length - W);
   const r = netAtSize({
     rows: seg, config: position.config, strategy: position.strategy || "two",
     sizeUsd: position.sizeUsd, costs, impact: null, cfg: c, token: position.token,
@@ -475,13 +479,14 @@ export function decideExit({
 }) {
   const c = { ...FA_SIZING_DEFAULTS, ...cfg };
   if (!Number.isFinite(c.horizonH) || c.horizonH <= 0) return defer("horizon_missing");
+  if (!windowValid(c)) return defer("window_missing");
   if (!position || !(position.sizeUsd > 0)) return defer("no_position");
   // ОТКАЗ ИСТОЧНИКА ОСТАНАВЛИВАЕТ РЕШЕНИЕ ЦЕЛИКОМ, а не только ветку перекладки. Без источника
   // альтернатив не видно НИ ОДНОЙ, и «альтернатив нет» превратилось бы в «держим», то есть отказ
   // снабжения выглядел бы как вывод правила.
   if (sources && sources.gmxDown) return defer("src_gmx_down");
   if (sources && sources.hlDown) return defer("src_hl_down");
-  if (!rows || rows.length < c.horizonH) return defer("short_history");
+  if (!rows || rows.length < windowHours(c)) return defer("short_history");
 
   const holdGrossUsd = holdGross({ position, rows, costs, cfg: c });
   if (!Number.isFinite(holdGrossUsd)) return defer("short_history");

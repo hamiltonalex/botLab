@@ -123,7 +123,10 @@ const FA_LAST_REFUSALS_CAP = 8;
 // ДВИЖОК (`autoViewWindowDays`) из того же выражения, каким тик собирает свой `cfg`, а горизонт
 // уезжает на экран рядом с окном, чтобы подписи не хранили своей копии.
 const faViewWindowDays = () => faauto.autoViewWindowDays(state.auto.engine);
+// ДВА ЧИСЛА С 2026-09-02: окно оценки назад (`faWindowH`, по нему режется кадр, считаются ворота и
+// долив баз, его показывают панели) и горизонт амортизации вперёд (`faHorizonH`, масштаб брутто).
 const faHorizonH = () => faauto.autoHorizonH(state.auto.engine);
+const faWindowH = () => faauto.autoWindowH(state.auto.engine);
 // Anti-FOUC window background per theme - must equal each theme's --bg in the renderer CSS.
 const THEME_BG = { dark: "#07090d", light: "#eef1f6" };
 const uiTheme = () => (state.settings.ui && state.settings.ui.theme === "light" ? "light" : "dark");
@@ -531,7 +534,7 @@ function faApplyBases(cacheKey, rows) {
 // кэшируется (идиома аудита D7): следующее обновление кадра попробует снова.
 async function faBackfillBases(cacheKey, inst, rows) {
   if (!rows || !rows.length || !inst) return rows;
-  const win = baseBackfillWindow(rows, { nowHour: nowHourTs(), horizonH: faHorizonH() });
+  const win = baseBackfillWindow(rows, { nowHour: nowHourTs(), horizonH: faWindowH() });
   if (!win) return rows;
   let hist;
   try {
@@ -880,6 +883,10 @@ async function faAutoStep(sources) {
       })),
     } : null,
     gate: tick.gate || null,
+    // ПОВОД РЕШЕНИЯ и события тика: каданс, сторож или событие (`events.js`). Интерфейс показывает
+    // повод в журнале решений, а здесь он нужен, чтобы лог и пульт говорили одно.
+    trigger: tick.trigger ?? null,
+    events: (tick.decisionEvents || []).map((e) => ({ ...e })),
   };
   // СВОДКА ОЦЕНКИ ПЕРЕЖИВАЕТ ТИКИ БЕЗ РЕШЕНИЯ. Между решениями `tick.evalMarkets` пуст (каданс 24 ч),
   // и класть пустоту поверх последней снятой оценки значило бы гасить единственный честный ответ на
@@ -900,7 +907,7 @@ async function faAutoStep(sources) {
     faAppendRecord("dec", nowMs, buildFaDecisionRecord({
       t: nowMs, source: "live", ageSec: gmxAgeSec, capitalUsd: params.capitalUsd,
       presetId: params.presetId, cfg: tick.cfg, universe: tick.universe, exit: tick.exit,
-      hold: posBefore?.token ?? null, window: tick.window, gate: tick.gate,
+      hold: posBefore?.token ?? null, window: tick.window, gate: tick.gate, trigger: tick.trigger,
     }));
   }
 
@@ -1073,15 +1080,15 @@ function faViewSelection() {
   // позиция, заведённая до перехода на автомат, это те же деньги.
   const open = state.positions.find((p) => p.status === "open");
   if (open && instFor(open.strategy, open.instrumentKey)) {
-    return { strat: open.strategy, asset: open.instrumentKey, cfg: open.config || "A", win: faViewWindowDays(), horizonH: faHorizonH(), from: "position" };
+    return { strat: open.strategy, asset: open.instrumentKey, cfg: open.config || "A", win: faViewWindowDays(), windowH: faWindowH(), horizonH: faHorizonH(), from: "position" };
   }
   // Лучший кандидат последней оценки. Ранг 1 проставлен ТЕМ ЖЕ предикатом, каким автомат выбирает
   // рынок входа (`bestAlternative`), и считается в движке.
   const best = (state.auto.lastEval?.markets || []).find((m) => m.rank === 1);
   if (best && instFor(best.strategy, best.token)) {
-    return { strat: best.strategy, asset: best.token, cfg: best.config || "A", win: faViewWindowDays(), horizonH: faHorizonH(), from: "candidate" };
+    return { strat: best.strategy, asset: best.token, cfg: best.config || "A", win: faViewWindowDays(), windowH: faWindowH(), horizonH: faHorizonH(), from: "candidate" };
   }
-  return { strat: null, asset: null, cfg: null, win: faViewWindowDays(), horizonH: faHorizonH(), from: null };
+  return { strat: null, asset: null, cfg: null, win: faViewWindowDays(), windowH: faWindowH(), horizonH: faHorizonH(), from: null };
 }
 
 // ---------------------------------------------------------------------------

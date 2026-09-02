@@ -672,6 +672,7 @@ test("FA_RECORD_SIZE сверяется с ДЛИНОЙ настоящих ст�
     ),
     exit, hold: funded ? "T0" : null, window: { firstTsHour: 1_697_400_000, lastTsHour: 1_699_992_000, rows: 720 },
     gate: gateOf(), // полный вид строки: ворота снабжения пишутся на каждом решении
+    trigger: "cadence", // и повод решения тоже
   });
   assert.equal(bytes(dec(0, 0, null)), FA_RECORD_SIZE.decFixed, "строка решения без рынков и без выхода");
   assert.equal(bytes(dec(0, 0, exitOf())) - bytes(dec(0, 0, null)), FA_RECORD_SIZE.decExit, "блок выхода");
@@ -885,4 +886,24 @@ test("журнал решений: свежие сверху, чужие стр�
   const out = faDecisionsFromRecords(rows);
   assert.equal(out.length, 2, "строка пропуска в журнал решений не попадает");
   assert.ok(out[0].at > out[1].at, "свежая сверху");
+});
+
+test("решение несёт окно назад и повод: без них цену внеочередных решений по записи не снять", () => {
+  // Решение владельца 2026-09-02: между кадансами правило зовётся по событию, и у каждого решения
+  // записывается повод `tr`; окно оценки `wn` пишется отдельно от горизонта `hz`, потому что
+  // читатель не имеет права выводить одно из другого.
+  const row = decision({ trigger: "neg_streak" });
+  assert.equal(row.wn, 720);
+  assert.equal(row.hz, 720);
+  assert.equal(row.tr, "neg_streak");
+  assert.equal(decision().tr, null, "без повода null, а не выдуманный «каданс»");
+  const odd = decision({ trigger: "придумали" });
+  assert.equal(odd.tr, "придумали", "сам повод записан: терять наблюдение нельзя");
+  assert.deepEqual(faUnknownCodes(odd), ["trig:придумали"], "повод вне реестра виден полем xc");
+  const [d] = faDecisionsFromRecords([row]);
+  assert.equal(d.trigger, "neg_streak");
+  assert.equal(d.windowH, 720);
+  const split = decision({ cfg: { ...FA_SIZING_DEFAULTS, windowH: 360 } });
+  assert.equal(split.wn, 360);
+  assert.deepEqual(split.cfgd, { windowH: 360 }, "отличие окна от умолчания пишется разницей");
 });

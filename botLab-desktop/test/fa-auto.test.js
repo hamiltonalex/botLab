@@ -25,7 +25,7 @@ import { FA_EXIT_REASONS } from "../src/engine/fa/exit.js";
 import { FA_MARGIN_REFUSALS } from "../src/engine/fa/margin.js";
 import {
   AUTO_SCHEMA_VERSION, FA_AUTO_BOT_ID, FA_AUTO_INTENTS, FA_AUTO_OUTCOMES, FA_AUTO_PRECEDENCE,
-  FA_AUTO_REFUSALS, armAuto, autoHorizonH, autoTick, autoViewWindowDays, createAutoState,
+  FA_AUTO_REFUSALS, armAuto, autoHorizonH, autoTick, autoViewWindowDays, autoWindowH, createAutoState,
   defaultAutoParams, ensureAutoState, explainAuto, legSpreadApr, stopAuto,
 } from "../src/engine/fa/auto.js";
 import { annualizeRow } from "../src/engine/math.js";
@@ -757,4 +757,122 @@ test("окна и горизонта нет рукописной копией н
         `${loc}: числа окна в подписи быть не должно: ${l.slice(0, 60)}`);
     }
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// СОБЫТИЯ ВНЕОЧЕРЕДНОГО РЕШЕНИЯ И ДВА ЧИСЛА ОКНА (решение владельца 2026-09-02)
+//
+// Каданс 24 ч остаётся, а между кадансами правило зовётся по событию (`events.js`). Событие двигает
+// только момент: решает то же правило с той же полосой гистерезиса, и на неизменившихся данных
+// перекладки от него нет. События меряются от снимка прошлого решения, поэтому одно условие не
+// зовёт правило тик за тиком. Окно оценки назад и горизонт вперёд разнесены, ворота режут по окну.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Удерживаемый рынок с постоянным потоком, у которого ПОСЛЕДНИЕ `tail` часов платим мы.
+const heldRows = (tail = 0) => Array.from({ length: H }, (_, h) =>
+  hour(h, { pot: 4000 / (3600 * H), bShort: 1e5, bLong: 1e12, recv: h >= H - tail ? "long" : "short" }));
+const heldMarket = (rows, over = {}) => market("HELD", rows, over);
+const ctxAt = (over = {}) => ({ token: "HELD", negHours: 0, potUsdPerSec: null, roomFrac: null, ...over });
+// Взведённый автомат, решивший ТОЛЬКО ЧТО: по кадансу следующий тик решать не имеет права.
+const decidedJustNow = (ctx) => armed({ positionId: "p1", lastDecisionAt: T - 1000, lastDecisionCtx: ctx });
+
+test("повод решения: каданс на плановом тике, null без решения; закрытие по сторожу это отказ, а не повод", () => {
+  const plan = run({ markets: [rich()] });
+  assert.equal(plan.decided, true);
+  assert.equal(plan.trigger, "cadence");
+  const wait = run({ state: armed({ lastDecisionAt: T - 1000 }) });
+  assert.equal(wait.why, "cadence_wait");
+  assert.equal(wait.trigger, null, "без решения повода нет");
+  assert.deepEqual(wait.decisionEvents, []);
+  const thin = run({ state: decidedJustNow(ctxAt()), markets: [heldMarket(heldRows())], position: held({ token: "HELD", markPx: 160 }) });
+  assert.equal(thin.kind, "close");
+  assert.equal(thin.why, "margin_thin");
+  assert.equal(thin.decided, false, "правила не звались: сторож блокирует до них");
+  assert.equal(thin.trigger, null);
+});
+
+test("neg_streak зовёт правило ВНЕОЧЕРЕДНО, полоса гистерезиса держит сделку, снимок гасит повтор", () => {
+  const rows = heldRows(6); // последние шесть часов платим мы
+  const t = run({ state: decidedJustNow(ctxAt({ negHours: 0 })), markets: [heldMarket(rows)], position: held({ token: "HELD" }) });
+  assert.equal(t.decided, true, "каданс не подошёл, но событие зовёт правило");
+  assert.equal(t.trigger, "neg_streak");
+  assert.equal(t.decisionEvents[0].hours, 6);
+  assert.ok(t.events.some((e) => e.kind === "event" && e.code === "neg_streak"), "событие лежит в ленте тика рядом с перерывами");
+  assert.equal(t.kind, "none");
+  assert.equal(t.why, "hold_best", "шесть часов из 720 полосу гистерезиса не пробивают: держим");
+  assert.equal(t.state.lastDecisionAt, T, "внеочередное решение сдвигает каданс: следующее плановое через сутки от него");
+  assert.equal(t.state.lastDecisionCtx.token, "HELD");
+  assert.equal(t.state.lastDecisionCtx.negHours, 6, "снимок помнит полосу");
+  // Тот же тик на новом снимке: условие держится, а события нет, иначе это каданс 5 минут под другим именем.
+  const again = run({ state: t.state, markets: [heldMarket(rows)], position: held({ token: "HELD" }) });
+  assert.equal(again.why, "cadence_wait");
+  assert.equal(again.decided, false);
+  assert.deepEqual(again.decisionEvents, []);
+  // Полоса короче порога: события нет.
+  const five = run({ state: decidedJustNow(ctxAt()), markets: [heldMarket(heldRows(5))], position: held({ token: "HELD" }) });
+  assert.equal(five.why, "cadence_wait");
+  // Порог из замороженных параметров взвода.
+  const two = run({
+    state: decidedJustNow(ctxAt()), markets: [heldMarket(heldRows(2))], position: held({ token: "HELD" }),
+  });
+  assert.equal(two.why, "cadence_wait", "по умолчанию два часа ниже порога");
+  const st2 = armed({ positionId: "p1", lastDecisionAt: T - 1000, lastDecisionCtx: ctxAt(), params: { ...defaultAutoParams(), eventNegHours: 2 } });
+  assert.equal(run({ state: st2, markets: [heldMarket(heldRows(2))], position: held({ token: "HELD" }) }).trigger, "neg_streak");
+});
+
+test("pot_drop: поток рынка упал вдвое против снимка, снимок обновляется новым потоком", () => {
+  const rows = heldRows();
+  const live = { bOwnUsd: 1e5, bOtherUsd: 1e6 };
+  const rates = { f_long: -4e-11, f_short: 4e-10, b_long: 0, b_short: 0, hl_rate: 0 }; // поток 4e-5 $/с при снимке 1e-4
+  const t = run({ state: decidedJustNow(ctxAt({ potUsdPerSec: 1e-4 })), markets: [heldMarket(rows, { live, rates })], position: held({ token: "HELD" }) });
+  assert.equal(t.trigger, "pot_drop");
+  assert.equal(t.decided, true);
+  assert.ok(Math.abs(t.state.lastDecisionCtx.potUsdPerSec - 4e-5) < 1e-15, "снимок обновлён: следующий порог от нового потока");
+  const mild = { f_long: -6e-11, f_short: 6e-10, b_long: 0, b_short: 0, hl_rate: 0 };
+  const m = run({ state: decidedJustNow(ctxAt({ potUsdPerSec: 1e-4 })), markets: [heldMarket(rows, { live, rates: mild })], position: held({ token: "HELD" }) });
+  assert.equal(m.why, "cadence_wait", "минус 40%: порог не взят");
+});
+
+test("room_drop: запас до ликвидации сжался на десять пунктов с прошлого решения, сторож ещё молчит", () => {
+  const rows = heldRows();
+  // Короткая нога GMX при входе 100 умирает на 200. На марке 112 запас 78.6% против 98% в снимке.
+  const t = run({ state: decidedJustNow(ctxAt({ roomFrac: 0.98 })), markets: [heldMarket(rows, { markPx: 112 })], position: held({ token: "HELD", markPx: 112 }) });
+  assert.equal(t.trigger, "room_drop");
+  assert.equal(t.decided, true);
+  assert.equal(t.why, "hold_best", "запас 78.6% выше порога сторожа 50%, а правило про поток держит");
+  assert.ok(t.state.lastDecisionCtx.roomFrac < 0.8, "снимок обновлён новым запасом");
+  const small = run({ state: decidedJustNow(ctxAt({ roomFrac: 0.98 })), markets: [heldMarket(rows, { markPx: 105 })], position: held({ token: "HELD", markPx: 105 }) });
+  assert.equal(small.why, "cadence_wait", "сжатие меньше десяти пунктов");
+});
+
+test("снимок для событий снимается на каждом решении: вход, удержание, перекладка, кэш", () => {
+  // Вход: снимок для рынка входа.
+  const open = run({ markets: [rich()] });
+  assert.equal(open.kind, "open");
+  assert.equal(open.state.lastDecisionCtx.token, open.intent.token);
+  assert.equal(open.state.lastDecisionCtx.negHours, 0);
+  assert.ok(Number.isFinite(open.state.lastDecisionCtx.roomFrac), "запас кандидата от сторожа входа");
+  // Пустой слот без входа: снимка нет.
+  const none = run({ markets: [poor()] });
+  assert.equal(none.decided, true);
+  assert.equal(none.state.lastDecisionCtx, null);
+  // Перекладка: снимок для НОВОГО рынка.
+  const st = armed({ positionId: "p1", lastDecisionAt: T - 25 * 3600 * 1000 });
+  const sw = run({ state: st, markets: [market("HELD", flat({ P: 60, bShort: 1e5 })), rich("RICH")], position: held({ token: "HELD" }) });
+  assert.equal(sw.kind, "switch");
+  assert.equal(sw.state.lastDecisionCtx.token, "RICH");
+});
+
+test("окно назад и горизонт вперёд разнесены: ворота режут по окну, оба числа едут в gate", () => {
+  const t = run({ markets: [rich()] });
+  assert.equal(t.gate.windowH, FA_SIZING_DEFAULTS.windowH);
+  assert.equal(t.gate.horizonH, FA_SIZING_DEFAULTS.horizonH);
+  assert.equal(autoWindowH(), FA_SIZING_DEFAULTS.windowH);
+  assert.equal(autoViewWindowDays(), autoWindowH() / 24, "панели показывают окно оценки назад");
+  const st = armAuto(createAutoState({ nowMs: T }), { nowMs: T, params: { presetId: "fa-uniform-v1" } });
+  assert.equal(autoWindowH(st), faSizingPreset("fa-uniform-v1").windowH);
+  const bad = armAuto(createAutoState({ nowMs: T }), { nowMs: T, params: { presetId: "нет-такого" } });
+  assert.equal(autoWindowH(bad), FA_SIZING_DEFAULTS.windowH);
+  // Форма состояния поднимает снимок аддитивно: старой записи без него это «снимка не было».
+  assert.equal(ensureAutoState({}).lastDecisionCtx, null);
 });

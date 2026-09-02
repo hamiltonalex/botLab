@@ -98,10 +98,12 @@ if (!(CAPITAL > 0)) { console.error("--capital: положительное чи�
 
 // ── Конфигурация. Контроли-НАСТРОЙКИ меняют её тем же способом, каким её вооружает приложение.
 const cfg = { ...FA_SIZING_DEFAULTS };
-if (DROP === "horizon-half") cfg.horizonH = FA_SIZING_DEFAULTS.horizonH / 2;
+// Контроль горизонта режет ОБА числа: окно назад и горизонт вперёд разнесены (2026-09-02), и
+// половинить только одно значило бы проверять масштаб брутто, а не прежний контроль.
+if (DROP === "horizon-half") { cfg.horizonH = FA_SIZING_DEFAULTS.horizonH / 2; cfg.windowH = cfg.horizonH; }
 if (DROP === "ratio-off") cfg.fundRatioK = 0;
 if (DROP === "ticket-off") cfg.ticketCapUsd = Infinity;
-const H = cfg.horizonH;
+const H = cfg.windowH; // окно оценки назад: по нему режутся кадры
 const CADENCE = DROP === "cadence-720" ? 720 : FA_EXIT_DEFAULTS.decisionIntervalHours;
 
 const f6 = (x) => (Number.isFinite(x) ? x.toFixed(6) : "н-д");

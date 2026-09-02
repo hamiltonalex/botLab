@@ -122,9 +122,10 @@
 // относительной величины, а разбавление считается отношением `B/(B+S)`. Базисные пункты до 4
 // знаков, возрасты до десятой доли секунды.
 
-import { FA_SIZING_REFUSALS, FA_SIZING_BINDINGS, FA_SIZING_DEFAULTS } from "./sizing.js";
+import { FA_SIZING_REFUSALS, FA_SIZING_BINDINGS, FA_SIZING_DEFAULTS, windowHours } from "./sizing.js";
 import { legModel } from "../paper.js";
 import { FA_EXIT_REASONS, FA_EXIT_ACTIONS } from "./exit.js";
+import { FA_DECISION_TRIGGERS } from "./events.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // РЕЕСТРЫ. Реестры отказов входа и выхода СУЩЕСТВУЮТ и переиспользуются как есть; здесь заведено
@@ -439,12 +440,15 @@ function curveCell(c) {
 //   gate - объект ворот снабжения тика (`autoTick().gate`) либо null. Пишутся счётчики окна баз
 //          ЛУЧШЕГО рынка с разбивкой по происхождению: без неё задним числом нельзя отличить решение
 //          на наблюдённых базах от решения на долитых из индексатора, а это разные наблюдения.
+//   trigger - повод решения из `FA_DECISION_TRIGGERS` (`events.js`): каданс, сторож или событие.
+//          Без него цену внеочередных решений в кругах снять по записи нельзя, а она не замерена.
 export function buildFaDecisionRecord({
   t, source = "live", ageSec, capitalUsd, presetId = null, cfg = null,
-  universe = null, exit = null, hold = null, window: win = null, gate = null,
+  universe = null, exit = null, hold = null, window: win = null, gate = null, trigger = null,
 } = {}) {
   if (!fin(t)) return null;
   const xc = [];
+  if (trigger != null && !FA_DECISION_TRIGGERS.includes(trigger)) push(xc, `trig:${trigger}`);
   const curves = (universe?.curves || []).filter((c) => c && !c.refusal && fin(c.sizeUsd));
   for (const c of universe?.curves || []) {
     if (c?.binding != null && !FA_SIZING_BINDINGS.includes(c.binding)) push(xc, `bind:${c.binding}`);
@@ -469,6 +473,11 @@ export function buildFaDecisionRecord({
     pre: trim(presetId, 64),
     cfgd: cfgDiff(cfg ?? universe?.cfg),
     hz: int((cfg ?? universe?.cfg)?.horizonH),
+    // ОКНО ОЦЕНКИ НАЗАД отдельно от горизонта вперёд (2026-09-02): при равных значениях запись
+    // повторяет число, и это нарочно: читатель не имеет права выводить одно из другого.
+    wn: int(windowHours(cfg ?? universe?.cfg)),
+    // ПОВОД РЕШЕНИЯ. Строка записи, а не код отказа: неизвестный повод виден полем `xc`.
+    tr: trigger == null ? null : trim(trigger, 32),
     hw: win ? [int(win.firstTsHour), int(win.lastTsHour), int(win.rows)] : null,
     // ВОРОТА СНАБЖЕНИЯ на момент решения: рынков в обходе, прошло ворота, покрытых часов лучшего
     // рынка против порога, и те же часы по происхождению (живьём, долито, без метки).
@@ -685,7 +694,7 @@ export const FA_RECORD_SIZE = Object.freeze({
   snapPos: 167, // блок открытой позиции: две ноги по пять полей
   snapMarket: 389, // один рынок со стаканом на восьми узлах
   gap: 113, // строка пропуска
-  decFixed: 282, // строка решения без рынков и без блока выхода, с блоком ворот снабжения `gt`
+  decFixed: 306, // строка решения без рынков и без блока выхода, с блоком ворот `gt`, окном `wn` и поводом `tr`
   decExit: 101, // блок правила выхода
   decMarket: 167, // один профинансированный рынок
   decRefusal: 42, // один отказ
@@ -818,7 +827,7 @@ export function faDecisionsFromRecords(rows) {
       .sort((a, b) => b.n - a.n || String(a.t).localeCompare(String(b.t)))[0] || null;
     out.push({
       at: r.t, ageSec: r.age ?? null, capitalUsd: r.cap ?? null, presetId: r.pre ?? null,
-      horizonH: r.hz ?? null,
+      horizonH: r.hz ?? null, windowH: r.wn ?? null, trigger: r.tr ?? null,
       passed: mk.length, checked: mk.length + rf.length,
       hold: r.hold ?? null, heldRank: faHeldRank(r),
       bestToken: best?.t ?? null, bestConfig: best?.c ?? null,

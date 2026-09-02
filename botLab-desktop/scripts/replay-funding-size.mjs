@@ -78,7 +78,7 @@ if (DROP != null && !(DROP in DROPS)) {
 }
 if (!(CAPITAL > 0)) { console.error("--capital: положительное число"); process.exit(1); }
 
-const H = FA_SIZING_DEFAULTS.horizonH;
+const H = FA_SIZING_DEFAULTS.windowH; // окно оценки назад: по нему режутся кадры
 const f6 = (x) => (Number.isFinite(x) ? x.toFixed(6) : "н-д");
 const f0 = (x) => (Number.isFinite(x) ? x.toFixed(0) : "н-д");
 

@@ -1312,6 +1312,9 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
             <div class="row"><span class="k" data-i18n="fa.auto.gUsable"></span><span class="v num" id="faAutoGUsable">-</span></div>
             <div class="row"><span class="k" data-i18n="fa.auto.gCov"></span><span class="v num" id="faAutoGCov">-</span></div>
             <div class="row"><span class="k" data-i18n="fa.auto.gHorizon"></span><span class="v num" id="faAutoGHorizon">-</span></div>
+            <!-- ДВА ЧИСЛА, А НЕ ОДНО: окно оценки назад и горизонт амортизации вперёд разнесены
+                 (2026-09-02); при равных значениях строки повторяют число, и это нарочно. -->
+            <div class="row"><span class="k" data-i18n="fa.auto.gFwd"></span><span class="v num" id="faAutoGFwd">-</span></div>
             <!-- ДОЛИТЫЕ ЧАСЫ НАЗВАНЫ ОТДЕЛЬНО: число приходит из ворот движка (`covIndexerH`), и
                  интерфейс не имеет права записать их в наблюдённые. -->
             <div class="row"><span class="k" data-i18n="fa.auto.gIdx"></span><span class="v num" id="faAutoGIdx">-</span></div>
@@ -1350,6 +1353,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
         <div class="trow"><span class="k" data-i18n="fa.auto.tktCadence"></span><span class="num" id="faAutoTktCadence">-</span></div>
         <div class="trow"><span class="k" data-i18n="fa.auto.tktAge"></span><span class="num" id="faAutoTktAge">-</span></div>
         <div class="trow"><span class="k" data-i18n="fa.auto.tktCov"></span><span class="num" id="faAutoTktCov">-</span></div>
+        <div class="trow"><span class="k" data-i18n="fa.auto.tktEvents"></span><span class="num" id="faAutoTktEvents">-</span></div>
         <div class="trow"><span class="k" data-i18n="fa.auto.tktLoss"></span><span class="num neg" data-i18n="fa.auto.tktLossV"></span></div>
         <div class="trow"><span class="k" data-i18n="fa.auto.tktBoot"></span><span class="num" data-i18n="fa.auto.tktBootV"></span></div>
         <div id="faAutoTktErr" class="ticket-err" role="alert" hidden></div>
@@ -3418,6 +3422,7 @@ function applyDataset(ds){
     state.cfg     = ds.selection.cfg    ?? null;
     state.win     = Number.isFinite(Number(ds.selection.win)) ? Number(ds.selection.win) : state.win;
     state.horizonH = Number.isFinite(Number(ds.selection.horizonH)) ? Number(ds.selection.horizonH) : state.horizonH;
+    state.windowH  = Number.isFinite(Number(ds.selection.windowH))  ? Number(ds.selection.windowH)  : state.windowH;
     state.selFrom = ds.selection.from   ?? null;
   }
   LIVE.series    = ds.series || null;   // null очищает: чужая серия не показывается
@@ -3451,7 +3456,8 @@ const state = {
      определяет правило входа, молчащая при смене горизонта. `null` до первого пуша честен -
      рынка в этот момент тоже нет, и зона стоит пустой. */
   win:   null,        // суток в окне панелей; из ds.selection.win
-  horizonH: null,     // горизонт правила в часах; из ds.selection.horizonH
+  horizonH: null,     // горизонт амортизации вперёд в часах; из ds.selection.horizonH
+  windowH: null,      // окно оценки назад в часах; из ds.selection.windowH (его и показывают подписи)
   selFrom: null,      // position | candidate | null - ЧЕМ обоснован выбор рынка
   live:  false,
   view:  'home',      // активный вид оболочки: home | funding-arb | btc-options
@@ -3874,7 +3880,9 @@ function renderHlPanel(){
    то, что приехало в `ds.selection` от `faViewSelection()` главного процесса, а туда из движка. */
 const faRuleParams = () => ({
   faWinD: Number.isFinite(state.win) ? state.win : '-',
-  faHorizonH: Number.isFinite(state.horizonH) ? state.horizonH : '-',
+  /* Подписи говорят про ОКНО ОЦЕНКИ НАЗАД («на окне в N часов»), поэтому шаблон получает окно;
+     горизонт амортизации вперёд стоит отдельной строкой на пульте (`faAutoGFwd`). */
+  faHorizonH: Number.isFinite(state.windowH) ? state.windowH : (Number.isFinite(state.horizonH) ? state.horizonH : '-'),
 });
 
 /* ТРИ ПОДПИСИ, В КОТОРЫХ ЧИСЛО ОКНА СТОЯЛО ЛИТЕРАЛОМ В ОБОИХ СЛОВАРЯХ. Теперь это шаблоны, а
@@ -4700,6 +4708,7 @@ const FA_CODE_TEXT = {
   funded:                   () => t('fa.code.funded'),
   no_capital_cap:           () => t('fa.code.noCapitalCap'),
   horizon_missing:          () => t('fa.code.horizonMissing'),
+  window_missing:           () => t('fa.code.windowMissing'),
   src_gmx_down:             () => t('fa.code.srcGmxDown'),
   src_hl_down:              () => t('fa.code.srcHlDown'),
   no_base:                  () => t('fa.code.noBase'),
@@ -4723,6 +4732,16 @@ const FA_CODE_TEXT = {
 /* Неизвестный код показывается КАК ЕСТЬ. Подменить его знакомой подписью значило бы соврать про то,
    почему автомат поступил так, а не иначе (идиома `sellPresetLabel` бота 2). */
 const faCodeText = c => (FA_CODE_TEXT[c] ? FA_CODE_TEXT[c]() : String(c || '-'));
+
+/* ПОВОД РЕШЕНИЯ (`FA_DECISION_TRIGGERS` в fa/events.js): каданс или одно из трёх событий
+   внеочередного решения. Сверяется с реестром тестом в обе стороны, как и коды. */
+const FA_TRIGGER_TEXT = {
+  cadence:    () => t('fa.trig.cadence'),
+  neg_streak: () => t('fa.trig.negStreak'),
+  pot_drop:   () => t('fa.trig.potDrop'),
+  room_drop:  () => t('fa.trig.roomDrop'),
+};
+const faTriggerText = c => (FA_TRIGGER_TEXT[c] ? FA_TRIGGER_TEXT[c]() : String(c || '-'));
 
 /* Чем СВЯЗАН размер. Это не отказ: рынок профинансирован, но упёрся во что-то одно. `null` в реестре
    движка означает «ничего не связывает», и у него своя строка - прочерк здесь был бы неправдой. */
@@ -4822,7 +4841,7 @@ function faWarnHtml(code, a){
     const eta = g && Number.isFinite(g.covMissingH) && Number.isFinite(g.covEtaMs)
       ? ' ' + ledgerEsc(t('fa.warn.histNoBaseEta', { missing:g.covMissingH, eta:faAutoDate(g.covEtaMs) })) : '';
     return pair(t('fa.warn.histNoBaseB'), t('fa.warn.histNoBase', {
-      h: g && Number.isFinite(g.horizonH) ? g.horizonH : '-',
+      h: g && Number.isFinite(g.windowH ?? g.horizonH) ? (g.windowH ?? g.horizonH) : '-',
       need: g && Number.isFinite(g.covNeed) ? fmtPctNS(g.covNeed, 0) : '-',
       cov: g && Number.isFinite(g.covBest) ? fmtPctNS(g.covBest, 1) : '-',
       live: g && Number.isFinite(g.covLiveH) ? g.covLiveH : '-',
@@ -4864,10 +4883,14 @@ function renderFaAuto(){
   if(gu) gu.textContent = g ? t('fa.auto.ofN', { n:g.usable, total:g.markets }) : '-';
   if(gc) gc.textContent = g && Number.isFinite(g.covBest)
     ? t('fa.auto.covOf', { v:fmtPctNS(g.covBest, 1), need:fmtPctNS(g.covNeed, 0) }) : '-';
-  if(gh) gh.textContent = g && Number.isFinite(g.horizonH) ? t('fa.unit.hoursN', { h:g.horizonH }) : '-';
+  /* Окно назад и горизонт вперёд стоят двумя строками; долитые часы считаются от ОКНА. */
+  const gw = g ? (g.windowH ?? g.horizonH) : null;
+  if(gh) gh.textContent = g && Number.isFinite(gw) ? t('fa.unit.hoursN', { h:gw }) : '-';
+  const gf = $('faAutoGFwd');
+  if(gf) gf.textContent = g && Number.isFinite(g.horizonH) ? t('fa.unit.hoursN', { h:g.horizonH }) : '-';
   const gi = $('faAutoGIdx');
-  if(gi) gi.textContent = g && Number.isFinite(g.covIndexerH) && Number.isFinite(g.horizonH)
-    ? t('fa.auto.gIdxV', { n:g.covIndexerH, h:g.horizonH }) : '-';
+  if(gi) gi.textContent = g && Number.isFinite(g.covIndexerH) && Number.isFinite(gw)
+    ? t('fa.auto.gIdxV', { n:g.covIndexerH, h:gw }) : '-';
   const gn = $('faAutoGateNote');
   if(gn){
     const note = !g ? '' : g.usable === 0 ? t('fa.auto.gateZero')
@@ -5082,7 +5105,8 @@ function renderFaJournals(){
       + '<td class="n">' + ledgerEsc(faJrUsd(r.costUsd)) + '</td>'
       + '<td class="n' + cls + '">' + ledgerEsc(net) + '</td>'
       + '<td class="n' + cls + '">' + ledgerEsc(pct) + '</td>'
-      + '<td class="lft">' + ledgerEsc(r.why ? faCodeText(r.why) : '-') + '</td>'
+      + '<td class="lft">' + ledgerEsc(r.why ? faCodeText(r.why) : '-')
+      + (r.trigger && r.trigger !== 'cadence' ? ' · ' + ledgerEsc(faTriggerText(r.trigger)) : '') + '</td>'
       + '</tr>';
   }).join('');
   const he = $('faHistoryEmpty');
@@ -5423,6 +5447,9 @@ function faFillTicket(){
   set('faAutoTktCadence', p && Number.isFinite(p.cadenceH) ? t('fa.unit.hoursN', { h:p.cadenceH }) : '-');
   set('faAutoTktAge', p && Number.isFinite(p.decisionMaxAgeH) ? t('fa.unit.hoursN', { h:p.decisionMaxAgeH }) : '-');
   set('faAutoTktCov', p && Number.isFinite(p.baseCoverageMin) ? fmtPctNS(p.baseCoverageMin, 0) : '-');
+  /* Пороги событий внеочередного решения замораживаются взводом вместе с остальными числами. */
+  set('faAutoTktEvents', p && Number.isFinite(p.eventNegHours) && Number.isFinite(p.eventPotDropFrac) && Number.isFinite(p.eventRoomDropFrac)
+    ? t('fa.auto.tktEventsV', { k:p.eventNegHours, p:fmtPctNS(p.eventPotDropFrac, 0), r:fmtPctNS(p.eventRoomDropFrac, 0) }) : '-');
   const cf = $('faAutoTktConfirm'); if(cf) cf.disabled = !p;
   return p;
 }

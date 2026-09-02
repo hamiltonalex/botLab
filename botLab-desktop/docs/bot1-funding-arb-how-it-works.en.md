@@ -83,8 +83,9 @@ Eight steps, one line each; the details are in the three parts below.
    the net over 720 hours, sifts markets by refusal codes and funds the rank 1 market.
 6. **Trade.** A paper position opens: two legs for the two-leg scheme (GMX and Hyperliquid), one for
    the one-leg scheme (GMX only). The ledger accrues the result hour by hour with dilution.
-7. **Holding and exit.** Every tick the margin guard runs; once a day the exit rule: hold, to cash or
-   switch. Thin room to liquidation closes the trade without waiting for the day to pass.
+7. **Holding and exit.** Every tick the margin guard runs; once a day and on an event the exit rule:
+   hold, to cash or switch. Thin room to liquidation closes the trade without waiting for the day to
+   pass.
 8. **Next entry.** After closing the slot is empty, and the next decision cycle looks for an entry
    again. So on until the operator stops the automaton.
 
@@ -124,7 +125,7 @@ sequenceDiagram
     E->>E: continuity, supply gate, margin guard
     alt room to liquidation is thin
         E->>D: the trade is closed without waiting for the cadence, and a trade passport
-    else cadence is due (once per 24 h)
+    else cadence is due (once per 24 h) or an event fired
         E->>E: entry rule or exit rule
         E->>D: decision row, plus a trade passport if there is a trade
     end
@@ -215,8 +216,8 @@ What is visible meanwhile. On the Overview the bot card shows the token and the 
 · bases N of 684 h · live L, backfilled I". On the automaton console: the reason in words ("not
 enough funding bases on the window") and in numbers ("market: the base is present in N of the 720 h
 window (live L, backfilled I), 95% required"), the "Supply gate" column (markets polled, passed the
-gate, best coverage against the required 95%, window horizon 720 h, window hours backfilled from the
-indexer N of 720) and a notice: how many hours are missing, that the backfill closes them on the
+gate, best coverage against the required 95%, evaluation window back 720 h, amortization horizon
+ahead 720 h, window hours backfilled from the indexer N of 720) and a notice: how many hours are missing, that the backfill closes them on the
 next frame refresh, and no earlier than what moment the threshold can be reached by observation.
 
 ## The decision cycle once a day
@@ -230,6 +231,21 @@ Arbitrum and on Avalanche, are priced by one rule with one economics: the net cu
 the horizon after the round trip. Scheme, coin and venue are not part of the criterion, only the
 net is, and rank 1 gets funded. The exit rule compares the open trade with the same alternatives,
 the other scheme included.
+
+Two numbers instead of one. The evaluation window back, 720 hours: that many recent hours of rates
+and bases the rule takes to estimate the flow; the frame is cut and the gate is computed on it. The
+amortization horizon ahead, 720 hours: over that many hours the round trip is spread, and the gross
+of the window is translated to it by the multiplier "horizon divided by window". Today both are
+equal, the multiplier is one, and that is the only measured combination: anything else is an
+assumption until measured.
+
+Between cadences the rule is called on an event. Three events, each relative to the snapshot of the
+last decision: the rate of our leg against us for six hours in a row, the market flow halved, the
+room to liquidation shrank by ten points. An event only moves the moment of the decision; the same
+rule decides with the same hysteresis band one round trip wide, so on unchanged data an event causes
+no switch, and the same condition does not call the rule tick after tick. The thresholds are
+assumptions named as numbers and frozen at arming; their price in round trips is not measured, and
+the trigger of every decision is written to the record and visible in the decision journal.
 
 ```mermaid
 %%{init: {"themeVariables": {"fontSize": "12px"}, "flowchart": {"nodeSpacing": 26, "rankSpacing": 18, "diagramPadding": 4, "wrappingWidth": 380}}}%%
@@ -308,8 +324,10 @@ rank 1 market as the candidate while there is no trade.
   base journal is written only by live polling.
 - **It does not compute annual return.** Neither on the cards nor in the journal; the interface
   dictionaries are tested for the absence of promises of future income.
-- **It does not decide more often than once a day.** Except the margin guard: its refusal cannot be
-  repaired by the next decision and does not wait for the cadence.
+- **It does not decide more often than once a day without a trigger.** An off-cadence decision comes
+  on three events (the rate against us for several hours in a row, the market flow halved, the room
+  to liquidation shrank), and the same rule decides then. The margin guard stands apart: its refusal
+  cannot be repaired by the next decision and does not wait for the cadence.
 - **It does not act on the first tick after launch** (`boot_warmup`), **after a polling gap**
   (`poll_gap`) or on the first tick after silence longer than 72 hours (`state_stale`): continuity
   must be observed. All three states clear on the next continuous tick.
@@ -460,13 +478,13 @@ and the last tick stamp on the console and in the growth of the snapshot file.
 
 # PART III. EXITING THE TRADE
 
-## The exit rule once a day
+## The exit rule once a day and on an event
 
-On the decision tick (once every 24 hours) the exit rule compares three numbers in the same units,
-dollars over 720 hours ahead:
+On the decision tick (once every 24 hours or on an event, see "The decision cycle") the exit rule
+compares three numbers in the same units, dollars over the horizon ahead, 720 hours:
 
 - **hold** = the gross of the current position over the horizon, on the last 720 hours of rates and
-  bases, at the fixed size;
+  bases (the evaluation window back), at the fixed size;
 - **to cash** = zero;
 - **switch** = the net of the best alternative: the gross of the new position minus the full round
   trip of its costs, exactly the number the entry rule returns for every eligible market.
@@ -654,7 +672,7 @@ are no toggles in either.
 | Feature | What it does |
 |---|---|
 | Automaton console | State token and chip, the last tick's reason in words and numbers, supply gate (markets polled, passed the gate, best base coverage, horizon), continuity and slot (ticks, longest gap, last tick, last decision, slot), the "N ticks · step" pill, the cadence note, an expandable explanation with the date of reaching the threshold |
-| Arming ticket | Shows what the automaton does without you and the frozen parameters: entry rule, capital $2,500, leverage 1, room to liquidation 50%, cadence 24 h, expiry 72 h, base coverage 95%, "loss: not capped", "polling starts at boot: yes"; confirmation with one button |
+| Arming ticket | Shows what the automaton does without you and the frozen parameters: entry rule, capital $2,500, leverage 1, room to liquidation 50%, cadence 24 h, expiry 72 h, base coverage 95%, the thresholds of the off-cadence events, "loss: not capped", "polling starts at boot: yes"; confirmation with one button |
 | Stop and undo | Two-step stop with a 3.5 s rollback; with an open trade a wind-down to the exit rule; an undo button |
 | Last evaluation by market | A row for each of the five markets: instrument, configuration, rank, outcome, what binds the size, size, net over the horizon, base coverage, retained share, scheme rate; the stamp "taken · capital ceiling · next no earlier than" |
 | Account honesty | Four measurements: retained share of the quoted flow, requested and working size, room to a leg liquidation with liquidation prices, out of sample the rule did not reproduce itself |
@@ -709,12 +727,14 @@ are no toggles in either.
 | Dilution | The reduction of the received rate by our own entry: we get a share equal to the previous base within the base together with our size |
 | Retained share | What part of the quoted flow arrived after dilution; counted only over the receiving hours |
 | GMX borrowing | The fee for borrowed liquidity on GMX; always a cost, untouched by dilution |
-| Window, horizon | 720 hours (30 days): that many past hours the rule takes and that many hours ahead it estimates income |
+| Evaluation window back | 720 hours (30 days): that many recent hours of rates and bases the rule takes; the frame is cut and the gate is computed on it |
+| Amortization horizon ahead | 720 hours: over that many hours the round trip is spread; the gross of the window is translated to it by the multiplier "horizon divided by window", equal to one today |
 | Supply gate | Checks without which a market does not enter the decision: 720 rows of history and a base known (live or backfilled) in 684 hours |
 | Base coverage | The share of the window's hours in which the base of our side is known, live or backfilled from the indexer; threshold 95%; the console shows live and backfilled separately |
 | Base backfill | Filling the window hours without a live observation from the indexer history on a frame refresh, under the side identity check; an observed hour is never overwritten |
 | Tick | One poll of the exchanges with accrual, recording and a named outcome; every 5 minutes by default |
-| Cadence | How often the expensive rules are called: once every 24 hours |
+| Cadence | How often the expensive rules are called without a trigger: once every 24 hours |
+| Off-cadence event | A reason to call the rule between cadences: the rate against us for several hours in a row, the market flow halved, the room to liquidation shrank; measured against the snapshot of the last decision |
 | Decision expiry | 72 hours of silence after which the first tick takes no decisions |
 | Entry rule | Builds a net curve by size for every market, sifts by codes, ranks by net |
 | Curve by size | Net over the horizon at every size on a logarithmic grid; the optimum is found numerically |
@@ -741,6 +761,7 @@ are no toggles in either.
 | `src/engine/fa/dilution.js` | Entry dilution: the multiplier, the GMX side identity, the three application rules |
 | `src/engine/fa/sizing.js` | The entry size rule: curve by size, ceilings, refusal codes and bindings, the allocator, presets |
 | `src/engine/fa/exit.js` | The exit rule: three numbers, cadence, the best alternative |
+| `src/engine/fa/events.js` | Off-cadence decision events: hourly net, the streak of losing hours, the market flow, the decision snapshot, the trigger registry |
 | `src/engine/fa/margin.js` | The margin guard: liquidation price and room per leg, codes |
 | `src/engine/fa/record.js` | Live recording: three streams, gap causes, archive readers, volume |
 | `src/engine/paper.js` | The paper ledger: opening, hourly accrual with dilution, closing, summaries |

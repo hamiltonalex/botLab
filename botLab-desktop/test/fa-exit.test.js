@@ -247,6 +247,7 @@ test("отказы снабжения и негодные входы назыв�
     ["src_gmx_down", { position: pos, rows, markets: [], sources: { gmxDown: true } }],
     ["src_hl_down", { position: pos, rows, markets: [], sources: { hlDown: true } }],
     ["horizon_missing", { position: pos, rows, markets: [], cfg: { ...FA_SIZING_DEFAULTS, horizonH: 0 } }],
+    ["window_missing", { position: pos, rows, markets: [], cfg: { ...FA_SIZING_DEFAULTS, windowH: 0 } }],
   ];
   for (const [want, args] of cases) {
     const d = decide(args);
@@ -386,4 +387,21 @@ test("APT, BTC и ETH: решение и брутто удержания сов�
   near(sw.best.sizeUsd, 5000, 1e-9, "размер альтернативы связан потолком тикета");
   near(sw.best.netUsd, 137.423561, 1e-5, "нетто лучшей альтернативы");
   near(sw.gainUsd, 140.632053, 1e-5, "прибавка перекладки");
+});
+
+test("брутто удержания режется по ОКНУ назад и масштабируется на горизонт вперёд тем же множителем, что альтернативы", () => {
+  // Решение владельца 2026-09-02: окно оценки и горизонт амортизации разнесены. Правило выхода
+  // режет по окну и получает брутто, уже переведённое на горизонт внутри `netAtSize`: единицы
+  // удержания и альтернативы совпадают по построению, а не по договорённости.
+  const rows = flat({ P: 4000, bShort: 1e5 });
+  const pos = { token: "X", config: "A", strategy: "two", sizeUsd: 2000 };
+  const base = holdGross({ position: pos, rows, cfg: { ...FA_SIZING_DEFAULTS } });
+  const half = holdGross({ position: pos, rows, cfg: { ...FA_SIZING_DEFAULTS, windowH: H / 2 } });
+  const tail = netAtSize({ rows: rows.slice(H / 2), config: "A", strategy: "two", sizeUsd: 2000, cfg: { ...FA_SIZING_DEFAULTS, windowH: H / 2 } }).gross;
+  assert.equal(half, tail, "срез по окну: последние windowH часов");
+  near(half, base, Math.abs(base) * 1e-6, "постоянный поток: половина окна на удвоенном масштабе даёт то же брутто");
+  assert.equal(holdGross({ position: pos, rows: rows.slice(0, H / 2 - 1), cfg: { ...FA_SIZING_DEFAULTS, windowH: H / 2 } }), null, "короче окна: брутто нет");
+  const d = decide({ position: pos, rows: rows.slice(0, H - 1), markets: [], cfg: { ...FA_SIZING_DEFAULTS, windowH: H - 1 } });
+  assert.notEqual(d.reason, "short_history", "истории ровно окно: не короче");
+  assert.equal(decide({ position: pos, rows, markets: [], cfg: { ...FA_SIZING_DEFAULTS, windowH: H + 1 } }).reason, "short_history", "окно длиннее истории");
 });

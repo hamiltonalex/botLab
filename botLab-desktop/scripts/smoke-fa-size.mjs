@@ -113,7 +113,7 @@ if (FAIL) console.log(`\nПОДДЕЛАН ОТКАЗ «${FAIL}»: лестниц
 
 // ── Вход правила. Мгновенные ставки растягиваются на горизонт: строка часа повторяется H раз.
 // Это ОЦЕНКА, а не история, и так и подписано в конце отчёта.
-const H = FA_SIZING_DEFAULTS.horizonH;
+const H = FA_SIZING_DEFAULTS.windowH; // окно оценки назад: столько строк подаётся правилу
 const nowSec = Math.floor(Date.now() / 1000 / SEC_PER_HOUR) * SEC_PER_HOUR;
 const nowMs = Date.now();
 const markets = [];
