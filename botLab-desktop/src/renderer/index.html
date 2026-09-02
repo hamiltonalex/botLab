@@ -235,7 +235,14 @@ body::before{
 }
 .live[aria-pressed="true"]{ color:var(--pos); border-color:color-mix(in srgb, var(--pos) 45%, transparent); background:var(--pos-bg); }
 .live .led{ width:8px; height:8px; border-radius:50%; background:var(--led-idle); transition:.18s; }
-.live.fresh .led{ background:var(--pos); box-shadow:0 0 9px var(--pos); animation:pulse 1.8s ease-in-out infinite; }
+.live.fresh .led{ background:var(--pos); box-shadow:0 0 9px var(--pos); }
+/* МИГАНИЕ ОДНОРАЗОВОЕ, НА ПРИХОД СНИМКА, а не `infinite`. Бесконечный pulse заставлял компоновать
+   кадр 60 раз в секунду всё время, пока вкладка на экране: на программной отрисовке (Intel HD 5300,
+   Big Sur) это 60 EGL-ошибок в секунду в логе (258 МБ за 11 часов) и постоянная нагрузка на
+   безвентиляторный Core M ради мигающей точки. Приём тот же, что у #ledgerUpdated.tick .blip:
+   класс .tick снимается и ставится заново на каждом НОВОМ снимке (ledBlink), между снимками ноль
+   перерисовок. Свежесть между миганиями показывают цвет и штамп «данные по состоянию на». */
+.live.fresh.tick .led{ animation:pulse 1s ease-in-out 1; }
 @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.45} }
 
 /* version pill - OTA update status (§15). Always present; only its look/text change (no layout shift).
@@ -647,7 +654,7 @@ table.scan tr:hover td{ background:color-mix(in srgb, var(--slate) 5%, transpare
 @keyframes rise{ to{ opacity:1; transform:none; } }
 @media (prefers-reduced-motion:reduce){
   .reveal{ animation:none; opacity:1; transform:none; }
-  .live[aria-pressed="true"] .led{ animation:none; }
+  .live.fresh.tick .led{ animation:none; }
 }
 
 /* responsive */
@@ -3743,6 +3750,15 @@ const $ = id => document.getElementById(id);
    только когда счёт пуст, и всегда явно подписана «история (гипотеза)». */
 // prefers-reduced-motion: плавные прокрутки/подсветки отключаемы системной настройкой
 const smoothOk = ()=> !matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* Одноразовое мигание светодиода пилюли LIVE на НОВОМ снимке. Ключ снимка (ISO-метка источника)
+   хранится на самой кнопке: функции свежести зовут и по таймеру возраста, и при смене языка, и на
+   буте, и мигать на каждом вызове значило бы мигать без данных. Через smoothOk, как все blip'ы. */
+function ledBlink(btn, key){
+  if(!btn || !key || btn.dataset.ledKey===key) return;
+  btn.dataset.ledKey=key;
+  if(!smoothOk()) return;
+  btn.classList.remove('tick'); void btn.offsetWidth; btn.classList.add('tick');
+}
 // Большое P&L-число (общий рендер для героя анализа и кокпита торговли)
 function setBigPnl(el, v, est){
   if(!Number.isFinite(v)){ el.innerHTML='<span class="cur">$</span>-'; el.className='val'; return; }
@@ -4166,6 +4182,7 @@ function updateFreshness(){
   const degraded=(f.notes||[]).length>0 || f.accrualOk===false;
   const led=$('liveBtn').querySelector('.led'); if(led) led.style.background = f.stale? 'var(--neg)' : (degraded?'var(--neu)':'var(--pos)');
   $('liveBtn').classList.toggle('fresh', !f.stale);
+  if(!f.stale) ledBlink($('liveBtn'), f.gmxAtIso);
   $('liveTxt').textContent = f.stale ? t('chrome.live.stale') : (degraded ? t('chrome.live.warn') : t('chrome.live.live'));
 }
 
@@ -6964,6 +6981,7 @@ function updateOptFreshness(f, running){
   if(txt) txt.textContent=state;
   if(led) led.style.background=ledCol;
   if(btn) btn.classList.toggle('fresh', state==='LIVE');
+  if(state==='LIVE') ledBlink(btn, f && f.atIso);
   if(stamp){
     if(f && f.atIso){ const iso=f.atIso.replace('T',' ').slice(0,19)+' UTC';
       const age=(f.ageSec==null)?'-':(f.ageSec<90?t('chrome.age.sec',{n:Math.round(f.ageSec)}):t('chrome.age.min',{n:Math.round(f.ageSec/60)}));
@@ -8192,6 +8210,7 @@ function updateScnFreshness(ds, cyc){
   if(txt) txt.textContent=word;
   if(led) led.style.background=col;
   if(btn) btn.classList.toggle('fresh', word==='LIVE');
+  if(word==='LIVE') ledBlink(btn, fresh.atIso);
   const tn=$('scnTestnetTag'); if(tn) tn.hidden=!(ds.settings&&ds.settings.testnet);
   const srcRow=(id, ageSec, stale, extra)=>{ const el=$(id); if(!el) return;
     el.innerHTML = ageSec==null && !extra ? '-'
