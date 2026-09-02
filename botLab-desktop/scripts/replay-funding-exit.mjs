@@ -103,6 +103,11 @@ const cfg = { ...FA_SIZING_DEFAULTS };
 if (DROP === "horizon-half") { cfg.horizonH = FA_SIZING_DEFAULTS.horizonH / 2; cfg.windowH = cfg.horizonH; }
 if (DROP === "ratio-off") cfg.fundRatioK = 0;
 if (DROP === "ticket-off") cfg.ticketCapUsd = Infinity;
+// ПОТОЛОК ТИКЕТА НЕ ВЫШЕ КАПИТАЛА СДЕЛКИ, как у автомата (`auto.js`, cfg тика): иначе при капитале
+// ниже $5000 кривые с размером выше капитала не влезают в `bestAlternative`, и прогон простаивает
+// там, где автомат вошёл бы ровно капиталом. При капитале по умолчанию $5000 это единица: книга
+// побитово та же. Контроль `ticket-off` снимает потолок и тут: снятый потолок выше любого капитала.
+if (DROP !== "ticket-off") cfg.ticketCapUsd = Math.min(cfg.ticketCapUsd, CAPITAL);
 const H = cfg.windowH; // окно оценки назад: по нему режутся кадры
 const CADENCE = DROP === "cadence-720" ? 720 : FA_EXIT_DEFAULTS.decisionIntervalHours;
 

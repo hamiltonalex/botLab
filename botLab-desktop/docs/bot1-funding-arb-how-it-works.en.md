@@ -449,8 +449,8 @@ and the last tick stamp on the console and in the growth of the snapshot file.
   (`cadence_wait` between decisions, `hold_best` on the decision tick), the slot with the market
   name, ticks, the longest gap, the last tick and the last decision.
 - **Account honesty**, four measurements, each meaning that the shown profit is larger than the real
-  one: the quoted flow against the received one and the retained share (measured: at a $2,000 slot
-  per market about 8.8% of the quoted flow stays with us, at $10,000 about 6.3%); requested and
+  one: the quoted flow against the received one and the retained share (measured over 63 markets and a year: at the working size of $2,500
+  per market about 8.4% of the quoted flow stays with us, at $2,000 about 8.8%, at $10,000 about 6.3%); requested and
   working size side by side; room to liquidation of the worst leg against the required 50% with the
   liquidation price of each leg and the permanent line "the shown P&L does not contain this risk";
   the line "out of sample the rule did not reproduce itself" with the numbers $214.80 against
