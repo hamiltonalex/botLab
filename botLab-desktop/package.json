@@ -46,7 +46,8 @@
     "dist:win": "electron-builder --win",
     "check:tag": "node scripts/check-tag-version.mjs",
     "check:changelog": "node scripts/check-changelog.mjs",
-    "make:icon": "node scripts/make-icon.mjs"
+    "make:icon": "node scripts/make-icon.mjs",
+    "e2e:fa-cards": "node scripts/e2e-fa-cards.mjs"
   },
   "author": "Alex Hamilton",
   "license": "MIT",
