@@ -258,17 +258,24 @@ export function writeCache(baseDir, key, rows) {
 // Свой каталог профиля, имя из метки UTC и вкладки, чтобы серия снимков читалась без открытия.
 // Запись атомарная (tmp + rename): `scp` с удалённой машины никогда не заберёт недописанный файл.
 // Удаления нет: снимки чистит оператор руками, как и всё в профиле.
+// Два адресата: каталог профиля (`writeScreenshot`, его читает оператор по SSH: папки Desktop и
+// Downloads на macOS для SSH закрыты TCC) и произвольный каталог (`writeScreenshotTo`: папка загрузок
+// для человека за машиной, main.js берёт её у `app.getPath("downloads")`). Имя с префиксом botlab-,
+// чтобы файл узнавался среди чужих загрузок; без двоеточий, потому что Windows их в именах не терпит.
 const SHOTS_DIR = "screenshots";
-const shotsDir = (b) => ensureDir(join(b, SHOTS_DIR));
 
 export function screenshotName(nowMs, view) {
   const stamp = new Date(nowMs).toISOString().replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
   const tab = /^[a-z0-9-]{1,32}$/.test(view || "") ? view : "page";
-  return `${stamp}-${tab}.png`;
+  return `botlab-${stamp}-${tab}.png`;
+}
+
+export function writeScreenshotTo(dir, name, png) {
+  const path = join(ensureDir(dir), name);
+  atomicWrite(path, png);
+  return path;
 }
 
 export function writeScreenshot(baseDir, name, png) {
-  const path = join(shotsDir(baseDir), name);
-  atomicWrite(path, png);
-  return path;
+  return writeScreenshotTo(join(baseDir, SHOTS_DIR), name, png);
 }

@@ -310,6 +310,28 @@ body::before{
   background:transparent; border:1px solid var(--line-2); cursor:pointer; transition:.15s;
 }
 .help-btn:hover, .help-btn[aria-expanded="true"]{ color:var(--accent); border-color:var(--accent); background:color-mix(in srgb, var(--accent) 8%, transparent); }
+/* снимок всей вкладки: кнопка постоянного chrome; в снимок она попадает сама, поэтому занятое
+   состояние внешне не отличается от обычного (иначе на каждом снимке была бы «нажатая» кнопка) */
+.shot-btn{
+  flex:0 0 auto; height:26px; padding:0 8px; border-radius:6px; display:inline-flex; align-items:center; gap:6px;
+  color:var(--txt-faint); background:transparent; border:1px solid var(--line); cursor:pointer; transition:.15s;
+  font:600 10.5px var(--f-mono); letter-spacing:.4px;
+}
+.shot-btn svg{ width:14px; height:14px; display:block; }
+.shot-btn:hover{ color:var(--accent); border-color:var(--accent); background:color-mix(in srgb, var(--accent) 8%, transparent); }
+.shot-btn:disabled{ cursor:progress; }
+.shot-toast{
+  position:fixed; right:16px; bottom:16px; z-index:300; max-width:min(560px, calc(100vw - 32px));
+  display:flex; align-items:center; gap:10px; padding:9px 10px 9px 12px; border-radius:8px;
+  background:var(--bg); border:1px solid var(--line-2); box-shadow:0 10px 30px rgba(0,0,0,.35);
+  font:12px/1.35 var(--f-mono); color:var(--txt);
+}
+.shot-toast .txt{ min-width:0; overflow-wrap:anywhere; }
+.shot-toast .act{ flex:0 0 auto; font:600 10.5px var(--f-mono); letter-spacing:.4px; color:var(--accent); background:transparent;
+  border:1px solid color-mix(in srgb, var(--accent) 50%, transparent); border-radius:6px; padding:4px 8px; cursor:pointer; }
+.shot-toast .act:hover{ background:color-mix(in srgb, var(--accent) 10%, transparent); }
+.shot-toast .close{ flex:0 0 auto; width:20px; height:20px; border:0; background:transparent; color:var(--txt-faint); cursor:pointer; font:700 14px var(--f-mono); padding:0; }
+.shot-toast .close:hover{ color:var(--txt); }
 /* сегмент темы - словарь .pollctl (обе темы видны, активная подсвечена); активная ячейка -
    accent (выбор), не pos (pos = live-семантика); после .pollctl-блока - каскад при равной специфичности */
 .themectl .seg button{ font-size:11px; line-height:1; padding:4px 7px; }
@@ -1136,6 +1158,11 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
       <span class="vdot"></span><span id="verPillTxt">-</span>
     </button>
     <button class="help-btn" data-help="updater" aria-haspopup="dialog" aria-expanded="false" aria-label="Справка: обновления приложения" data-i18n-aria="chrome.help.updater.aria">?</button>
+    <!-- снимок ВСЕЙ вкладки (с прокруткой) в папку загрузок: снимает главный процесс (main.js captureFullPage),
+         рендерер только просит и показывает, куда лёг файл -->
+    <button class="shot-btn" id="shotBtn" type="button" aria-label="Снимок всей вкладки в папку загрузок" data-i18n-aria="chrome.shot.aria" title="Снимок всей вкладки, включая прокрутку, в папку загрузок (Cmd/Ctrl+Shift+S)" data-i18n-title="chrome.shot.title">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+    </button>
     <!-- переключатель темы: постоянный chrome (НЕ в контекстно-скрываемом #botTools);
          сегмент: активная тема подсвечена, соседняя ячейка = доступное действие -->
     <div class="pollctl themectl" title="Тема интерфейса" data-i18n-title="chrome.theme.title">
@@ -1170,6 +1197,12 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
       <span class="stamp"><span data-i18n="chrome.stamp.prefix">данные по состоянию на</span> <b id="stamp">ожидание живых данных…</b></span>
     </div>
   </header>
+  <!-- уведомление о снимке: путь к файлу и «показать в папке»; скрыто, пока снимка не было -->
+  <div class="shot-toast" id="shotToast" role="status" aria-live="polite" hidden>
+    <span class="txt" id="shotToastTxt"></span>
+    <button type="button" class="act" id="shotToastShow" data-i18n="chrome.shot.show">показать в папке</button>
+    <button type="button" class="close" id="shotToastClose" aria-label="Закрыть" data-i18n-aria="chrome.shot.close">×</button>
+  </div>
 
   <!-- ═══════════════════════ ВИД · ОБЗОР (home) ═══════════════════════ -->
   <section id="view-home" role="tabpanel" aria-labelledby="tab-home" tabindex="-1" class="view reveal">
@@ -8651,6 +8684,29 @@ function setLocale(l){
   if(window.ui && window.ui.setLocale) Promise.resolve(window.ui.setLocale(l)).catch(e=>console.warn('ui.setLocale', e));
   repaintCharts();            // подписи канвасов уже из словаря (fa); остальные вкладки - в следующих фазах
 }
+// ── снимок всей вкладки: кнопка шапки → window.ui.screenshot() → main.js captureFullPage → путь ──
+// Рендерер ничего не снимает и не решает: показывает ответ. Клавиши и сигнал приходят пушем onShot.
+(function(){
+  const btn=$('shotBtn'), toast=$('shotToast'), txt=$('shotToastTxt'), showBtn=$('shotToastShow'), closeBtn=$('shotToastClose');
+  if(!btn||!toast) return;
+  let lastPath=null, hideT=null;
+  function hide(){ toast.hidden=true; if(hideT){ clearTimeout(hideT); hideT=null; } }
+  function show(r){
+    if(r&&r.path){ lastPath=r.path; txt.textContent = r.fallback ? t('chrome.shot.doneProfile',{path:r.path}) : t('chrome.shot.done',{path:r.path}); showBtn.hidden=false; }
+    else { lastPath=null; txt.textContent=t('chrome.shot.fail',{err:(r&&r.error)||'?'}); showBtn.hidden=true; }
+    toast.hidden=false; if(hideT) clearTimeout(hideT); hideT=setTimeout(hide, 15000);
+  }
+  btn.addEventListener('click', async ()=>{
+    if(!window.ui||!window.ui.screenshot){ show({error:'no bridge'}); return; }
+    hide(); btn.disabled=true; // уведомление прячется ДО снимка, чтобы не попасть в него
+    try{ show(await window.ui.screenshot()); }
+    catch(e){ show({error:(e&&e.message)||String(e)}); }
+    finally{ btn.disabled=false; }
+  });
+  showBtn.addEventListener('click', ()=>{ if(lastPath&&window.ui&&window.ui.showInFolder) window.ui.showInFolder(lastPath); });
+  closeBtn.addEventListener('click', hide);
+  if(window.ui&&window.ui.onShot) window.ui.onShot(show);
+})();
 applyI18n(); // стартовое применение словаря к статике (для ru - тождество)
 if($('langSel')) $('langSel').querySelectorAll('button').forEach(b=>{
   b.onclick=()=>{ if(b.dataset.v!==localeCurrent()) setLocale(b.dataset.v); };

@@ -24,7 +24,7 @@ import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts } 
 import { ledgerView, buildLedger } from "../engine/ledger.js";
 import { toLedgerCsv, toLedgerSheet, toLedgerJson, ledgerFileName, dialogFiltersFor } from "./export.js";
 import { buildXlsxBuffer } from "./xlsx-writer.js";
-import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes, readScanRecords, listScanRecordDays, writeCache, loadFaBases, saveFaBases, screenshotName, writeScreenshot } from "../engine/store.js";
+import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes, readScanRecords, listScanRecordDays, writeCache, loadFaBases, saveFaBases, screenshotName, writeScreenshot, writeScreenshotTo } from "../engine/store.js";
 // Бот 1, автомат (фаза 4): чистые правила живут в src/engine/fa/, здесь только снабжение,
 // исполнение намерения и диск. Ни одной строки решения в главном процессе нет намеренно - иначе
 // книга охраны прогоняла бы не ту систему, которая работает живьём.
@@ -139,7 +139,7 @@ process.on("unhandledRejection", (e) => console.error("[main] unhandledRejection
 // Electron>`; см. `captureFullPage`). На Windows таких сигналов нет и сама подписка бросает, там
 // остаётся сочетание клавиш в окне.
 if (process.platform !== "win32") {
-  process.on("SIGUSR2", () => { captureFullPage("SIGUSR2"); });
+  process.on("SIGUSR2", () => { captureFullPage("SIGUSR2", "profile"); });
 }
 
 let win = null;
@@ -3448,6 +3448,16 @@ function wireIpcUi() {
     saveSettings(baseDir, state.settings);
     return { ok: true, locale };
   });
+  // Снимок всей вкладки по кнопке в шапке: в папку загрузок (см. `captureFullPage`). Ответ несёт
+  // путь, размер и признак отката в профиль; рендерер только показывает его.
+  ipcMain.handle("ui:screenshot", async () => (await captureFullPage("кнопка", "downloads")) ?? { error: "busy" });
+  // «Показать в папке»: Finder или Проводник с выделенным файлом. Принимаются ТОЛЬКО пути, которые
+  // выдал сам снимок: произвольный путь из рендерера в оболочку не уходит.
+  ipcMain.handle("ui:showInFolder", async (_e, p) => {
+    if (typeof p !== "string" || !shotPaths.has(p)) return { ok: false };
+    shell.showItemInFolder(p);
+    return { ok: true };
+  });
   // Реестр пресетов схемы продавца - тем же приёмом sendSync, и по той же причине, что тема с
   // локалью: числа окна и дельты стоят в ПОДПИСЯХ интерфейса («колл 336-672 ч»), то есть нужны до
   // первой отрисовки. Через датасет они пришли бы первым пушем, и до него подпись показывала бы
@@ -3703,11 +3713,23 @@ function wireIpc() {
 // Снимает отладочный протокол Chromium из главного процесса: `Page.captureScreenshot` с
 // `captureBeyondViewport` рисует документ целиком, окно не двигается и не меняет размер, рендерер не
 // участвует и ничего не считает. Два повода: сигнал SIGUSR2 главному процессу (подписка выше) и
-// Cmd/Ctrl+Shift+S в окне (`createWindow`). Файл `userData/screenshots/<UTC>-<вкладка>.png` кладёт
-// склад, в лог уходит строка `[shot]` с путём и размером; ошибка тоже строкой, снимок никогда не
-// роняет приложение. Один снимок за раз: повторный повод во время записи только отмечается в логе.
+// Cmd/Ctrl+Shift+S в окне (`createWindow`) и кнопка в шапке (IPC `ui:screenshot`). Куда класть,
+// решает повод (`dest`): человеку за машиной (кнопка, клавиши) файл нужен там, где он его найдёт,
+// это папка загрузок `app.getPath("downloads")` (на macOS `~/Downloads`, на Windows системная папка
+// загрузок, обе с учётом переноса пользователем); оператору по SSH (сигнал) нужен каталог профиля
+// `userData/screenshots`, потому что папки Desktop и Downloads на macOS для SSH закрыты TCC. Корень
+// приложения не годится нигде: Program Files без прав администратора не пишется, а запись внутрь
+// подписанного .app ломает подпись. Если в загрузки записать не удалось (macOS спрашивает
+// разрешение «Файлы и папки» при первой записи, и его могут не дать), файл уходит в профиль, а
+// ответ несёт `fallback: true`, чтобы интерфейс честно назвал место. Имя строит склад. В лог уходит
+// строка `[shot]` с путём и размером; ошибка тоже строкой, снимок никогда не роняет приложение.
+// Один снимок за раз: повторный повод во время записи только отмечается в логе.
 let shotBusy = false;
-async function captureFullPage(reason) {
+const shotPaths = new Set(); // пути, которые выдал сам снимок: только их показывает `ui:showInFolder`
+function shotDownloadsDir() {
+  try { return app.getPath("downloads"); } catch { return null; }
+}
+async function captureFullPage(reason, dest = "profile") {
   if (!win || win.isDestroyed()) return null;
   if (shotBusy) {
     console.log(`[shot] ${reason}: предыдущий снимок ещё пишется, повод пропущен`);
@@ -3733,12 +3755,32 @@ async function captureFullPage(reason) {
       captureBeyondViewport: true,
       clip: { x: 0, y: 0, width, height, scale: 1 },
     });
-    const path = writeScreenshot(baseDir, screenshotName(Date.now(), view), Buffer.from(data, "base64"));
+    const png = Buffer.from(data, "base64");
+    const name = screenshotName(Date.now(), view);
+    let path = null;
+    let fallback = false;
+    const downloads = dest === "downloads" ? shotDownloadsDir() : null;
+    if (downloads) {
+      try {
+        path = writeScreenshotTo(downloads, name, png);
+      } catch (e) {
+        console.error(`[shot] ${reason}: в папку загрузок не записалось (${(e && e.message) || e}), файл уходит в профиль`);
+        fallback = true;
+      }
+    } else if (dest === "downloads") {
+      fallback = true;
+    }
+    if (!path) path = writeScreenshot(baseDir, name, png);
+    shotPaths.add(path);
     console.log(`[shot] ${reason}: ${path} (${width}x${height} css px, вкладка ${view || "?"})`);
-    return path;
+    const result = { path, width, height, view: view || null, fallback };
+    // Клавиши и сигнал приходят мимо рендерера: он узнаёт о снимке пушем и показывает то же
+    // уведомление, что и после кнопки. Кнопка получает ответ IPC и пуш ей не нужен.
+    if (reason !== "кнопка" && win && !win.isDestroyed()) win.webContents.send("ui:shot", result);
+    return result;
   } catch (e) {
     console.error(`[shot] ${reason}: не снялось: ${(e && e.message) || e}`);
-    return null;
+    return { error: (e && e.message) || String(e) };
   } finally {
     if (attached) {
       try { dbg.detach(); } catch {}
@@ -3775,7 +3817,7 @@ function createWindow() {
   win.webContents.on("before-input-event", (e, input) => {
     if (!isShotShortcut(input)) return;
     e.preventDefault();
-    captureFullPage("клавиши");
+    captureFullPage("клавиши", "downloads");
   });
   win.loadFile(join(HERE, "..", "renderer", "index.html"));
 }

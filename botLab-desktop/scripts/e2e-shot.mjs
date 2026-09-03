@@ -1,14 +1,16 @@
 // e2e-shot.mjs - живая проверка снимка всей страницы (main.js `captureFullPage`) через Playwright
 // _electron на ВРЕМЕННОМ профиле (тот же приём изоляции, что в e2e-ui.mjs: --user-data-dir и
 // подменённый HOME, прерывание до любого действия, если userData не во временной папке).
-// Что проверяется: SIGUSR2 главному процессу даёт PNG в userData/screenshots с высотой всего
-// документа, а не окна; имя несёт вкладку; путь уходит в лог. Сочетание клавиш здесь НЕ
-// проверяется: синтетические нажатия Playwright (CDP Input.dispatchKeyEvent) до
-// `before-input-event` не доходят, поэтому предикат сочетания живёт в shortcuts.js под юнит-тестом,
-// а живое нажатие проверяется руками (файл и строка [shot] в логе).
+// Что проверяется: 1) SIGUSR2 главному процессу даёт PNG в userData/screenshots с высотой всего
+// документа, а не окна; имя несёт вкладку; путь уходит в лог; 2) кнопка в шапке через настоящий
+// IPC кладёт файл в папку загрузок и показывает уведомление с путём. Папка загрузок берётся у
+// приложения и обязана лежать во временном HOME, иначе кнопка не нажимается: настоящие загрузки
+// пользователя прогон не трогает. Сочетание клавиш здесь НЕ проверяется: синтетические нажатия
+// Playwright (CDP Input.dispatchKeyEvent) до `before-input-event` не доходят, поэтому предикат
+// сочетания живёт в shortcuts.js под юнит-тестом, а живое нажатие проверяется руками.
 // Не часть золотого набора (поднимает Electron, ~20 с). Запуск: npm run e2e:shot
 import { createRequire } from "node:module";
-import { mkdtempSync, rmSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,6 +79,33 @@ try {
   check("строка [shot] с путём в логе главного процесса", stdout.join("").includes(`[shot] SIGUSR2: ${join(shotsDir, first)}`));
 
   check("временных файлов .tmp в каталоге нет", !readdirSync(shotsDir).some((f) => f.endsWith(".tmp")));
+
+  // 2. кнопка в шапке → IPC → папка загрузок (только если она внутри временного HOME)
+  // Папку загрузок Chromium берёт у системы, а не из HOME (проверено: при подменённом HOME она
+  // осталась настоящей), поэтому прогон перенаправляет её явно тем же app.setPath, каким её меняют
+  // настройки Electron. Настоящие загрузки пользователя прогон не трогает никогда.
+  const tmpDownloads = join(tmpHome, "Downloads");
+  mkdirSync(tmpDownloads, { recursive: true });
+  await app.evaluate(({ app: a }, dir) => a.setPath("downloads", dir), tmpDownloads);
+  const downloads = await app.evaluate(({ app: a }) => { try { return a.getPath("downloads"); } catch { return null; } });
+  const dlIsolated = !!downloads && realpathSync(downloads).startsWith(realpathSync(tmpHome));
+  check("папка загрузок перенаправлена во временный HOME", dlIsolated, String(downloads));
+  if (dlIsolated) {
+    await win.evaluate("setView('btc-options')");
+    await sleep(800);
+    await win.click("#shotBtn");
+    const dl = await waitFor(() => { try { return readdirSync(downloads).find((f) => /^botlab-.*-btc-options\.png$/.test(f)); } catch { return null; } },
+      { label: "снимок по кнопке в папке загрузок", timeout: 15000 });
+    const s2 = pngSize(readFileSync(join(downloads, dl)));
+    const geo2 = await win.evaluate("({inner: window.innerHeight, doc: document.documentElement.scrollHeight})");
+    check("кнопка: PNG в папке загрузок с именем botlab-…-btc-options.png", true, `${dl} ${s2.width}x${s2.height}`);
+    check("кнопка: высота снимка это высота документа", Math.abs(s2.height / dpr - geo2.doc) <= 2 && geo2.doc > geo2.inner + 50,
+      `png ${s2.height} при dpr ${dpr}; документ ${geo2.doc}, окно ${geo2.inner}`);
+    const toast = await waitFor(() => win.evaluate("(function(){const t=document.getElementById('shotToast');return t&&!t.hidden?document.getElementById('shotToastTxt').textContent:''})()"),
+      { label: "уведомление о снимке", timeout: 5000 });
+    check("уведомление показывает путь к файлу", toast.includes(join(downloads, dl)), toast);
+    check("строка [shot] кнопка в логе", stdout.join("").includes(`[shot] кнопка: ${join(downloads, dl)}`));
+  }
 } catch (e) {
   check("прогон без исключений", false, (e && e.message) || String(e));
 } finally {

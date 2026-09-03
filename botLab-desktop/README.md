@@ -182,15 +182,21 @@ Environment flags: `FA_AUTO=1` arms bot 1 at boot if it is not armed yet (parame
 the default values), `SCN_AUTOSTART=1` starts the scanner. The poll interval (1, 5 or 15 minutes),
 language and theme are set in the app and persist in `settings.json`.
 
-Full-page screenshot: the app captures the WHOLE current tab itself, not the visible part of the
-window, so a machine watched over SSH (where `screencapture` is blind without the screen-recording
-permission and a window capture is cut at the screen edge) can still be inspected. Two triggers:
-`kill -USR2 <pid of the Electron main process>` (macOS and Linux) and Cmd/Ctrl+Shift+S in the window
-(all platforms). The file lands in `userData/screenshots/<UTC stamp>-<tab>.png`, written atomically,
-and the log prints a `[shot]` line with the path and the size. The capture goes through the Chromium
-debugging protocol from the main process (`Page.captureScreenshot` beyond the viewport): the window
-does not move or resize and the renderer does no work. `npm run e2e:shot` exercises it on a temporary
-profile.
+Full-page screenshot: the app captures the WHOLE current tab itself, scroll included, not the
+visible part of the window. Three triggers. The camera button in the top bar and Cmd/Ctrl+Shift+S
+(all platforms) write `botlab-<UTC stamp>-<tab>.png` into the user's Downloads folder
+(`app.getPath('downloads')`: `~/Downloads` on macOS, the Downloads known folder on Windows, both
+honouring a relocated folder) and show a notice with the path and a "show in folder" action that
+opens Finder or Explorer at the file; macOS asks for the "Files and Folders" permission on the first
+write, and if the folder cannot be written the file goes to `userData/screenshots/` and the notice
+says so. `kill -USR2 <pid of the Electron main process>` (macOS and Linux) writes into
+`userData/screenshots/` directly, because on macOS the Downloads folder is invisible over SSH.
+The application folder is never used: Program Files is read-only without elevation and writing into
+a signed macOS bundle breaks its signature. Files are written atomically and the log prints a
+`[shot]` line with the path and the size. The capture goes through the Chromium debugging protocol
+from the main process (`Page.captureScreenshot` beyond the viewport): the window does not move or
+resize and the renderer does no work. `npm run e2e:shot` exercises the signal and the button on a
+temporary profile whose Downloads folder is temporary too.
 
 ## Build installers and release
 

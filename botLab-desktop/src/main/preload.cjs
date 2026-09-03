@@ -60,6 +60,12 @@ contextBridge.exposeInMainWorld("ui", {
   // локаль UI - тот же приём: sendSync до первой отрисовки, invoke для персиста
   getLocaleSync: () => ipcRenderer.sendSync("ui:getLocale"),
   setLocale: (l) => ipcRenderer.invoke("ui:setLocale", l),
+  // снимок всей вкладки (main.js captureFullPage): кнопка шлёт запрос и получает путь; клавиши и
+  // сигнал приходят мимо рендерера, о них он узнаёт через onShot; showInFolder принимает только
+  // пути, которые выдал сам снимок (проверяет главный процесс)
+  screenshot: () => ipcRenderer.invoke("ui:screenshot"),
+  showInFolder: (p) => ipcRenderer.invoke("ui:showInFolder", p),
+  onShot: (cb) => ipcRenderer.on("ui:shot", (_e, r) => cb(r)),
 });
 
 // ── Bot 2 «BTC-опционы» (Strategy One) - a PARALLEL bridge, fully isolated from `fa` above ──
