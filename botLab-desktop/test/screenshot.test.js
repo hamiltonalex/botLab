@@ -84,6 +84,8 @@ test("мост и рендерер: кнопка в шапке, уведомле
   assert.match(html, /<button class="shot-btn" id="shotBtn" type="button"[^>]*data-i18n-title="chrome\.shot\.title"/, "кнопка снимка в шапке");
   assert.match(html, /<header class="topbar">[\s\S]*id="shotBtn"[\s\S]*<\/header>/, "кнопка стоит в постоянной шапке, а не внутри вида одного бота");
   assert.match(html, /id="shotToast"[^>]*role="status"[^>]*hidden/, "уведомление о снимке скрыто, пока снимка не было");
+  assert.match(html, /\.shot-toast\[hidden\]\{ display:none; \}/,
+    "у уведомления авторский display:flex, поэтому атрибут hidden обязан быть подкреплён правилом, иначе оно видно с самого старта");
   assert.match(html, /window\.ui\.screenshot\(\)/, "кнопка зовёт мост, а не снимает сама");
   assert.match(html, /window\.ui\.showInFolder\(lastPath\)/);
   assert.doesNotMatch(html, /captureScreenshot|webContents/, "в рендерере нет ни протокола, ни главного процесса");

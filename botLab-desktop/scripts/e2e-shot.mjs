@@ -61,6 +61,8 @@ try {
   await sleep(800);
   const geo = await win.evaluate("({inner: window.innerHeight, doc: document.documentElement.scrollHeight, w: document.documentElement.scrollWidth, dpr: window.devicePixelRatio, view: state.view})");
   console.log("окно:", JSON.stringify(geo));
+  const toastBoot = await win.evaluate("(function(){const t=document.getElementById('shotToast');return !!t&&t.hidden&&getComputedStyle(t).display==='none'})()");
+  check("до снимка уведомления на экране нет (атрибут hidden не перебит display)", toastBoot);
   const shotsDir = join(userData, "screenshots");
   const listShots = () => { try { return readdirSync(shotsDir).filter((f) => f.endsWith(".png")); } catch { return []; } };
 
@@ -105,6 +107,10 @@ try {
       { label: "уведомление о снимке", timeout: 5000 });
     check("уведомление показывает путь к файлу", toast.includes(join(downloads, dl)), toast);
     check("строка [shot] кнопка в логе", stdout.join("").includes(`[shot] кнопка: ${join(downloads, dl)}`));
+    const toastShown = await win.evaluate("(function(){const t=document.getElementById('shotToast');return getComputedStyle(t).display!=='none'})()");
+    check("после снимка уведомление на экране", toastShown);
+    const closed = await win.evaluate("(function(){document.getElementById('shotToastClose').click();const t=document.getElementById('shotToast');return t.hidden&&getComputedStyle(t).display==='none'})()");
+    check("крестик прячет уведомление целиком", closed);
   }
 } catch (e) {
   check("прогон без исключений", false, (e && e.message) || String(e));

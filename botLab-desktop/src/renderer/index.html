@@ -326,6 +326,9 @@ body::before{
   background:var(--bg); border:1px solid var(--line-2); box-shadow:0 10px 30px rgba(0,0,0,.35);
   font:12px/1.35 var(--f-mono); color:var(--txt);
 }
+/* авторский display:flex перебивает браузерное правило для атрибута hidden: без этой строки
+   уведомление видно с самого старта (поймано снимком с mbp15 2026-09-03) */
+.shot-toast[hidden]{ display:none; }
 .shot-toast .txt{ min-width:0; overflow-wrap:anywhere; }
 .shot-toast .act{ flex:0 0 auto; font:600 10.5px var(--f-mono); letter-spacing:.4px; color:var(--accent); background:transparent;
   border:1px solid color-mix(in srgb, var(--accent) 50%, transparent); border-radius:6px; padding:4px 8px; cursor:pointer; }
