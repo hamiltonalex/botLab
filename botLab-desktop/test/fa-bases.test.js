@@ -126,6 +126,15 @@ test("годность часа определяет resolveBase, а не соб
   // не та, и считать по ней разбавление значит считать по чужому числу.
   const broken = [{ ...good[0], fbase_long: good[0].fbase_long * 3 }];
   assert.equal(baseCoverage(broken, "short").covered, 0, "несошедшееся тождество это НЕ покрытый час");
+  // Живой час с невязкой выше 1e-6 (база снята в первую минуту часа, ставки строки индексатора от
+  // границы часа) покрыт по метке `live` и идёт в счётчик живых; тот же час без метки и долитый
+  // час сверяются строго и не покрыты.
+  const drift = { ...good[0], fbase_long: good[0].fbase_long * 1.002 }; // невязка 0.2%
+  assert.equal(baseCoverage([drift], "short").covered, 0, "без метки строгий порог");
+  assert.deepEqual(baseCoverage([{ ...drift, fbase_src: "live" }], "short"), {
+    hours: 1, covered: 1, missing: 0, fraction: 1, coveredLive: 1, coveredIndexer: 0, coveredUnknown: 0,
+  });
+  assert.equal(baseCoverage([{ ...drift, fbase_src: "indexer" }], "short").covered, 0, "долитый час сверяется строго");
   // Пустое окно это ноль покрытия, а не единица: делить нечего, и молчаливое «всё хорошо» здесь
   // означало бы вход по пустым данным.
   assert.equal(baseCoverage([], "short").fraction, 0);

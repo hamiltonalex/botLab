@@ -183,7 +183,11 @@ ban of 2026-08-31 is lifted. The conditions of the backfill are not relaxed: a l
 ranks above history and is never overwritten; only past full hours of the horizon window are
 backfilled; every hour is checked by the side identity against the row's own rates, and an hour
 where it fails (indexer zeros on a live market) stays a hole; every hour remembers where its base
-came from, and the interface never calls a backfilled hour observed. The reindexing drift (40.4% of
+came from, and the interface never calls a backfilled hour observed. A live hour is checked by the
+same identity but with a 5% tolerance instead of 1e-6: the bot samples the base in the first minute
+of the hour while the indexer row's rates refer to the hour boundary, and open interest moves within
+that minute; on the live run of 2026-09-03 the strict tolerance rejected a third of BTC's live hours
+and would have pushed coverage below 684 hours within three days. The reindexing drift (40.4% of
 hours by the last bit over 71 days) is below decision precision for bases: a check of the live base
 against the indexer gives a median of 0.38% and a maximum of 3.36%.
 

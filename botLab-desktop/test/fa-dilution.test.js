@@ -36,8 +36,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSpreadCsv } from "../src/engine/format.js";
 import {
-  FA_DILUTION_REASONS, FA_FLOW_REASONS, FA_IDENTITY_MAX_REL_ERR, NO_DILUTION,
-  baseUsd, dilutedFundingRate, dilutionFactor, potOf, resolveBase,
+  FA_DILUTION_REASONS, FA_FLOW_REASONS, FA_IDENTITY_MAX_REL_ERR, FA_IDENTITY_MAX_REL_ERR_LIVE, NO_DILUTION,
+  baseUsd, dilutedFundingRate, dilutionFactor, identityMaxRelErr, potOf, resolveBase,
 } from "../src/engine/fa/dilution.js";
 import { openPosition, accrue, accrueFromRows, closePosition, positionSummary, accountSummary } from "../src/engine/paper.js";
 import { buildLedger, ledgerReconciles } from "../src/engine/ledger.js";
@@ -130,6 +130,49 @@ test("база пришла НЕ ТА: тождество не сходится,
   accrueFromRows(p, [bad], BASE_MS + HOUR);
   assert.equal(p.accruals[0].dilutionReason, "base_identity_broken");
   assert.equal(p.accruals[0].fundingUsd, 0);
+});
+
+test("живая база в строке индексатора: допуск 5% по метке live, строгий 1e-6 без метки и у долитых", () => {
+  // Две ЖИВЫЕ строки кадра mb12 03.09.2026 (BTC 15:00Z и ETH 12:00Z), у которых тождество при 1e-6
+  // не сходилось: базы сняты опросом в первую минуту часа, ставки строки индексатора относятся к
+  // границе часа. Сама живая база верна: с живыми ставками того же мгновения невязка была 1e-10.
+  const btc = {
+    tsHour: 1788447600, f_long: 4.819887777536491e-9, f_short: -4.844765352830757e-9, b_long: 1.4759286274993964e-9, b_short: 0,
+    hl_rate: 0.0000125, fbase_long: 11341466.42830005, fbase_short: 11336091.564949535,
+  };
+  const eth = {
+    tsHour: 1788436800, f_long: 5.092305185240664e-9, f_short: -4.13956159700288e-9, b_long: 0, b_short: 3.106178913961201e-9,
+    hl_rate: 0.0000125, fbase_long: 12337865.826546386, fbase_short: 15466126.55992495,
+  };
+  for (const [r, rel] of [[btc, 4.7e-3], [eth, 1.87e-2]]) {
+    const live = resolveBase({ ...r, fbase_src: "live" }, "long");
+    assert.equal(live.ok, true, `живой час годен при невязке ${live.relErr}`);
+    assert.equal(live.reason, null);
+    near(live.relErr, rel, 5e-4, "невязка живого часа");
+    assert.equal(resolveBase({ ...r, fbase_src: "indexer" }, "long").reason, "base_identity_broken", "долитый час с такой невязкой отвергается");
+    assert.equal(resolveBase(r, "long").reason, "base_identity_broken", "безметочный час идёт по строгому порогу");
+  }
+  assert.equal(identityMaxRelErr("live"), FA_IDENTITY_MAX_REL_ERR_LIVE);
+  for (const src of ["indexer", null, undefined, "", "LIVE"]) {
+    assert.equal(identityMaxRelErr(src), FA_IDENTITY_MAX_REL_ERR, `метка «${String(src)}» это строгий порог`);
+  }
+  assert.ok(FA_IDENTITY_MAX_REL_ERR_LIVE > 0.0336, "допуск выше расхождения живой базы с индексатором (максимум 3.36%)");
+  assert.ok(FA_IDENTITY_MAX_REL_ERR_LIVE > 0.0092, "и выше невязки подмены поля у BTC (0.92%): поэтому к безметочным строкам он не применяется");
+  // Что живой допуск ловит по-прежнему: нулевая база и перепутанные стороны при неравных базах.
+  assert.equal(resolveBase({ ...btc, fbase_src: "live", fbase_long: 0 }, "long").reason, "no_base");
+  const swapped = resolveBase({ ...eth, fbase_src: "live", fbase_long: eth.fbase_short, fbase_short: eth.fbase_long }, "long");
+  assert.equal(swapped.reason, "base_identity_broken", `перепутанные стороны: невязка ${swapped.relErr}`);
+  // `potOf` сам по себе строгий: слабый допуск выбирает только `resolveBase` по метке строки.
+  assert.equal(potOf(btc.f_long, btc.fbase_long, btc.f_short, btc.fbase_short).ok, false);
+  assert.equal(potOf(btc.f_long, btc.fbase_long, btc.f_short, btc.fbase_short, FA_IDENTITY_MAX_REL_ERR_LIVE).ok, true);
+  // Допуск доходит до ставки: живой час начисляется разбавленным, а не обнуляется.
+  const p = openPosition({ strategy: "two", instrumentKey: "BTC", config: "B", capital: 2500, leverage: 1, nowMs: btc.tsHour * 1000, dilute: true });
+  accrueFromRows(p, [{ ...btc, fbase_src: "live" }], (btc.tsHour + 3600) * 1000);
+  assert.equal(p.accruals[0].dilutionReason, "diluted");
+  near(p.accruals[0].dilutionFactor, btc.fbase_long / (btc.fbase_long + 2500), 1e-12, "множитель B/(B+S) по живой базе");
+  const strict = openPosition({ strategy: "two", instrumentKey: "BTC", config: "B", capital: 2500, leverage: 1, nowMs: btc.tsHour * 1000, dilute: true });
+  accrueFromRows(strict, [btc], (btc.tsHour + 3600) * 1000);
+  assert.equal(strict.accruals[0].dilutionReason, "base_identity_broken", "та же строка без метки обнуляется, как и раньше");
 });
 
 test("ставка после разбавления: четыре причины и ни одной молчаливой", () => {

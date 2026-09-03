@@ -52,6 +52,14 @@ test("почасовое нетто считается тем же разбор�
   assert.equal(hourlyNetUsd(null, LEG), null);
 });
 
+test("живой час с невязкой тождества выше 1e-6 остаётся известным: допуск живой базы доходит до событий", () => {
+  const r = recv(0);
+  const drift = { ...r, fbase_long: r.fbase_long * 1.002 }; // невязка 0.2%: база снята позже ставок строки
+  assert.equal(hourlyNetUsd(drift, LEG), null, "без метки строгий порог: час неизвестен");
+  const live = hourlyNetUsd({ ...drift, fbase_src: "live" }, LEG);
+  assert.ok(Number.isFinite(live) && Math.abs(live - hourlyNetUsd(r, LEG)) < 1e-12, "живой час считается как обычный: база нашей стороны та же");
+});
+
 test("полоса отрицательных часов считается с конца и обрывается неизвестным часом", () => {
   const rows = [...Array.from({ length: 5 }, (_, h) => recv(h)), ...Array.from({ length: 3 }, (_, h) => pay(5 + h))];
   assert.equal(negativeStreakHours(rows, LEG), 3);

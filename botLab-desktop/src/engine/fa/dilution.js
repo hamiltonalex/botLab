@@ -75,7 +75,39 @@ export const NO_DILUTION = Object.freeze({ rate: null, factor: 1, reason: "off" 
 
 // Порог сходимости тождества. 1e-6 это запас в восемь порядков к наблюдённому p99 (4.3e-16 в
 // долях), то есть срабатывает он не на шуме плавающей точки, а только когда база пришла не та.
+// Действует там, где база и ставки строки сняты ОДНИМ мгновением: строка индексатора с долитой
+// базой (`fbase_src: "indexer"`), фикстуры и книги охраны, живой снимок `markets/info`.
 export const FA_IDENTITY_MAX_REL_ERR = 1e-6;
+
+// ДОПУСК ДЛЯ ЖИВОЙ БАЗЫ В СТРОКЕ КАДРА (`fbase_src: "live"`), И ПОЧЕМУ ОН ДРУГОЙ. Живую базу часа
+// опрос снимает в первую минуту часа (первое наблюдение выигрывает, `fa/bases.js`), а ставки той же
+// строки приходят от индексатора и относятся к границе часа. За эту минуту открытый интерес
+// успевает сдвинуться хоть на одну сделку, и отношение сторон f_long/f_short уже не равно
+// B_short/B_long, хотя сама живая база верна: её собственное тождество с живыми ставками того же
+// мгновения сходится до 1e-10. ЗАМЕР 2026-09-03 на живом прогоне mb12 (окно 720 ч, 47 живых часов
+// на рынок): при допуске 1e-6 у BTC не сходились 15 часов из 47 (невязка медиана 2.5e-4, максимум
+// 5.6e-3), у ETH 11 из 47 (1.5e-3, максимум 1.9e-2), у ETH-Avax ноль (рынок малый, интерес за
+// минуту не двигается). Цена: покрытие ворот удерживаемого рынка падало примерно на 8 часов в
+// сутки и пробило бы 684 часа через трое суток, после чего тик блокируется кодом `hist_no_base`
+// и правило выхода не зовётся, а каждый несошедшийся час обнулялся в оценке (удержано 97.8%
+// потока против 99.98% на входе).
+//
+// Пять процентов это выше максимума наблюдённой невязки (1.9e-2) и выше расхождения живой базы с
+// индексатором (максимум 3.36%, шапка `potOf`). Что допуск ловит по-прежнему: нулевую базу при
+// живом рынке (невязка 1) и перепутанные стороны при неравных базах. Чего НЕ ловит: подмену поля
+// открытого интереса в токенах у BTC и APT (невязка 0.92% и 1.68%), и ровно поэтому он НЕ
+// применяется к строкам без метки: у фикстур и книг охраны базы того же мгновения, что и ставки,
+// и строгий порог там обязан остаться. Часы кадра, наблюдённые живьём до появления колонки, метки
+// не имеют и идут по строгому порогу тоже: это цена миграции (на mb12 8 часов из 24 у BTC), и они
+// выходят из окна за месяц.
+export const FA_IDENTITY_MAX_REL_ERR_LIVE = 0.05;
+
+// Допуск по происхождению базы строки. Метку `live` пишет только `applyObservedBases`
+// (`fa/bases.js`); реестр меток живёт там же (`FA_BASE_SOURCES`) и сюда не импортируется, потому
+// что `bases.js` уже импортирует этот модуль, и обратный импорт замкнул бы цикл.
+export function identityMaxRelErr(fbaseSrc) {
+  return fbaseSrc === "live" ? FA_IDENTITY_MAX_REL_ERR_LIVE : FA_IDENTITY_MAX_REL_ERR;
+}
 
 // База фандинга приходит из первоисточника строкой в той же неподвижной точке 1e30, что и открытый
 // интерес в `markets/info`, поэтому масштаб берётся оттуда, а не заводится второй константой.
@@ -106,14 +138,17 @@ export function dilutionFactor(bOwnUsd, sizeUsd) {
 // база, отличающаяся общим ценовым коэффициентом, проходит проверку насквозь. Величина этой слепой
 // зоны на живых данных измерена отдельно: сверка `markets/info` со свежим снимком индексатора дала
 // медиану 0.38% и максимум 3.36%, то есть на множитель B/(B+S) она влияет незначимо.
-export function potOf(fLong, bLongUsd, fShort, bShortUsd) {
+//
+// `maxRelErr` по умолчанию строгий: слабый допуск живой базы выбирает `resolveBase` по метке строки,
+// а не вызывающий, иначе допуск расползся бы по вызовам.
+export function potOf(fLong, bLongUsd, fShort, bShortUsd, maxRelErr = FA_IDENTITY_MAX_REL_ERR) {
   const a = Math.abs(fLong) * bLongUsd;
   const b = Math.abs(fShort) * bShortUsd;
   if (!Number.isFinite(a) || !Number.isFinite(b)) return { pot: NaN, relErr: NaN, ok: false };
   const den = Math.max(a, b);
   if (!(den > 0)) return { pot: 0, relErr: 0, ok: true }; // поток нулевой: делить нечего и нечего сверять
   const relErr = Math.abs(a - b) / den;
-  return { pot: den, relErr, ok: relErr <= FA_IDENTITY_MAX_REL_ERR };
+  return { pot: den, relErr, ok: relErr <= maxRelErr };
 }
 
 // База НАШЕЙ стороны из часовой строки или живого снимка. Поля названы `fbase_*`, а не `b_*`,
@@ -132,7 +167,9 @@ export function resolveBase(rowOrSnapshot, gmxSide) {
   const bShort = gmxSide === "short" ? bOwnUsd : bOtherUsd;
   const checkable = Number.isFinite(bOtherUsd) && bOtherUsd > 0 && Number.isFinite(r.f_long) && Number.isFinite(r.f_short);
   if (!checkable) return { bOwnUsd, bOtherUsd, relErr: null, ok: true, reason: null };
-  const id = potOf(r.f_long, bLong, r.f_short, bShort);
+  // Допуск выбирается по происхождению базы строки (`FA_IDENTITY_MAX_REL_ERR_LIVE`): живая база против
+  // ставок индексатора того же часа сверяется слабее, долитая и безметочная строго.
+  const id = potOf(r.f_long, bLong, r.f_short, bShort, identityMaxRelErr(r.fbase_src));
   return { bOwnUsd, bOtherUsd, relErr: id.relErr, ok: id.ok, reason: id.ok ? null : "base_identity_broken" };
 }
 
