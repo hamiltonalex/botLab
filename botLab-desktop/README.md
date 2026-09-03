@@ -182,6 +182,16 @@ Environment flags: `FA_AUTO=1` arms bot 1 at boot if it is not armed yet (parame
 the default values), `SCN_AUTOSTART=1` starts the scanner. The poll interval (1, 5 or 15 minutes),
 language and theme are set in the app and persist in `settings.json`.
 
+Full-page screenshot: the app captures the WHOLE current tab itself, not the visible part of the
+window, so a machine watched over SSH (where `screencapture` is blind without the screen-recording
+permission and a window capture is cut at the screen edge) can still be inspected. Two triggers:
+`kill -USR2 <pid of the Electron main process>` (macOS and Linux) and Cmd/Ctrl+Shift+S in the window
+(all platforms). The file lands in `userData/screenshots/<UTC stamp>-<tab>.png`, written atomically,
+and the log prints a `[shot]` line with the path and the size. The capture goes through the Chromium
+debugging protocol from the main process (`Page.captureScreenshot` beyond the viewport): the window
+does not move or resize and the renderer does no work. `npm run e2e:shot` exercises it on a temporary
+profile.
+
 ## Build installers and release
 
 ```
@@ -216,8 +226,9 @@ quit of the app, and positions, ledgers and records survive updates.
   (hourly frames, 365 days, with funding bases and their origin), `fa-bases/` (journals of live base
   observations), `funding-arb-auto.json` (automaton state, frozen parameters, decision snapshot),
   `funding-arb-auto-eval.json`, `btc-options.json` and `btc-options-history.json`,
-  `otm-scanner.json`, and the append-only `scan-records/`. Writes are atomic; a corrupt state file
-  is quarantined, never silently replaced; the app cannot delete records.
+  `otm-scanner.json`, the append-only `scan-records/`, and `screenshots/` (full-page captures on
+  request, see above). Writes are atomic; a corrupt state file is quarantined, never silently
+  replaced; the app cannot delete records.
 - **Repository data** (`../data/`): the Deribit cache the offline computations of bot 2 and the
   scanner run on, and the GMX and Hyperliquid data of the bot 1 study, both with their own README.
 

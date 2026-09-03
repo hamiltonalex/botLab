@@ -38,6 +38,7 @@
     "hist:repack": "node scripts/hist-repack.mjs",
     "e2e:ui": "node scripts/e2e-ui.mjs",
     "e2e:chain": "node scripts/e2e-chain.mjs",
+    "e2e:shot": "node scripts/e2e-shot.mjs",
     "verify:loris": "node scripts/verify-loris.mjs",
     "start": "electron .",
     "dist": "electron-builder",

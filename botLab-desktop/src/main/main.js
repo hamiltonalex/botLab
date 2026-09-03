@@ -24,7 +24,7 @@ import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts } 
 import { ledgerView, buildLedger } from "../engine/ledger.js";
 import { toLedgerCsv, toLedgerSheet, toLedgerJson, ledgerFileName, dialogFiltersFor } from "./export.js";
 import { buildXlsxBuffer } from "./xlsx-writer.js";
-import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes, readScanRecords, listScanRecordDays, writeCache, loadFaBases, saveFaBases } from "../engine/store.js";
+import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes, readScanRecords, listScanRecordDays, writeCache, loadFaBases, saveFaBases, screenshotName, writeScreenshot } from "../engine/store.js";
 // Бот 1, автомат (фаза 4): чистые правила живут в src/engine/fa/, здесь только снабжение,
 // исполнение намерения и диск. Ни одной строки решения в главном процессе нет намеренно - иначе
 // книга охраны прогоняла бы не ту систему, которая работает живьём.
@@ -69,6 +69,7 @@ import { foldScanStats, bumpScanStart } from "./scn-stats.js";
 import { sanitizeRestoredScanState } from "./scn-boot.js";
 import { isolateSmokeProfile } from "./smoke-profile.js";
 import { migrateLegacyUserData } from "./migrate.js";
+import { isShotShortcut } from "./shortcuts.js";
 import { initUpdater, disposeUpdater } from "./updater.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -134,6 +135,12 @@ const uiLocale = () => (state.settings.ui && state.settings.ui.locale === "en" ?
 
 process.on("uncaughtException", (e) => console.error("[main] uncaughtException:", e));
 process.on("unhandledRejection", (e) => console.error("[main] unhandledRejection:", e));
+// SIGUSR2: снимок всей страницы по сигналу с консоли или по SSH (`kill -USR2 <pid главного процесса
+// Electron>`; см. `captureFullPage`). На Windows таких сигналов нет и сама подписка бросает, там
+// остаётся сочетание клавиш в окне.
+if (process.platform !== "win32") {
+  process.on("SIGUSR2", () => { captureFullPage("SIGUSR2"); });
+}
 
 let win = null;
 let baseDir = null;
@@ -3689,6 +3696,57 @@ function wireIpc() {
 // ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
+// ---- снимок всей страницы ----
+// Приложение снимает ВСЮ страницу само, а не видимую часть окна. Повод: наблюдение удалённой машины
+// по SSH иначе слепо: `screencapture` без разрешения «Запись экрана» у sshd отдаёт пустой стол, а
+// снимок окна по идентификатору режется по экрану, хотя вкладка длиннее его в несколько раз.
+// Снимает отладочный протокол Chromium из главного процесса: `Page.captureScreenshot` с
+// `captureBeyondViewport` рисует документ целиком, окно не двигается и не меняет размер, рендерер не
+// участвует и ничего не считает. Два повода: сигнал SIGUSR2 главному процессу (подписка выше) и
+// Cmd/Ctrl+Shift+S в окне (`createWindow`). Файл `userData/screenshots/<UTC>-<вкладка>.png` кладёт
+// склад, в лог уходит строка `[shot]` с путём и размером; ошибка тоже строкой, снимок никогда не
+// роняет приложение. Один снимок за раз: повторный повод во время записи только отмечается в логе.
+let shotBusy = false;
+async function captureFullPage(reason) {
+  if (!win || win.isDestroyed()) return null;
+  if (shotBusy) {
+    console.log(`[shot] ${reason}: предыдущий снимок ещё пишется, повод пропущен`);
+    return null;
+  }
+  shotBusy = true;
+  const wc = win.webContents;
+  const dbg = wc.debugger;
+  let attached = false;
+  try {
+    // Вкладка для имени файла: рендерер держит её в `state.view` (`setView`); пусто, если не поднялся.
+    const view = await wc.executeJavaScript("String((typeof state==='object'&&state&&state.view)||'')");
+    if (!dbg.isAttached()) {
+      dbg.attach("1.3");
+      attached = true;
+    }
+    const metrics = await dbg.sendCommand("Page.getLayoutMetrics");
+    const size = metrics.cssContentSize || metrics.contentSize;
+    const width = Math.ceil(size.width);
+    const height = Math.ceil(size.height);
+    const { data } = await dbg.sendCommand("Page.captureScreenshot", {
+      format: "png",
+      captureBeyondViewport: true,
+      clip: { x: 0, y: 0, width, height, scale: 1 },
+    });
+    const path = writeScreenshot(baseDir, screenshotName(Date.now(), view), Buffer.from(data, "base64"));
+    console.log(`[shot] ${reason}: ${path} (${width}x${height} css px, вкладка ${view || "?"})`);
+    return path;
+  } catch (e) {
+    console.error(`[shot] ${reason}: не снялось: ${(e && e.message) || e}`);
+    return null;
+  } finally {
+    if (attached) {
+      try { dbg.detach(); } catch {}
+    }
+    shotBusy = false;
+  }
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1480,
@@ -3712,6 +3770,13 @@ function createWindow() {
   win.webContents.on("console-message", (_e, _lvl, message) => console.log("[renderer]", message));
   win.webContents.on("did-finish-load", () => console.log("[main] renderer loaded"));
   win.webContents.on("render-process-gone", (_e, d) => console.error("[main] renderer gone:", d));
+  // Cmd/Ctrl+Shift+S: снимок всей страницы (`captureFullPage`). Только первое нажатие, без
+  // автоповтора; сочетание не занято ни меню, ни рендерером.
+  win.webContents.on("before-input-event", (e, input) => {
+    if (!isShotShortcut(input)) return;
+    e.preventDefault();
+    captureFullPage("клавиши");
+  });
   win.loadFile(join(HERE, "..", "renderer", "index.html"));
 }
 

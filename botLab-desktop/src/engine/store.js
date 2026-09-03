@@ -253,3 +253,22 @@ export function readCache(baseDir, key) {
 export function writeCache(baseDir, key, rows) {
   atomicWrite(cachePath(baseDir, key), toSpreadCsv(rows));
 }
+
+// ---- снимки экрана: приложение снимает ВСЮ страницу само (main.js `captureFullPage`) ----
+// Свой каталог профиля, имя из метки UTC и вкладки, чтобы серия снимков читалась без открытия.
+// Запись атомарная (tmp + rename): `scp` с удалённой машины никогда не заберёт недописанный файл.
+// Удаления нет: снимки чистит оператор руками, как и всё в профиле.
+const SHOTS_DIR = "screenshots";
+const shotsDir = (b) => ensureDir(join(b, SHOTS_DIR));
+
+export function screenshotName(nowMs, view) {
+  const stamp = new Date(nowMs).toISOString().replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
+  const tab = /^[a-z0-9-]{1,32}$/.test(view || "") ? view : "page";
+  return `${stamp}-${tab}.png`;
+}
+
+export function writeScreenshot(baseDir, name, png) {
+  const path = join(shotsDir(baseDir), name);
+  atomicWrite(path, png);
+  return path;
+}
