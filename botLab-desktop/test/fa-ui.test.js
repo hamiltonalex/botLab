@@ -21,7 +21,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { FA_AUTO_REFUSALS, FA_AUTO_OUTCOMES } from "../src/engine/fa/auto.js";
 import { FA_SIZING_REFUSALS, FA_SIZING_BINDINGS } from "../src/engine/fa/sizing.js";
 import { FA_EXIT_REASONS, FA_EXIT_ACTIONS } from "../src/engine/fa/exit.js";
@@ -307,7 +307,7 @@ test("архив читается, но удалять его нечем: кан
   const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
   const sources = walk(SRC).filter((f) => /\.(js|cjs|mjs|html)$/.test(f));
-  const rel = (f) => f.slice(SRC.length + 1);
+  const rel = (f) => f.slice(SRC.length + 1).split(sep).join("/"); // на Windows разделитель обратный
   // Единственные два места во всём src, где вообще есть удаление, сносят ВРЕМЕННЫЙ каталог,
   // созданный тут же через mkdtempSync (профиль дымового прогона). Расширять список нельзя.
   const ALLOW_RM = new Set(["main/main.js", "main/smoke-profile.js"]);

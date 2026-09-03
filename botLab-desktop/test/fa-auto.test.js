@@ -425,8 +425,10 @@ test("АВТОМАТ НЕ ИСПОЛНЯЕТ: тик не трогает ни л
   assert.equal(t.state.lastTickAt, T);
   // Ни сети, ни файлов, ни собственных часов в модуле нет. Комментарии из счёта убираются: шапка
   // обязана НАЗЫВАТЬ запрет, и запрещать себе его называть было бы нелепо.
+  // Концы строк приводятся к LF: Windows-чекаут с autocrlf даёт \r\n, и без этого хвост
+  // комментария с \r не отрезался бы (поймано Windows-прогоном релиза 0.3.2).
   const code = readFileSync(join(HERE, "..", "src", "engine", "fa", "auto.js"), "utf8")
-    .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+    .replace(/\r\n/g, "\n").split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
   for (const forbidden of ["Date.now", "node:fs", "readFileSync", "fetch("]) {
     assert.ok(!code.includes(forbidden), `чистый редьюсер не имеет права на ${forbidden}`);
   }

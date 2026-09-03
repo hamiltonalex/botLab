@@ -23,7 +23,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   FA_BASE_SOURCES, applyObservedBases, backfillBases, baseBackfillWindow, baseCoverage,
@@ -308,7 +308,9 @@ test("замыкание импортов sources.js не тянет бота 2,
       for (const m of src.matchAll(/^\s*import[^"']*["'](\.[^"']+)["']/gm)) walk(join(dirname(file), m[1]));
     };
     walk(entry);
-    return [...seen];
+    // Пути приводятся к прямой косой: на Windows path.join даёт обратную, и проверки по
+    // "/fa/dilution.js" не находили бы ничего (поймано Windows-прогоном релиза 0.3.2).
+    return [...seen].map((f) => f.split(sep).join("/"));
   };
   const src = closure(join(HERE, "..", "src", "engine", "sources.js"));
   assert.ok(src.some((f) => f.endsWith("/fa/dilution.js")), "масштаб базы берётся у правила разбавления");

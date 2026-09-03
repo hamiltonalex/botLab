@@ -23,7 +23,7 @@ const SHA256_RE = /^[0-9a-f]{64}$/;
 export function parseBaselines(text) {
   const entries = new Map();
   const errors = [];
-  const lines = String(text ?? "").split("\n");
+  const lines = String(text ?? "").split(/\r?\n/); // Windows-чекаут отдаёт файл с \r\n
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i].replace(/#.*$/, "").trim();
     if (!line) continue;
