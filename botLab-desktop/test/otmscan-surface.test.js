@@ -296,3 +296,19 @@ test("leg-сверка: отсутствие биржевого грека да�
   assert.ok(Number.isFinite(checks[0].vgOur), "наша вега при этом посчитана");
   assert.ok(Number.isFinite(checks[0].dRel), "дельта сверена как обычно");
 });
+
+test("сводка: срез секунды расчёта (марки и IV есть, bid/ask нет ни у кого) даёт withQuote 0", () => {
+  // Замер mbp15 2026-09-04 08:00:25 UTC: биржа опустошает книги всех серий на десятки секунд после
+  // экспирации, марки и IV при этом живые. Именно по withQuote ensureBtcOptSellSurface решает, что
+  // такой срез нельзя кэшировать на 2 минуты: иначе секунда пустых книг стоит цепочке три минуты.
+  const metas = [meta("BTC_USDC-25SEP26-82000-C", 504, 82000, "call"), meta("BTC_USDC-25SEP26-80000-P", 504, 80000, "put")];
+  const empty = buildSurfaceRows({
+    summary: metas.map((m) => sum(m.instrument_name, { bid_price: null, ask_price: null })),
+    chainMetas: metas,
+    nowMs: NOW,
+  });
+  assert.equal(empty.rows.length, 2, "строки без котировок остаются строками: марк и греки на месте");
+  assert.equal(summarizeSurface(empty.rows).withQuote, 0);
+  const quoted = buildSurfaceRows({ summary: metas.map((m) => sum(m.instrument_name)), chainMetas: metas, nowMs: NOW });
+  assert.equal(summarizeSurface(quoted.rows).withQuote, 2);
+});

@@ -5706,6 +5706,7 @@ const HELP_BTC_OPTIONS = {
   'opt-sweep': { tk:'help.opt-sweep.t', bk:'help.opt-sweep.b' },
   'opt-hedge': { tk:'help.opt-hedge.t', bk:'help.opt-hedge.b' },
   'opt-legs-sell': { tk:'help.opt-legs-sell.t', bk:'help.opt-legs-sell.b' },
+  'opt-legs-strangle': { tk:'help.opt-legs-strangle.t', bk:'help.opt-legs-strangle.b' },
   'opt-legs': { tk:'help.opt-legs.t', bk:'help.opt-legs.b' },
   'opt-greeks': { tk:'help.opt-greeks.t', bk:'help.opt-greeks.b' },
   'opt-pnl': { tk:'help.opt-pnl.t', bk:'help.opt-pnl.b' },
@@ -7440,10 +7441,13 @@ function optApplyModeRows(){
     : t('opt.r.hintStraddle');
   const legD=$('optPayoffLegendD');
   if(legD) legD.textContent = sell ? t('opt.r.legCredit') : t('opt.payoff.legD0');
-  const legsHelp=$('optLegsHelp'); if(legsHelp) legsHelp.setAttribute('data-help', sell?'opt-legs-sell':'opt-legs');
+  /* Карточка ног называет то, что реально продано: у пары две короткие ноги, и подпись «продажа
+     колла · 1 нога» на открытом стрэнгле врала бы (снимок mbp15 2026-09-04 после перевхода). */
+  const pair = sell && optModeActive()==='sell-strangle';
+  const legsHelp=$('optLegsHelp'); if(legsHelp) legsHelp.setAttribute('data-help', pair?'opt-legs-strangle':sell?'opt-legs-sell':'opt-legs');
   const legsTitle=$('optLegsTitle'), legsHint=$('optLegsHint');
-  if(legsTitle) legsTitle.textContent = sell ? t('opt.r.legsTitleSell') : t('opt.legs.title0');
-  if(legsHint) legsHint.textContent = sell ? t('opt.r.legsHintSell') : t('opt.legs.hint0');
+  if(legsTitle) legsTitle.textContent = pair ? t('opt.r.legsTitleStrangle') : sell ? t('opt.r.legsTitleSell') : t('opt.legs.title0');
+  if(legsHint) legsHint.textContent = pair ? t('opt.r.legsHintStrangle') : sell ? t('opt.r.legsHintSell') : t('opt.legs.hint0');
   const closeBtn=$('optCloseBtn');
   if(closeBtn) closeBtn.title = sell
     ? t('opt.r.holdNote')

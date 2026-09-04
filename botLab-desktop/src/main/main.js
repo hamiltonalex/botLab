@@ -1408,7 +1408,14 @@ async function ensureBtcOptSellSurface(nowMs) {
     });
     const at = Date.now();
     const { rows } = buildSurfaceRows({ summary, chainMetas: chain.instruments, nowMs: at });
-    bo.sellSurface = { rows, fetchedAt: at };
+    // СРЕЗ БЕЗ ЕДИНОЙ КОТИРОВКИ НЕ КЭШИРУЕТСЯ. В секунду расчёта 08:00 UTC биржа опустошает книги
+    // всех серий на несколько десятков секунд (замер 2026-09-04: тик 08:00:25 без бида и аска у
+    // всех опрашиваемых ног при живых марках, в 08:00:40 котировки вернулись). Правило отбора
+    // требует bid и ask, поэтому такой срез отбраковывает всё, а кэш на 2 минуты превращал
+    // секунду пустых книг в три минуты простоя цепочки после экспирации (перевход 08:03:11
+    // вместо ~08:01). Срез отдаётся вызывающему как есть (отказ честный), но следующая попытка
+    // через 30 с берёт свежий. Структурно пустое окно с котировками кэшируется по-прежнему.
+    bo.sellSurface = summarizeSurface(rows).withQuote > 0 ? { rows, fetchedAt: at } : null;
     return rows;
   } finally {
     btcOptSellSurfaceInFlight = false;
