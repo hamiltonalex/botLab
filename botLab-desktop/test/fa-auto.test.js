@@ -23,6 +23,7 @@ import { DEFAULT_COSTS } from "../src/engine/costs.js";
 import { FA_SIZING_DEFAULTS, FA_SIZING_REFUSALS, faSizingPreset } from "../src/engine/fa/sizing.js";
 import { FA_EXIT_REASONS } from "../src/engine/fa/exit.js";
 import { FA_MARGIN_REFUSALS } from "../src/engine/fa/margin.js";
+import { FA_DRAWDOWN_REFUSALS } from "../src/engine/fa/drawdown.js";
 import {
   AUTO_SCHEMA_VERSION, FA_AUTO_BOT_ID, FA_AUTO_INTENTS, FA_AUTO_OUTCOMES, FA_AUTO_PRECEDENCE,
   FA_AUTO_REFUSALS, armAuto, autoHorizonH, autoTick, autoViewWindowDays, autoWindowH, createAutoState,
@@ -162,11 +163,16 @@ test("реестр приоритетов покрывает реестр отк
   assert.ok(at("state_stale") < at("boot_warmup"), "после многодневного простоя верны оба, и сильнее говорит срок годности");
   assert.ok(at("margin_thin") < at("cadence_wait"), "сторож залога перебивает каданс: его отказ невосстановим");
   assert.ok(at("margin_unknown") < at("margin_thin"), "не посчитали и посчитали тонко это разные состояния");
+  assert.ok(at("margin_thin") < at("drawdown_stop"), "ликвидация ноги невосстановима, просадка это уже отданные деньги");
+  assert.ok(at("drawdown_stop") < at("hist_no_base"), "стоп считает по леджеру сделки и не нуждается в базах");
+  assert.ok(at("drawdown_stop") < at("cadence_wait"), "стоп не ждёт каданса");
   assert.ok(at("state_corrupt") === 0, "состояние, которого нет, старше любого вывода из него");
   // Коды сторожа переиспользуются ССЫЛКОЙ, а не переписаны строками.
   for (const c of FA_MARGIN_REFUSALS) assert.ok(FA_AUTO_REFUSALS.includes(c));
+  for (const c of FA_DRAWDOWN_REFUSALS) assert.ok(FA_AUTO_REFUSALS.includes(c));
   const src = readFileSync(join(HERE, "..", "src", "engine", "fa", "auto.js"), "utf8");
   assert.ok(src.includes("...FA_MARGIN_REFUSALS"), "реестр сторожа обязан входить ссылкой");
+  assert.ok(src.includes("...FA_DRAWDOWN_REFUSALS"), "реестр сторожа просадки обязан входить ссылкой");
   for (const code of ["below_fund_ratio", "alt_beats_hold", "hold_best", "no_book"]) {
     assert.ok(!src.includes(`"${code}"`), `код «${code}» задублирован строкой вместо ссылки на реестр правила`);
   }
@@ -346,6 +352,85 @@ test("сторож стоит и на ВХОДЕ: кандидат с тонки
   assert.equal(t.why, "margin_thin");
   assert.equal(t.kind, "none");
   assert.equal(t.intent, null, "намерения входа при отказе сторожа быть не может");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5a. Сторож просадки: по леджеру сделки, до каданса и до правила выхода (замер З6, drawdown.js)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Сделка, отдавшая от пика два круга: круг $9, пик $25, накоплено $5, просадка $20 при пороге $18.
+const bleeding = (over = {}) => held({ cumUsd: 5, peakUsd: 25, roundTripUsd: 9, ...over });
+const bleedMarkets = () => [market("HELD", flat({ P: 4000, bShort: 1e5 }))];
+
+test("стоп по просадке закрывает сделку НЕ ДОЖИДАЯСЬ каданса и сдвигает метку решения на сейчас", () => {
+  const t = run({
+    state: armed({ positionId: "p1", lastDecisionAt: T - 1000, lastDecisionCtx: { token: "HELD", negHours: 0, potUsdPerSec: 1, roomFrac: 0.9 } }),
+    position: bleeding(),
+    markets: bleedMarkets(),
+  });
+  assert.equal(t.kind, "close");
+  assert.equal(t.why, "drawdown_stop");
+  assert.equal(t.intent.action, "close");
+  assert.equal(t.intent.id, "p1");
+  assert.equal(t.drawdown.code, "drawdown_stop");
+  assert.equal(t.drawdown.drawdownUsd, 20);
+  assert.equal(t.drawdown.thresholdUsd, 18);
+  assert.equal(t.state.lastDecisionAt, T, "после стопа следующее решение через каданс, как в замере З6");
+  assert.equal(t.state.lastDecisionCtx, null, "сделки не будет: событиям не от чего меряться");
+  assert.equal(t.decided, false, "стоп это сторож, а не решение правила: строки решения нет");
+  const r = t.refusals.find((x) => x.code === "drawdown_stop");
+  assert.equal(r.where, "position");
+  assert.equal(r.rounds, 2);
+  assert.match(explainAuto(t), /ВЫХОД HELD/);
+});
+
+test("просадка НИЖЕ порога стоп не зовёт, а порог включительный", () => {
+  const below = run({ state: armed({ positionId: "p1", lastDecisionAt: T - 1000 }), position: bleeding({ cumUsd: 7.5 }), markets: bleedMarkets() });
+  assert.equal(below.why, "cadence_wait");
+  assert.equal(below.kind, "none");
+  assert.equal(below.drawdown.known, true);
+  assert.equal(below.drawdown.ok, true);
+  assert.equal(below.drawdown.drawdownUsd, 17.5);
+  const edge = run({ state: armed({ positionId: "p1", lastDecisionAt: T - 1000 }), position: bleeding({ cumUsd: 7 }), markets: bleedMarkets() });
+  assert.equal(edge.why, "drawdown_stop");
+});
+
+test("параметр ноль ВЫКЛЮЧАЕТ стоп, а неизвестные числа леджера его не зовут", () => {
+  const off = run({ state: armed({ positionId: "p1", lastDecisionAt: T - 1000, params: { drawdownStopRounds: 0 } }), position: bleeding({ cumUsd: -100 }), markets: bleedMarkets() });
+  assert.equal(off.why, "cadence_wait");
+  assert.equal(off.drawdown.enabled, false);
+  // Позиция без чисел леджера (старая форма) не даёт кода: это отказ снабжения, а не просадка.
+  const blind = run({ state: armed({ positionId: "p1", lastDecisionAt: T - 1000 }), position: held(), markets: bleedMarkets() });
+  assert.equal(blind.why, "cadence_wait");
+  assert.equal(blind.drawdown.enabled, true);
+  assert.equal(blind.drawdown.known, false);
+  assert.ok(!blind.refusals.some((x) => x.code === "drawdown_stop"));
+  // Без открытой сделки вердикта нет вовсе.
+  assert.equal(run({}).drawdown, null);
+});
+
+test("сторож залога старше стопа, стоп старше ворот снабжения удерживаемого рынка", () => {
+  const thin = run({ state: armed({ positionId: "p1" }), position: bleeding({ markPx: 140 }), markets: bleedMarkets() });
+  assert.equal(thin.why, "margin_thin", "ликвидация ноги невосстановима, просадка это уже отданные деньги");
+  assert.equal(thin.kind, "close");
+  assert.ok(thin.refusals.some((x) => x.code === "drawdown_stop"), "код стопа остаётся в журнале, хоть решил не он");
+  // Дыра в базах удерживаемого рынка блокирует правило выхода, но не стоп: он считает по леджеру.
+  const gated = run({ state: armed({ positionId: "p1" }), position: bleeding(), markets: [market("HELD", partlyBased({ P: 4000, bShort: 1e5, withBase: 100 }))] });
+  assert.equal(gated.why, "drawdown_stop");
+  assert.equal(gated.kind, "close");
+  assert.ok(gated.refusals.some((x) => x.code === "hist_no_base"), "отказ ворот остаётся в журнале");
+});
+
+test("умолчание параметров несёт стоп в два круга, и взвод его замораживает", () => {
+  assert.equal(defaultAutoParams().drawdownStopRounds, 2);
+  const st = armAuto(createAutoState({ nowMs: T }), { nowMs: T });
+  assert.equal(st.params.drawdownStopRounds, 2);
+  // Состояние, взведённое ДО появления параметра, получает умолчание при слиянии: живой автомат на
+  // mb12 взведён 01.09 и переоснащается без перевзвода.
+  const oldState = armed({ positionId: "p1", lastDecisionAt: T - 1000 });
+  oldState.params = Object.freeze({ ...defaultAutoParams(), drawdownStopRounds: undefined });
+  const t = run({ state: oldState, position: bleeding(), markets: bleedMarkets() });
+  assert.equal(t.why, "drawdown_stop");
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

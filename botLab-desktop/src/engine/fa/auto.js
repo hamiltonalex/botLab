@@ -117,6 +117,7 @@ import { FA_EVENT_DEFAULTS, decisionContext, detectDecisionEvents } from "./even
 import { FA_EXIT_DEFAULTS, FA_EXIT_REASONS, bestAlternative, decideExit, shouldDecideNow } from "./exit.js";
 import { FA_MARGIN_DEFAULTS, FA_MARGIN_REFUSALS, marginGuard, positionLegs } from "./margin.js";
 import { baseCoverage } from "./bases.js";
+import { FA_DRAWDOWN_DEFAULTS, FA_DRAWDOWN_REFUSALS, drawdownGuard } from "./drawdown.js";
 import { FA_GAP_SLOTS, classifyFaGap } from "./record.js";
 
 const HOUR_MS = 3600 * 1000;
@@ -171,6 +172,10 @@ export function defaultAutoParams() {
     eventNegHours: FA_EVENT_DEFAULTS.eventNegHours,
     eventPotDropFrac: FA_EVENT_DEFAULTS.eventPotDropFrac,
     eventRoomDropFrac: FA_EVENT_DEFAULTS.eventRoomDropFrac,
+    // СТОП ПО ПРОСАДКЕ накопленного результата сделки, в кругах издержек (`drawdown.js`). ЗАМЕР З6
+    // 2026-09-04: два круга единственный порог, выигравший у правила на всех трёх периодах при том
+    // же числе кругов; один круг проигрывает вне выборки. Ноль выключает сторож.
+    drawdownStopRounds: FA_DRAWDOWN_DEFAULTS.drawdownStopRounds,
   };
 }
 
@@ -236,6 +241,7 @@ export const FA_AUTO_REFUSALS = Object.freeze([
   "boot_warmup", // первый тик после старта процесса: непрерывность ещё не наблюдалась
   "poll_gap", // перерыв опроса: срез и трейлинг на этом тике не непрерывны
   ...FA_MARGIN_REFUSALS, // сторож залога заводит свои коды сам, здесь они переиспользуются ССЫЛКОЙ
+  ...FA_DRAWDOWN_REFUSALS, // сторож просадки: тот же принцип, код живёт в `drawdown.js`
   "capital_missing", // потолок капитала не назван: правило размера обязано отказать, а не занять всё
   "hist_short", // трейлинга меньше горизонта: оценка была бы в других единицах
   "hist_no_base", // баз фандинга на окне меньше требуемого: ни наблюдение, ни долив истории окно ещё не закрыли
@@ -250,7 +256,10 @@ export const FA_AUTO_REFUSALS = Object.freeze([
 //
 // ПОЧЕМУ ИМЕННО ТАК. Сверху вниз идёт от «системы нет» к «системе нечего делать»:
 //   состояние не прочиталось > выключен > бухгалтерия разошлась > данные слишком стары >
-//   не наблюдали непрерывности > сторож залога > снабжение > слот > остановка > каданс.
+//   не наблюдали непрерывности > сторож залога > сторож просадки > снабжение > слот > остановка > каданс.
+// Сторож просадки стоит НИЖЕ сторожа залога (ликвидация ноги невосстановима, просадка это деньги
+// уже отданные) и ВЫШЕ ворот снабжения: он считает по леджеру самой сделки и не нуждается ни в
+// кадре, ни в базах, поэтому дыра в базах удерживаемого рынка ему не мешает.
 // Срок годности состояния стоит ВЫШЕ бута и перерыва нарочно: после многодневного простоя верны все
 // три, и самое сильное утверждение о качестве решения делает именно он.
 export const FA_AUTO_PRECEDENCE = Object.freeze([
@@ -262,6 +271,7 @@ export const FA_AUTO_PRECEDENCE = Object.freeze([
   "poll_gap",
   "margin_unknown",
   "margin_thin",
+  "drawdown_stop",
   "capital_missing",
   "hist_short",
   "hist_no_base",
@@ -279,6 +289,7 @@ const REFUSAL_TEXT = Object.freeze({
   poll_gap: "перерыв опроса: срез и трейлинг не непрерывны",
   margin_thin: "запас до ликвидации ноги меньше требуемого",
   margin_unknown: "запас до ликвидации посчитать нечем",
+  drawdown_stop: "накопленный результат сделки отдал от пика порог стопа по просадке",
   capital_missing: "потолок капитала не назван",
   hist_short: "истории меньше горизонта",
   hist_no_base: "баз фандинга на окне не хватает",
@@ -668,6 +679,21 @@ export function autoTick({
     if (margin.code) add(margin.code, { where: "position", roomFrac: margin.roomFrac });
   }
 
+  // ── ШАГ 4a. СТОРОЖ ПРОСАДКИ ОТКРЫТОЙ СДЕЛКИ (`drawdown.js`, замер З6). Каждый тик, до каданса и до
+  // правила выхода, по числам леджера самой сделки: накопленный брутто, его пик и круг издержек.
+  // Единственное место, где реализованный результат участвует в поведении; правило выхода его
+  // по-прежнему не видит. Неизвестные числа стоп не зовут (`known: false`), и это видно в вердикте.
+  let drawdown = null;
+  if (position) {
+    drawdown = drawdownGuard({
+      cumUsd: position.cumUsd, peakUsd: position.peakUsd, roundTripUsd: position.roundTripUsd,
+      rounds: params.drawdownStopRounds,
+    });
+    if (drawdown.code) {
+      add(drawdown.code, { where: "position", drawdownUsd: drawdown.drawdownUsd, thresholdUsd: drawdown.thresholdUsd, rounds: drawdown.rounds });
+    }
+  }
+
   // ── ШАГ 5. КАДАНС И СОБЫТИЯ. Сторож залога перебивает каданс: его отказ невосстановим следующим
   // решением. СОБЫТИЕ (`events.js`) тоже перебивает каданс, но двигает только момент решения:
   // правило и полоса гистерезиса те же, и на неизменившихся данных перекладки от события не будет.
@@ -714,7 +740,7 @@ export function autoTick({
   const out = (kind, why, extra = null) => {
     st.lastRefusals = [...new Set(refusals.map((r) => r.code))];
     return {
-      kind, why, refusals, events, state: st, margin, gate, decided: false, intent: null, universe: null, exit: null,
+      kind, why, refusals, events, state: st, margin, drawdown, gate, decided: false, intent: null, universe: null, exit: null,
       window: null, evalMarkets: null, params, cfg, trigger: null, decisionEvents, ...(extra || {}),
     };
   };
@@ -732,6 +758,16 @@ export function autoTick({
     // Закрываться по нему значит платить круг издержек за икоту источника, то есть превращать
     // отказ снабжения в вывод правила, а этот класс дефекта проекту уже стоил целого вывода.
     if (position && decider === "margin_thin") {
+      return out("close", decider, { intent: closeIntent(position, decider) });
+    }
+    // СТОП ПО ПРОСАДКЕ ТОЖЕ ТРЕБУЕТ ЗАКРЫТИЯ, и после него метка решения сдвигается на «сейчас»:
+    // следующее решение приходит через каданс, как в замере З6 (стенд после стопа ждал сутки).
+    // Немедленный перезаход в тот же рынок по тому же трейлингу был бы спором сторожа с правилом
+    // входа, ровно тем, за который отклонён кандидат «полоса 48 часов». Снимок событий обнуляется:
+    // сделки не будет, событиям не от чего меряться.
+    if (position && decider === "drawdown_stop") {
+      st.lastDecisionAt = now;
+      st.lastDecisionCtx = null;
       return out("close", decider, { intent: closeIntent(position, decider) });
     }
     return out("none", decider);

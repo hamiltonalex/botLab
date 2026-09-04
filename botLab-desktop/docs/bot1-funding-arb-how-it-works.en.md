@@ -59,9 +59,9 @@ flowchart TD
     D -- "yes" --> E["Decision cycle once a day: the entry rule builds a curve<br/>by size for every market and takes rank 1"]
     E -- "no market repays the round trip" --> C
     E -- "funded" --> F["Trade: one or two legs; the paper ledger accrues<br/>funding with dilution hour by hour"]
-    F --> G["Holding. Every tick: margin guard, snapshot to the archive.<br/>Once a day: the exit rule"]
+    F --> G["Holding. Every tick: margin guard, drawdown stop, snapshot to the archive.<br/>Once a day: the exit rule"]
     G -- "hold" --> G
-    G -- "to cash or thin room" --> C
+    G -- "to cash, thin room or drawdown stop" --> C
     G -- "switch" --> F
     B -. "stop" .-> H["No new entries; an open trade<br/>lives on to the exit rule"]
 ```
@@ -84,9 +84,10 @@ Eight steps, one line each; the details are in the three parts below.
    the net over 720 hours, sifts markets by refusal codes and funds the rank 1 market.
 6. **Trade.** A paper position opens: two legs for the two-leg scheme (GMX and Hyperliquid), one for
    the one-leg scheme (GMX only). The ledger accrues the result hour by hour with dilution.
-7. **Holding and exit.** Every tick the margin guard runs; once a day and on an event the exit rule:
-   hold, to cash or switch. Thin room to liquidation closes the trade without waiting for the day to
-   pass.
+7. **Holding and exit.** Every tick the margin guard and the drawdown stop run; once a day and on an
+   event the exit rule: hold, to cash or switch. Thin room to liquidation closes the trade without
+   waiting for the day to pass; so does the stop, when the accumulated result of the trade has given
+   back two round trips of costs from its peak.
 8. **Next entry.** After closing the slot is empty, and the next decision cycle looks for an entry
    again. So on until the operator stops the automaton.
 
@@ -123,8 +124,8 @@ sequenceDiagram
         E->>H: order book for two coins (ETH, BTC)
         E->>D: snapshot row to the archive, plus a gap row if there was a break
     end
-    E->>E: continuity, supply gate, margin guard
-    alt room to liquidation is thin
+    E->>E: continuity, supply gate, margin guard, drawdown stop
+    alt room to liquidation is thin or two round trips given back from the peak
         E->>D: the trade is closed without waiting for the cadence, and a trade passport
     else cadence is due (once per 24 h) or an event fired
         E->>E: entry rule or exit rule
@@ -304,8 +305,9 @@ they coincide; below the cap the working size is the optimum found.
 
 **Arming parameters**, frozen at the moment of switching on: preset `fa-per-market-h720-v1`, capital
 per trade $2,500, leverage 1 on each leg, required room to liquidation 50%, decision cadence 24 h,
-decision expiry 72 h, required base coverage 95%. The cadence is measured: 24 hours give the same net
-as 1 hour, over 27 round trips instead of 44. The expiry and the coverage are named assumptions in
+decision expiry 72 h, required base coverage 95%, drawdown stop 2 round trips. The cadence is
+measured: 24 hours give the same net as 1 hour, over 27 round trips instead of 44; the stop is
+measured over three history periods (section "The drawdown stop"). The expiry and the coverage are named assumptions in
 the code. Editing the defaults after arming does not catch up with a running trade; re-arming
 resets the continuity accumulator, so the `FA_AUTO=1` flag leaves an already armed automaton alone.
 
@@ -410,6 +412,41 @@ equals 2.30 years of the strategy's net income. Frequency in the measurement: 2 
 at leverage 1, 10 at leverage 2, 46 at leverage 3. The guard catches this event during holding and
 closes the trade before liquidation; liquidation itself never happens in the ledger, and the shown
 P&L does not contain this risk.
+
+
+## The drawdown stop
+
+The exit rule does not see the realized result of the trade: it compares the gross of the window
+back, the net of the best alternative and the zero of cash, and neither the round trip already paid
+nor the accumulated profit enters that comparison. The consequence, measured on the live frame: when
+rates reverse, the trade is held until the 720-hour average goes negative, and it gives the market
+roughly the whole gross of the window at any speed of reversal. The drawdown stop is the only place
+where the realized result takes part in the behaviour, and it stands next to the rule, not inside it.
+
+On every tick the guard reads three numbers from the ledger of the trade itself: the accumulated
+gross since entry, its peak and the round trip of costs charged at entry. When the peak minus the
+accumulated reaches two round trips, the trade is closed on that very tick (`drawdown_stop`) without
+waiting for the cadence, and the next decision comes with the cadence: an immediate re-entry into the
+same market on the same trailing would be a quarrel between the guard and the entry rule. In the
+precedence the stop ranks below the margin guard (a leg liquidation is unrecoverable, money given
+back is already gone) and above the supply gate: it needs neither the frame nor the bases, so a gap
+in the bases of the held market does not stop it. Missing ledger numbers do not call the stop: that
+is a supply refusal, not a drawdown.
+
+The threshold is measured, not assigned. The stand `exit-6-loss.mjs` ran seven candidates of
+behaviour in a losing trade over three history periods at a capital of $2,500: a year of 63 markets,
+a second period of 22 and a long window of 14. The two-round-trip stop was the only one to beat the
+rule everywhere: on the same start it yields $4.4, $12.5 and $10.8 more, winning 40 starts out of 40
+on every period at the same number of round trips; without any one of the 63 names the conclusion
+holds in 58 cases out of 63. A one-round-trip stop is the best on the first year and loses out of
+sample; a half-round-trip stop, a streak of negative hours shorter than two days, an exponential
+window and a collapse of the market flow lose from $34 to $1,290 through extra round trips. The stop
+fires one to three times a year: on trades that gave back two round trips the rule would have held
+the position for another 100..200 hours past the peak of its result. The value of the stop in money
+is small, on the order of $5..15 a year at $2,500, and the threshold must not be tuned further: a grid
+around two round trips would produce a number fitted to the same three periods. On the honesty card
+the stop is shown as the row "given back from the peak of the accumulated at a threshold"; the
+parameter is frozen by arming together with the others.
 
 ## Recording: three streams
 

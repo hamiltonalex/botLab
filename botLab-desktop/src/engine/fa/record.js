@@ -125,6 +125,13 @@
 import { FA_SIZING_REFUSALS, FA_SIZING_BINDINGS, FA_SIZING_DEFAULTS, windowHours } from "./sizing.js";
 import { legModel } from "../paper.js";
 import { FA_EXIT_REASONS, FA_EXIT_ACTIONS } from "./exit.js";
+import { FA_MARGIN_REFUSALS } from "./margin.js";
+import { FA_DRAWDOWN_REFUSALS } from "./drawdown.js";
+
+// ПРИЧИНЫ ЗАКРЫТИЯ В ПАСПОРТЕ СДЕЛКИ: реестр правила выхода плюс коды двух сторожей автомата (залога и
+// просадки), которые закрывают сделку МИМО правила. Без них каждое закрытие сторожем помечалось бы
+// кодом «причина вне реестра», то есть штатный исход выглядел бы как дефект записи.
+const FA_TRADE_WHY = Object.freeze([...FA_EXIT_REASONS, ...FA_MARGIN_REFUSALS, ...FA_DRAWDOWN_REFUSALS]);
 import { FA_DECISION_TRIGGERS } from "./events.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -541,8 +548,9 @@ function tradeSide(p) {
 //
 //   event      - "open" | "close" | "switch". Перекладка это ОДНА строка с обеими сторонами:
 //                разложенная на две, она теряет то, что круг заплачен ради этой альтернативы;
-//   why        - причина из `FA_EXIT_REASONS` для выхода и перекладки; у входа причина живёт в
-//                строке решения, на которую указывает `d`, и здесь она null;
+//   why        - причина из `FA_EXIT_REASONS` для выхода и перекладки либо код сторожа (`margin_thin`,
+//                `drawdown_stop`) для закрытия мимо правила; у входа причина живёт в строке решения,
+//                на которую указывает `d`, и здесь она null;
 //   decisionAt - метка строки решения. Пришивает паспорт к расчёту, из которого он вырос.
 export function buildFaTradeRecord({
   t, source = "live", event, why = null, ageSec, decisionAt = null,
@@ -551,7 +559,7 @@ export function buildFaTradeRecord({
   if (!fin(t)) return null;
   if (!FA_TRADE_EVENTS.includes(event)) return null;
   const xc = [];
-  if (why != null && !FA_EXIT_REASONS.includes(why)) push(xc, `exit:${why}`);
+  if (why != null && !FA_TRADE_WHY.includes(why)) push(xc, `exit:${why}`);
   const row = {
     v: FA_RECORD_VERSION,
     k: "trade",

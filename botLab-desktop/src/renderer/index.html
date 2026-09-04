@@ -1390,6 +1390,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
         <div class="trow"><span class="k" data-i18n="fa.auto.tktAge"></span><span class="num" id="faAutoTktAge">-</span></div>
         <div class="trow"><span class="k" data-i18n="fa.auto.tktCov"></span><span class="num" id="faAutoTktCov">-</span></div>
         <div class="trow"><span class="k" data-i18n="fa.auto.tktEvents"></span><span class="num" id="faAutoTktEvents">-</span></div>
+        <div class="trow"><span class="k" data-i18n="fa.auto.tktDd"></span><span class="num" id="faAutoTktDd">-</span></div>
         <div class="trow"><span class="k" data-i18n="fa.auto.tktLoss"></span><span class="num neg" data-i18n="fa.auto.tktLossV"></span></div>
         <div class="trow"><span class="k" data-i18n="fa.auto.tktBoot"></span><span class="num" data-i18n="fa.auto.tktBootV"></span></div>
         <div id="faAutoTktErr" class="ticket-err" role="alert" hidden></div>
@@ -1509,6 +1510,17 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
           <div class="why-box warn" style="margin-top:10px">
             <b data-i18n="fa.hon.liqWarnB"></b> <span data-i18n="fa.hon.liqWarn"></span>
           </div>
+        </div>
+
+        <!-- (4) СТОП ПО ПРОСАДКЕ. Вердикт сторожа приходит готовым из тика (`drawdown.js`): накопленный
+             брутто, его пик и круг читает леджер сделки, интерфейс числа не считает. -->
+        <div class="fa-hon-sec">
+          <div class="subhdr" data-i18n="fa.hon.ddHdr"></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="fa.hon.ddRow"></span><span class="v num" id="faHonDd">-</span></div>
+          </div>
+          <div class="stamp" id="faHonDdNone" hidden style="margin-top:6px" data-i18n="fa.hon.ddNone"></div>
+          <div class="stamp" style="margin-top:8px" data-i18n="fa.hon.ddNote"></div>
         </div>
       </div>
 
@@ -4735,6 +4747,7 @@ const FA_CODE_TEXT = {
   poll_gap:                 () => t('fa.code.pollGap'),
   margin_thin:              () => t('fa.code.marginThin'),
   margin_unknown:           () => t('fa.code.marginUnknown'),
+  drawdown_stop:            () => t('fa.code.drawdownStop'),
   capital_missing:          () => t('fa.code.capitalMissing'),
   hist_short:               () => t('fa.code.histShort'),
   hist_no_base:             () => t('fa.code.histNoBase'),
@@ -4842,7 +4855,7 @@ function faChipCls(cls){
 function faRefusalNums(last){
   if(!last || !Array.isArray(last.refusals) || !last.refusals.length) return '';
   const withNums = last.refusals.find(x => x && (x.covered != null || x.rows != null || x.ms != null
-    || x.roomFrac != null || x.silenceH != null || x.positionId != null));
+    || x.roomFrac != null || x.silenceH != null || x.positionId != null || x.drawdownUsd != null));
   const r = withNums || last.refusals[0];
   const c = last.why, tok = r.token != null ? String(r.token) : null;
   /* ЖИВЬЁМ И ДОЛИТО ПОРОЗНЬ: оба числа приходят в записи отказа из ворот движка (`baseCoverage`).
@@ -4856,6 +4869,8 @@ function faRefusalNums(last){
     return t('fa.num.pollGap', { d:ledgerDur(r.ms / 1000), c:faGapCause(r.cause) });
   if((c === 'margin_thin' || c === 'margin_unknown'))
     return t('fa.num.margin', { v:Number.isFinite(r.roomFrac) ? fmtPctNS(r.roomFrac, 1) : '-' });
+  if(c === 'drawdown_stop' && Number.isFinite(r.drawdownUsd))
+    return t('fa.num.drawdown', { dd:fmtUSDfull(r.drawdownUsd), thr:Number.isFinite(r.thresholdUsd) ? fmtUSDfull(r.thresholdUsd) : '-' });
   if(c === 'state_stale' && Number.isFinite(r.silenceH))
     return t('fa.num.stateStale', { h:r.silenceH.toFixed(1) });
   if(c === 'orphan_position' && r.positionId)
@@ -4866,7 +4881,7 @@ function faRefusalNums(last){
 /* Разворачиваемое объяснение под телом. Разворачивается ровно на тех кодах, где молчание дороже
    всего: штатный отказ первых недель, перерыв опроса, протухшее состояние, сторож залога и
    расхождение бухгалтерии. Число покрытия берётся из ворот снабжения, а не считается. */
-const FA_WARN_CODES = { hist_no_base:1, poll_gap:1, state_stale:1, margin_thin:1, margin_unknown:1, orphan_position:1 };
+const FA_WARN_CODES = { hist_no_base:1, poll_gap:1, state_stale:1, margin_thin:1, margin_unknown:1, drawdown_stop:1, orphan_position:1 };
 function faWarnHtml(code, a){
   const g = a && a.last && a.last.gate ? a.last.gate : null;
   const pair = (b, body) => '<b>' + ledgerEsc(b) + '</b> ' + ledgerEsc(body);
@@ -4887,6 +4902,7 @@ function faWarnHtml(code, a){
   if(code === 'state_stale')     return pair(t('fa.warn.stateStaleB'), t('fa.warn.stateStale'));
   if(code === 'margin_thin')     return pair(t('fa.warn.marginThinB'), t('fa.warn.marginThin'));
   if(code === 'margin_unknown')  return pair(t('fa.warn.marginUnknownB'), t('fa.warn.marginUnknown'));
+  if(code === 'drawdown_stop')   return pair(t('fa.warn.drawdownStopB'), t('fa.warn.drawdownStop'));
   return pair(t('fa.warn.orphanB'), t('fa.warn.orphan'));
 }
 
@@ -5046,6 +5062,19 @@ function renderFaHonesty(){
     legs.innerHTML = rows.join('');
   }
   const rn = $('faHonRoomNone'); if(rn) rn.hidden = !!roomOk;
+
+  // (4) СТОП ПО ПРОСАДКЕ. Три числа леджера и порог приходят вердиктом сторожа (`drawdown.js`);
+  //     выключенный параметром сторож называется словом, а не прочерком.
+  const d = a && a.last && a.last.drawdown ? a.last.drawdown : null;
+  const ddOn = !!(d && d.enabled && d.known && Number.isFinite(d.drawdownUsd) && Number.isFinite(d.thresholdUsd));
+  const ed = $('faHonDd');
+  if(ed){
+    ed.textContent = ddOn
+      ? t('fa.hon.ddV', { dd:fmtUSDfull(d.drawdownUsd), thr:fmtUSDfull(d.thresholdUsd) })
+      : (d && !d.enabled ? t('fa.hon.ddOff') : '-');
+    ed.className = 'v num' + (ddOn ? (d.ok ? ' pos' : ' neg') : ' faint');
+  }
+  const dnn = $('faHonDdNone'); if(dnn) dnn.hidden = ddOn || !!(d && !d.enabled);
 }
 
 /* ── ЖУРНАЛЫ АВТОМАТА: ИСТОРИЯ СДЕЛОК И ЖУРНАЛ РЕШЕНИЙ ───────────────────────────────────────────
@@ -5486,6 +5515,9 @@ function faFillTicket(){
   /* Пороги событий внеочередного решения замораживаются взводом вместе с остальными числами. */
   set('faAutoTktEvents', p && Number.isFinite(p.eventNegHours) && Number.isFinite(p.eventPotDropFrac) && Number.isFinite(p.eventRoomDropFrac)
     ? t('fa.auto.tktEventsV', { k:p.eventNegHours, p:fmtPctNS(p.eventPotDropFrac, 0), r:fmtPctNS(p.eventRoomDropFrac, 0) }) : '-');
+  /* Стоп по просадке замораживается взводом вместе с остальными; ноль это выключенный сторож, и он назван словом. */
+  set('faAutoTktDd', p && Number.isFinite(p.drawdownStopRounds)
+    ? (p.drawdownStopRounds > 0 ? t('fa.auto.tktDdV', { k:p.drawdownStopRounds }) : t('fa.auto.tktDdOff')) : '-');
   const cf = $('faAutoTktConfirm'); if(cf) cf.disabled = !p;
   return p;
 }

@@ -907,3 +907,12 @@ test("решение несёт окно назад и повод: без них
   assert.equal(split.wn, 360);
   assert.deepEqual(split.cfgd, { windowH: 360 }, "отличие окна от умолчания пишется разницей");
 });
+
+test("коды сторожей залога и просадки это законные причины закрытия в паспорте сделки", () => {
+  for (const why of ["margin_thin", "drawdown_stop"]) {
+    const row = buildFaTradeRecord({ t: 1.7e12, event: "close", why, ageSec: 1 });
+    assert.equal(row.why, why);
+    assert.equal(row.xc, undefined, `причина «${why}» не должна помечаться как вне реестра`);
+  }
+  assert.deepEqual(buildFaTradeRecord({ t: 1.7e12, event: "close", why: "надоело", ageSec: 1 }).xc, ["exit:надоело"]);
+});

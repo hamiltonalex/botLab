@@ -192,7 +192,7 @@ try {
         cadenceNote: txt('faAutoCadenceNote'), stamp: txt('faAutoStampTxt'), warnHidden: hid('faAutoWarn'), emptyHidden: hid('faAutoEmpty'), stopHidden: hid('faAutoStopBtn'),
         evalStamp: txt('faEvalStampTxt'), evalRows: rows('faEvalBody'), evalRowCls: rowCls('faEvalBody'), evalEmptyHidden: hid('faEvalEmpty'),
         honQuoted: txt('faHonQuoted'), honGot: txt('faHonGot'), honRowQuoted: txt('faHonRowQuoted'), honRowGot: txt('faHonRowGot'), honRowKept: txt('faHonRowKept'), honBarPct: txt('faHonBarPct'),
-        honWant: txt('faHonWant'), honSize: txt('faHonSize'), honBind: txt('faHonBind'), honRoom: txt('faHonRoom'), honLegs: kv('faHonLegs'), honDilNoneHidden: hid('faHonDilNone'), honSizeNoneHidden: hid('faHonSizeNone'), honRoomNoneHidden: hid('faHonRoomNone'),
+        honWant: txt('faHonWant'), honSize: txt('faHonSize'), honBind: txt('faHonBind'), honRoom: txt('faHonRoom'), honLegs: kv('faHonLegs'), honDilNoneHidden: hid('faHonDilNone'), honSizeNoneHidden: hid('faHonSizeNone'), honRoomNoneHidden: hid('faHonRoomNone'), honDd: txt('faHonDd'), honDdNoneHidden: hid('faHonDdNone'),
         histRows: rows('faHistoryBody'), histFoot: txt('faHistoryFoot'), histEmptyHidden: hid('faHistoryEmpty'),
         jrRows: rows('faJournalBody'), jrFoot: txt('faJournalFoot'), jrEmptyHidden: hid('faJournalEmpty'), jrBrokenHidden: hid('faJournalBroken'),
         arc: { winDays: txt('faArcWinDays'), winFrom: txt('faArcWinFrom'), winTo: txt('faArcWinTo'), winPoll: txt('faArcWinPoll'), covPct: txt('faArcCovPct'), covPolls: txt('faArcCovPolls'), covLost: txt('faArcCovLost'), covExp: txt('faArcCovExp'), covUnexp: txt('faArcCovUnexp'), causes: kv('faArcCauses'), gaps: kv('faArcGaps'), brokenHidden: hid('faArcBroken'), vanN: txt('faArcVanN'), vanWin: txt('faArcVanWin'), vanEmptyHidden: hid('faArcVanEmpty'), codeN: txt('faArcCodeN'), codes: kv('faArcCodeList'), liqN: txt('faArcLiqN'), liqSrc: txt('faArcLiqSrc'), liqLegs: kv('faArcLiqLegs'), volDay: txt('faArcVolDay'), volDisk: txt('faArcVolDisk'), volParts: kv('faArcVolParts'), volInputs: txt('faArcVolInputs'), retOldest: txt('faArcRetOldest'), ret: kv('faArcRetList'), emptyHidden: hid('faArcEmpty') },
@@ -288,6 +288,11 @@ try {
   check("запас до ликвидации", S.dom.honRoom, m && Number.isFinite(m.roomFrac) ? tpl("fa.hon.liqRoomV", { v: pctNS(m.roomFrac, 1), need: pctNS(m.need, 1) }) : "-");
   const legsExp = (m?.legs || []).map((l) => ({ k: (l.venue === "hl" ? "Hyperliquid" : "GMX") + " · " + sideText(l.side), v: tpl("fa.hon.liqLegV", { v: pctNS(l.roomFrac, 1), px: px(l.liquidationPx) }) }));
   check("ноги сторожа", JSON.stringify((S.dom.honLegs || []).map((x) => ({ k: norm(x.k), v: norm(x.v) }))), JSON.stringify(legsExp));
+  // Стоп по просадке: вердикт сторожа из тика (`drawdown.js`), выключенный сторож назван словом.
+  const dd = last.drawdown;
+  const ddOn = !!(dd && dd.enabled && dd.known && Number.isFinite(dd.drawdownUsd) && Number.isFinite(dd.thresholdUsd));
+  check("стоп по просадке", S.dom.honDd, ddOn ? tpl("fa.hon.ddV", { dd: usdFull(dd.drawdownUsd), thr: usdFull(dd.thresholdUsd) }) : (dd && !dd.enabled ? tpl("fa.hon.ddOff") : "-"));
+  checkBool("заметка стопа скрыта, когда вердикт есть", S.dom.honDdNoneHidden === (ddOn || !!(dd && !dd.enabled)), `hidden=${S.dom.honDdNoneHidden}`);
 
   // ── история сделок ──
   section = "история";

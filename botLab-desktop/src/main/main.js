@@ -643,6 +643,11 @@ function faAutoPosition() {
     entryPx: p.openMarkPx,
     markPx: Number.isFinite(snap?.price) ? snap.price : null,
     hlMaxLev: snap?.hlMaxLev ?? instFor(p.strategy, p.instrumentKey)?.hlMaxLev ?? null,
+    // ЧИСЛА ЛЕДЖЕРА ДЛЯ СТОРОЖА ПРОСАДКИ (`drawdown.js`): накопленный брутто, его пик и круг,
+    // списанный при входе. Берутся у самой позиции, второго счёта здесь нет.
+    cumUsd: p.cumFunding,
+    peakUsd: p.peakCum,
+    roundTripUsd: p.roundTripCost,
   };
 }
 
@@ -888,6 +893,14 @@ async function faAutoStep(sources) {
         roomFrac: Number.isFinite(l.roomFrac) ? l.roomFrac : null,
         liquidationPx: Number.isFinite(l.liquidationPx) ? l.liquidationPx : null,
       })),
+    } : null,
+    // ВЕРДИКТ СТОРОЖА ПРОСАДКИ (`drawdown.js`): карточка честности показывает, сколько отдано от пика
+    // и где порог; числа готовые, интерфейс их не считает.
+    drawdown: tick.drawdown ? {
+      enabled: !!tick.drawdown.enabled, known: !!tick.drawdown.known, ok: !!tick.drawdown.ok, code: tick.drawdown.code ?? null,
+      drawdownUsd: Number.isFinite(tick.drawdown.drawdownUsd) ? tick.drawdown.drawdownUsd : null,
+      thresholdUsd: Number.isFinite(tick.drawdown.thresholdUsd) ? tick.drawdown.thresholdUsd : null,
+      rounds: Number.isFinite(tick.drawdown.rounds) ? tick.drawdown.rounds : null,
     } : null,
     gate: tick.gate || null,
     // ПОВОД РЕШЕНИЯ и события тика: каданс, сторож или событие (`events.js`). Интерфейс показывает
