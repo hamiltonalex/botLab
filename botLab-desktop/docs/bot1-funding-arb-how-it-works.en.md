@@ -6,12 +6,39 @@ phases of a trade's life: before the trade, in the trade, exiting the trade. Ter
 they appear; the glossary and the code map are at the end.
 
 [Русская версия](bot1-funding-arb-how-it-works.ru.md) · The document matches the code as of
-2026-09-02.
+2026-09-04.
 
 **Important.** The bot trades on paper only. No real money moves, no orders are sent to any
 exchange, the application holds no account keys. It reads public GMX V2 and Hyperliquid data (and a
 reference price from Binance) and models what would happen to an account. It is a research instrument, not investment advice; no
 profit is promised, and no annual return is built from what is shown.
+
+---
+
+## The bot's logic in short
+
+Before entering, the bot prices every variant it knows: the funding of both legs, the cost of
+borrowing on GMX, fees, book slippage, the free liquidity of the venues and the effect of its own
+volume on the rate. It picks the size by itself too, from $500 to $2,500 per leg. In the end it
+opens only the best variant or does not enter at all when the economics do not add up: the net over
+the horizon must repay the full round trip of costs.
+
+There are two venues: GMX V2 and Hyperliquid. GMX is checked on the Arbitrum and Avalanche
+networks. Binance serves only as a source of a reference price; no trades are opened there.
+
+The assets for now are BTC and ETH only. Each has two paired schemes: A is a short on GMX and a long
+on Hyperliquid, B is a long on GMX and a short on Hyperliquid. Plus three one-leg schemes on GMX:
+ETH on Arbitrum, BTC on Arbitrum and ETH on Avalanche. In those the bot opens a short and keeps the
+collateral in the same coin, with no Hyperliquid leg.
+
+Seven variants in all. First the bot picks the best direction for BTC and for ETH by the sign of
+the rates over the window, then compares those two variants with the three one-leg schemes and
+funds the first by net.
+
+After entry, once a day and on an event, it compares holding with the same alternatives and with an
+exit to cash, and on every tick it guards the room to liquidation of both legs and the drawdown of
+the accumulated result: two round trips of costs given back from the peak close the trade. All of
+it on paper: no orders go to the exchanges.
 
 ---
 
