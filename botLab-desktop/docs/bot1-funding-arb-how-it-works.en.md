@@ -497,8 +497,8 @@ and the last tick stamp on the console and in the growth of the snapshot file.
   per market about 8.4% of the quoted flow stays with us, at $2,000 about 8.8%, at $10,000 about 6.3%); requested and
   working size side by side; room to liquidation of the worst leg against the required 50% with the
   liquidation price of each leg and the permanent line "the shown P&L does not contain this risk";
-  the line "out of sample the rule did not reproduce itself" with the numbers $214.80 against
-  $429.99.
+  the line "out of sample the edge is not proven": the second period of 22 large names gives the
+  rule $712 a year against $413 for "enter and hold", the small names are absent there.
 - **Zone Ⅱ · Trading**: account P&L since launch (net, after one-off costs), the positions table,
   the parameters of the selected position, the forward equity curve from t0, the ledger with CSV,
   XLSX and JSON export.
