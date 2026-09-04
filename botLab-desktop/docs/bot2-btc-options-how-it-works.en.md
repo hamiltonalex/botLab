@@ -259,6 +259,21 @@ result is corrected by an adjustment. The counterweight is closed at market. If 
 was off at the expiry moment, settlement runs at the next start and, when the delay
 reaches an hour or more, is marked as late.
 
+**The last half hour.** Deribit's official settlement price is the 30-minute average of
+the index before 08:00, so within that window the exchange reports the expiring option's
+delta with a linear decay: spot only moves the part of the average not yet accumulated.
+The bot follows that delta and sells the counterweight off evenly across the window, so
+by 08:00 the perp is already flat and the average unwind price tracks the settlement
+price (2026-09-04: 29 sells at an average of 80,728 against a delivery price of 80,753,
+a 0.03% gap). The "at market" close at settlement only touches the remainder, usually
+zero.
+
+**The settlement second.** At 08:00 the exchange empties the books of every series for a
+few dozen seconds: a surface slice taken at that moment has no quoted leg at all, and the
+rule rejects everything. Such a slice is not cached; the next attempt 30 seconds later
+takes a fresh one, so re-entry normally lands in the first minutes after expiry
+(2026-09-04: settlement at 08:00:10, the new pair opened at 08:03:11).
+
 **The trade's result** goes into the chain history: premium, costs, funding, outcome and
 return on collateral, the same measure the scheme was evaluated with historically.
 
@@ -271,9 +286,9 @@ One chain link, by example:
 ```mermaid
 timeline
     title One chain link (example, 3-week tenor)
-    Day 0 : Previous trade settled at 08.00 UTC : Half a minute later a new strangle is picked and sold : Counterweight placed
+    Day 0 : Previous trade settled at 08.00 UTC : Within the first minutes a new strangle is picked and sold : Counterweight placed
     Days 1-20 : A tick every 15 seconds : Counterweight adjustments by the band : Margin under watch
-    Day 21 : Settlement at 08.00 UTC by the index : Result and return on collateral journaled : The next link opens immediately
+    Day 21 : Settlement at 08.00 UTC by the index : Result and return on collateral journaled : The next link opens within minutes
 ```
 
 ---
