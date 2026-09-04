@@ -522,6 +522,36 @@ and the last tick stamp on the console and in the growth of the snapshot file.
 
 # PART III. EXITING THE TRADE
 
+## A tick with an open trade: guards, events, cadence
+
+The exit rule is not called on every tick, the guards run on every one. The order below is the
+precedence order of the code: what stands higher decides earlier, and its refusal stays visible in
+the journal even when it was not the one that decided. A polling gap and the first tick after start
+block everything: on such a tick the guards are computed and shown, but they close on the next
+continuous tick. A hole in the bases of the trade's market blocks only the rule: the margin guard
+and the drawdown stop compute from the price and the ledger and need no frame.
+
+```mermaid
+%%{init: {"themeVariables": {"fontSize": "12px"}, "flowchart": {"nodeSpacing": 26, "rankSpacing": 18, "diagramPadding": 4, "wrappingWidth": 380}}}%%
+flowchart TD
+    T0["A tick every 5 minutes with an open trade:<br/>the ledger accrues first"] --> T1{{"Polling gap, first tick after start,<br/>toggle off, state older than 72 hours?"}}
+    T1 -- "yes" --> S1["Nothing is decided; the guards are computed<br/>and shown, a close happens on the next continuous tick"]
+    T1 -- "no" --> T2{{"Margin guard: room of the worst leg<br/>below the required 50%?"}}
+    T2 -- "no price or leverage" --> S2["margin_unknown: waiting for data, no close"]
+    T2 -- "yes" --> X1["margin_thin: close"]
+    T2 -- "no" --> T3{{"Drawdown stop: peak of the accumulated<br/>minus the accumulated at least two round trips?"}}
+    T3 -- "yes" --> X2["drawdown_stop: close,<br/>the next decision comes with the cadence"]
+    T3 -- "no" --> T4{{"Gate of the trade's market: 720 hours of rates,<br/>bases in at least 684 hours?"}}
+    T4 -- "no" --> S3["hist_short or hist_no_base: the rule is not called,<br/>the position is held, the guards keep working"]
+    T4 -- "yes" --> T5{{"An event or the cadence?"}}
+    T5 -- "rate against us 6 hours in a row" --> R
+    T5 -- "market flow halved" --> R
+    T5 -- "room shrank by 10 points" --> R
+    T5 -- "24 hours since the last decision" --> R
+    T5 -- "nothing" --> S4["cadence_wait: hold"]
+    R["The exit rule: the maximum of the hold gross,<br/>the zero of cash and the net of the best alternative<br/>(diagram in the next section)"]
+```
+
 ## The exit rule once a day and on an event
 
 On the decision tick (once every 24 hours or on an event, see "The decision cycle") the exit rule
@@ -535,7 +565,9 @@ compares three numbers in the same units, dollars over the horizon ahead, 720 ho
 
 The maximum wins. The cost of closing the current position is paid in any of the three branches and
 therefore does not enter the criterion; the realized result of the position does not enter either:
-it is sunk and cannot affect the choice of branch. Cash is an alternative with net zero, not a
+it is sunk and cannot affect the choice of branch. The only place where the realized result takes
+part in the behaviour is the drawdown stop, and it stands next to the rule, not inside it (section
+"The drawdown stop"). Cash is an alternative with net zero, not a
 separate branch, so the rule has no order of checks that could be mixed up. Ties go to inaction:
 inaction is free, action costs a round trip. The criterion has no free parameters: it is assembled
 from the entry rule's numbers and zero.
@@ -689,10 +721,13 @@ measurements before the automaton, and the answer is negative:
   (only the GMX leg counts as income) $2,673;
 - 79-111% of the gross income of the full perimeter comes from the undilutable Hyperliquid leg, that
   is, it is a Hyperliquid perpetual carry hedged on GMX, not a GMX funding arbitrage;
-- out of sample, on the project's second period, the rule produced $214.80 a year against $429.99 for
-  plain "enter and hold": the baseline beats the rule twofold; the caveat in the other direction: that
-  period has none of the small names on which the first year earned, and the project has no data to
-  settle the dispute;
+- out of sample, on the project's second period (22 large names, 2024-12..2025-06), the rule yields
+  $712 a year against $413 for plain "enter and hold" with the ticket cap brought down to the capital,
+  as the automaton does; the earlier record "$214.80 against $429.99, the baseline beats the rule
+  twofold" was a property of the stand (a $5,000 cap at a $2,500 capital: the destination market was
+  chosen at a foreign size) and was refuted on 4 September 2026; the caveat stays: that period has
+  none of the small names on which the first year earned, and reproducibility of the edge across
+  universes is not proven by this;
 - the switch branch has no measured edge: cross-market switches paid off in 43% of cases at a 24 h
   cadence on a sample of two dozen, which is a coin toss;
 - a leg liquidation is not modeled by the ledger, and one BERA episode wipes out 2.30 years of net
@@ -704,6 +739,56 @@ measurements before the automaton, and the answer is negative:
 The point of the live run is therefore not income: to check that the automaton, the recording and the
 rules work on live data the way they did in the runs, and that live dilution and live costs agree
 with the model. The four measurements of the honesty card stand on the screen permanently for that.
+
+## The loss map: what can take money away and what the bot does about it
+
+Every branch below is a way to lose money in an open trade, and each names the answer of the code.
+Green: the branch exists in the code and is under test. Yellow: the bot reacts, but with a caveat
+(the lag of the window, an event threshold chosen rather than measured, liquidation by the model
+rather than by the exchange). Red: neither the ledger nor the rule sees it by construction, and it
+is cured not by the decision code but by size, leverage and the order of actions on a real account.
+
+```mermaid
+%%{init: {"themeVariables": {"fontSize": "12px"}, "flowchart": {"nodeSpacing": 14, "rankSpacing": 36, "diagramPadding": 4, "wrappingWidth": 320}}}%%
+flowchart LR
+    L["A loss in an open trade:<br/>two legs, leverage 1"]
+    L --> A["The rate flow got worse"]
+    L --> B["Price and leg margin"]
+    L --> C["Costs and turnover"]
+    L --> D["Data and estimate"]
+    L --> E["Execution on a real account"]
+    A --> A1["funding of our GMX leg changed sign, borrowing grew<br/>or the Hyperliquid rate turned against us: a 6-hour streak<br/>calls the rule ahead of the cadence, the stop closes after<br/>two round trips given back from the peak, otherwise to cash<br/>only with a negative 720 h window"]
+    A --> A2["the counter side left, the market flow halved:<br/>an event calls the rule ahead of the cadence"]
+    A --> A3["dilution by our own entry:<br/>the B/(B+S) multiplier in the ledger and in the rule"]
+    B --> B1["price against the short Hyperliquid leg: an event when<br/>the room shrinks by 10 points, a close when the room is below 50%;<br/>liquidation by the model, not by the exchange"]
+    B --> B2["price against the long GMX leg:<br/>at leverage 1 there is no liquidation"]
+    B --> B3["a price gap between ticks:<br/>the guard is too late, the ledger does not book price"]
+    B --> B4["no cross margin between exchanges:<br/>the loss of one leg is not covered by the profit of the other"]
+    B --> B5["basis of GMX and Hyperliquid marks at exit:<br/>the price result is not booked"]
+    C --> C1["the model round trip is charged at entry;<br/>a real exit costlier than the model is not seen"]
+    C --> C2["a switch pays a new round trip:<br/>an excess of a full round trip is required"]
+    C --> C3["idle churn cash and entry:<br/>entry at net above a round trip, exit at gross below zero"]
+    C --> C4["a switch on a reversal with the lag of the window:<br/>median lead minus 54 hours"]
+    D --> D1["a source is silent: no decision,<br/>the position hangs, no close by design"]
+    D --> D2["a hole in the bases of the trade's market:<br/>the rule is not called, the guards keep working"]
+    D --> D3["state older than 72 hours after a crash:<br/>the decision is blocked"]
+    E --> E1["the exchange or the network does not let one leg close"]
+    E --> E2["forced closing of a leg by the exchange"]
+    E --> E3["smart contract, bridge, depeg of the wrapped asset"]
+    classDef ok fill:#1f5f3a,color:#fff,stroke:#2e8b57
+    classDef part fill:#6b5a1e,color:#fff,stroke:#b8860b
+    classDef none fill:#6b1f1f,color:#fff,stroke:#b22222
+    classDef hub fill:#243447,color:#fff,stroke:#4a6a8a
+    class L,A,B,C,D,E hub
+    class A3,B2,C2,C3,D1,D3 ok
+    class A1,A2,B1,C1,C4,D2 part
+    class B3,B4,B5,E1,E2,E3 none
+```
+
+The red branches cannot be closed by the decision code at all. Their price on a real account is set
+by the leg size as a share of the deposit, by leverage 1, by closing both legs within one time window
+and by how much collateral sits on the Hyperliquid side above the notional: there is no cross margin
+between the exchanges, and only a person can move collateral between them.
 
 ---
 
