@@ -5,7 +5,7 @@
 // PURE, inline fixtures, no network.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { greeksGateOk } from "../src/engine/btcopt/deribit.js";
+import { greeksGateOk, tickerToPerp } from "../src/engine/btcopt/deribit.js";
 
 const leg = (over = {}) => ({ delta: 0.5, gamma: 0.0001, vega: 12, theta: -30, mark: 900, ...over });
 
@@ -85,7 +85,7 @@ function stubFetch(failName) {
       : { mark_price: 900, best_bid_price: 890, best_ask_price: 910, mark_iv: 45, index_price: 61000, underlying_price: 61000, timestamp: 1751500000000, greeks: { delta: 0.5, gamma: 0.0001, vega: 12, theta: -30, rho: 1 } };
   const meta = (name) =>
     name === "BTC-PERPETUAL"
-      ? { instrument_name: name, instrument_type: "reversed", contract_size: 10, tick_size: 0.5, min_trade_amount: 10 }
+      ? { instrument_name: name, instrument_type: "reversed", contract_size: 10, tick_size: 0.5, min_trade_amount: 10, maker_commission: 0.00015, taker_commission: 0.00035 }
       : { instrument_name: name, option_type: "call", strike: 61000, expiration_timestamp: 1752739200000, contract_size: 1, tick_size: 5, min_trade_amount: 0.01, quote_currency: "USDC", settlement_currency: "USDC" };
   return async (url) => {
     const u = new URL(String(url));
@@ -282,4 +282,30 @@ test("createRestSource: onError отдаёт ошибку на неудачно�
   src.stop();
   assert.deepEqual(calls, ["boom", null], "каждая попытка зовёт колбэк: ошибка, затем здоровый null");
   assert.equal(src.status().errorStreak, 0, "здоровая попытка сбросила серию");
+});
+
+// ── Комиссии биржи едут в снимок перпа из той же меты, что и размер контракта ──────────────────
+test("tickerToPerp: makerFee/takerFee из maker_commission/taker_commission меты; без полей → null, не 0", () => {
+  const ticker = { mark_price: 80000, index_price: 79990, best_bid_price: 79999.5, best_ask_price: 80000, funding_8h: 0.0001, current_funding: 0.00005, timestamp: 1788600000000 };
+  const meta = { instrument_name: "BTC-PERPETUAL", instrument_type: "reversed", contract_size: 10, tick_size: 0.5, min_trade_amount: 10, maker_commission: 0.00015, taker_commission: 0.00035 };
+  const p = tickerToPerp(ticker, meta);
+  assert.equal(p.contractSize, 10);
+  assert.equal(p.makerFee, 0.00015, "maker биржи");
+  assert.equal(p.takerFee, 0.00035, "taker биржи");
+  const bare = tickerToPerp(ticker, { instrument_name: "BTC-PERPETUAL", instrument_type: "reversed", contract_size: 10, tick_size: 0.5, min_trade_amount: 10 });
+  assert.equal(bare.makerFee, null, "нет поля → null: запасное значение выбирает движок, а не адаптер");
+  assert.equal(bare.takerFee, null);
+});
+
+test("snapshot: перп композитного снимка несёт ставки комиссий биржи из меты инструмента", async () => {
+  const real = global.fetch;
+  global.fetch = stubFetch(null);
+  try {
+    const snap = await buildDeribitSnapshot({ legInstruments: ["PRIM-LEG"], nowMs: 1751500000000 });
+    assert.equal(snap.perp.makerFee, 0.00015);
+    assert.equal(snap.perp.takerFee, 0.00035);
+    assert.equal(snap.perp.contractSize, 10, "размер контракта из той же меты");
+  } finally {
+    global.fetch = real;
+  }
 });

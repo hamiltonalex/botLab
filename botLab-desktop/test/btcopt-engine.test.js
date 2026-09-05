@@ -356,13 +356,14 @@ test("normalizeDeadband: a bare preset gains the table width; explicit width alw
 });
 
 // ── Execution style reaches the paper fill (price + fee) ────────────────────────────────────────
-test("exec style: limit fills at MID with maker fee 0; market crosses the spread and pays taker", () => {
-  // limit (default PARAMS/engineCfg): buy fills at liquidity.mid, fee 0
+test("exec style: limit fills at MID and pays the maker rate; market crosses the spread and pays taker", () => {
+  // limit (default PARAMS/engineCfg): buy fills at liquidity.mid. Перп mkSnapshot ставок биржи не
+  // несёт, поэтому комиссия идёт по ЗАПАСНОЙ константе движка, а та равна биржевой (maker 0.015%).
   const lim = opened();
   engine.evaluate(lim.st, lim.snap, NOON);
   const limFill = lim.st.ledger.find((e) => e.type === "hedge");
   assert.equal(limFill.priceRef, 61000, "limit fill at mid");
-  near(limFill.feeUsd, 0, 1e-12, "maker fee 0.00%");
+  near(limFill.feeUsd, Math.abs(limFill.contracts) * 10 * 0.00015, 1e-12, "maker 0.015% (запасная константа = бирже)");
 
   // market: same book, execStyle market frozen at open via state.settings
   const st = engine.create({ nowMs: NOON, settings: { execStyle: "market", deadbandRefQty: 1 } });
@@ -372,7 +373,20 @@ test("exec style: limit fills at MID with maker fee 0; market crosses the spread
   engine.evaluate(st, snap, NOON);
   const mktFill = st.ledger.find((e) => e.type === "hedge");
   assert.equal(mktFill.priceRef, 61001, "market buy crosses to the ask");
-  near(mktFill.feeUsd, Math.abs(mktFill.contracts) * 10 * 0.0005, 1e-12, "taker 0.05%");
+  near(mktFill.feeUsd, Math.abs(mktFill.contracts) * 10 * 0.00035, 1e-12, "taker 0.035% (запасная константа = бирже)");
+});
+
+test("комиссия исполнения берётся из снимка перпа (мета биржи), когда он её несёт; константы движка не решают", () => {
+  const { st, snap } = opened();
+  snap.perp = { ...snap.perp, makerFee: 0.0002, takerFee: 0.0004 };
+  engine.evaluate(st, snap, NOON);
+  const fill = st.ledger.find((e) => e.type === "hedge");
+  assert.ok(fill && fill.contracts !== 0, "хедж исполнен");
+  near(fill.feeUsd, Math.abs(fill.contracts) * 10 * 0.0002, 1e-12, "limit → makerFee снимка 0.02%, не константа 0.015%");
+  near(st.perpState.feesCum, fill.feeUsd, 1e-12, "накопитель комиссий = строка леджера");
+  // Оценка издержек того же тика считает круг (2x) по той же ставке снимка.
+  const cyc = engine.evaluate(st, { ...snap, ts: snap.ts + 1 }, NOON + 61000);
+  if (cyc.estimated_cost) near(cyc.estimated_cost.fee, 2 * Math.abs(cyc.hedge_order?.amount_rounded_btc ?? 0) * snap.perp.mark * 0.0002, 1e-9, "estimateCost по ставке снимка");
 });
 
 // ── Defaults must be expressible by the UI (audit №2: 3 s default vs the 5/15/30 toolbar) ────────

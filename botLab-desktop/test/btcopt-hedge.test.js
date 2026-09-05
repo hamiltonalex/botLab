@@ -11,6 +11,7 @@ import {
   estimateCost,
   decideHedge,
   applyFill,
+  perpFeeRate,
   contractsForDelta,
   effectiveDeadband,
   benefitMoveFrac,
@@ -122,7 +123,7 @@ test("estimateCost (limit): maker fee, no spread term, slippage survives as the 
     liquidity: { halfSpread: 1 },
     cfg: { ...baseCfg, slippageRate: 0.0002 }, // execStyle "limit" from baseCfg
   });
-  near(c.fee, 0, 1e-12, "fee (maker 0.00%)");
+  near(c.fee, 0, 1e-12, "fee (снимок без ставки биржи, cfg без makerFeeRate → 0)");
   near(c.spread, 0, 1e-12, "spread (mid fill crosses nothing)");
   near(c.slippage, 0.002 * 63000 * 0.0002, 1e-9, "slippage (kept in both branches)");
   near(c.total, c.slippage, 1e-9, "total = slippage only");
@@ -414,4 +415,44 @@ test("масштаб выгоды теперь настраивается, НЕ 
   // Ценовой триггер при этом НЕ участвовал ни в одном из двух прогонов.
   for (const d of [stingy, generous]) assert.ok(!d.trigger_reason.includes("price"), "триггер цены молчит");
   assert.ok(generous.estimated_benefit > stingy.estimated_benefit, "менялась именно выгода");
+});
+
+// ── Ставка комиссии перпа: снимок биржи первым, cfg запасным ─────────────────────────────────────
+// Повод: до 2026-09-05 ставки жили константами движка (maker 0 / taker 0.0005), и бумажный прогон
+// 17.08-05.09 книжил 87 исполнений хеджа по нулю при бирже 0.00015 / 0.00035 (недобрано $32.83).
+test("perpFeeRate: ставка из снимка перпа побеждает cfg; без поля в снимке берётся cfg; ноль биржи законен", () => {
+  const cfg = { makerFeeRate: 0, takerFeeRate: 0.0005 };
+  const live = { makerFee: 0.00015, takerFee: 0.00035 };
+  near(perpFeeRate(live, cfg, "limit"), 0.00015, 1e-15, "maker из снимка");
+  near(perpFeeRate(live, cfg, "market"), 0.00035, 1e-15, "taker из снимка");
+  near(perpFeeRate({ mark: 63000, contractSize: 10 }, cfg, "limit"), 0, 1e-15, "без поля: cfg.makerFeeRate");
+  near(perpFeeRate({ mark: 63000, contractSize: 10 }, cfg, "market"), 0.0005, 1e-15, "без поля: cfg.takerFeeRate");
+  near(perpFeeRate({ makerFee: null, takerFee: null }, cfg, "market"), 0.0005, 1e-15, "null это отсутствие, не ноль");
+  near(perpFeeRate({ makerFee: 0, takerFee: 0 }, { makerFeeRate: 0.001, takerFeeRate: 0.001 }, "limit"), 0, 1e-15, "ноль от биржи берётся как есть");
+  near(perpFeeRate(null, cfg, "limit"), 0, 1e-15, "перп null → cfg");
+});
+
+test("estimateCost: комиссия по ставке снимка перпа (2x за круг), cfg не решает", () => {
+  const perp = { mark: 63000, funding8h: 0, contractSize: 10, makerFee: 0.00015, takerFee: 0.00035 };
+  const lim = estimateCost({ hedgeQty: 0.002, targetQty: 0.002, perp, liquidity: { halfSpread: 1 }, cfg: baseCfg });
+  near(lim.fee, 2 * 0.002 * 63000 * 0.00015, 1e-12, "limit: maker биржи, хотя в cfg makerFeeRate нет");
+  const mkt = estimateCost({ hedgeQty: 0.002, targetQty: 0.002, perp, liquidity: { halfSpread: 1 }, cfg: mktCfg });
+  near(mkt.fee, 2 * 0.002 * 63000 * 0.00035, 1e-12, "market: taker биржи вместо cfg 0.0005");
+  near(mkt.total, mkt.fee + 0.002, 1e-12, "спред тот же, проскальзывание и фандинг нулевые");
+});
+
+test("applyFill: комиссия исполнения по ставке снимка перпа; снимок без ставки → cfg", () => {
+  const cfg = { makerFeeRate: 0, takerFeeRate: 0.0005 };
+  const live = { contractSize: 10, makerFee: 0.00015, takerFee: 0.00035 };
+  const ps1 = { qty: 0, avgEntry: 0, feesCum: 0, realizedUsd: 0 };
+  const f1 = applyFill(ps1, { side: "sell", amount_rounded_btc: 0.002, order_type: "limit" }, 63000, live, cfg);
+  assert.equal(f1.filledContracts, -13);
+  near(f1.feeUsd, 13 * 10 * 0.00015, 1e-12, "limit → maker биржи 0.015%");
+  const ps2 = { qty: 0, avgEntry: 0, feesCum: 0, realizedUsd: 0 };
+  const f2 = applyFill(ps2, { side: "sell", amount_rounded_btc: 0.002, order_type: "market" }, 63000, live, cfg);
+  near(f2.feeUsd, 13 * 10 * 0.00035, 1e-12, "market → taker биржи 0.035%");
+  near(ps2.feesCum, f2.feeUsd, 1e-12, "накопитель комиссий получил ту же сумму");
+  const ps3 = { qty: 0, avgEntry: 0, feesCum: 0, realizedUsd: 0 };
+  const f3 = applyFill(ps3, { side: "sell", amount_rounded_btc: 0.002, order_type: "market" }, 63000, { contractSize: 10 }, cfg);
+  near(f3.feeUsd, 13 * 10 * 0.0005, 1e-12, "без ставки в снимке → cfg.takerFeeRate");
 });

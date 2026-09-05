@@ -40,9 +40,14 @@ export const isSellKind = (kind) => kind === "sell-call" || kind === "sell-stran
 
 // Cost-model rates + blackout windows the hedge engine needs but that aren't user-facing knobs. Merged
 // under the persisted settings at evaluate time (settings win if they ever override one).
+// КОМИССИИ ПЕРПА ЗДЕСЬ ЗАПАСНЫЕ. Живой снимок перпа несёт ставки биржи (deribit.js: makerFee/takerFee
+// из public/get_instrument, той же меты, что и размер контракта), и hedge.js берёт их первыми; сюда
+// попадает только снимок без меты (запись тиков, стенды, тесты). Числа равны биржевым на 2026-09-05.
+// До этого стояли «иллюстративные» 0 / 0.0005, и бумажный прогон 17.08-05.09 книжил все 87 исполнений
+// хеджа по нулю: недобрано $32.83 на обороте $218 870 (см. perpFeeRate в hedge.js).
 const HEDGE_CONSTANTS = {
-  takerFeeRate: 0.0005, // 5 bps taker (Deribit illustrative)
-  makerFeeRate: 0, // Deribit BTC-perp maker 0.00% - the limit (post-only) execution branch
+  takerFeeRate: 0.00035, // taker BTC-PERPETUAL 0.035% (биржа, 2026-09-05); запасное значение
+  makerFeeRate: 0.00015, // maker BTC-PERPETUAL 0.015% (биржа, 2026-09-05), ветка limit (post-only); запасное значение
   slippageRate: 0.0002, // flat slippage rate on the perp mark
   fundingHorizonSec: 28800, // one 8h funding period
   dailyWindowSec: 600, // ±10 min around 08:00 UTC settlement

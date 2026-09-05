@@ -10,7 +10,8 @@
 // (currency=USDC&kind=option → filter "BTC_USDC-*"): contract_size 1, min_trade_amount 0.01 (= qty step),
 // tick_size 5 (PREMIUM price tick, USD), settlement/quote USDC, marks & greeks in USD, mark_iv in %.
 // The hedge leg is the INVERSE BTC-PERPETUAL ($10 contract, instrument_type "reversed", settlement BTC):
-// contract_size 10, tick_size 0.5, min_trade_amount 10, funding via current_funding / funding_8h.
+// contract_size 10, tick_size 0.5, min_trade_amount 10, funding via current_funding / funding_8h,
+// maker_commission 0.00015 / taker_commission 0.00035 (2026-09-05): комиссии хеджа книжатся по ним, не по константам.
 //
 // The pure mappers + the composite snapshot are the engine's SOLE input contract (see §5 of the plan).
 // The mappers are pure (unit-testable); the fetchers and the source own the I/O and NEVER throw into a tick.
@@ -170,6 +171,12 @@ export function tickerToPerp(ticker, meta) {
     contractSize: meta.contract_size, // 10 (USD)
     tickSize: meta.tick_size, // 0.5
     minTradeAmount: meta.min_trade_amount, // 10
+    // Комиссии биржи за исполнение, доля от оборота, из ТОЙ ЖЕ меты public/get_instrument, что и
+    // contract_size (2026-09-05: maker 0.00015, taker 0.00035). Живой тракт книжит комиссии хеджа
+    // по ним (hedge.js perpFeeRate); запасные константы движка включаются только у снимка без меты.
+    // Нет поля - null, а не 0: ноль это законная ставка биржи, отсутствие это «не знаем».
+    makerFee: num(meta.maker_commission),
+    takerFee: num(meta.taker_commission),
     ts: num(ticker.timestamp),
   };
 }

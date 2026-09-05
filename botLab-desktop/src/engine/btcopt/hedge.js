@@ -117,9 +117,33 @@ export function expectedBenefit({ deltaBtc, underlying, m }) {
   return Math.abs(deltaBtc) * underlying * m;
 }
 
+// ── Ставка комиссии перпа ───────────────────────────────────────────────────────────────────────
+// perpFeeRate(perp, cfg, style) → доля от оборота за одно исполнение: maker при style "limit",
+// иначе taker. Источник ПЕРВЫМ - снимок перпа (`perp.makerFee` / `perp.takerFee`: deribit.js кладёт
+// их из public/get_instrument той же меты, что и contractSize), запасным - cfg (HEDGE_CONSTANTS
+// движка либо явные настройки стенда).
+//
+// ПОЧЕМУ СНИМОК, А НЕ КОНСТАНТА, И ЭТО БЫЛ ДЕФЕКТ УЧЁТА. До 2026-09-05 движок нёс «иллюстративные»
+// ставки maker 0 / taker 0.0005, а биржа берёт 0.00015 / 0.00035 (get_instrument BTC-PERPETUAL).
+// Бумажный прогон 17.08-05.09 (mbp15) книжил все 87 исполнений хеджа по нулю: при обороте $218 870
+// недобрано $32.83, а это самая чувствительная статья схемы продавца (пятилетний замер 26.08:
+// стрэнгл 336-672 ×4.09 при 0 б.п. против ×3.18 при 2.5 б.п.). Ставка биржи меняется решением
+// биржи, а не релизом приложения, поэтому её место в снимке, рядом с размером контракта, а не в коде.
+//
+// НОЛЬ И ОТСУТСТВИЕ РАЗЛИЧАЮТСЯ. Ставка 0 от биржи законна и берётся как есть; запасное значение
+// включается только когда поля нет вовсе (null/undefined/NaN): записи тиков, стенды и тесты строят
+// перп без меты, и там правит cfg - стенды сверок задают ставку замера явными настройками.
+export function perpFeeRate(perp, cfg, style) {
+  const limit = style === "limit";
+  const live = limit ? perp?.makerFee : perp?.takerFee;
+  if (Number.isFinite(live)) return live;
+  return limit ? cfg.makerFeeRate ?? 0 : cfg.takerFeeRate;
+}
+
 // Itemized $ cost of the hedge, execution-style aware (mirrors the fill semantics in engine.js):
 // market - fee is round-trip (2x taker) on the traded size and the half-spread is paid; limit
-// (post-only) - maker rate (Deribit BTC-perp 0.00%) and NO spread term (the fill models mid).
+// (post-only) - maker rate and NO spread term (the fill models mid). Обе ставки берутся у биржи из
+// снимка перпа, cfg лишь запасное значение (см. perpFeeRate выше).
 // slippage stays in BOTH branches as a non-zero cost floor: a real resting order still carries
 // non-fill / adverse-selection risk, and a zero total would degenerate the λ filter.
 //
@@ -142,7 +166,7 @@ export function expectedBenefit({ deltaBtc, underlying, m }) {
 // числе отрицательной. Зажимает потребитель (`decideHedge`), и там же объяснено почему.
 export function estimateCost({ hedgeQty, targetQty, perp, liquidity, cfg }) {
   const limit = cfg.execStyle === "limit";
-  const feeRate = limit ? cfg.makerFeeRate ?? 0 : cfg.takerFeeRate;
+  const feeRate = perpFeeRate(perp, cfg, cfg.execStyle);
   const fee = 2 * Math.abs(hedgeQty) * perp.mark * feeRate;
   const spread = limit ? 0 : Math.abs(hedgeQty) * liquidity.halfSpread;
   const slippage = Math.abs(hedgeQty) * perp.mark * cfg.slippageRate;
@@ -351,8 +375,9 @@ export function applyFill(perpState, hedge_order, priceRef, meta, cfg) {
   if (perpState.qty === 0) perpState.avgEntry = 0;
   perpState.realizedUsd = (perpState.realizedUsd || 0) + realized;
   // Fee rate follows the ORDER's execution style (not cfg.execStyle): flatten orders are always
-  // order_type "market" (taker) even when the structure hedges with post-only limits.
-  const feeRate = hedge_order.order_type === "limit" ? cfg.makerFeeRate ?? 0 : cfg.takerFeeRate;
+  // order_type "market" (taker) even when the structure hedges with post-only limits. Сама ставка
+  // берётся из снимка перпа (мета биржи), cfg лишь запасное значение - см. perpFeeRate.
+  const feeRate = perpFeeRate(meta, cfg, hedge_order.order_type);
   const feeUsd = Math.abs(contractsDelta) * cs * feeRate;
   perpState.feesCum = (perpState.feesCum || 0) + feeUsd;
 
