@@ -73,8 +73,11 @@ Sells insurance against large moves of the Bitcoin price and keeps a counterweig
 perpetual future, adjusted as the market moves (delta hedging), in a continuous chain of trades:
 a call (or a strangle) 14 to 28 days from expiry with delta near 0.45, quote sanity gates, size
 from a stress rule (maintenance margin at a 45% spot move must stay under 80% of the account),
-settlement and immediate re-entry. Live Deribit public data, paper account. The seller scheme is
-measured against five years of recorded market in two books (see the guard below).
+a risk stop derived from the same cap (maintenance margin at 60% of the account for two ticks in
+a row closes the trade, and the next one waits for its expiry), settlement and immediate
+re-entry. Hedge fees and funding are booked at the exchange's own rates: the instrument's maker
+and taker commissions and the current funding rate. Live Deribit public data, paper account. The
+seller scheme is measured against five years of recorded market in two books (see the guard below).
 
 ## OTM scanner
 

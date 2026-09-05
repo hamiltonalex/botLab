@@ -4,7 +4,7 @@ What the bot does, when, and why - the full life cycle, from contract selection 
 settlement and re-entry. Terms are explained as they appear; a glossary and a code map
 close the document.
 
-[Русская версия](bot2-btc-options-how-it-works.ru.md) · Document matches the code as of 2026-08-27.
+[Русская версия](bot2-btc-options-how-it-works.ru.md) · Document matches the code as of 2026-09-05.
 
 **Important.** The bot trades on paper only. No real money moves, no orders are sent to
 the exchange, and the app holds no account keys. It reads public market data from the
@@ -47,7 +47,10 @@ flowchart TD
     D -- "yes" --> E["Size by the stress rule: survive a 45%<br/>price move in either direction"]
     E --> F["Open: premium received,<br/>counterweight placed"]
     F --> G["In the trade. Every 15 seconds: adjust the<br/>counterweight, check margin, write the journal"]
-    G --> H{{"Expiry? (08:00 UTC)"}}
+    G --> S{{"Reserve at 60% of the account<br/>two ticks in a row?"}}
+    S -- "yes" --> X["Risk stop: trade closed, result recorded;<br/>no new trade before its expiry"]
+    X --> B
+    S -- "no" --> H{{"Expiry? (08:00 UTC)"}}
     H -- "no" --> G
     H -- "yes" --> I["Settlement: the trade's result<br/>is recorded in the chain"]
     I --> B
@@ -64,7 +67,9 @@ Six steps, one line each; details in the sections below.
    checks quote quality and computes the size. Opening records the premium and the
    entry costs.
 4. **Holding.** Until expiry the bot keeps the counterweight inside a band and watches
-   the margin. The scheme has no early exits.
+   the margin. There is one early exit: a risk stop when the reserve behind the sold
+   insurance occupies 60% of the account for two ticks in a row; after it, the next trade
+   waits for the closed trade's expiry.
 5. **Expiry.** At 08:00 UTC on the expiry date the insurance settles automatically; the
    trade's result is recorded in the journal and in the chain history.
 6. **Re-entry.** On the very next tick the bot is already looking for a new contract.
@@ -104,7 +109,9 @@ What matters about ticks:
 - **Public data only.** The bot requests option, perpetual and index prices; it sends
   nothing and never authenticates.
 - **Bad data never trades.** If the snapshot is incomplete (no perpetual price, no
-  greeks), the bot skips the decision instead of acting blindly.
+  greeks), the bot skips the decision instead of acting blindly. A frozen option quote
+  (ticker stamp older than a minute) is recognised and the reference price is taken from
+  the live perpetual index; the substitution is marked in the tick record.
 - **Polling runs only while there is something to watch.** With an open trade or an armed
   chain it starts by itself (including after a restart); with neither, the bot does not
   start polling on its own (polling started manually with the LIVE button runs until
@@ -195,12 +202,24 @@ instrument description, not from the code (as of 2026-09-05: maker 0.015%, taker
 turnover). The perpetual carries funding, small periodic payments between buyers and
 sellers; the bot accrues it every tick at the exchange's current rate, in either direction.
 
-**There are no exits before expiry.** No stop-losses, no take-profits: all of the
-scheme's statistics were taken with a single exit, living until expiry, and the project's
-sweeps of early exits produced not a single profitable configuration. A trade can be
-closed manually, but it is then permanently marked as closed early; the chain summary
-counts such closes separately and warns that a total including them goes beyond what was
-measured.
+**There is exactly one early exit, and the code decides it, not a switch.** No loss
+stops and no take-profits: the scheme's statistics were taken with the exit "live until
+expiry", and stops on a share of the premium, the collateral or the account, and on the
+distance to the strike, were tested on five years of history and rejected (the
+counterweight keeps the loss inside one sold premium, and every loss stop that fired
+made the result worse). The one rule that won looks at risk, not at loss: if the reserve
+behind the sold insurance (maintenance margin) occupies 60% of the account for two ticks
+in a row, the bot closes the trade entirely - buys the insurance back, removes the
+counterweight, books the exit costs - and opens nothing new before the closed trade's
+expiry. The level is not a stored number: it is derived from the stress sizing rule's
+cap (three quarters of 80%), so the risk appetite at entry and at exit cannot drift
+apart. On history the rule fired four times in five years and cut the peak reserve load
+by 15-18 points at a cost of 1.4% of growth. It arms itself at every open; it has no
+screen and no setting; a close by the stop is written to the journal, the link in the
+chain history carries the reason "stop", and on the chain strip it is hatched as an
+off-plan exit, separately from a manual one. A trade can still be closed manually, but it
+is then permanently marked as closed early; the chain summary counts such closes
+separately and warns that a total including them goes beyond what was measured.
 
 ---
 
@@ -220,9 +239,10 @@ three questions on every tick:
    keep jitter around a threshold from spamming alerts, a level is only released after
    utilisation retreats 5 points below it (hysteresis).
 
-The stress sizing rule (above) and the margin alerts are two halves of one protection:
-the first refuses a dangerous size at entry, the second watches the risk as the trade
-runs.
+The stress sizing rule (above), the risk stop (in the counterweight section) and the
+margin alerts are three parts of one protection: the first refuses a dangerous size at
+entry, the second closes the trade once the reserve has taken 60% of the account, the
+third signals the operator at 80% and 90%.
 
 ---
 
@@ -329,11 +349,13 @@ journal) and "Structure constructor" (scheme choice, preview, launch).
 | Seller chain | The main mode: continuously sell and manage trades; "continuous" and "single trade" modes; stop with live-out |
 | Scheme selector | Three structures: "4 legs" (the tent), "sell call", "strangle"; the pair falls back to a call when no put exists; switching is blocked while a trade is open |
 | Autonomous sizing | The ±45% / 80%-of-account stress rule; no operator size number in the chain |
+| Risk stop | The only early exit: maintenance margin at 60% of the account for two ticks in a row; armed by the code at every open, no screen; after a stop the next trade waits for the closed trade's expiry |
+| Scheme presets | Named, versioned seller configurations: the live "call 336-672 h" and the unmeasured "call 168-336 h"; a preset without a five-year measurement is flagged in the passport |
 | Leg sanity | Quote freshness, spread, book depth; a veto switches the candidate; 4-hour waiting window |
 | Delta hedge | A perpetual counterweight with a 0.03 BTC-per-contract band, limit orders at mid |
 | Margin monitor | Reserve utilisation, liquidation price estimate, 80/90 alerts with hysteresis, system notifications |
 | Journal (ledger) | Every event as a row: open, entry costs, hedges, closes (perp and options), funding gaps, margin alerts, settlement, delivery adjustment; CSV, XLSX and JSON export |
-| Conformance passport | A row-by-row comparison of the trade's frozen configuration against the measured scheme: band, triggers, blackout, tenor, sizing rule, exit |
+| Conformance passport | A row-by-row comparison of the trade's frozen configuration against the measured scheme: band, triggers, blackout, tenor, preset, sizing rule, exit |
 | Chain history | Each link's outcome: premium, costs, return on collateral, "early close" and "degraded sanity" marks |
 | Tick coverage | Polling continuity per trade; gaps recorded with their cause (sleep, app downtime, no response) |
 | Payoff chart | "What happens at expiry at price X" with strike, break-even, current price and LIQ marks; the path from entry to the liquidation estimate is a scale on the margin card |
@@ -354,8 +376,10 @@ journal) and "Structure constructor" (scheme choice, preview, launch).
 
 - **It does not predict the price or time the market.** Re-entry happens right after
   settlement: every "good moment" filter tried on history only made things worse.
-- **It does not place stops or take-profits.** The only measured exit is to live until
-  expiry; early exits produced no profitable configuration on history.
+- **It does not place loss stops or take-profits.** Stops on a share of the premium, the
+  collateral or the account, and on the distance to the strike, were tested on history and
+  rejected; the only early exit is the risk stop (the reserve at 60% of the account for two
+  ticks in a row), and its level is derived from the size cap, not chosen by the operator.
 - **It does not send real orders.** Paper simulation on live public data only; the app
   has no keys and no access to money.
 - **It does not guarantee profit.** It shows the model's honest result, losses included.
@@ -399,6 +423,7 @@ journal) and "Structure constructor" (scheme choice, preview, launch).
 | `src/engine/btcopt/margin.js` | The exchange's margin formulas, liquidation price estimate, stress sizing |
 | `src/engine/btcopt/hedge.js` | The counterweight decision and the execution model |
 | `src/engine/btcopt/pnl.js` | Accounting: options, perp, funding, fees, the journal |
+| `src/engine/btcopt/record.js` | The tick record row: quotes, the counterweight decision, both funding rates (`f8` the 8-hour average, `cf` the instantaneous) |
 | `src/engine/btcopt/payoff.js` | The at-expiry payoff chart |
 | `src/engine/btcopt/metrics.js`, `stress.js`, `regime.js`, `sweep.js` | Run metrics, stress scenarios, the IV signal, the sweep |
 | `src/engine/btcopt/deribit.js` | Public Deribit data supply |
