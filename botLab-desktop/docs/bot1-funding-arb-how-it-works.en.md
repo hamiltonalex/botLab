@@ -531,6 +531,11 @@ and the last tick stamp on the console and in the growth of the snapshot file.
   liquidation price of each leg and the permanent line "the shown P&L does not contain this risk";
   the line "out of sample the edge is not proven": the second period of 22 large names gives the
   rule $712 a year against $413 for "enter and hold", the small names are absent there.
+- **GMX funding decay** on the honesty card: the own-side rate now, how many hours in a row it has
+  been declining and by what step, the zero hour by trend and the open interest skew. This is an
+  observation, not a decision: the exit rule and the guards do not see these numbers, because on
+  three history periods closing on decay loses to the rule by round trips (the Z7 measurement,
+  2026-09-05).
 - **Zone Ⅱ · Trading**: account P&L since launch (net, after one-off costs), the positions table,
   the parameters of the selected position, the forward equity curve from t0, the ledger with CSV,
   XLSX and JSON export.

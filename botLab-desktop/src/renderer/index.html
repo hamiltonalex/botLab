@@ -1522,6 +1522,21 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
           <div class="stamp" id="faHonDdNone" hidden style="margin-top:6px" data-i18n="fa.hon.ddNone"></div>
           <div class="stamp" style="margin-top:8px" data-i18n="fa.hon.ddNote"></div>
         </div>
+
+        <!-- (5) ЗАТУХАНИЕ ФАНДИНГА GMX. Наблюдение из тика (`decay.js`), не решение: ряд убывания ставки
+             своей стороны, ноль по тренду и перекос интереса. Правило выхода и сторожа этих чисел не
+             видят (замер З7 05.09.2026: закрытие по затуханию на истории проигрывает правилу). -->
+        <div class="fa-hon-sec">
+          <div class="subhdr" data-i18n="fa.hon.decHdr"></div>
+          <div class="dl">
+            <div class="row"><span class="k" data-i18n="fa.hon.decRate"></span><span class="v num" id="faHonDecRate">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.hon.decRun"></span><span class="v num" id="faHonDecRun">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.hon.decZero"></span><span class="v num" id="faHonDecZero">-</span></div>
+            <div class="row"><span class="k" data-i18n="fa.hon.decSkew"></span><span class="v num" id="faHonDecSkew">-</span></div>
+          </div>
+          <div class="stamp" id="faHonDecNone" hidden style="margin-top:6px" data-i18n="fa.hon.decNone"></div>
+          <div class="stamp" style="margin-top:8px" data-i18n="fa.hon.decNote"></div>
+        </div>
       </div>
 
       <!-- (4) ДОХОДНОСТЬ ВНЕ ВЫБОРКИ НЕ ВОСПРОИЗВЕДЕНА. Постоянная строка: правило формулируется
@@ -5075,6 +5090,34 @@ function renderFaHonesty(){
     ed.className = 'v num' + (ddOn ? (d.ok ? ' pos' : ' neg') : ' faint');
   }
   const dnn = $('faHonDdNone'); if(dnn) dnn.hidden = ddOn || !!(d && !d.enabled);
+
+  // (5) ЗАТУХАНИЕ ФАНДИНГА GMX. Наблюдение приходит из тика готовым (`decay.js`): ряд убывания
+  //     ставки своей стороны, шаг, ноль по тренду, перекос интереса. Интерфейс числа не считает и
+  //     решений по ним не изображает: это не сторож (замер З7).
+  const dc = a && a.last && a.last.decay ? a.last.decay : null;
+  const dcOn = !!(dc && dc.known && Number.isFinite(dc.fNow));
+  const dcSet = (id, txt, cls) => { const el = $(id); if(!el) return; el.textContent = txt; el.className = cls; };
+  if(dcOn){
+    const pays = dc.fNow <= 0;
+    const who = pays ? t('fa.hon.decPay') : t('fa.hon.decRecv');
+    dcSet('faHonDecRate', t('fa.hon.decRateV', { apr:fmtPctNS(dc.aprNow, 2), who:who }), 'v num' + (pays ? ' neg' : ' pos'));
+    dcSet('faHonDecRun', dc.runHours > 0
+      ? t('fa.hon.decRunV', { h:dc.runHours, step:Number.isFinite(dc.stepAprPerHour) ? fmtPctNS(dc.stepAprPerHour, 2) : '-' })
+      : t('fa.hon.decRunNo'), 'v num' + (dc.runHours > 0 ? ' neg' : ''));
+    const eta = Number.isFinite(dc.hoursToZero) && Number.isFinite(dc.zeroAtMs);
+    dcSet('faHonDecZero', pays
+      ? t('fa.hon.decBelowV', { h:dc.belowZeroHours })
+      : (eta ? t('fa.hon.decZeroV', { h:dc.hoursToZero.toFixed(1), at:faAutoDate(dc.zeroAtMs) }) : '-'),
+      'v num' + (pays || eta ? ' neg' : ' faint'));
+    const sk = Number.isFinite(dc.skewFrac);
+    const skV = { v:fmtPctNS(Math.abs(dc.skewFrac || 0), 1) };
+    dcSet('faHonDecSkew', sk
+      ? (dc.skewFrac > 0 ? t('fa.hon.decSkewOwn', skV) : t('fa.hon.decSkewOther', skV))
+      : '-', 'v num' + (sk ? (dc.skewFrac > 0 ? ' neg' : ' pos') : ' faint'));
+  } else {
+    for(const id of ['faHonDecRate', 'faHonDecRun', 'faHonDecZero', 'faHonDecSkew']) dcSet(id, '-', 'v num faint');
+  }
+  const dcn = $('faHonDecNone'); if(dcn) dcn.hidden = dcOn;
 }
 
 /* ── ЖУРНАЛЫ АВТОМАТА: ИСТОРИЯ СДЕЛОК И ЖУРНАЛ РЕШЕНИЙ ───────────────────────────────────────────

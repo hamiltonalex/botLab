@@ -31,6 +31,7 @@ import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState,
 import * as faauto from "../engine/fa/auto.js";
 import { FA_BOOK_NODES_USD, bookSlippageNodes } from "../engine/fa/sizing.js";
 import { marginGuard as faMarginGuard, positionLegs as faPositionLegs } from "../engine/fa/margin.js";
+import { decayObservation as faDecayObservation } from "../engine/fa/decay.js";
 import { applyObservedBases, backfillBases, baseBackfillWindow, emptyBaseJournal, observeBases } from "../engine/fa/bases.js";
 import { FA_RECORD_PREFIX, buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord, faDecisionsFromRecords, faRecordDayKey, faTradesFromRecords } from "../engine/fa/record.js";
 import { faEvalClears, faEvalFromDisk, faEvalOfTick, faEvalToDisk } from "./fa-eval.js";
@@ -710,6 +711,21 @@ function faAutoPosition() {
   };
 }
 
+// НАБЛЮДЕНИЕ ЗАТУХАНИЯ ФАНДИНГА GMX у удерживаемой сделки (`decay.js`): ряд убывания ставки своей
+// стороны по часовым строкам кадра, живой снимок сверху, перекос интереса по живым базам. Только для
+// карточки честности: правило и сторожа его не читают, в запись оно не идёт (снимок уже несёт факторы).
+function faDecayOf(pos, nowMs) {
+  if (!pos) return null;
+  const snap = state.snapshots.byKey[pos.token];
+  return faDecayObservation({
+    rows: state.frames.get(cacheKeyFor(pos.strategy, pos.token)) || [],
+    gmxSide: legModel(pos.strategy, pos.config).gmxSide,
+    live: snap?.raw || null,
+    liveAtMs: state.snapshots.fresh.gmxAt || nowMs,
+    nowMs,
+  });
+}
+
 // Ноги сделки для записи и для сторожа. ОДНО наблюдение на оба употребления: паспорт сделки и вход
 // сторожа обязаны быть одним и тем же числом, иначе архив и решение разъедутся.
 function faLegsOf(pos, params) {
@@ -961,6 +977,9 @@ async function faAutoStep(sources) {
       thresholdUsd: Number.isFinite(tick.drawdown.thresholdUsd) ? tick.drawdown.thresholdUsd : null,
       rounds: Number.isFinite(tick.drawdown.rounds) ? tick.drawdown.rounds : null,
     } : null,
+    // НАБЛЮДЕНИЕ ЗАТУХАНИЯ ФАНДИНГА GMX (`decay.js`): ряд убывания ставки своей стороны, ноль по
+    // тренду, перекос интереса. Для карточки честности; правило выхода и сторожа его не видят.
+    decay: faDecayOf(posBefore, nowMs),
     gate: tick.gate || null,
     // ПОВОД РЕШЕНИЯ и события тика: каданс, сторож или событие (`events.js`). Интерфейс показывает
     // повод в журнале решений, а здесь он нужен, чтобы лог и пульт говорили одно.
