@@ -5101,14 +5101,15 @@ function renderFaHonesty(){
     const pays = dc.fNow <= 0;
     const who = pays ? t('fa.hon.decPay') : t('fa.hon.decRecv');
     dcSet('faHonDecRate', t('fa.hon.decRateV', { apr:fmtPctNS(dc.aprNow, 2), who:who }), 'v num' + (pays ? ' neg' : ' pos'));
-    dcSet('faHonDecRun', dc.runHours > 0
-      ? t('fa.hon.decRunV', { h:dc.runHours, step:Number.isFinite(dc.stepAprPerHour) ? fmtPctNS(dc.stepAprPerHour, 2) : '-' })
-      : t('fa.hon.decRunNo'), 'v num' + (dc.runHours > 0 ? ' neg' : ''));
+    const runTxt = dc.runHours > 0
+      ? (Number.isFinite(dc.stepAprPerHour) ? t('fa.hon.decRunV', { h:dc.runHours, step:fmtPctNS(dc.stepAprPerHour, 2) }) : t('fa.hon.decRunH', { h:dc.runHours }))
+      : t('fa.hon.decRunNo');
+    dcSet('faHonDecRun', runTxt, 'v num' + (dc.runHours > 0 ? ' neg' : ''));
     const eta = Number.isFinite(dc.hoursToZero) && Number.isFinite(dc.zeroAtMs);
-    dcSet('faHonDecZero', pays
-      ? t('fa.hon.decBelowV', { h:dc.belowZeroHours })
-      : (eta ? t('fa.hon.decZeroV', { h:dc.hoursToZero.toFixed(1), at:faAutoDate(dc.zeroAtMs) }) : '-'),
-      'v num' + (pays || eta ? ' neg' : ' faint'));
+    const zeroTxt = pays
+      ? (dc.belowZeroHours > 0 ? t('fa.hon.decBelowV', { h:dc.belowZeroHours }) : t('fa.hon.decBelowNow'))
+      : (eta ? t('fa.hon.decZeroV', { h:dc.hoursToZero.toFixed(1), at:faAutoDate(dc.zeroAtMs) }) : '-');
+    dcSet('faHonDecZero', zeroTxt, 'v num' + (pays || eta ? ' neg' : ' faint'));
     const sk = Number.isFinite(dc.skewFrac);
     const skV = { v:fmtPctNS(Math.abs(dc.skewFrac || 0), 1) };
     dcSet('faHonDecSkew', sk

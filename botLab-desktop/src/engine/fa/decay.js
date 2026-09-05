@@ -13,9 +13,15 @@
 //
 // ЧТО СЧИТАЕТСЯ, по часовым строкам кадра и живому снимку, для ставки СВОЕЙ стороны сделки
 // (f_long у длинной ноги GMX, f_short у короткой; положительная ставка означает, что платят нам):
-//   runHours      - сколько последних часов подряд ставка строго убывала: шаг ровно час, дыра в
-//                   строках или плато обрывают ряд; живой снимок ниже последней строки продлевает
-//                   ряд на текущий час (`liveContinues`);
+//   runHours      - сколько последних часов подряд ставка убывала: шаг ровно час, дыра в строках
+//                   обрывает ряд; живой снимок ниже последней строки продлевает ряд на текущий час
+//                   (`liveContinues`). ОДНА ЗАМИНКА ВНУТРИ РЯДА ДОПУСКАЕТСЯ: час, где ставка не
+//                   упала, считается частью ряда, если через час она оказалась ниже уровня до
+//                   заминки. Часовые снимки индексатора ловят множитель между обновлениями рынка, и
+//                   живой эпизод BTC дал ровно такую заминку: 13:00Z на 0.4% выше 12:00Z при шаге
+//                   1.6e-10 в час, после 30 часов убывания и за час до перехода через ноль; строгий
+//                   ряд показал бы «1 ч». Две заминки подряд и заминка последним часом ряд рвут:
+//                   продолжения убывания ещё не видно;
 //   stepPerHour   - средний шаг ряда по строкам кадра (/с за час), отрицательный; нужен ряд не короче
 //                   двух шагов, иначе тренда нет;
 //   fNow          - ставка сейчас: живой снимок, если он есть, иначе последняя строка;
@@ -52,14 +58,31 @@ export function decayObservation({ rows = null, gmxSide = "long", live = null, l
   const liveF = live && fin(live[fKey]) ? live[fKey] : null;
   if (!list.length && liveF == null) return base;
 
-  // Ряд строго убывающих часовых шагов, заканчивающийся последней строкой.
+  // Ряд убывающих часовых шагов, заканчивающийся последней строкой, с одной допустимой заминкой
+  // МЕЖДУ двумя настоящими шагами вниз (шапка): час без падения считается частью ряда, если точка
+  // после него (следующая строка, а у последней строки живой снимок) ниже точки до него. Заминка,
+  // оказавшаяся самой ранней точкой ряда, из ряда вычитается: ряд обязан начинаться с падения.
   let run = 0;
+  let wiggleUsed = false;
+  let lastWasWiggle = false;
+  const contiguous = (i, j) => list[i].tsHour - list[j].tsHour === SEC_PER_HOUR;
   for (let i = list.length - 1; i >= 1; i -= 1) {
-    const a = list[i];
-    const b = list[i - 1];
-    if (a.tsHour - b.tsHour !== SEC_PER_HOUR || !(a[fKey] < b[fKey])) break;
-    run += 1;
+    if (!contiguous(i, i - 1)) break;
+    const cur = list[i][fKey];
+    const prev = list[i - 1][fKey];
+    if (cur < prev) { run += 1; wiggleUsed = false; lastWasWiggle = false; continue; }
+    const hasNext = i + 1 < list.length;
+    const after = hasNext ? list[i + 1][fKey] : liveF;
+    const resumed = hasNext ? run >= 1 : (liveF != null && liveF < cur);
+    if (!wiggleUsed && resumed && after != null && after < prev) {
+      run += 1;
+      wiggleUsed = true;
+      lastWasWiggle = true;
+      continue;
+    }
+    break;
   }
+  if (lastWasWiggle) run -= 1;
   const last = list.length ? list[list.length - 1] : null;
   const step = last && run >= 2 ? (last[fKey] - list[list.length - 1 - run][fKey]) / run : null;
   let below = 0;
@@ -96,7 +119,10 @@ export function decayObservation({ rows = null, gmxSide = "long", live = null, l
 export function explainDecay(v) {
   if (!v || !v.known) return "затухание: ставки своей стороны нет";
   const apr = `${(v.aprNow * 100).toFixed(2)}% годовых`;
-  if (v.status === "flipped") return `ставка своей стороны ${apr}, платим мы, ниже нуля ${v.belowZeroHours} ч`;
+  if (v.status === "flipped") {
+    const since = v.belowZeroHours > 0 ? `ниже нуля ${v.belowZeroHours} ч` : "ниже нуля с текущего часа";
+    return `ставка своей стороны ${apr}, платим мы, ${since}`;
+  }
   if (v.status === "declining") {
     const zero = fin(v.hoursToZero) ? `, ноль по тренду через ${v.hoursToZero.toFixed(1)} ч` : "";
     return `ставка своей стороны ${apr}, убывает ${v.runHours} ч подряд${zero}`;

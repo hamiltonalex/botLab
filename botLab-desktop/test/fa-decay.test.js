@@ -64,6 +64,32 @@ test("плато и дыра обрывают ряд; один шаг это р�
   assert.match(explainDecay(flat), /ряда убывания нет/);
 });
 
+test("одна заминка внутри ряда не рвёт его, две подряд и заминка последним часом рвут (живой эпизод BTC 13:00Z)", () => {
+  // 30 часов убывания по 1.6e-10, заминка +0.4% на предпоследней строке, затем переход через ноль
+  const fl = Array.from({ length: 31 }, (_, i) => 5e-9 - i * 1.6e-10);
+  fl[29] = fl[28] * 1.004; // 13:00Z чуть выше 12:00Z
+  fl.push(-3.17e-10); // 14:00Z ниже нуля
+  const v = decayObservation({ rows: series(fl), gmxSide: "long" });
+  assert.equal(v.runHours, 31, "ряд из 32 строк: 31 шаг, заминка внутри посчитана");
+  assert.equal(v.status, "flipped");
+  assert.equal(v.belowZeroHours, 1);
+  near(v.stepPerHour, (-3.17e-10 - 5e-9) / 31, 1e-20, "шаг по концам ряда");
+  // две заминки подряд: ряд обрывается на последнем настоящем шаге
+  const two = decayObservation({ rows: series([5e-10, 4e-10, 3e-10, 3.05e-10, 3.1e-10, 2e-10]), gmxSide: "long" });
+  assert.equal(two.runHours, 1, "вторая заминка рвёт ряд, а первая, оказавшись самой ранней точкой, вычитается");
+  // заминка последней строкой кадра, а живой снимок уже ниже уровня до заминки: ряд цел (эпизод BTC 13:00Z)
+  const liveAfter = decayObservation({ rows: series([5e-10, 4e-10, 3e-10, 3.05e-10]), gmxSide: "long", live: { f_long: 1e-10 } });
+  assert.equal(liveAfter.runHours, 4, "три шага кадра, заминка поглощена живым снимком, живой снимок продлил ряд");
+  assert.equal(liveAfter.liveContinues, true);
+  // заминка последним часом: продолжения ещё не видно, ряда нет
+  const tail = decayObservation({ rows: series([5e-10, 4e-10, 3e-10, 3.5e-10]), gmxSide: "long" });
+  assert.equal(tail.runHours, 0);
+  assert.equal(tail.status, "none");
+  // заминка, после которой ставка не опустилась ниже уровня до неё, ряд рвёт
+  const shallow = decayObservation({ rows: series([5e-10, 4e-10, 3e-10, 3.5e-10, 3.2e-10]), gmxSide: "long" });
+  assert.equal(shallow.runHours, 1);
+});
+
 test("переворот: ставка своей стороны ниже нуля, часы ниже нуля считаются по строкам", () => {
   const rows = series([1e-9, 5e-10, 0, -5e-10, -1e-9]);
   const v = decayObservation({ rows, gmxSide: "long", live: { f_long: -1.2e-9, f_short: 1e-9 } });
@@ -73,6 +99,10 @@ test("переворот: ставка своей стороны ниже нул
   assert.equal(v.hoursToZero, null, "ноль уже пройден");
   assert.equal(v.zeroAtMs, null);
   assert.match(explainDecay(v), /платим мы, ниже нуля 3 ч/);
+  const fresh = decayObservation({ rows: series([3e-10, 2e-10, 1e-10]), gmxSide: "long", live: { f_long: -1e-10 } });
+  assert.equal(fresh.status, "flipped");
+  assert.equal(fresh.belowZeroHours, 0, "строк ниже нуля ещё нет, ноль пройден живым снимком");
+  assert.match(explainDecay(fresh), /ниже нуля с текущего часа/);
 });
 
 test("короткая нога читает f_short и базу короткой стороны; живой снимок выше последней строки ряд не продлевает", () => {
