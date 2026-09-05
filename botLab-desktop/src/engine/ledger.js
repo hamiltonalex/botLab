@@ -11,6 +11,13 @@ import { legModel, positionSummary } from "./paper.js";
 
 export const LEDGER_TYPES = ["open_costs", "gmx_funding", "gmx_borrow", "hl_funding", "gap_unpriced", "manual_adjustment"];
 
+// ИСТОЧНИК СТАВКИ РАСЧЁТА HL (paper.js, `hlSettleFromObservations`): расчётная ставка биржи, последний
+// снимок до границы часа или снимок после неё (прогноз следующего часа: так считали все записи до
+// 05.09.2026 и так считается без наблюдений до границы). Записи без метки суффикса не получают.
+const HL_RATE_SRC_TEXT = (src) => (src === "venue" ? " · по расчётной ставке биржи"
+  : src === "prev" ? " · по последнему снимку до границы часа"
+    : src === "live" ? " · по снимку после границы (прогноз)" : "");
+
 // One economic operation. amount is the SIGNED $ delta to net P&L (income > 0, expense < 0);
 // income/expense are the pre-split accounting columns; seq is the primary ordering key (t can
 // collide: a funding row and an HL settlement may share the same boundary timestamp).
@@ -133,8 +140,9 @@ export function buildLedger(position) {
         description:
           "расчёт финансирования Hyperliquid · " +
           (hlDirection === "long" ? "длинная нога" : "короткая нога") +
-          (a.hlSettlements > 1 ? " · ×" + a.hlSettlements + " часовых расчётов" : ""),
-        meta: { settlements: a.hlSettlements },
+          (a.hlSettlements > 1 ? " · ×" + a.hlSettlements + " часовых расчётов" : "") +
+          HL_RATE_SRC_TEXT(a.hlRateSrc),
+        meta: { settlements: a.hlSettlements, hlRateSrc: a.hlRateSrc ?? null, hlRate: Number.isFinite(a.hlRate) ? a.hlRate : null },
       });
     }
   }

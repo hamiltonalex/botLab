@@ -391,7 +391,12 @@ The result drips in hour by hour, and the ledger keeps it in three items:
   dilution multiplier. An hour in which we pay enters in full, without a multiplier.
 - **GMX borrowing** is always a cost, per second, untouched by dilution.
 - **Hyperliquid funding** accrues discretely, once per crossed hour boundary, in either direction,
-  untouched by dilution: our entry into the GMX base does not change it.
+  untouched by dilution: our entry into the GMX base does not change it. The boundary rate is the
+  exchange's settled rate for that hour (`fundingHistory`); when the exchange has not published the
+  row yet, the rate of the last snapshot before the boundary is used. A snapshot taken minutes after
+  the boundary is a forecast of the next hour, and the ledger no longer settles on it: a measurement
+  on 2026-09-05 over 62 boundaries of the live trade showed the HL leg understated by 8% that way,
+  with spurious negative hours. The source of the rate is named in the operations journal row.
 
 The round trip (entry plus exit) is deducted once at opening and frozen on the position. A position
 without the dilution flag in the ledger would be accrued at the full quoted rate; for the automaton's

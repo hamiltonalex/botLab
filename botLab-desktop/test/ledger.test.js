@@ -168,3 +168,25 @@ test("ledgerView: paging, ordering, counts and filter subtotals", () => {
   assert.ok(v.recon.ok, "view carries the reconciliation verdict");
   near(v.recon.positionNetPnl, positionSummary(p).netPnl, 0, "verdict pinned to positionSummary");
 });
+
+test("buildLedger: строка расчёта HL называет источник ставки границы; старые записи без метки", () => {
+  const p = openTwoLeg();
+  accrue(p, SNAP, BASE + HOUR, { markPx: 3300, hlSettle: { rate: 1.25e-5, src: "venue" } });
+  const h = buildLedger(p).find((e) => e.type === "hl_funding");
+  assert.equal(h.meta.hlRateSrc, "venue");
+  assert.equal(h.meta.hlRate, 1.25e-5);
+  assert.match(h.description, /по расчётной ставке биржи/);
+  const q = openTwoLeg();
+  accrue(q, SNAP, BASE + HOUR, { markPx: 3300 });
+  const hq = buildLedger(q).find((e) => e.type === "hl_funding");
+  assert.equal(hq.meta.hlRateSrc, "live");
+  assert.match(hq.description, /прогноз/);
+  // Запись до появления метки: суффикса нет, метка null, тождество журнала держится.
+  delete q.accruals[0].hlRateSrc;
+  delete q.accruals[0].hlRate;
+  const old = buildLedger(q).find((e) => e.type === "hl_funding");
+  assert.equal(old.meta.hlRateSrc, null);
+  assert.equal(old.meta.hlRate, null);
+  assert.ok(!/прогноз|биржи|границы/.test(old.description));
+  assert.ok(ledgerReconciles(q, buildLedger(q)).ok);
+});

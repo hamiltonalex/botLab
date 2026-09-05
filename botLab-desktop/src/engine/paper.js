@@ -9,6 +9,22 @@
 //
 // No orders, no keys - this simulates the ledger a real position WOULD produce from live rates.
 //
+// СТАВКА РАСЧЁТА HL НА ГРАНИЦЕ ЧАСА: ЧЬЯ ОНА (замер 2026-09-05, 62 границы живой сделки BTC/B на mb12).
+// Поле `funding` живого контекста Hyperliquid это ПРОГНОЗ ставки на следующий расчёт, среднее премии
+// с начала текущего часа. Тик приходится на первые минуты часа, и «текущая ставка» через две минуты
+// после границы это среднее по двум минутам нового часа, а не то, что биржа только что заплатила:
+// леджер записал $1.539 там, где `fundingHistory` биржи дал $1.674 (8.1% ноги), и нарисовал шесть
+// отрицательных расчётов из 62 там, где биржа платила пять раз из шести. Ставка ПОСЛЕДНЕГО снимка ДО
+// границы совпадает с биржевой 62 из 62 в пределах 1e-6 (45 точно). Поэтому `accrue` принимает
+// ставку границы снаружи (`opts.hlSettle`, см. `hlSettleFromObservations`): расчётная ставка биржи
+// за этот час, иначе последний снимок до границы, и лишь без обоих ставка текущего снимка с пометкой
+// `live` в журнале. Без опции выражение то же, что и раньше, побитово: книги охраны не двигаются.
+//
+// Историческая ветка (`accrueFromRows`) книжит ставку строки часа H на границе H+1, а у `fetchHlHistory`
+// ключ строки это время ПЛАТЕЖА: ставка строки H заплачена на границе H, часом раньше того места, куда
+// её кладёт ветка. На сумме окна это сдвиг на одну строку из 720, и он оставлен как есть намеренно:
+// правка сдвинула бы четыре книги охраны ради часа, который на решение не влияет.
+//
 // ЦЕНА ОТСУТСТВУЮЩЕЙ ЛИКВИДАЦИИ ИЗМЕРЕНА, И ОНА НЕ МАЛА. Английская оговорка выше говорит, что
 // ликвидации в этом леджере НЕТ; она не говорит, сколько это стоит, и потому читается как мелочь.
 // Замер 2026-08-31 (ветка исследования, `scripts/funding-arb-study/pf-vf-залог.mjs`):
@@ -173,14 +189,21 @@ export function accrue(position, snapshot, nowMs, opts = {}) {
   const fundingUsd = dil.factor === 1 ? fundingQuotedUsd : dil.rate * dtSec * position.notional;
   const dPnlGmx = dil.factor === 1 ? dPnlGmxQuoted : fundingUsd + borrowUsd;
 
-  // HL: one discrete settlement per crossed top-of-hour boundary, using the current rate estimate.
+  // HL: одно дискретное начисление на каждую пересечённую границу часа. СТАВКА ГРАНИЦЫ приходит
+  // снаружи (`opts.hlSettle`, см. шапку и `hlSettleFromObservations`): расчётная ставка биржи за
+  // этот час либо последний снимок ДО границы. Без неё берётся ставка текущего снимка, как раньше,
+  // и это помечается источником `live`: снимок ПОСЛЕ границы это прогноз следующего часа.
   let hlSettlements = 0;
   if (hlPerHourSign !== 0 && Number.isFinite(hl_rate)) {
     const fromHour = Math.floor(accrueFromMs / HOUR_MS);
     const toHour = Math.floor(nowMs / HOUR_MS);
     hlSettlements = Math.max(0, toHour - fromHour);
   }
-  const dPnlHl = hlSettlements * hlPerHourSign * (hl_rate || 0) * position.notional;
+  const settle = hlSettlements > 0 && opts.hlSettle && Number.isFinite(opts.hlSettle.rate) ? opts.hlSettle : null;
+  // Без внешней ставки выражение то же, что и до появления опции, в том же порядке: книги охраны и
+  // старые записи не двигаются ни на бит.
+  const hlRate = settle ? settle.rate : (hl_rate || 0);
+  const dPnlHl = hlSettlements * hlPerHourSign * hlRate * position.notional;
 
   return applyDelta(position, nowMs, {
     source: "live",
@@ -194,8 +217,30 @@ export function accrue(position, snapshot, nowMs, opts = {}) {
     dPnlHl,
     dPnl: dPnlGmx + dPnlHl,
     markPx: Number.isFinite(opts.markPx) ? opts.markPx : null, // best-effort mark at accrual time
+    // Ставка границы и её источник пишутся ТОЛЬКО у шага, пересёкшего границу: у остальных запись та
+    // же, что и раньше. `venue` это строка биржи, `prev` последний снимок до границы, `live` снимок
+    // после неё (прогноз следующего часа, так считали все записи до 05.09.2026).
+    ...(hlSettlements > 0 ? { hlRate, hlRateSrc: settle ? (settle.src === "venue" ? "venue" : "prev") : "live" } : null),
     ...dilutionEntry(dil, fundingQuotedUsd),
   });
+}
+
+// СТАВКА РАСЧЁТА HL ДЛЯ ПЕРЕСЕЧЁННОЙ ГРАНИЦЫ ЧАСА по наблюдениям главного процесса. Порядок
+// предпочтения и почему он такой (шапка, замер 2026-09-05):
+//   venue - строка `fundingHistory` биржи за этот час: то, что биржа заплатила на самом деле;
+//   prev  - ставка последнего снимка строго ДО границы: за минуты до неё прогноз биржи уже почти
+//           равен расчётной ставке (62 из 62 в пределах 1e-6, 45 точно);
+//   null  - наблюдений до границы нет: вызывающий начислит по текущему снимку и пометит `live`.
+// `seen` это наблюдения [{ t, rate }] в любом порядке; берётся последнее по времени строго до границы.
+export function hlSettleFromObservations({ venueRate = null, seen = [], boundaryMs } = {}) {
+  if (Number.isFinite(venueRate)) return { rate: venueRate, src: "venue" };
+  if (!Number.isFinite(boundaryMs)) return null;
+  let best = null;
+  for (const o of seen || []) {
+    if (!o || !Number.isFinite(o.t) || !Number.isFinite(o.rate) || o.t >= boundaryMs) continue;
+    if (!best || o.t > best.t) best = o;
+  }
+  return best ? { rate: best.rate, src: "prev", at: best.t } : null;
 }
 
 // Accrue an offline gap from HISTORICAL hourly rows (canonical frame rows: tsHour in epoch seconds,
@@ -271,7 +316,7 @@ export function settlePosition(position, rows, snapshotRaw, nowMs, capSec, opts 
   if (Number.isFinite(capSec) && gapSec > capSec && rows && rows.length) {
     if (accrueFromRows(position, rows, nowMs).hoursApplied > 0) changed = true;
   }
-  if (snapshotRaw && accrue(position, snapshotRaw, nowMs, { maxDtSec: capSec, markPx: opts.markPx })) changed = true;
+  if (snapshotRaw && accrue(position, snapshotRaw, nowMs, { maxDtSec: capSec, markPx: opts.markPx, hlSettle: opts.hlSettle })) changed = true;
   return changed;
 }
 

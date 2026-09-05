@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openPosition, accrue, closePosition, positionSummary, legModel } from "../src/engine/paper.js";
+import { openPosition, accrue, closePosition, positionSummary, legModel, hlSettleFromObservations } from "../src/engine/paper.js";
 import { savePositions, loadPositions, writeCache, readCache, saveSettings, loadSettings } from "../src/engine/store.js";
 import { roundTripCost } from "../src/engine/costs.js";
 
@@ -95,4 +95,61 @@ test("persistence: positions + settings + CSV cache survive a round-trip", () =>
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── СТАВКА РАСЧЁТА HL НА ГРАНИЦЕ ЧАСА (шапка paper.js, замер 2026-09-05): снимок после границы это
+// прогноз следующего часа; ставка границы приходит снаружи, источник пишется в запись.
+test("расчёт HL на границе: внешняя ставка (биржа, снимок до границы) вместо прогноза, источник назван", () => {
+  const snap = { f_long: -1e-8, f_short: 1e-8, b_long: 0, b_short: 0, hl_rate: 2e-5 }; // снимок ПОСЛЕ границы
+  const mk = () => openPosition({ strategy: "two", instrumentKey: "BTC", config: "B", capital: 2500, leverage: 1, nowMs: BASE + 57 * 60 * 1000 });
+  const live = mk();
+  accrue(live, snap, BASE + 62 * 60 * 1000);
+  const prev = mk();
+  accrue(prev, snap, BASE + 62 * 60 * 1000, { hlSettle: { rate: 1e-5, src: "prev" } });
+  const venue = mk();
+  accrue(venue, snap, BASE + 62 * 60 * 1000, { hlSettle: { rate: 1.25e-5, src: "venue" } });
+  assert.equal(live.accruals[0].hlSettlements, 1);
+  near(live.accruals[0].dPnlHl, 2e-5 * 2500, 1e-12, "без внешней ставки: ставка снимка, как раньше");
+  assert.equal(live.accruals[0].hlRateSrc, "live");
+  assert.equal(live.accruals[0].hlRate, 2e-5);
+  near(prev.accruals[0].dPnlHl, 1e-5 * 2500, 1e-12, "ставка последнего снимка до границы");
+  assert.equal(prev.accruals[0].hlRateSrc, "prev");
+  near(venue.accruals[0].dPnlHl, 1.25e-5 * 2500, 1e-12, "расчётная ставка биржи");
+  assert.equal(venue.accruals[0].hlRateSrc, "venue");
+  assert.equal(venue.accruals[0].hlRate, 1.25e-5);
+  assert.equal(live.accruals[0].dPnlGmx, venue.accruals[0].dPnlGmx, "нога GMX от источника ставки HL не зависит");
+  // Чужой ярлык источника читается как снимок до границы, а не как строка биржи.
+  const odd = mk();
+  accrue(odd, snap, BASE + 62 * 60 * 1000, { hlSettle: { rate: 1e-5, src: "whatever" } });
+  assert.equal(odd.accruals[0].hlRateSrc, "prev");
+  // Неконечная внешняя ставка это отсутствие ставки: снимок и пометка live.
+  const bad = mk();
+  accrue(bad, snap, BASE + 62 * 60 * 1000, { hlSettle: { rate: NaN, src: "venue" } });
+  assert.equal(bad.accruals[0].hlRateSrc, "live");
+  near(bad.accruals[0].dPnlHl, 2e-5 * 2500, 1e-12);
+  // Без пересечения границы полей ставки нет и внешняя ставка не применяется.
+  const mid = mk();
+  accrue(mid, snap, BASE + 59 * 60 * 1000, { hlSettle: { rate: 1e-5, src: "venue" } });
+  assert.equal(mid.accruals[0].hlSettlements, 0);
+  assert.equal(mid.accruals[0].dPnlHl, 0);
+  assert.ok(!("hlRateSrc" in mid.accruals[0]) && !("hlRate" in mid.accruals[0]));
+  // Одноногая схема: ноги HL нет, полей нет даже на границе.
+  const one = openPosition({ strategy: "one", instrumentKey: "ETH-Arb", capital: 2500, leverage: 1, nowMs: BASE + 57 * 60 * 1000 });
+  accrue(one, { f_short: 1e-8, b_short: 2e-9, f_long: 0, b_long: 0, hl_rate: 0 }, BASE + 62 * 60 * 1000, { hlSettle: { rate: 1e-5, src: "venue" } });
+  assert.equal(one.accruals[0].dPnlHl, 0);
+  assert.ok(!("hlRateSrc" in one.accruals[0]));
+});
+
+test("hlSettleFromObservations: биржа прежде снимка, снимок строго ДО границы, иначе ничего", () => {
+  const B = BASE + HOUR;
+  assert.deepEqual(hlSettleFromObservations({ venueRate: 3e-6, seen: [{ t: B - 1000, rate: 1e-5 }], boundaryMs: B }), { rate: 3e-6, src: "venue" });
+  const prev = hlSettleFromObservations({ venueRate: null, seen: [{ t: B - 600e3, rate: 9e-6 }, { t: B - 120e3, rate: 1e-5 }, { t: B + 120e3, rate: 2e-5 }], boundaryMs: B });
+  assert.equal(prev.src, "prev");
+  assert.equal(prev.rate, 1e-5, "последний ДО границы, а не самый свежий");
+  assert.equal(prev.at, B - 120e3);
+  assert.equal(hlSettleFromObservations({ venueRate: NaN, seen: [{ t: B, rate: 2e-5 }], boundaryMs: B }), null, "снимок на самой границе это уже новый час");
+  assert.equal(hlSettleFromObservations({ seen: [], boundaryMs: B }), null);
+  assert.equal(hlSettleFromObservations({ venueRate: null, seen: [{ t: B - 1, rate: NaN }], boundaryMs: B }), null);
+  assert.equal(hlSettleFromObservations({ venueRate: null, seen: [{ t: B - 1, rate: 1e-5 }] }), null, "без границы не с чем сравнивать");
+  assert.equal(hlSettleFromObservations(), null);
 });

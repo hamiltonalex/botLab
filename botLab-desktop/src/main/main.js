@@ -16,10 +16,10 @@ import { dirname, join } from "node:path";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
-import { fetchGmxCurrent, fetchHlCurrent, fetchHlBook, fetchBinancePrices, fetchGmxFundingBalanceHistory } from "../engine/sources.js";
+import { fetchGmxCurrent, fetchHlCurrent, fetchHlBook, fetchHlHistory, fetchBinancePrices, fetchGmxFundingBalanceHistory } from "../engine/sources.js";
 import { getTwoLegFrame, getOneLegFrame, nowHourTs, WINDOW_DAYS, STALE_AFTER_SEC } from "../engine/backfill.js";
 import { buildSnapshot, buildTwoLegEntry, buildOneLegEntry, buildSeries } from "../engine/assemble.js";
-import { openPosition, accrue, accrueFromRows, settlePosition, recordUnpricedGap, closePosition, positionSummary, accountSummary, legModel } from "../engine/paper.js";
+import { openPosition, accrue, accrueFromRows, settlePosition, recordUnpricedGap, closePosition, positionSummary, accountSummary, legModel, hlSettleFromObservations } from "../engine/paper.js";
 import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts } from "../engine/costs.js";
 import { ledgerView, buildLedger } from "../engine/ledger.js";
 import { toLedgerCsv, toLedgerSheet, toLedgerJson, ledgerFileName, dialogFiltersFor } from "./export.js";
@@ -157,6 +157,12 @@ const state = {
   },
   positions: [],
   snapshots: { byKey: {}, fresh: { gmxAt: 0, hlAt: 0, ageSec: null, stale: true, gateOk: true, accrualOk: false, notes: [] } },
+  // НАБЛЮДЕНИЯ СТАВКИ HL по инструменту [{ t, rate }] и кэш расчётных ставок биржи по границам часов
+  // (`coin:boundaryMs` -> ставка или null). Обе карты живут только в памяти сессии: ставка границы
+  // нужна ровно на том тике, который её пересёк (`hlSettleFor`), а разрыв сверх капа закрывается
+  // историей биржи из кадра, ему эти наблюдения не нужны.
+  hlSeen: new Map(),
+  hlSettled: new Map(),
   frames: new Map(), // cacheKey -> rows (also disk-cached, incrementally topped up)
   framePromises: new Map(), // cacheKey -> in-flight Promise (dedupes concurrent backfills)
   backfilling: new Set(), // cacheKeys currently fetching - surfaced to the UI
@@ -244,6 +250,9 @@ async function pollLive() {
     const snap = buildSnapshot(inst, g, h);
     if (snap) {
       byKey[inst.key] = snap;
+      // Ставка HL запоминается ДО того, как снимок заменится: последний снимок перед границей часа
+      // это запасная ставка расчёта (`hlSettleFor`), когда биржа ещё не отдала строку за час.
+      if (inst.hlCoin && Number.isFinite(snap.raw?.hl_rate)) faNoteHlRate(inst.key, snap.raw.hl_rate, hl.fetchedAt || Date.now());
       if (!snap.gateOk) {
         gateOk = false;
         notes.push(`${inst.key}: sign-gate failed - accrual paused for this instrument`);
@@ -284,6 +293,54 @@ async function pollLive() {
   await faAutoStep({ gmxDown: false, hlDown: !hl.fetchedAt });
 }
 
+// ── СТАВКА РАСЧЁТА HL НА ПЕРЕСЕЧЁННОЙ ГРАНИЦЕ ЧАСА (шапка paper.js: снимок после границы это прогноз
+// следующего часа, и по нему леджер занижал ногу HL на 8%). Наблюдения копятся каждым опросом;
+// расчётная ставка биржи за час тянется одним коротким запросом на границу и кэшируется; отказ сети
+// или ещё не опубликованная строка молча уступают последнему снимку до границы, а без наблюдений
+// начисление идёт по текущему снимку с пометкой `live`. Запрос ограничен по времени, чтобы икота
+// Hyperliquid не задерживала тик: повторы `postJson` доработают в фоне, их результат не нужен.
+const HL_SETTLE_FETCH_MS = 8000;
+function faNoteHlRate(key, rate, t) {
+  const list = state.hlSeen.get(key) || [];
+  list.push({ t, rate });
+  if (list.length > 48) list.splice(0, list.length - 48);
+  state.hlSeen.set(key, list);
+}
+async function hlSettledRate(coin, boundaryMs) {
+  const k = `${coin}:${boundaryMs}`;
+  if (state.hlSettled.has(k)) return state.hlSettled.get(k);
+  const sec = boundaryMs / 1000;
+  let rate = null;
+  try {
+    const job = fetchHlHistory(coin, sec - 60, sec + 600);
+    job.catch(() => {});
+    const hist = await Promise.race([job, new Promise((_, rej) => setTimeout(() => rej(new Error("hl fundingHistory timeout")), HL_SETTLE_FETCH_MS))]);
+    const row = hist.get(Math.floor(sec / 3600) * 3600);
+    if (row && Number.isFinite(row.hl_rate)) rate = row.hl_rate;
+  } catch {
+    return null; // отказ не кэшируется: закрытие на том же тике может спросить ещё раз
+  }
+  state.hlSettled.set(k, rate);
+  if (state.hlSettled.size > 64) state.hlSettled.delete(state.hlSettled.keys().next().value);
+  return rate;
+}
+async function hlSettleFor(p, nowMs) {
+  if (p.strategy !== "two") return null;
+  const HOUR = 3600 * 1000;
+  const toHour = Math.floor(nowMs / HOUR);
+  if (toHour <= Math.floor(p.lastAccrualAt / HOUR)) return null; // границы часа не пересечены
+  // При капе живого шага (не больше 45 мин) граница одна; при разрыве сверх капа целые часы закрывает
+  // история, а живой шаг пересекает только последнюю границу перед «сейчас».
+  const boundaryMs = toHour * HOUR;
+  const coin = instFor(p.strategy, p.instrumentKey)?.hlCoin || p.meta?.hlCoin || p.instrumentKey;
+  const venueRate = await hlSettledRate(coin, boundaryMs);
+  const s = hlSettleFromObservations({ venueRate, seen: state.hlSeen.get(p.instrumentKey) || [], boundaryMs });
+  if (!s || s.src !== "venue") {
+    console.log(`[fa] расчёт HL ${p.instrumentKey} на границе ${new Date(boundaryMs).toISOString().slice(11, 16)}Z: ${s ? "биржа строку не отдала, ставка последнего снимка до границы" : "наблюдений до границы нет, ставка текущего снимка (прогноз)"}`);
+  }
+  return s;
+}
+
 // Settle every open position up to now with the given live-step cap: history for the whole-hour
 // part of any over-cap gap, capped live for the rest - so no accrual path has a cap dead zone.
 // А6 R2 (ратифицировано 2026-07-20): гэп сверх капа сначала ДОЗАБИРАЕТ фрейм с биржи (await
@@ -307,8 +364,10 @@ async function settleOpenPositions(capSec) {
         state.snapshots.fresh.notes.push(`${p.instrumentKey}: история для дозаполнения гэпа недоступна (${String(e.message || e).slice(0, 60)})`);
       }
     }
-    // markPx: best-effort mark for the ledger's "price at operation" column - never required
-    if (settlePosition(p, rows, snap.raw, now, capSec, { markPx: snap.price })) changed = true;
+    // markPx: best-effort mark for the ledger's "price at operation" column - never required.
+    // hlSettle: ставка пересечённой границы часа (строка биржи либо последний снимок до границы).
+    const hlSettle = await hlSettleFor(p, now);
+    if (settlePosition(p, rows, snap.raw, now, capSec, { markPx: snap.price, hlSettle })) changed = true;
   }
   if (changed) savePositions(baseDir, state.positions);
   return changed;
@@ -754,7 +813,7 @@ async function faClosePaperPosition(p, nowMs) {
     }
   }
   if (p.status === "open" && snap && snap.accrualOk !== false) {
-    settlePosition(p, rows, snap.raw, nowMs, pollSec() * 3, { markPx: snap.price });
+    settlePosition(p, rows, snap.raw, nowMs, pollSec() * 3, { markPx: snap.price, hlSettle: await hlSettleFor(p, nowMs) });
   } else if (p.status === "open") {
     accrueFromRows(p, rows, nowMs);
     recordUnpricedGap(p, nowMs, "автомат закрыл сделку без полного живого снимка");
@@ -3528,7 +3587,7 @@ function wireIpc() {
         }
       }
       if (p.status === "open" && snap && snap.accrualOk !== false) {
-        settlePosition(p, rows, snap.raw, now, pollSec() * 3);
+        settlePosition(p, rows, snap.raw, now, pollSec() * 3, { hlSettle: await hlSettleFor(p, now) });
       } else if (p.status === "open") {
         // Use any available actual hourly history first. If the current tail still has no trusted
         // rate, record it explicitly instead of losing it when the position is closed.
