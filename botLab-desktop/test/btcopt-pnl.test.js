@@ -8,6 +8,7 @@ import {
   markStructure,
   markPerp,
   accrueFunding,
+  fundingRateOf,
   attribute,
   noHedgeAttribute,
   appendLedger,
@@ -281,4 +282,42 @@ test("appendLedger: rows feed ledgerReconciles cleanly (built, not hand-crafted)
   appendLedger(st, { type: "close-options", realizedUsd: 25 });
   const r = ledgerReconciles(st, goldenSnapshot);
   assert.equal(r.ok, true);
+});
+
+// ── Ставка начисления: мгновенная ставка биржи первой, восьмичасовая запасной (05.09.2026) ───────
+// funding_8h тикера это скользящая сумма восьми прошедших часовых ставок (равна interest_8h биржи
+// на 385/385 границах часа), а биржа начисляет интеграл мгновенной ставки: книга по среднему
+// переплатила $5.55 из $164 за прогон 17.08-05.09 и расходилась по дням на ±$3..6.
+test("fundingRateOf: currentFunding первым, funding8h запасным, без обоих null", () => {
+  assert.deepEqual(fundingRateOf({ currentFunding: 0.0003, funding8h: 0.0001 }), { rate: 0.0003, src: "current" });
+  assert.deepEqual(fundingRateOf({ funding8h: 0.0001 }), { rate: 0.0001, src: "8h" }, "старый снимок без cf");
+  assert.deepEqual(fundingRateOf({ currentFunding: null, funding8h: 0.0001 }), { rate: 0.0001, src: "8h" }, "null это отсутствие");
+  assert.deepEqual(fundingRateOf({ currentFunding: 0, funding8h: 0.0001 }), { rate: 0, src: "current" }, "ноль мгновенной ставки законен");
+  assert.deepEqual(fundingRateOf({ mark: 1 }), { rate: null, src: null });
+  assert.deepEqual(fundingRateOf(null), { rate: null, src: null });
+});
+
+test("accrueFunding: начисляет по currentFunding, а не по funding8h, когда снимок несёт обе", () => {
+  const perpState = { qty: -13, fundingCum: 0 };
+  const r = accrueFunding(perpState, { currentFunding: 0.0003, funding8h: 0.0001, contractSize: 10 }, 28800, { maxDtSec: 1e9 });
+  near(r.deltaUsd, 13 * 10 * 0.0003, 1e-12, "шорт получает по мгновенной ставке 0.0003, не по 0.0001");
+  assert.equal(r.src, "current");
+  assert.equal(r.rate, 0.0003);
+  near(perpState.fundingCum, 0.039, 1e-12, "накопитель");
+});
+
+test("accrueFunding: снимок без currentFunding начисляет по funding8h (старые записи, стенды) и называет источник", () => {
+  const perpState = { qty: +13, fundingCum: 0 };
+  const r = accrueFunding(perpState, { funding8h: 0.0001, contractSize: 10 }, 28800, { maxDtSec: 1e9 });
+  near(r.deltaUsd, -0.013, 1e-12, "лонг платит по запасной ставке");
+  assert.equal(r.src, "8h");
+  assert.equal(r.rate, 0.0001);
+});
+
+test("accrueFunding: снимок без ставки вовсе начисляет ноль и говорит об этом src null", () => {
+  const perpState = { qty: -13, fundingCum: 1 };
+  const r = accrueFunding(perpState, { contractSize: 10, mark: 60000 }, 28800, { maxDtSec: 1e9 });
+  assert.equal(r.deltaUsd, 0);
+  assert.equal(r.src, null);
+  assert.equal(perpState.fundingCum, 1, "накопитель не тронут");
 });

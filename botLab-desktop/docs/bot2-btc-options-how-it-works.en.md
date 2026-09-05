@@ -193,7 +193,7 @@ order at the middle of the spread paying the maker fee; if the operator selected
 crosses the spread and pays the taker fee. The bot reads both rates from the exchange's
 instrument description, not from the code (as of 2026-09-05: maker 0.015%, taker 0.035% of
 turnover). The perpetual carries funding, small periodic payments between buyers and
-sellers; the bot accrues it every tick, in either direction.
+sellers; the bot accrues it every tick at the exchange's current rate, in either direction.
 
 **There are no exits before expiry.** No stop-losses, no take-profits: all of the
 scheme's statistics were taken with a single exit, living until expiry, and the project's

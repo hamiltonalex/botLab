@@ -18,7 +18,7 @@
 import { buildStructure, buildSellStructure, buildSellStrangleStructure, optionDeltaTotal, netGreeks, netDebit, pickExpiry, structureRejections } from "./structure.js";
 import { payoffCurve, payoffAt } from "./payoff.js";
 import { decideHedge, applyFill, settlementBlackout } from "./hedge.js";
-import { markStructure, markPerp, accrueFunding, attribute, noHedgeAttribute, appendLedger } from "./pnl.js";
+import { markStructure, markPerp, accrueFunding, fundingRateOf, attribute, noHedgeAttribute, appendLedger } from "./pnl.js";
 import { initMetrics, foldCycle, summarize } from "./metrics.js";
 import { structureMargin, liqPriceEst } from "./margin.js";
 import { computeScenarios } from "./stress.js";
@@ -223,10 +223,11 @@ export function classifyGapCause({ fromMs, toMs, hints = {} } = {}) {
 
 export function ingest(state, snapshot, nowMs, hints = {}) {
   const cfg = buildCfg(state.settings);
-  // Начисление возможно, только когда перп снимка оценён. Тик без перпа при удерживаемой позиции
-  // НЕ двигает часы фандинга (см. конец функции): иначе интервал молча выпадал бы из начисления.
+  // Начисление возможно, только когда перп снимка оценён: есть мгновенная ставка биржи либо
+  // запасная восьмичасовая (pnl.fundingRateOf). Тик без перпа при удерживаемой позиции НЕ двигает
+  // часы фандинга (см. конец функции): иначе интервал молча выпадал бы из начисления.
   const holdingPerp = state.perpState.qty !== 0;
-  const perpPriced = !!(snapshot.perp && Number.isFinite(snapshot.perp.funding8h));
+  const perpPriced = !!snapshot.perp && fundingRateOf(snapshot.perp).rate != null;
   if (holdingPerp && perpPriced) {
     const last = state.lastIngestAt ?? nowMs;
     const dtSec = Math.max(0, (nowMs - last) / 1000);

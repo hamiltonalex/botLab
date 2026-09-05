@@ -157,7 +157,12 @@ function buildSnapshot(i, openLeg) {
   }
   const perp = {
     instrument: "BTC-PERPETUAL", mark: S, index: S, bid: S, ask: S,
-    funding8h: fundRate(ts) * 8, inverse: true, contractSize: PERP_CS, tickSize: 0.5, minTradeAmount: 10, ts,
+    // Часовая ставка кэша истории (interest_1h·8) подаётся в ОБА поля: движок начисляет по
+    // currentFunding (pnl.fundingRateOf, с 05.09.2026), а funding8h остаётся прогнозом издержек
+    // перекладки. У записи мгновенной ставки нет, часовая это лучшее её приближение; число одно и
+    // то же, поэтому книга охраны та же, что снималась до смены ставки начисления.
+    currentFunding: fundRate(ts) * 8, funding8h: fundRate(ts) * 8,
+    inverse: true, contractSize: PERP_CS, tickSize: 0.5, minTradeAmount: 10, ts,
   };
   return {
     ts, underlying: S, index: S, legs, perp,

@@ -50,8 +50,12 @@ export function buildS1TickRecord({ snap, cycle, chain } = {}) {
     sAge: r(snap.spot?.ageSec, 1),
     sSrc: snap.spot?.source ?? null,
     idx: snap.index ?? null,
+    // Перп несёт ОБЕ ставки фандинга: `f8` это скользящее среднее восьми часов (прогноз издержек
+    // перекладки и стресс), `cf` это мгновенная ставка биржи, по которой начисляет
+    // pnl.accrueFunding с 05.09.2026. Без `cf` реплей начисления невозможен; записи до этой даты
+    // его и не воспроизводят (там начисление шло по `f8`, реплей повторяет его тем же полем).
     perp: p
-      ? { b: p.bid ?? null, a: p.ask ?? null, m: p.mark ?? null, i: p.index ?? null, f8: p.funding8h ?? null }
+      ? { b: p.bid ?? null, a: p.ask ?? null, m: p.mark ?? null, i: p.index ?? null, f8: p.funding8h ?? null, cf: p.currentFunding ?? null }
       : null,
     legs,
     dec: c

@@ -456,3 +456,15 @@ test("applyFill: комиссия исполнения по ставке сни�
   const f3 = applyFill(ps3, { side: "sell", amount_rounded_btc: 0.002, order_type: "market" }, 63000, { contractSize: 10 }, cfg);
   near(f3.feeUsd, 13 * 10 * 0.0005, 1e-12, "без ставки в снимке → cfg.takerFeeRate");
 });
+
+test("estimateCost и carry: прогноз на горизонт остаётся на funding8h, мгновенная ставка снимка его не подменяет", () => {
+  const c = estimateCost({
+    hedgeQty: 0.002,
+    targetQty: -0.01,
+    perp: { mark: 63000, funding8h: 0.0002, currentFunding: 0.001, contractSize: 10 },
+    liquidity: { halfSpread: 1 },
+    cfg: mktCfg,
+  });
+  near(c.funding_horizon, 0.002 * 63000 * 0.0002, 1e-12, "фандинг приращения по среднему 8 ч");
+  near(c.carry_horizon, -0.01 * 63000 * 0.0002, 1e-12, "карри целевой позиции по среднему 8 ч");
+});

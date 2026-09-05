@@ -33,6 +33,16 @@ test("запись тика: котировки как пришли, греки 
   assert.equal(row.dec.d, "SKIP");
   assert.equal(row.dec.sid, "s1-x");
   assert.equal(row.ch.on, 1);
+  assert.equal(row.perp.f8, 0.0001, "восьмичасовая ставка как пришла");
+  assert.equal(row.perp.cf, null, "снимок без мгновенной ставки → cf null, а не 0 (старые записи)");
+});
+
+test("запись тика: мгновенная ставка фандинга едет в строку полем cf рядом с f8 (начисление с 05.09.2026)", () => {
+  const s = snap();
+  s.perp = { ...s.perp, currentFunding: 0.00027 };
+  const row = buildS1TickRecord({ snap: s });
+  assert.equal(row.perp.cf, 0.00027, "по этой ставке начисляет accrueFunding, без неё реплей начисления невозможен");
+  assert.equal(row.perp.f8, 0.0001, "f8 остаётся: прогноз издержек перекладки и стресс");
 });
 
 test("запись тика: деградация не роняет строку - нет перпа, цикла и цепочки", () => {

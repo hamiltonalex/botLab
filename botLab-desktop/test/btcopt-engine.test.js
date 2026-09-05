@@ -1194,3 +1194,24 @@ test("стоп: действия halve и restore живой бот не при�
   assert.ok(r.error && /не реализовано/.test(r.error), `ожидался внятный отказ, получено: ${JSON.stringify(r)}`);
   assert.equal(st.structure, null, "структура не открыта");
 });
+
+// ── Начисление фандинга по мгновенной ставке биржи (05.09.2026) ─────────────────────────────────
+test("ingest: при обеих ставках в снимке начисляет по currentFunding; снимок только с currentFunding считается оценённым", () => {
+  const st = engine.create({ nowMs: NOON, settings: { deadbandRefQty: 1 } });
+  st.perpState.qty = -12;
+  st.perpState.avgEntry = 61000;
+  st.lastIngestAt = NOON;
+  engine.ingest(st, { perp: { currentFunding: 0.0003, funding8h: 0.0001, contractSize: 10, mark: 61000 }, underlying: 61000 }, NOON + 15_000);
+  near(st.perpState.fundingCum, 12 * 10 * 0.0003 * (15 / 28800), 1e-15, "шорт получил по 0.0003, не по среднему 0.0001");
+  // Снимок без funding8h, но с мгновенной ставкой, оценён: часы идут, начисление есть.
+  const before = st.perpState.fundingCum;
+  engine.ingest(st, { perp: { currentFunding: 0.0002, contractSize: 10, mark: 61000 }, underlying: 61000 }, NOON + 30_000);
+  near(st.perpState.fundingCum - before, 12 * 10 * 0.0002 * (15 / 28800), 1e-15, "начислено по мгновенной ставке без f8");
+  assert.equal(st.lastIngestAt, NOON + 30_000, "часы фандинга сдвинуты");
+  // Снимок без обеих ставок не оценён: часы стоят, следующий оценённый тик доначисляет весь разрыв.
+  engine.ingest(st, { perp: { contractSize: 10, mark: 61000 }, underlying: 61000 }, NOON + 45_000);
+  assert.equal(st.lastIngestAt, NOON + 30_000, "тик без ставки часы не двигает");
+  const b2 = st.perpState.fundingCum;
+  engine.ingest(st, { perp: { currentFunding: 0.0002, contractSize: 10, mark: 61000 }, underlying: 61000 }, NOON + 60_000);
+  near(st.perpState.fundingCum - b2, 12 * 10 * 0.0002 * (30 / 28800), 1e-15, "доначислен весь интервал 30 с");
+});

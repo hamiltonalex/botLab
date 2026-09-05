@@ -82,17 +82,43 @@ export function markPerp(perpState, perp) {
 }
 
 // ── Funding accrual (mutates perpState.fundingCum) ──────────────────────────────────────────────
-// accrueFunding(perpState, perp, dtSec, { maxDtSec }) → { deltaUsd, gapSkippedSec }.
-// dtEff = min(dtSec, maxDtSec); deltaUsd = −qty·contractSize·funding8h·(dtEff/28800). A SHORT
-// (qty<0) with positive funding8h RECEIVES → positive deltaUsd. fundingCum is accumulated in place;
-// gapSkippedSec = max(0, dtSec − maxDtSec) reports time dropped by the anti-catch-up clamp.
+// fundingRateOf(perp) → { rate, src }: ставка начисления (в единицах 8 часов) и её источник.
+// ПЕРВОЙ берётся мгновенная ставка биржи `currentFunding` (src "current"), запасной `funding8h`
+// (src "8h"); нет ни той, ни другой - { rate: null, src: null }, начислять нечем, и это решает
+// вызывающий (engine.ingest не двигает часы фандинга на таком тике).
+//
+// ПОЧЕМУ МГНОВЕННАЯ, А НЕ ВОСЬМИЧАСОВАЯ, И ЭТО БЫЛ ДЕФЕКТ УЧЁТА. `funding_8h` тикера равен
+// `interest_8h` биржи на каждой границе часа (замер 05.09.2026, 385 границ, 1.5e-6), то есть это
+// СКОЛЬЗЯЩАЯ СУММА восьми прошедших часовых ставок, а биржа начисляет интеграл МГНОВЕННОЙ ставки
+// по позиции. Начисление по среднему оплачивает всплеск ставки следующие восемь часов, уже на
+// другом размере позиции: по дням книга расходилась с биржей на ±$3..6 при потоке около $10 в
+// день (20.08: книга -5.91 против биржи -0.01), а за прогон 17.08-05.09 (mbp15, 107 341 тик,
+// 87 сегментов позиции) переплатила $5.55 из $164: книга -164.31 против часового пути биржи
+// -158.76, из них $4.86 это лаг среднего, остальное дискретизация тиков и кламп. Взвешивание
+// позиции внутри часа почти не важно ($0.18): вся разница в лаге ставки.
+//
+// ПРОГНОЗ ОСТАЁТСЯ НА `funding8h`. estimateCost.funding_horizon, carry_horizon и стресс
+// funding_stress оценивают карри на горизонт ВПЕРЁД, и среднее восьми часов предсказывает
+// следующие часы лучше мгновенного значения; там нужен прогноз, а здесь начисление.
+export function fundingRateOf(perp) {
+  if (Number.isFinite(perp?.currentFunding)) return { rate: perp.currentFunding, src: "current" };
+  if (Number.isFinite(perp?.funding8h)) return { rate: perp.funding8h, src: "8h" };
+  return { rate: null, src: null };
+}
+
+// accrueFunding(perpState, perp, dtSec, { maxDtSec }) → { deltaUsd, gapSkippedSec, rate, src }.
+// dtEff = min(dtSec, maxDtSec); deltaUsd = −qty·contractSize·rate·(dtEff/28800), rate по
+// fundingRateOf (без ставки начисляется ноль, src null). A SHORT (qty<0) with positive rate
+// RECEIVES → positive deltaUsd. fundingCum is accumulated in place; gapSkippedSec =
+// max(0, dtSec − maxDtSec) reports time dropped by the anti-catch-up clamp.
 export function accrueFunding(perpState, perp, dtSec, opts = {}) {
   const maxDtSec = opts.maxDtSec ?? Infinity;
   const dtEff = Math.min(dtSec, maxDtSec);
-  const deltaUsd = -perpState.qty * perp.contractSize * perp.funding8h * (dtEff / 28800);
+  const { rate, src } = fundingRateOf(perp);
+  const deltaUsd = -perpState.qty * perp.contractSize * (rate ?? 0) * (dtEff / 28800);
   perpState.fundingCum = (perpState.fundingCum || 0) + deltaUsd;
   const gapSkippedSec = Math.max(0, dtSec - maxDtSec);
-  return { deltaUsd, gapSkippedSec };
+  return { deltaUsd, gapSkippedSec, rate, src };
 }
 
 // ── Full attribution ────────────────────────────────────────────────────────────────────────────
