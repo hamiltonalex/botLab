@@ -1,5 +1,7 @@
 /* Classic script for Electron and the file:// selector oracle. The engine owns selection,
-   ordering, economics and progress. This view formats snapshots without replay timers. */
+   ordering, economics and progress. The live path formats snapshots as they arrive, without
+   reveal timers. The replay below is user-triggered: it plays back the size checks the engine
+   recorded for the same calculation, with pauses added for viewing, and recomputes nothing. */
 (function () {
   'use strict';
   const $ = id => document.getElementById(id);
@@ -10,6 +12,7 @@
   const setHtml = (el, value) => { if(el && renderedHtml.get(el)!==value){ el.innerHTML=value; renderedHtml.set(el,value); } };
   let currentId = null;
   const expanded = new Set();
+  let lastArgs = null;
 
   function newer(a, b) {
     if(!a) return b || null;
@@ -56,19 +59,101 @@
     return '<svg viewBox="0 0 82 21" aria-hidden="true"><path d="'+path+'" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>';
   }
 
-  function render({auto:a, positions=[], t, usd:formatUsd, date, code, side, bind}) {
+  /* ── ПОВТОР РАСЧЁТА. Живой перебор семи схем длится доли секунды, и таблица появляется целиком.
+     Повтор проигрывает ЗАПИСАННЫЕ движком проверки размеров того же расчёта (`samples` кандидатов
+     в порядке `order`, оба поля пишет главный процесс из событий движка) с паузами для показа.
+     Ничего не считает и не выдумывает: каждый кадр это состояние, которое живой расчёт прошёл.
+     Живое обновление показываемой трассы (новая ревизия, новый расчёт) повтор прерывает: живое
+     главнее. При prefers-reduced-motion на рынок показывается один кадр, последняя проверка. ── */
+  const REPLAY = { marketMs:1300, minStepMs:14, maxStepMs:70, afterMarketMs:420, beforeRankMs:700, emptyMarketMs:450, reducedMs:600 };
+  const replay = { traceId:null, revision:null, order:[], m:0, i:0, timer:null };
+  const reducedMotion = () => { try{ return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }catch(e){ return false; } };
+  const samplesOf = c => (c && Array.isArray(c.samples)) ? c.samples : [];
+  const replayOrder = trace => (trace && Array.isArray(trace.candidates) ? trace.candidates : [])
+    .filter(c=>finite(c.order)).sort((a,b)=>a.order-b.order).map(c=>c.id);
+  const canReplay = trace => !!trace && trace.phase!=='evaluating' && Array.isArray(trace.candidates)
+    && trace.candidates.some(c=>finite(c.order) && samplesOf(c).length>0);
+  const replayActive = trace => !!replay.traceId && !!trace && trace.id===replay.traceId
+    && (trace.revision || 0)===replay.revision && trace.phase!=='evaluating';
+
+  function replaySnapshot(trace) {
+    const pos = new Map(replay.order.map((id,k)=>[id,k]));
+    const reduced = reducedMotion();
+    const candidates = trace.candidates.map(c => {
+      const k = pos.get(c.id);
+      if(k===undefined) return c;                 // не стартовал и живьём: пропуск направления, ворота
+      if(k<replay.m) return { ...c, rank:null }; // посчитан: итог без ранга, ранги приходят в конце
+      const blank = { ...c, rank:null, refusal:null, refusalFrom:null, points:[], evaluatedSizes:0,
+        sizeUsd:null, netUsd:null, grossUsd:null, costUsd:null, ratio:null, binding:null, testing:null };
+      if(k>replay.m || replay.i<0) return { ...blank, status:'pending' };
+      const samples = samplesOf(c);
+      const idx = reduced ? samples.length-1 : Math.min(replay.i, samples.length-1);
+      const s = idx>=0 ? samples[idx] : null;
+      return { ...blank, status:'calculating', evaluatedSizes:s ? idx+1 : 0,
+        testing:s ? { sizeUsd:s[0], grossUsd:s[1], costUsd:s[2], netUsd:s[3] } : null };
+    });
+    return { ...trace, candidates, completed:candidates.filter(c=>!['pending','calculating'].includes(c.status)).length,
+      activeCandidateId:replay.order[replay.m] || null, selectedCandidateId:null, bestCandidateId:null };
+  }
+  function stepMs(trace, m) {
+    const c = trace.candidates.find(x=>x.id===replay.order[m]);
+    const n = samplesOf(c).length;
+    if(!n) return REPLAY.emptyMarketMs;
+    if(reducedMotion()) return REPLAY.reducedMs;
+    return Math.max(REPLAY.minStepMs, Math.min(REPLAY.maxStepMs, REPLAY.marketMs/n));
+  }
+  function schedule(ms) { replay.timer = setTimeout(replayTick, ms); }
+  function replayTick() {
+    replay.timer = null;
+    const trace = lastArgs && lastArgs.auto ? lastArgs.auto.entryTrace : null;
+    if(!replayActive(trace) || replay.m>=replay.order.length){ stopReplay(true); return; }
+    const c = trace.candidates.find(x=>x.id===replay.order[replay.m]);
+    const n = samplesOf(c).length;
+    let ms;
+    if(replay.i<0){ replay.i = 0; ms = stepMs(trace, replay.m); }
+    else if(!reducedMotion() && replay.i+1<n){ replay.i += 1; ms = stepMs(trace, replay.m); }
+    else { replay.m += 1; replay.i = -1; ms = replay.m>=replay.order.length ? REPLAY.beforeRankMs : REPLAY.afterMarketMs; }
+    if(lastArgs) render(lastArgs);
+    schedule(ms);
+  }
+  function startReplay(trace) {
+    stopReplay(false);
+    const order = replayOrder(trace);
+    if(!order.length) return;
+    replay.traceId = trace.id; replay.revision = trace.revision || 0; replay.order = order; replay.m = 0; replay.i = 0;
+    if(lastArgs) render(lastArgs);
+    schedule(stepMs(trace, 0));
+  }
+  function stopReplay(rerender) {
+    if(replay.timer){ clearTimeout(replay.timer); replay.timer = null; }
+    const was = !!replay.traceId;
+    replay.traceId = null; replay.revision = null; replay.order = []; replay.m = 0; replay.i = 0;
+    if(rerender && was && lastArgs) render(lastArgs);
+  }
+  function toggleReplay() {
+    if(replay.traceId){ stopReplay(true); return; }
+    const trace = lastArgs && lastArgs.auto ? lastArgs.auto.entryTrace : null;
+    if(canReplay(trace)) startReplay(trace);
+  }
+
+  function render(args) {
+    lastArgs = args;
+    const {auto:a, positions=[], t, usd:formatUsd, date, code, side, bind} = args;
     const card=$('faEntryCard'); if(!card) return;
     const usd = value => finite(value) ? formatUsd(value) : '-';
     const trace=a && a.entryTrace;
-    const candidates=trace && Array.isArray(trace.candidates) ? trace.candidates : [];
+    if(replay.traceId && !replayActive(trace)) stopReplay(false);
+    const replaying=!!replay.traceId;
+    const v=replaying ? replaySnapshot(trace) : trace;
+    const candidates=v && Array.isArray(v.candidates) ? v.candidates : [];
     const gate=a && a.last && a.last.gate;
-    const phase=trace ? trace.phase : a && a.on ? 'warming' : 'empty';
-    const running=phase==='evaluating';
-    const selected=candidates.find(c=>c.id===trace?.selectedCandidateId);
+    const phase=replaying ? 'replay' : trace ? trace.phase : a && a.on ? 'warming' : 'empty';
+    const running=phase==='evaluating' || replaying;
+    const selected=candidates.find(c=>c.id===v?.selectedCandidateId);
     const rankComplete=!!trace && !running && phase!=='warming';
-    const total=trace && finite(trace.total) ? trace.total : 0;
-    const completed=trace && finite(trace.completed) ? trace.completed : 0;
-    const active=candidates.find(c=>c.id===trace?.activeCandidateId);
+    const total=v && finite(v.total) ? v.total : 0;
+    const completed=v && finite(v.completed) ? v.completed : 0;
+    const active=candidates.find(c=>c.id===v?.activeCandidateId);
     card.dataset.phase=phase;
     card.dataset.traceId=trace?.id || '';
     if(currentId!==trace?.id){ expanded.clear(); currentId=trace?.id; }
@@ -79,15 +164,16 @@
     const direction = c => c.strategy==='one' ? t('fa.entry.oneDirection',{asset:String(c.token || '').split('-')[0]})
       : t('fa.entry.twoDirection',{gmx:side(c.config==='A'?'short':'long'),hl:side(c.config==='A'?'long':'short')});
     const label = c => String(c.token || '')+(c.config?' · '+c.config:'');
-    const statusKeys={ empty:'fa.entry.status.empty', warming:'fa.entry.status.warming', evaluating:'fa.entry.status.evaluating',
+    const statusKeys={ empty:'fa.entry.status.empty', warming:'fa.entry.status.warming', evaluating:'fa.entry.status.evaluating', replay:'fa.entry.status.replay',
       ranked:'fa.entry.status.ranked', opened:'fa.entry.status.opened', closed:'fa.entry.status.closed', blocked:'fa.entry.status.blocked' };
     setText('faEntryStatus',t(statusKeys[phase] || statusKeys.empty));
     setText('faEntrySubtitle',trace ? t('fa.entry.scope',{n:total,h:finite(trace.horizonH)?trace.horizonH:'-',cap:usd(trace.capitalUsd)}) : t('fa.entry.subtitle'));
-    setText('faEntryProgressText',trace
-      ? running ? t('fa.entry.progressActive',{n:completed,total,market:active?label(active):t('fa.entry.preparing')})
+    const stage = active ? label(active) : replaying && completed>=total ? t('fa.entry.replayRanking') : t('fa.entry.preparing');
+    setText('faEntryProgressText',v
+      ? running ? t(replaying?'fa.entry.progressReplay':'fa.entry.progressActive',{n:completed,total,market:stage})
         : t('fa.entry.progressDone',{n:completed,total})
       : a && a.on && gate ? t('fa.entry.gateProgress',{n:gate.usable,total:gate.markets}) : t('fa.entry.progressEmpty'));
-    setText('faEntryAsOf',trace ? t('fa.entry.asOf',{at:date(trace.startedAt)}) : '');
+    setText('faEntryAsOf',trace ? t(replaying?'fa.entry.asOfReplay':'fa.entry.asOf',{at:date(trace.startedAt)}) : '');
     const progress=$('faEntryProgress');
     progress.setAttribute('aria-valuemin','0');
     progress.setAttribute('aria-valuemax',String(total || 1));
@@ -144,7 +230,7 @@
       retained.add(String(c.id));
       let row=Array.from(body.children).find(el=>el.dataset.candidateId===String(c.id));
       if(!row){ row=document.createElement('tr'); row.dataset.candidateId=String(c.id); }
-      const isSelected=c.id===trace.selectedCandidateId;
+      const isSelected=c.id===v.selectedCandidateId;
       row.dataset.status=c.status || 'pending';
       row.dataset.rank=finite(c.rank)?String(c.rank):'';
       row.className=isSelected?'fa-entry-selected':'';
@@ -177,11 +263,13 @@
       if(curveButton) curveButton.setAttribute('aria-expanded',String(expanded.has(c.id)));
       let detail=$(detailId);
       if(!detail || detail.parentNode!==body){ detail=document.createElement('tr'); detail.id=detailId; detail.className='fa-entry-detail'; }
-      detail.dataset.detailFor=String(c.id); detail.hidden=!expanded.has(c.id);
+      // Строка деталей без узлов (рынок ещё считается, повтор) прячется и очищается: прежнее
+      // содержимое от другого состояния той же строки показывать нельзя.
+      detail.dataset.detailFor=String(c.id); detail.hidden=!(expanded.has(c.id) && points.length);
       if(points.length){
         setHtml(detail,'<td colspan="8"><div class="fa-entry-detail-content"><div class="fa-entry-detail-head"><span>'+esc(t('fa.entry.curveCaption',{market:label(c),n:sizes,points:points.length}))+'</span><span>'+esc(t('fa.entry.binding',{why:bind(c.binding)}))+'</span></div>'
           +'<div class="fa-entry-points" role="list" aria-label="'+esc(t('fa.entry.pointsAria'))+'">'+points.map(p=>'<span class="fa-entry-point" role="listitem" data-best="'+(finite(p.sizeUsd) && p.sizeUsd===c.sizeUsd)+'"><span>'+esc(usd(p.sizeUsd))+'</span><b>'+esc(usd(p.net))+'</b></span>').join('')+'</div></div></td>');
-      }
+      } else setHtml(detail,'');
       place(detail);
     }
     Array.from(body.children).forEach(el=>{ if(!retained.has(el.dataset.candidateId || el.dataset.detailFor)) el.remove(); });
@@ -195,8 +283,17 @@
         if(detail) detail.hidden=!expanded.has(id);
       });
     }
-    setText('faEntryFoot',t(selected?'fa.entry.pinnedNote':running?'fa.entry.liveNote':'fa.entry.methodNote'));
-    setText('faEntryDecision',trace?.decision?.why ? code(trace.decision.why) : '');
+    setText('faEntryFoot',t(replaying?'fa.entry.replayNote':selected?'fa.entry.pinnedNote':running?'fa.entry.liveNote':'fa.entry.methodNote'));
+    setText('faEntryDecision',!replaying && trace?.decision?.why ? code(trace.decision.why) : '');
+    const btn=$('faEntryReplay');
+    if(btn){
+      btn.hidden=!(replaying || canReplay(trace));
+      setText('faEntryReplay',t(replaying?'fa.entry.replayStop':'fa.entry.replay'));
+      const aria=t(replaying?'fa.entry.replayStopAria':'fa.entry.replayAria');
+      if(btn.getAttribute('aria-label')!==aria){ btn.setAttribute('aria-label',aria); btn.title=aria; }
+      btn.setAttribute('aria-pressed',String(replaying));
+      if(!btn.dataset.bound){ btn.dataset.bound='true'; btn.addEventListener('click',toggleReplay); }
+    }
     const review=$('faEntryReview'), latest=a && a.latestTrace;
     review.hidden=!(latest && (!trace || latest.id!==trace.id));
     if(!review.hidden){
@@ -206,5 +303,5 @@
     } else setText('faEntryReviewText','');
   }
 
-  window.FaEntryTrace = { render, mergeAuto, receive };
+  window.FaEntryTrace = { render, mergeAuto, receive, toggleReplay, isReplaying: () => !!replay.traceId };
 })();

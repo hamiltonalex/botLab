@@ -4,12 +4,15 @@
 .fa-entry-head{ display:flex; align-items:flex-start; gap:12px; padding:18px 18px 12px; }
 .fa-entry-heading{ flex:1; min-width:0; }
 .fa-entry-head .help-btn{ margin-top:2px; }
+.fa-entry-head .paperbtn.mini{ flex:0 0 auto; white-space:nowrap; }
+.fa-entry-head .paperbtn.mini[aria-pressed="true"]{ color:var(--accent); border-color:color-mix(in srgb,var(--accent) 45%,transparent); }
 .fa-entry-heading h2{ margin:0 0 5px; font:600 15px var(--f-sans); letter-spacing:.1px; }
 .fa-entry-subtitle{ color:var(--txt-dim); font:400 11px/1.5 var(--f-sans); }
 .fa-entry-status{ display:inline-flex; align-items:center; gap:7px; padding:5px 9px; border:1px solid var(--line-2);
   border-radius:5px; white-space:nowrap; color:var(--txt-dim); font:500 10px var(--f-mono); }
 .fa-entry-status::before{ content:""; width:5px; height:5px; border-radius:50%; background:currentColor; }
 #faEntryCard[data-phase="evaluating"] .fa-entry-status{ color:var(--accent); background:var(--accent-bg); border-color:color-mix(in srgb,var(--accent) 30%,transparent); }
+#faEntryCard[data-phase="replay"] .fa-entry-status{ color:var(--accent); background:var(--accent-bg); border-color:color-mix(in srgb,var(--accent) 30%,transparent); }
 #faEntryCard[data-phase="opened"] .fa-entry-status{ color:var(--pos); background:var(--pos-bg); border-color:color-mix(in srgb,var(--pos) 30%,transparent); }
 #faEntryCard[data-phase="blocked"] .fa-entry-status,#faEntryCard[data-phase="warming"] .fa-entry-status{ color:var(--neu); }
 .fa-entry-steps{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); list-style:none; padding:0 18px; margin:0; gap:0; }

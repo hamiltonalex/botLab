@@ -1,9 +1,12 @@
 // Read-only projection of actual sizing observations. No entry/exit economics live here.
+// Каждая проверка размера пишется в `samples` кандидата ([размер, брутто, издержки, нетто], четыре
+// знака), а порядок старта рынков в `order`: интерфейс проигрывает по ним записанный ход расчёта.
 import { legSpreadApr } from "../engine/fa/auto.js";
 
 export const FA_ENTRY_TRACE_VERSION = 1;
 export const faCandidateId = (m) => `${m.token}|${m.strategy || "two"}|${m.strategy === "one" ? "one" : m.config ?? "one"}`;
 const number = (n) => Number.isFinite(n) ? n : null;
+const round4 = (n) => Number.isFinite(n) ? Math.round(n * 1e4) / 1e4 : null;
 const clone = (value) => structuredClone(value);
 const isDone = (c) => !["pending", "calculating"].includes(c.status);
 
@@ -25,7 +28,7 @@ export function createFaEntryTrace(event) {
         refusalFrom: alternate && !sourceRefusal ? null : refusal ? (sourceRefusal ? "slice" : "gate") : null,
         legApr: legSpreadApr(market.rates, market.strategy || "two", config),
         coverage: number(market.coverage), rank: null, sizeUsd: null, netUsd: null, grossUsd: null,
-        costUsd: null, ratio: null, binding: null, points: [], evaluatedSizes: 0,
+        costUsd: null, ratio: null, binding: null, points: [], evaluatedSizes: 0, order: null, samples: [],
       });
     }
   }
@@ -52,9 +55,12 @@ export function advanceFaEntryTrace(trace, event) {
     candidate.pass = event.pass;
     candidate.evaluatedSizes = 0;
     candidate.points = [];
+    candidate.order = Math.max(0, ...next.candidates.map((c) => c.order ?? 0)) + 1;
+    candidate.samples = [];
     next.activeCandidateId = candidate.id;
   } else if (event.type === "size") {
     candidate.evaluatedSizes = event.evaluatedSizes;
+    (candidate.samples ||= []).push([round4(event.sizeUsd), round4(event.grossUsd), round4(event.costUsd), round4(event.netUsd)]);
     candidate.testing = { sizeUsd: number(event.sizeUsd), netUsd: number(event.netUsd),
       grossUsd: number(event.grossUsd), costUsd: number(event.costUsd) };
   } else if (event.type === "market:complete") {
@@ -126,6 +132,7 @@ export function faEntryTraceFromDisk(raw) {
       raw.completed !== raw.total || raw.activeCandidateId != null ||
       !raw.decision || typeof raw.decision.kind !== "string" || typeof raw.decision.why !== "string") return null;
   const ids = new Set();
+  const orders = new Set();
   for (const c of raw.candidates) {
     if (!c || typeof c.id !== "string" || ids.has(c.id) || typeof c.token !== "string" || !c.token ||
         !["two", "one"].includes(c.strategy) || (c.strategy === "one" ? c.config != null : !["A", "B"].includes(c.config)) ||
@@ -136,6 +143,10 @@ export function faEntryTraceFromDisk(raw) {
       if (c[key] != null && !Number.isFinite(c[key])) return null;
     }
     if (c.points.some((p) => !p || !Number.isFinite(p.sizeUsd) || !Number.isFinite(p.net))) return null;
+    if (c.order != null && (!Number.isSafeInteger(c.order) || c.order < 1 || orders.has(c.order))) return null;
+    if (!Array.isArray(c.samples) || c.samples.length !== c.evaluatedSizes || (c.order == null && c.samples.length) ||
+        c.samples.some((s) => !Array.isArray(s) || s.length !== 4 || s.some((v) => v != null && !Number.isFinite(v)))) return null;
+    if (c.order != null) orders.add(c.order);
     ids.add(c.id);
   }
   if (raw.selectedCandidateId && !ids.has(raw.selectedCandidateId)) return null;

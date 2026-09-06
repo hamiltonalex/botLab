@@ -64,6 +64,17 @@ test("real sizing streams in order, records rejected markets and keeps ranking i
   assert.equal(trace.bestCandidateId, faCandidateId({ ...best, strategy: best.token.includes("-") ? "one" : "two" }));
   assert.equal(trace.selectedCandidateId, faCandidateId(tick.intent));
   assert.equal(trace.phase, "ranked");
+  // Записанный ход для повтора в интерфейсе: порядок старта рынков и каждая проверка размера с числами.
+  const sizeEvents = events.filter((e) => e.type === "size");
+  const round4 = (v) => (Number.isFinite(v) ? Math.round(v * 1e4) / 1e4 : null);
+  for (const c of trace.candidates) {
+    assert.equal(c.samples.length, c.evaluatedSizes, c.id);
+    if (c.order == null) { assert.deepEqual(c.samples, []); continue; }
+    const own = sizeEvents.filter((e) => faCandidateId(e) === c.id);
+    assert.deepEqual(c.samples, own.map((e) => [e.sizeUsd, e.grossUsd, e.costUsd, e.netUsd].map(round4)));
+  }
+  const started = trace.candidates.filter((c) => c.order != null).sort((a, b) => a.order - b.order);
+  assert.deepEqual(started.map((c) => [c.token, c.order]), [["ETH", 1], ["BTC", 2], ["ETH-Arb", 3]]);
   for (const row of tick.evalMarkets) {
     const shown = trace.candidates.find((c) => c.id === faCandidateId(row));
     assert.equal(shown.netUsd, row.netUsd);
@@ -80,6 +91,8 @@ test("five eligible instruments produce five optimizations, with no invented A/B
     assert.equal(c.evaluatedSizes, 0);
     assert.deepEqual(c.points, []);
     assert.equal(c.rank, null);
+    assert.equal(c.order, null);
+    assert.deepEqual(c.samples, []);
   }
 });
 
@@ -186,6 +199,10 @@ test("corrupt/incomplete trace cannot be restored or pinned to a different posit
     (x) => { x.candidates[0].points = [{}]; }, (x) => { x.completedAt = null; },
     (x) => { x.completed = 1; }, (x) => { x.bestCandidateId = "missing"; },
     (x) => { x.selectedCandidateId = "missing"; }, (x) => { x.revision = 0; },
+    (x) => { x.candidates[0].samples = x.candidates[0].samples.map(() => [1, 2, 3]); },
+    (x) => { x.candidates[0].samples.push([1, 2, 3, 4]); }, (x) => { x.candidates[0].order = 0; },
+    (x) => { x.candidates[1].order = x.candidates[0].order; },
+    (x) => { const s = x.candidates.find((c) => c.order == null); s.samples = [[1, 2, 3, 4]]; s.evaluatedSizes = 1; },
   ]) {
     const broken = structuredClone(trace); change(broken);
     assert.equal(faEntryTraceFromDisk(broken), null);
@@ -205,4 +222,10 @@ test("optional shrink second pass reports its actual recalculations without chan
   const observed = sizeUniverse({ ...args, onProgress: (event) => events.push(event) });
   assert.deepEqual(observed, baseline);
   assert.ok(events.some((e) => e.type === "market:start" && e.pass === 2));
+  let trace = advanceFaEntryTrace(null, { type: "evaluation:start", now: T, purpose: "entry",
+    markets: args.markets.map((m) => ({ token: m.token, strategy: m.strategy, config: m.config })) });
+  for (const e of events) trace = advanceFaEntryTrace(trace, e);
+  // Второй проход перезаписывает порядок и образцы: в повторе виден именно он.
+  assert.deepEqual(trace.candidates.filter((c) => c.order != null).map((c) => [c.id, c.order]), [["ETH|two|A", 3], ["BTC|two|A", 4]]);
+  for (const c of trace.candidates.filter((c) => c.order != null)) assert.equal(c.samples.length, c.evaluatedSizes);
 });

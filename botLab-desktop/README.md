@@ -144,7 +144,8 @@ npm run e2e:fa-entry-trace
 ```
 
 It feeds real engine progress into the renderer in an isolated temporary profile and checks
-progress, ranking, the retained entry calculation, trade closure, both languages and layout.
+progress, ranking, the replay of recorded size checks, the retained entry calculation, trade closure,
+both languages and layout.
 
 ### Live checks (they hit the real exchanges)
 

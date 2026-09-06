@@ -169,6 +169,8 @@ async function inspect() {
       winnerNet: text("faEntryWinnerNet"), winnerSize: text("faEntryWinnerSize"), winnerStatus: text("faEntryWinnerStatus"),
       realizedVisible: visible("faEntryWinnerRealized"), realized: text("faEntryWinnerRealized"),
       emptyVisible: visible("faEntryEmpty"), reviewVisible: visible("faEntryReview"),
+      replayVisible: visible("faEntryReplay"), replayLabel: text("faEntryReplay"),
+      replayPressed: document.getElementById("faEntryReplay")?.getAttribute("aria-pressed") ?? null,
       rows: [...document.querySelectorAll("#faEntryBody > tr[data-candidate-id]")].map((r) => ({
         id: r.dataset.candidateId, status: r.dataset.status, rank: r.dataset.rank,
         selected: r.classList.contains("fa-entry-selected"), text: r.textContent.replace(/\s+/g, " ").trim(),
@@ -218,7 +220,8 @@ try {
   await screenshot("01-empty-ru");
 
   // Subsequent checks feed genuine progress snapshots from autoTick in sequence.
-  // No timeouts, reveal timer, alternate ranking implementation or invented progress.
+  // No timeouts, reveal timer, alternate ranking implementation or invented progress on the live
+  // path. The replay checked further below is user-triggered and plays recorded samples only.
   const entry = runTick();
   assert.equal(entry.tick.kind, "open", "fixture must reach a real engine open intent");
   assert.ok(entry.progress.length > 2, "engine must emit intermediate trace snapshots");
@@ -292,6 +295,88 @@ try {
     }
   });
   await screenshot("04-ranked-ru");
+
+  // ПОВТОР РАСЧЁТА. Живой перебор длится доли секунды, поэтому кнопка проигрывает ЗАПИСАННЫЕ движком
+  // проверки размеров того же расчёта с паузами. Проверяется, что показанный кадр это записанный
+  // образец реально посчитанного рынка, порядок рынков записанный, ранги и победитель до конца
+  // повтора скрыты, а итог после повтора совпадает с живым итогом до цента.
+  const replayOrder = entry.trace.candidates.filter((c) => Number.isFinite(c.order)).sort((a, b) => a.order - b.order);
+  assert.ok(replayOrder.length >= 2 && replayOrder.every((c) => c.samples.length === c.evaluatedSizes), "started candidates carry recorded samples");
+  const replayButton = page.locator("#faEntryReplay");
+  assert.equal(await replayButton.isVisible(), true, "replay is offered for a completed calculation");
+  async function inspectCalculating() {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const view = await inspect();
+      if (view.phase !== "replay" || view.rows.some((r) => r.status === "calculating")) return view;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return inspect();
+  }
+  await replayButton.click();
+  const replayFirst = await inspectCalculating();
+  check("replay shows a recorded sample of a really evaluated market, in the recorded order", () => {
+    assert.equal(replayFirst.phase, "replay");
+    assert.equal(replayFirst.replayPressed, "true");
+    assert.notEqual(replayFirst.replayLabel, ranked.replayLabel);
+    assert.notEqual(replayFirst.status, ranked.status, "replay must be labelled differently from a finished calculation");
+    assert.deepEqual(replayFirst.rows.map((r) => r.id), originalOrder, "replay keeps the universe order until the end");
+    assert.ok(replayFirst.rows.every((r) => !r.rank), "no ranks during replay");
+    assert.equal(replayFirst.winnerVisible, false);
+    const current = replayFirst.rows.find((r) => r.status === "calculating");
+    assert.ok(current, "one market is being replayed");
+    const candidate = replayOrder.find((c) => c.id === current.id);
+    assert.ok(candidate, "the replayed market is one the engine really evaluated");
+    const shown = [2, 3, 4, 5].map((column) => usdNumber(current.cells[column]));
+    assert.ok(candidate.samples.some((s) => s.every((value, k) => Math.abs(shown[k] - value) <= 0.0051)),
+      "replayed numbers must be a recorded sample: " + JSON.stringify(shown));
+    const k = replayOrder.indexOf(candidate);
+    assert.ok(replayOrder.slice(k + 1).every((c) => replayFirst.rows.find((r) => r.id === c.id).status === "pending"), "later markets wait their turn");
+  });
+  await screenshot("04b-replay-ru");
+  await page.waitForFunction(() => document.getElementById("faEntryCard").dataset.phase !== "replay", null, { timeout: 30000 });
+  const replayDone = await inspect();
+  check("replay ends on the live result: same order, economics and winner", () => {
+    assert.equal(replayDone.phase, "ranked");
+    assert.equal(replayDone.replayPressed, "false");
+    assert.deepEqual(economics(replayDone.rows), economics(ranked.rows));
+    assert.deepEqual(replayDone.rows.map((r) => r.id), ranked.rows.map((r) => r.id));
+    assert.equal(replayDone.winnerNet, ranked.winnerNet);
+  });
+  await replayButton.click();
+  assert.equal((await inspect()).phase, "replay");
+  await replayButton.click();
+  const replayStopped = await inspect();
+  check("a second click stops the replay and restores the live result at once", () => {
+    assert.equal(replayStopped.phase, "ranked");
+    assert.deepEqual(economics(replayStopped.rows), economics(ranked.rows));
+  });
+  // Живое главнее повтора: начавшийся расчёт нового цикла прерывает проигрывание.
+  const LATER = NOW + 3600_000;
+  const later = runTick({ now: LATER, state: armed({ lastTickAt: LATER - POLL_SEC * 1000 }) });
+  assert.equal(later.tick.kind, "open", "fixture must reach a second real open intent");
+  await replayButton.click();
+  await receive(later.progress.find((s) => s.activeCandidateId));
+  const interrupted = await inspect();
+  check("a live calculation interrupts the replay", () => {
+    assert.equal(interrupted.phase, "evaluating");
+    assert.equal(interrupted.replayPressed, "false");
+    assert.equal(interrupted.replayVisible, false, "no replay while the engine is calculating");
+  });
+  await apply(dataset(entry.tick, { entryTrace: entry.trace, latestTrace: entry.trace }));
+  assert.equal((await inspect()).phase, "ranked");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await replayButton.click();
+  const reducedFrame = await inspectCalculating();
+  check("reduced motion shows one recorded frame per market, the last sample", () => {
+    assert.equal(reducedFrame.phase, "replay");
+    const current = reducedFrame.rows.find((r) => r.status === "calculating");
+    assert.ok(current, "one market is being replayed under reduced motion");
+    const candidate = replayOrder.find((c) => c.id === current.id);
+    const last = candidate.samples[candidate.samples.length - 1];
+    assert.ok(Math.abs(usdNumber(current.cells[2]) - last[0]) <= 0.0051, current.cells[2] + " vs " + last[0]);
+  });
+  await page.waitForFunction(() => document.getElementById("faEntryCard").dataset.phase !== "replay", null, { timeout: 30000 });
+  await page.emulateMedia({ reducedMotion: null });
   await apply(dataset(entry.tick, { entryTrace: entry.progress[0], latestTrace: entry.progress[0] }));
   const afterStaleDataset = await inspect();
   check("a stale dataset cannot roll the same completed evaluation backwards", () => {

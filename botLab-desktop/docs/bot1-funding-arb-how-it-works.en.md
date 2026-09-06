@@ -359,6 +359,11 @@ size optimization, ranking and the decision outcome. Updates come from the size 
 market start, each evaluated size and the completed curve. Between cycles the card shows the
 saved calculation; a five-minute poll does not by itself start another evaluation.
 
+The live pass over the seven setups takes a fraction of a second and cannot be watched. The
+"Replay calculation" button plays back the size checks the engine recorded for the same cycle,
+with pauses added for viewing: the same numbers in the same order, nothing is recomputed, and the
+card's status reads "replay" while it runs. A live trace update interrupts the replay.
+
 The table includes seven schemes. The two directions not selected by current rates are marked
 separately: their full size and net calculation did not run. The other rows show the engine's
 size, gross, round-trip costs, net and evaluation outcome. Once evaluation ends, eligible
@@ -860,7 +865,7 @@ are no toggles in either.
 | Arming ticket | Shows what the automaton does without you and the frozen parameters: entry rule, capital $2,500, leverage 1, room to liquidation 50%, cadence 24 h, expiry 72 h, base coverage 95%, the thresholds of the off-cadence events, "loss: not capped", "polling starts at boot: yes"; confirmation with one button |
 | Stop and undo | Two-step stop with a 3.5 s rollback; with an open trade a wind-down to the exit rule; an undo button |
 | Last evaluation by market | A row for each of the five markets: instrument, configuration, rank, outcome, what binds the size, size, net over the horizon, base coverage, retained share, scheme rate; the stamp "taken · capital ceiling · next no earlier than" |
-| Entry calculation | Sequential evaluation of seven schemes with actual size-optimization updates, refusals and final ranking; distinguishes the selected candidate from an opened trade and retains the entry calculation with the position until closing |
+| Entry calculation | Sequential evaluation of seven schemes with actual size-optimization updates, refusals and final ranking; distinguishes the selected candidate from an opened trade and retains the entry calculation with the position until closing; replays the recorded course on demand |
 | Account honesty | Four measurements: retained share of the quoted flow, requested and working size, room to a leg liquidation with liquidation prices, out of sample the rule did not reproduce itself |
 | Recording archive | Read from disk on demand: window, polling slot coverage and gaps by cause, markets vanished from polling, codes outside the registries, room to liquidation by record, volume per day and on disk, retention in the subjunctive; a "Re-read" button; no deletion |
 | Automaton trade history | A row per trade: number, instrument, configuration, requested and working size, entered, exited, hours, costs, result in dollars and percent, why it exited |
