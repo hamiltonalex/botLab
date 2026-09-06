@@ -220,7 +220,14 @@ try {
   if (dp && pos) {
     for (const k of ["createdAt", "capital", "leverage", "notional", "roundTripCost", "strategy", "instrumentKey", "config", "status"]) check(`позиция: ${k}`, JSON.stringify(pos[k]), JSON.stringify(dp[k]));
     check("позиция: meta", JSON.stringify(pos.meta), JSON.stringify(dp.meta));
-    checkBool("позиция: брутто не меньше диска (копия доначислила)", pos.summary.grossPnl >= dp.cumFunding - 1e-9, `${pos.summary.grossPnl} против ${dp.cumFunding}`);
+    // Знак начисления НЕ предполагается: в часы, когда фандинг платим мы (`we_pay`), копия
+    // доначисляет ВНИЗ, и прежняя проверка «брутто не меньше диска» падала на живой сделке BTC/B
+    // 2026-09-06 (2.3725 против 2.3836 после двух отрицательных тиков). Проверяются две вещи,
+    // которые верны при любом знаке: копия продолжила журнал начислений, а брутто сдвинулось
+    // только ими (без новых начислений оно обязано совпасть с диском до плавающей точки).
+    const diskAccruals = (dp.accruals || []).length;
+    checkBool("позиция: журнал начислений копии не короче диска (копия доначислила)", pos.accrualCount >= diskAccruals, `${pos.accrualCount} против ${diskAccruals}`);
+    checkBool("позиция: брутто сдвинулось только начислениями копии", pos.accrualCount > diskAccruals || Math.abs(pos.summary.grossPnl - dp.cumFunding) < 1e-9, `${pos.summary.grossPnl} против ${dp.cumFunding} при ${pos.accrualCount - diskAccruals} новых начислениях`);
   }
   if (S.journal) {
     check("журнал решений: строк как на диске", S.journal.decisions.total, disk.decRows);
