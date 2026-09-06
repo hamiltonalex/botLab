@@ -31,9 +31,10 @@ on Hyperliquid, B is a long on GMX and a short on Hyperliquid. Plus three one-le
 ETH on Arbitrum, BTC on Arbitrum and ETH on Avalanche. In those the bot opens a short and keeps the
 collateral in the same coin, with no Hyperliquid leg.
 
-Seven variants in all. First the bot picks the best direction for BTC and for ETH by the sign of
-the rates over the window, then compares those two variants with the three one-leg schemes and
-funds the first by net.
+Seven variants in all. First the bot picks direction A or B for BTC and ETH by the current net
+rate spread (`net_A >= net_B` selects A). It then evaluates size and net over the historical window
+for those two variants and the three one-leg schemes, and funds the first by net. The other
+direction of each two-leg market does not undergo a separate size optimization.
 
 After entry, once a day and on an event, it compares holding with the same alternatives and with an
 exit to cash, and on every tick it guards the room to liquidation of both legs and the drawdown of
@@ -350,6 +351,24 @@ rate at the moment of evaluation. The evaluation is daily: the header carries th
 the capital ceiling and the time before which there will be no next one. Between cycles the universe
 is not recomputed, and the card promises no live process. The "Ⅰ · The bot's market" zone shows the
 rank 1 market as the candidate while there is no trade.
+
+### Entry calculation widget
+
+The "Entry calculation" card shows the current decision cycle: data checks, variant evaluation,
+size optimization, ranking and the decision outcome. Updates come from the size rule itself:
+market start, each evaluated size and the completed curve. Between cycles the card shows the
+saved calculation; a five-minute poll does not by itself start another evaluation.
+
+The table includes seven schemes. The two directions not selected by current rates are marked
+separately: their full size and net calculation did not run. The other rows show the engine's
+size, gross, round-trip costs, net and evaluation outcome. Once evaluation ends, eligible
+variants follow the engine's rank. The best candidate does not guarantee entry: the card
+distinguishes selection, a guard refusal and an actually opened paper position.
+
+At entry, the calculation is saved with the position and remains on the card until closing,
+including after a restart. Daily hold reviews do not replace the original entry rationale.
+Closing shows the trade outcome; the next entry pins its own calculation. For older positions
+without a saved snapshot, the entry calculation is not reconstructed from current market data.
 
 ## What the bot does not do in this phase
 
@@ -841,6 +860,7 @@ are no toggles in either.
 | Arming ticket | Shows what the automaton does without you and the frozen parameters: entry rule, capital $2,500, leverage 1, room to liquidation 50%, cadence 24 h, expiry 72 h, base coverage 95%, the thresholds of the off-cadence events, "loss: not capped", "polling starts at boot: yes"; confirmation with one button |
 | Stop and undo | Two-step stop with a 3.5 s rollback; with an open trade a wind-down to the exit rule; an undo button |
 | Last evaluation by market | A row for each of the five markets: instrument, configuration, rank, outcome, what binds the size, size, net over the horizon, base coverage, retained share, scheme rate; the stamp "taken · capital ceiling · next no earlier than" |
+| Entry calculation | Sequential evaluation of seven schemes with actual size-optimization updates, refusals and final ranking; distinguishes the selected candidate from an opened trade and retains the entry calculation with the position until closing |
 | Account honesty | Four measurements: retained share of the quoted flow, requested and working size, room to a leg liquidation with liquidation prices, out of sample the rule did not reproduce itself |
 | Recording archive | Read from disk on demand: window, polling slot coverage and gaps by cause, markets vanished from polling, codes outside the registries, room to liquidation by record, volume per day and on disk, retention in the subjunctive; a "Re-read" button; no deletion |
 | Automaton trade history | A row per trade: number, instrument, configuration, requested and working size, entered, exited, hours, costs, result in dollars and percent, why it exited |
@@ -936,4 +956,6 @@ are no toggles in either.
 | `src/engine/store.js` | State files, base journals, NDJSON records |
 | `src/main/main.js` | The polling timer, arming by flag, the slice for the rules, intent execution, persistence, the `fa:*` channels |
 | `src/main/fa-eval.js`, `src/main/fa-archive.js` | The last evaluation summary on disk; archive aggregates for the card |
+| `src/engine/fa/observe.js`, `src/main/fa-entry-trace.js` | Isolated progress observations, calculation snapshots, position binding and restore |
+| `src/renderer/entry-trace.js`, `entry-trace.css` | Entry calculation widget: progress, candidate table, size curves and selected trade |
 | `src/renderer/index.html`, `src/renderer/locales/ru.js`, `en.js` | The tab and Overview interface, the dictionaries of both languages |

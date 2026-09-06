@@ -137,6 +137,15 @@ npm run guard -- --drop-rule sunk-in         # bot 1: round trip subtracted twic
 
 The full list of controls is printed by `npm run guard -- --help`.
 
+The entry calculation widget has an offline Electron check:
+
+```
+npm run e2e:fa-entry-trace
+```
+
+It feeds real engine progress into the renderer in an isolated temporary profile and checks
+progress, ranking, the retained entry calculation, trade closure, both languages and layout.
+
 ### Live checks (they hit the real exchanges)
 
 ```

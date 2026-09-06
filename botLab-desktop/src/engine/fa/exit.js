@@ -490,7 +490,7 @@ export function bestAlternative(curves, capitalUsd) {
 // ─────────────────────────────────────────────────────────────────────────────
 export function decideExit({
   position, rows, markets = [], capitalAvailableUsd = null,
-  costs = DEFAULT_COSTS, cfg = FA_SIZING_DEFAULTS, sources = null,
+  costs = DEFAULT_COSTS, cfg = FA_SIZING_DEFAULTS, sources = null, onProgress = null,
 }) {
   const c = { ...FA_SIZING_DEFAULTS, ...cfg };
   if (!Number.isFinite(c.horizonH) || c.horizonH <= 0) return defer("horizon_missing");
@@ -510,7 +510,7 @@ export function decideExit({
   // обязан получить свой код отказа от распределителя, а не выпасть молча.
   const capital = Number.isFinite(capitalAvailableUsd) && capitalAvailableUsd > 0 ? capitalAvailableUsd : position.sizeUsd;
   const uni = markets.length
-    ? sizeUniverse({ markets, costs, capitalTotal: capital, cfg: c, sources })
+    ? sizeUniverse({ markets, costs, capitalTotal: capital, cfg: c, sources, onProgress })
     : { curves: [], refusals: [], alloc: new Map() };
 
   const best = bestAlternative(uni.curves, capital);

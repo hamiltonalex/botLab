@@ -35,6 +35,7 @@ import { decayObservation as faDecayObservation } from "../engine/fa/decay.js";
 import { applyObservedBases, backfillBases, baseBackfillWindow, emptyBaseJournal, observeBases } from "../engine/fa/bases.js";
 import { FA_RECORD_PREFIX, buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord, faDecisionsFromRecords, faRecordDayKey, faTradesFromRecords } from "../engine/fa/record.js";
 import { faEvalClears, faEvalFromDisk, faEvalOfTick, faEvalToDisk } from "./fa-eval.js";
+import { advanceFaEntryTrace, finishFaEntryTrace, bindFaEntryTrace, closeFaEntryTrace, faEntryTraceFromDisk, displayFaEntryTrace } from "./fa-entry-trace.js";
 // Сводка архива записи (фаза 6). Шесть читателей архива движка зовутся ТОЛЬКО оттуда: здесь диск
 // и склейка, счёт под тестом.
 import { faArchiveSummary } from "./fa-archive.js";
@@ -178,7 +179,7 @@ const state = {
   //              раз в пять минут, а оценка раз в сутки, и складывать их в одно поле значило бы
   //              стирать оценку 287 раз между решениями.
   auto: { engine: null, corrupt: false, bases: new Map(), books: new Map(),
-    lastTick: null, lastEval: null, records: { snap: 0, gap: 0, dec: 0, trade: 0 }, busy: false },
+    lastTick: null, lastEval: null, latestTrace: null, records: { snap: 0, gap: 0, dec: 0, trade: 0 }, busy: false },
   // Bot 2 «BTC-опционы» (Strategy One) - isolated paper engine + live Deribit source (Phase 1).
   // Read only by the s1:* handlers / assembleDataset1(); never leaks into assembleDataset()/fa:push.
   // Phase 3b: bounded history RINGS live HERE (never in the persisted engine state - it re-serializes
@@ -385,6 +386,7 @@ function closeOrphanedPositions() {
     if (p.status === "open" && !instFor(p.strategy, p.instrumentKey)) {
       recordUnpricedGap(p, now, "instrument removed from the tracked universe");
       closePosition(p, now);
+      faCloseEntryEvidence(p, "instrument_removed");
       state.bootNotes.push(`${p.instrumentKey}: инструмент удалён из набора - бумажная позиция закрыта, P&L зафиксирован`);
       changed = true;
     }
@@ -468,6 +470,7 @@ const FA_AUTO_ID = faauto.FA_AUTO_BOT_ID;
 // пишутся только под взведённым автоматом, а `lastDecisionAt` живёт дольше: сводка исчезала бы
 // раньше отметки, которую обязана объяснять.
 const FA_EVAL_ID = `${FA_AUTO_ID}-eval`;
+const FA_TRACE_ID = `${FA_AUTO_ID}-entry-trace`;
 
 function loadOrInitFaAuto() {
   // Битый JSON КАРАНТИНИТСЯ (.corrupt-<ts>), а не перезаписывается молча: молча подменённое
@@ -491,6 +494,37 @@ function loadOrInitFaAuto() {
   }
   state.auto.engine = st;
   loadFaEval();
+  try { state.auto.latestTrace = faEntryTraceFromDisk(loadBotStateQuarantine(baseDir, FA_TRACE_ID).state); }
+  catch (e) { console.warn("[fa-auto] entry trace restore:", e.message); }
+}
+
+function persistFaEntryTrace() {
+  try { saveBotState(baseDir, FA_TRACE_ID, state.auto.latestTrace || { schemaVersion: 1, cleared: true }); }
+  catch (e) { console.warn("[fa-auto] entry trace persist:", e.message); }
+}
+
+function publishFaEntryTrace(trace) {
+  state.auto.latestTrace = trace;
+  // A dedicated small push avoids rebuilding charts/account state for every evaluated size.
+  // Renderer teardown must never interrupt saving/executing an already decided position.
+  try {
+    if (trace && win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send("fa:auto:trace", trace);
+    }
+  } catch (e) { console.warn("[fa-auto] entry trace push:", e.message); }
+}
+
+function faDisplayedEntryTrace() {
+  return displayFaEntryTrace({ positions: state.positions, positionId: state.auto.engine?.positionId,
+    latestTrace: state.auto.latestTrace });
+}
+
+function faCloseEntryEvidence(p, why) {
+  const entry = faEntryTraceFromDisk(p.meta?.entryTrace);
+  if (!entry) return;
+  p.meta.entryTrace = closeFaEntryTrace(entry, { ...p, realizedUsd: positionSummary(p).netPnl }, why);
+  publishFaEntryTrace(p.meta.entryTrace);
+  persistFaEntryTrace();
 }
 
 // ПОДЪЁМ СВОДКИ. Правила формы живут в `fa-eval.js` и оттуда же берутся тестом: битую и НЕПОЛНУЮ
@@ -661,6 +695,8 @@ function faAutoMarkets() {
       token: inst.key,
       config,
       strategy,
+      chain: inst.chain,
+      directionKnown: strategy === "one" || !!(snap?.dataComplete && snap?.gateOk !== false),
       rows: state.frames.get(cacheKeyFor(strategy, inst.key)) || [],
       markPx: Number.isFinite(snap?.price) ? snap.price : null,
       hlMaxLev: snap?.hlMaxLev ?? inst.hlMaxLev ?? null,
@@ -818,7 +854,7 @@ function faOpenFromIntent(intent, nowMs) {
 
 // Закрытие с ДОСЧЁТОМ хвоста, тот же порядок, что у ручного закрытия: последний интервал не
 // теряется, а разрыв сверх капа сначала дозабирается историей.
-async function faClosePaperPosition(p, nowMs) {
+async function faClosePaperPosition(p, nowMs, why = null) {
   const snap = state.snapshots.byKey[p.instrumentKey];
   let rows = state.frames.get(cacheKeyFor(p.strategy, p.instrumentKey));
   if (p.status === "open" && (nowMs - p.lastAccrualAt) / 1000 > pollSec() * 3) {
@@ -835,6 +871,7 @@ async function faClosePaperPosition(p, nowMs) {
     recordUnpricedGap(p, nowMs, "автомат закрыл сделку без полного живого снимка");
   }
   closePosition(p, nowMs);
+  faCloseEntryEvidence(p, why);
   return p;
 }
 
@@ -930,6 +967,7 @@ async function faAutoStep(sources) {
     if (wrote) st.lastSnapAt = nowMs;
   }
 
+  let scanTrace = null;
   const tick = faauto.autoTick({
     now: nowMs,
     bootAt: APP_BOOT_MS,
@@ -942,7 +980,16 @@ async function faAutoStep(sources) {
     foreignOpen: state.positions.some((x) => x.status === "open" && x.id !== st.positionId),
     nominalSec: pollSec(),
     gapHints: { sleepWindow: lastSleepWindow, bootAt: APP_BOOT_MS, sourceErrorSince: sourceErrorFirstAt },
+    onProgress: (event) => {
+      scanTrace = advanceFaEntryTrace(scanTrace, event);
+      if (scanTrace) publishFaEntryTrace(scanTrace);
+    },
   });
+  if (scanTrace) {
+    scanTrace = finishFaEntryTrace(scanTrace, tick, Date.now());
+    publishFaEntryTrace(scanTrace);
+    persistFaEntryTrace();
+  }
   const prev = state.auto.lastTick;
   state.auto.engine = tick.state;
   // ЧТО ИЗ ТИКА ВИДИТ ИНТЕРФЕЙС. Код исхода, отказы С ЧИСЛАМИ, вердикт сторожа залога и счёт ворот
@@ -1015,7 +1062,7 @@ async function faAutoStep(sources) {
   if (armed && (tick.kind === "close" || tick.kind === "switch") && posBefore) {
     const p = state.positions.find((x) => x.id === posBefore.id);
     if (p) {
-      await faClosePaperPosition(p, nowMs);
+      await faClosePaperPosition(p, nowMs, tick.why);
       // Паспорт снимается ПОСЛЕ досчёта хвоста: реализованный итог до него это другое число.
       closed = {
         ...posBefore, ...faLegsOf(posBefore, params),
@@ -1029,6 +1076,11 @@ async function faAutoStep(sources) {
     const p = faOpenFromIntent(tick.intent, nowMs);
     if (p) {
       state.auto.engine.positionId = p.id;
+      if (scanTrace) {
+        p.meta.entryTrace = bindFaEntryTrace(scanTrace, p);
+        publishFaEntryTrace(p.meta.entryTrace);
+        persistFaEntryTrace();
+      }
       const pos = faAutoPosition();
       opened = { ...pos, ...faLegsOf(pos, params), wantUsd: tick.intent.wantUsd, gotUsd: tick.intent.gotUsd, leverage: tick.intent.leverage };
     }
@@ -1283,6 +1335,8 @@ function assembleDataset() {
       // на цикле решения и лежит до следующего. Отметка `at` и каданс едут рядом, чтобы карточка
       // могла назвать, КОГДА это снято и когда будет снято снова, а не выдавать сутки за «сейчас».
       lastEval: state.auto.lastEval,
+      entryTrace: faDisplayedEntryTrace(),
+      latestTrace: state.auto.latestTrace,
     } : null,
   };
 }
@@ -3614,6 +3668,7 @@ function wireIpc() {
         recordUnpricedGap(p, now, "position closed without a complete live snapshot");
       }
       closePosition(p, now);
+      faCloseEntryEvidence(p, "manual_close");
       savePositions(baseDir, state.positions);
       push();
     }
@@ -3625,6 +3680,7 @@ function wireIpc() {
   ipcMain.handle("fa:auto:get", async () => ({
     state: state.auto.engine, corrupt: state.auto.corrupt,
     defaults: faauto.defaultAutoParams(), last: state.auto.lastTick,
+    entryTrace: faDisplayedEntryTrace(), latestTrace: state.auto.latestTrace,
     refusals: faauto.FA_AUTO_REFUSALS, precedence: faauto.FA_AUTO_PRECEDENCE,
   }));
 
@@ -3637,6 +3693,8 @@ function wireIpc() {
       faauto.armAuto(state.auto.engine, { nowMs, params: req.params || null, mode: req.mode });
       // Битое состояние поднято выключенным; ручной взвод это и есть подтверждение оператора.
       state.auto.corrupt = false;
+      state.auto.latestTrace = null;
+      persistFaEntryTrace();
     } else if (req && req.on === false) {
       faauto.stopAuto(state.auto.engine, { nowMs, immediate: req.immediate === true });
     } else {
@@ -3952,6 +4010,8 @@ app.whenReady().then(async () => {
     faauto.armAuto(state.auto.engine, { nowMs: Date.now() });
     persistFaAuto();
     clearFaEval(); // взвод есть взвод: сводка прошлого автомата ранжирована против прежнего потолка
+    state.auto.latestTrace = null;
+    persistFaEntryTrace();
     console.log("[fa-auto] FA_AUTO=1: автомат взведён на буте, параметры заморожены значениями по умолчанию");
   }
   // An OPEN paper position whose instrument was removed/delisted can no longer be tracked or closed

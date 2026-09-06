@@ -17,6 +17,8 @@ try{ if(window.ui && window.ui.getLocaleSync && window.ui.getLocaleSync()==='en'
 <script src="./i18n.js"></script>
 <script src="./locales/ru.js"></script>
 <script src="./locales/en.js"></script>
+<script src="./entry-trace.js"></script>
+<link rel="stylesheet" href="./entry-trace.css" />
 
 <!--
   ============================================================================
@@ -1400,6 +1402,58 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
         </div>
       </div>
     </div>
+
+    <!-- Entry evidence comes from actual engine progress, then remains pinned to its trade. -->
+    <section class="card span2" id="faEntryCard" data-phase="empty" aria-labelledby="faEntryHeading">
+      <div class="fa-entry-head">
+        <div class="fa-entry-heading">
+          <h2 id="faEntryHeading" data-i18n="fa.entry.title"></h2>
+          <div class="fa-entry-subtitle" id="faEntrySubtitle"></div>
+        </div>
+        <span class="fa-entry-status" id="faEntryStatus" role="status" aria-live="polite"></span>
+      </div>
+      <ol class="fa-entry-steps" id="faEntrySteps" data-i18n-aria="fa.entry.stepsAria">
+        <li data-step="data" data-state="pending"><span class="fa-entry-step-no" aria-hidden="true">01</span><span class="fa-entry-step-label" data-i18n="fa.entry.stepData"></span></li>
+        <li data-step="variants" data-state="pending"><span class="fa-entry-step-no" aria-hidden="true">02</span><span class="fa-entry-step-label" data-i18n="fa.entry.stepVariants"></span></li>
+        <li data-step="rank" data-state="pending"><span class="fa-entry-step-no" aria-hidden="true">03</span><span class="fa-entry-step-label" data-i18n="fa.entry.stepRank"></span></li>
+        <li data-step="trade" data-state="pending"><span class="fa-entry-step-no" aria-hidden="true">04</span><span class="fa-entry-step-label" data-i18n="fa.entry.stepTrade"></span></li>
+      </ol>
+      <div class="fa-entry-progress-row"><span id="faEntryProgressText"></span><span class="fa-entry-asof" id="faEntryAsOf"></span></div>
+      <div class="fa-entry-progress" id="faEntryProgress" role="progressbar" data-i18n-aria="fa.entry.progressAria" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"><span id="faEntryProgressFill"></span></div>
+      <div class="fa-entry-empty" id="faEntryEmpty">
+        <span class="fa-entry-empty-icon" aria-hidden="true">⌁</span>
+        <div><b id="faEntryEmptyTitle"></b><p id="faEntryEmptyText"></p></div>
+      </div>
+      <div class="fa-entry-winner" id="faEntryWinner" hidden>
+        <div>
+          <span class="fa-entry-eyebrow" id="faEntryWinnerEyebrow"></span>
+          <div class="fa-entry-winner-title" id="faEntryWinnerTitle"></div>
+          <div class="fa-entry-winner-route" id="faEntryWinnerRoute"></div>
+        </div>
+        <div>
+          <span class="fa-entry-metric-label" id="faEntryWinnerNetLabel"></span>
+          <span class="fa-entry-winner-net" id="faEntryWinnerNet"></span>
+        </div>
+        <div>
+          <span class="fa-entry-metric-label" data-i18n="fa.entry.sizePerLeg"></span>
+          <span class="fa-entry-winner-size" id="faEntryWinnerSize"></span>
+          <span class="fa-entry-winner-status" id="faEntryWinnerStatus"></span>
+          <span class="fa-entry-winner-realized" id="faEntryWinnerRealized" hidden></span>
+        </div>
+      </div>
+      <div class="fa-entry-table-scroll" id="faEntryTableScroll" tabindex="0" role="region" data-i18n-aria="fa.entry.tableAria" hidden>
+        <table class="fa-entry-table" id="faEntryTable">
+          <thead><tr>
+            <th scope="col" data-i18n="fa.entry.thRank"></th><th scope="col" data-i18n="fa.entry.thMarket"></th>
+            <th scope="col" data-i18n="fa.entry.thSize"></th><th scope="col" data-i18n="fa.entry.thGross"></th>
+            <th scope="col" data-i18n="fa.entry.thCost"></th><th scope="col" data-i18n="fa.entry.thNet"></th>
+            <th scope="col" data-i18n="fa.entry.thCurve"></th><th scope="col" data-i18n="fa.entry.thOutcome"></th>
+          </tr></thead><tbody id="faEntryBody"></tbody>
+        </table>
+      </div>
+      <div class="fa-entry-foot"><span id="faEntryFoot"></span><span id="faEntryDecision"></span></div>
+      <div class="fa-entry-review" id="faEntryReview" hidden><b data-i18n="fa.entry.reviewLabel"></b> <span id="faEntryReviewText"></span></div>
+    </section>
 
     <!-- ══ ПОСЛЕДНЯЯ ОЦЕНКА ПО РЫНКАМ ══
          ЧТО ЭТО. Пять строк по числу рынков вселенной: что правило входа увидело по каждому в
@@ -3492,7 +3546,7 @@ function applyDataset(ds){
   LIVE.positions = ds.positions || [];
   LIVE.fresh     = ds.fresh || LIVE.fresh;
   LIVE.account   = ds.account || null;
-  LIVE.auto      = ds.auto || null;   // null очищает: состояния автомата может не быть вовсе
+  LIVE.auto      = window.FaEntryTrace.mergeAuto(LIVE.auto, ds.auto || null);
   LIVE.ready     = true;
   // гидратация сохранённой модели издержек (аудит D8) - не во время редактирования
   if(ds.settings && ds.settings.costs && !costFocusActive()) Object.assign(COSTS, ds.settings.costs);
@@ -4922,6 +4976,7 @@ function faWarnHtml(code, a){
 }
 
 function renderFaAuto(){
+  renderFaEntryTrace();
   // Тикет перезаполняется вместе с карточкой, и СКРЫТЫЙ ТОЖЕ. Иначе он застывает на языке и на
   // числах, которые были в момент открытия (см. комментарий у `faFillTicket`), а спрятанный текст
   // на чужом языке живёт в DOM и достаётся скрин-ридеру и поиску по странице. Семь записей в DOM
@@ -5018,6 +5073,11 @@ function renderFaAuto(){
   /* Журналы перечитываются, только когда движок ДЕЙСТВИТЕЛЬНО дописал строки: сигнатура это
      счётчики записей, и на кликах по контролам она не меняется, значит запроса не будет. */
   if(FA_JOURNAL.loaded && FA_JOURNAL.sig !== faRecordsSig()) faLoadRecords(true);
+}
+
+function renderFaEntryTrace(){
+  window.FaEntryTrace.render({ auto:LIVE.auto, positions:LIVE.positions, t,
+    usd:fmtUSDfull, date:faAutoDate, code:faCodeText, side:faSideText, bind:faBindText });
 }
 
 /* ── ЧЕСТНОСТЬ СЧЁТА. Четыре замера, и каждый означает одно: показанная прибыль БОЛЬШЕ настоящей.
@@ -6183,6 +6243,12 @@ updateFreshness();
       applyDataset(ds);
     }
     window.fa.onPush(ds2=>applyDataset(ds2));
+    if(window.fa.auto && typeof window.fa.auto.onTrace==='function'){
+      window.fa.auto.onTrace(trace=>{
+        LIVE.auto = window.FaEntryTrace.receive(LIVE.auto, trace);
+        renderFaEntryTrace();
+      });
+    }
   }catch(e){
     console.warn('getState failed', e);
     const stamp=$('stamp'); if(stamp) stamp.innerHTML='<b class="neg">'+t('chrome.stamp.ipcError')+'</b>';

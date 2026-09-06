@@ -123,6 +123,7 @@ import { FA_MARGIN_DEFAULTS, FA_MARGIN_REFUSALS, marginGuard, positionLegs } fro
 import { baseCoverage } from "./bases.js";
 import { FA_DRAWDOWN_DEFAULTS, FA_DRAWDOWN_REFUSALS, drawdownGuard } from "./drawdown.js";
 import { FA_GAP_SLOTS, classifyFaGap } from "./record.js";
+import { observeFa } from "./observe.js";
 
 const HOUR_MS = 3600 * 1000;
 
@@ -524,7 +525,7 @@ export function autoTick({
   now, bootAt = null, state = null, corrupt = false,
   markets = [], sources = null, costs = DEFAULT_COSTS,
   position = null, foreignOpen = false,
-  nominalSec = null, gapHints = {},
+  nominalSec = null, gapHints = {}, onProgress = null,
 } = {}) {
   const st = ensureAutoState(state ? { ...state, uptime: { ...state.uptime, gaps: [...(state.uptime?.gaps || [])] } } : null);
   const refusals = [];
@@ -779,6 +780,15 @@ export function autoTick({
 
   // ── ПРАВИЛА. Дорогая часть, и она зовётся ЦЕЛИКОМ. Своей оценки размера или альтернативы у
   // автомата нет ни строки.
+  observeFa(onProgress, {
+    type: "evaluation:start", now, purpose: position ? "review" : "entry", capitalUsd: params.capitalUsd,
+    horizonH: H, windowH: W, sources,
+    markets: (markets || []).map((m, i) => ({
+      token: m.token, config: m.config ?? null, strategy: m.strategy || "two", chain: m.chain ?? null,
+      rates: m.rates ?? null, directionKnown: m.directionKnown ?? true,
+      refusal: gates[i]?.code ?? null, coverage: gates[i]?.coverage ?? null,
+    })),
+  });
   // Окно, поданное правилу. Пришпиливает решение к тем самым часам, на которых оно принято: без
   // этих трёх чисел задним числом нельзя отличить плохое решение от решения по другим данным.
   const windowOf = (m) => (m && m.rows.length
@@ -793,7 +803,7 @@ export function autoTick({
     const ex = decideExit({
       position: { token: position.token, config: position.config, strategy: position.strategy, sizeUsd: position.sizeUsd },
       rows: held ? held.rows : null,
-      markets: usable, capitalAvailableUsd: params.capitalUsd, costs, cfg, sources,
+      markets: usable, capitalAvailableUsd: params.capitalUsd, costs, cfg, sources, onProgress,
     });
     st.lastDecisionAt = now;
     // Снимок по умолчанию это удержание; ветки закрытия и перекладки заменяют его ниже.
@@ -829,7 +839,7 @@ export function autoTick({
   }
 
   // Слот пуст: правило ВХОДА целиком, распределитель зовётся своей единственной точкой входа.
-  const uni = sizeUniverse({ markets: usable, costs, capitalTotal: params.capitalUsd, cfg, sources });
+  const uni = sizeUniverse({ markets: usable, costs, capitalTotal: params.capitalUsd, cfg, sources, onProgress });
   st.lastDecisionAt = now;
   st.lastDecisionCtx = null; // пустой слот: снимок появится вместе со сделкой
   const base = {

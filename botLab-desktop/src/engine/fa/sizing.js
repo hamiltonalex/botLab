@@ -31,6 +31,7 @@
 
 import { DEFAULT_COSTS, normalizeCosts, roundTripCost } from "../costs.js";
 import { openPosition, accrueFromRows, closePosition, positionSummary, legModel } from "../paper.js";
+import { observeFa } from "./observe.js";
 
 const HOUR_MS = 3600 * 1000;
 
@@ -594,7 +595,7 @@ function goldenRefine(evalNet, loLog, hiLog, iters) {
 // в бою не существует (ANIME: край $3.31 и отношение 2.53, на билете $500 нетто МИНУС $2.66;
 // MEME: край $1.40 и 1.07, на билете минус $1.03). Такой рынок обязан получать СВОЙ код отказа, а
 // не проходить через формулу отношения.
-export function bestSizeForMarket({ token, config, strategy = "two", rows, live, costs = DEFAULT_COSTS, impact = null, cfg = FA_SIZING_DEFAULTS, uniformSizeUsd = null }) {
+export function bestSizeForMarket({ token, config, strategy = "two", rows, live, costs = DEFAULT_COSTS, impact = null, cfg = FA_SIZING_DEFAULTS, uniformSizeUsd = null, onProgress = null }) {
   const c = { ...FA_SIZING_DEFAULTS, ...cfg };
   if (!Number.isFinite(c.horizonH) || c.horizonH <= 0) return refuse(token, config, "horizon_missing");
   if (!windowValid(c)) return refuse(token, config, "window_missing");
@@ -622,7 +623,14 @@ export function bestSizeForMarket({ token, config, strategy = "two", rows, live,
     return refuse(token, config, "no_room", { ceilingUsd: ceil.usd, binding: ceil.binding, flowWeightedBaseUsd: weightedBaseUsd });
   }
 
-  const evalAt = (sizeUsd) => netAtSize({ rows, config, strategy, sizeUsd, costs, impact, cfg: c, token });
+  let evaluatedSizes = 0;
+  const evalAt = (sizeUsd) => {
+    const result = netAtSize({ rows, config, strategy, sizeUsd, costs, impact, cfg: c, token });
+    evaluatedSizes += 1;
+    observeFa(onProgress, { type: "size", token, config, strategy, evaluatedSizes,
+      sizeUsd, netUsd: result?.net ?? null, grossUsd: result?.gross ?? null, costUsd: result?.cost ?? null });
+    return result;
+  };
   const grid = logGrid(c.gridMinUsd, Math.min(ceil.usd, c.gridMaxUsd), c.gridStepLog10);
   const points = [];
   for (const s of grid) {
@@ -809,7 +817,7 @@ export function allocateCapital(curves, capitalTotal, cfg = FA_SIZING_DEFAULTS) 
 
 // Её зовут и живой тракт, и офлайн-прогон, и прогоны исследования. Отказы НЕ выбрасываются, а
 // копятся: рынок, выпавший молча, ничем не отличается от рынка, которого не было.
-export function sizeUniverse({ markets, costs = DEFAULT_COSTS, capitalTotal, cfg = FA_SIZING_DEFAULTS, sources = null }) {
+export function sizeUniverse({ markets, costs = DEFAULT_COSTS, capitalTotal, cfg = FA_SIZING_DEFAULTS, sources = null, onProgress = null }) {
   const c = { ...FA_SIZING_DEFAULTS, ...cfg };
   const refusals = [];
   if (!Number.isFinite(c.horizonH) || c.horizonH <= 0) {
@@ -831,10 +839,16 @@ export function sizeUniverse({ markets, costs = DEFAULT_COSTS, capitalTotal, cfg
     return { alloc: new Map(), usedUsd: 0, netTotal: 0, curves: [], refusals: [{ token: null, refusal: "src_hl_down" }], cfg: c };
   }
 
-  const build = (uniformSizeUsd) => (markets || []).map((m) => bestSizeForMarket({
-    token: m.token, config: m.config, strategy: m.strategy || "two",
-    rows: m.rows, live: m.live, costs, impact: m.impact || null, cfg: c, uniformSizeUsd,
-  }));
+  const build = (uniformSizeUsd) => (markets || []).map((m) => {
+    const pass = uniformSizeUsd == null ? 1 : 2;
+    observeFa(onProgress, { type: "market:start", token: m.token, config: m.config, strategy: m.strategy || "two", pass });
+    const curve = bestSizeForMarket({
+      token: m.token, config: m.config, strategy: m.strategy || "two",
+      rows: m.rows, live: m.live, costs, impact: m.impact || null, cfg: c, uniformSizeUsd, onProgress,
+    });
+    observeFa(onProgress, { type: "market:complete", token: m.token, config: m.config, strategy: m.strategy || "two", pass, curve });
+    return curve;
+  });
 
   // Сжатие требует единого размера, а единый размер требует кривых. Поэтому при w > 0 кривые
   // строятся дважды: первый проход даёт кривые и отбор, второй применяет сжатие. При w = 0 второго

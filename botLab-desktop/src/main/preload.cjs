@@ -28,6 +28,11 @@ contextBridge.exposeInMainWorld("fa", {
     // Сводка архива записи: непрерывность ленты, пропавшие рынки, коды вне реестров, запас до
     // ликвидации по записи, объём и сослагательный срок хранения. Канала на УДАЛЕНИЕ здесь нет.
     archive: (req) => ipcRenderer.invoke("fa:auto:archive", req),
+    onTrace: (cb) => {
+      const h = (_e, trace) => cb(trace);
+      ipcRenderer.on("fa:auto:trace", h);
+      return () => ipcRenderer.removeListener("fa:auto:trace", h);
+    },
   },
   // main -> renderer live pushes (poll ticks, accrual updates, freshness)
   onPush: (cb) => {

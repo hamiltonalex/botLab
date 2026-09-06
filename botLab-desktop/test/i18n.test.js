@@ -39,22 +39,31 @@ test("i18n: значения непустые строки, плейсхолде
   }
 });
 
-// Ключи, на которые ссылается index.html: data-i18n-атрибуты и вызовы t('…').
+// Ключи разметки и подключённых скриптов: data-i18n-атрибуты и вызовы t('…').
 // Захват t('…') фильтруется на точечную нотацию, чтобы не цеплять посторонние строки.
 function referencedKeys() {
   const html = R("index.html");
+  // Провайдер i18n и словари не являются потребителями ключей: включение locales/ сюда
+  // скрыло бы любой мёртвый перевод. Виджеты подключаются как локальные classic scripts.
+  const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g)]
+    .map((m) => m[1].replace(/^\.\//, ""))
+    .filter((p) => p !== "i18n.js" && !p.startsWith("locales/") && !p.includes("://"));
+  const source = [html, ...scripts.map(R)].join("\n");
   const keys = new Set();
   for (const m of html.matchAll(/data-i18n(?:-title|-aria|-ph)?="([^"]+)"/g)) keys.add(m[1]);
-  for (const m of html.matchAll(/\bt\(\s*'([^']+)'/g)) {
+  for (const m of source.matchAll(/\bt\(\s*'([^']+)'/g)) {
     if (/^[a-z]+(\.[A-Za-z0-9]+)+$/.test(m[1])) keys.add(m[1]);
   }
   // реестры справок ссылаются на словарь строками tk:'help.…' / bk:'help.…' (ключи бывают с дефисом: help.opt-auto),
   // поля редактора порогов сканера - через nameK:'scn.fld.…'
   for (const m of html.matchAll(/(?:[tb]k|nameK):'((?:help|scn)\.[A-Za-z0-9.-]+)'/g)) keys.add(m[1]);
+  // Ветви/карта фаз виджета содержат полные ключи, а не произвольный динамический префикс.
+  // Считаем конкретные ссылки, сохраняя проверку мёртвых ключей внутри fa.entry.
+  for (const m of source.matchAll(/['"](fa\.entry\.[A-Za-z0-9.]+)['"]/g)) keys.add(m[1]);
   return keys;
 }
 
-test("i18n: каждый ключ из index.html есть в обоих словарях", () => {
+test("i18n: каждый ключ интерфейса есть в обоих словарях", () => {
   const { ru, en } = loadDicts();
   const missing = [...referencedKeys()].filter((k) => !(k in ru) || !(k in en));
   assert.deepEqual(missing, [], "ключи без перевода");
