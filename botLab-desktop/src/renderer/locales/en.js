@@ -1824,7 +1824,7 @@ registerLocale('en', {
   'fa.entry.emptyWarmingTitle': 'The bot is preparing its decision inputs',
   'fa.entry.emptyWarming': 'Calculation begins when the data gates pass and a decision is due. Each candidate updates as the engine evaluates it.',
   'fa.entry.emptyLegacyTitle': 'Entry calculation is unavailable',
-  'fa.entry.emptyLegacy': 'Its entry calculation was not saved. New alternative reviews appear below; the next entry will include its full calculation here.',
+  'fa.entry.emptyLegacy': 'The open trade has no saved entry calculation: it was opened before this card existed, or the record failed validation. New alternative reviews appear below; the next entry will include its full calculation here.',
   'fa.entry.winner': 'Bot selection · first place',
   'fa.entry.winnerClosed': 'Selected trade · completed',
   'fa.entry.winnerNet': 'Modelled net over {h} h at entry',
