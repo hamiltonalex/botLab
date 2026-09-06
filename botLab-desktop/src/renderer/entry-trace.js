@@ -58,7 +58,7 @@
 
   function render({auto:a, positions=[], t, usd:formatUsd, date, code, side, bind}) {
     const card=$('faEntryCard'); if(!card) return;
-    const usd = value => finite(value) ? formatUsd(value) : '—';
+    const usd = value => finite(value) ? formatUsd(value) : '-';
     const trace=a && a.entryTrace;
     const candidates=trace && Array.isArray(trace.candidates) ? trace.candidates : [];
     const gate=a && a.last && a.last.gate;
@@ -82,7 +82,7 @@
     const statusKeys={ empty:'fa.entry.status.empty', warming:'fa.entry.status.warming', evaluating:'fa.entry.status.evaluating',
       ranked:'fa.entry.status.ranked', opened:'fa.entry.status.opened', closed:'fa.entry.status.closed', blocked:'fa.entry.status.blocked' };
     setText('faEntryStatus',t(statusKeys[phase] || statusKeys.empty));
-    setText('faEntrySubtitle',trace ? t('fa.entry.scope',{n:total,h:finite(trace.horizonH)?trace.horizonH:'—',cap:usd(trace.capitalUsd)}) : t('fa.entry.subtitle'));
+    setText('faEntrySubtitle',trace ? t('fa.entry.scope',{n:total,h:finite(trace.horizonH)?trace.horizonH:'-',cap:usd(trace.capitalUsd)}) : t('fa.entry.subtitle'));
     setText('faEntryProgressText',trace
       ? running ? t('fa.entry.progressActive',{n:completed,total,market:active?label(active):t('fa.entry.preparing')})
         : t('fa.entry.progressDone',{n:completed,total})
@@ -114,7 +114,7 @@
       setText('faEntryWinnerRoute',route(selected)+' · '+direction(selected));
       setText('faEntryWinnerNet',usd(selected.netUsd));
       setText('faEntryWinnerSize',usd(selected.sizeUsd));
-      setText('faEntryWinnerNetLabel',t('fa.entry.winnerNet',{h:trace.horizonH ?? '—'}));
+      setText('faEntryWinnerNetLabel',t('fa.entry.winnerNet',{h:trace.horizonH ?? '-'}));
       setText('faEntryWinnerEyebrow',t(phase==='closed'?'fa.entry.winnerClosed':'fa.entry.winner'));
       const pos=positions.find(p=>p.id===trace.positionId);
       const isOpen=phase==='opened' || pos?.status==='open';
@@ -160,9 +160,9 @@
       const tone=isSelected?'selected':calculating?'active':c.refusal?'rejected':'';
       const detailId='faEntryDetail-'+index;
       const curve=points.length ? '<button type="button" class="fa-entry-curve-button" data-details="'+esc(c.id)+'" aria-expanded="false" aria-controls="'+detailId+'" aria-label="'+esc(t('fa.entry.curveAria',{market:label(c),n:sizes}))+'">'+sparkline(points)+'<span>'+esc(t('fa.entry.sizes',{n:sizes}))+' <span aria-hidden="true">⌄</span></span></button>'
-        : '<span class="fa-entry-number">'+(calculating?esc(t('fa.entry.sizes',{n:sizes})):'—')+'</span>';
+        : '<span class="fa-entry-number">'+(calculating?esc(t('fa.entry.sizes',{n:sizes})):'-')+'</span>';
       const amounts=calculating && c.testing ? c.testing : c;
-      const rank=finite(c.rank)?String(c.rank):calculating?'·':'—';
+      const rank=finite(c.rank)?String(c.rank):calculating?'·':'-';
       setHtml(row,'<td><span class="fa-entry-rank">'+rank+'</span></td>'
         +'<td class="fa-entry-market"><span class="fa-entry-market-title">'+esc(c.token)+' <span class="fa-entry-config">'+esc(c.config || t('fa.entry.one'))+'</span></span>'
         +'<span class="fa-entry-route">'+esc(route(c))+'</span><span class="fa-entry-direction">'+esc(direction(c))+'</span></td>'

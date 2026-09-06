@@ -1852,7 +1852,7 @@ registerLocale('en', {
   'fa.entry.eligible': 'Eligible',
   'fa.entry.directionSkipped': 'Direction not selected',
   'fa.entry.directionBasis': 'A/B compared at current rates; sizing not run',
-  'fa.entry.directionFallback': 'Direction from the stored snapshot; current rates unavailable',
+  'fa.entry.directionFallback': 'Live snapshot missing, incomplete or failed its gate; A/B choice unconfirmed',
   'fa.entry.notEvaluated': 'Calculation unavailable for this decision cycle',
   'fa.entry.lowerRank': 'Net below the leader',
   'fa.entry.highestNet': 'Highest net among eligible candidates',
@@ -1871,6 +1871,8 @@ registerLocale('en', {
   'fa.entry.reviewActive': 'Now checked {n} / {total}. The original entry calculation is retained above.',
   'fa.entry.reviewActiveLegacy': 'Now checked {n} / {total}. This is an alternative review for the open trade.',
   'fa.entry.reviewDone': '{at} · {why}',
+  'help.fa-entry.t': 'Entry calculation',
+  'help.fa-entry.b': '<p>One decision cycle of the entry rule: which setups the bot went through, what it got on each and which one it selected. The table fills as the calculation runs: a row comes alive when the engine starts a market and freezes when it has finished it. The engine computes the numbers; the interface does not recompute them.</p><ul><li><b>Seven setups.</b> The two paired markets in both directions plus the three one-leg schemes. The A/B direction of a paired market is chosen from live rates before sizing, so the other direction is marked "direction not selected" and has no size.</li><li><b>Size search.</b> The button in that column expands the size grid nodes with the net at each. There are more checks than nodes: after the grid the optimum is refined inside the bracket of the best node.</li><li><b>Decision.</b> Either a rank among eligible candidates or a refusal code in words: a supply gate, the size rule or the whole slice, the same codes as on the last evaluation card.</li><li><b>Selection and trade are different states.</b> First place in the ranking is not yet an entry: the margin guard can refuse the candidate, and the card then says "no entry". An opened paper trade is marked separately.</li><li><b>The calculation is pinned to its trade.</b> While the trade is open the card keeps its entry calculation, including after a restart; daily alternative reviews appear on the line below and do not replace the table. After closing, the trade result stands next to the modelled net, and these are two different numbers.</li></ul>',
   'home.fa.auto': '{state} · {why}',
   'home.fa.autoBases': '{state} · bases {have} of {need} h · live {live}, backfilled {idx}',
 });

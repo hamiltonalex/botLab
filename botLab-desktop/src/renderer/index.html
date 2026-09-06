@@ -1410,6 +1410,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
           <h2 id="faEntryHeading" data-i18n="fa.entry.title"></h2>
           <div class="fa-entry-subtitle" id="faEntrySubtitle"></div>
         </div>
+        <button class="help-btn" data-help="fa-entry">?</button>
         <span class="fa-entry-status" id="faEntryStatus" role="status" aria-live="polite"></span>
       </div>
       <ol class="fa-entry-steps" id="faEntrySteps" data-i18n-aria="fa.entry.stepsAria">
@@ -3546,7 +3547,9 @@ function applyDataset(ds){
   LIVE.positions = ds.positions || [];
   LIVE.fresh     = ds.fresh || LIVE.fresh;
   LIVE.account   = ds.account || null;
-  LIVE.auto      = window.FaEntryTrace.mergeAuto(LIVE.auto, ds.auto || null);
+  // null очищает: состояния автомата может не быть вовсе. Слияние трасс расчёта входа делает виджет;
+  // без него набор принимается как есть, чтобы отсутствие виджета не ломало приём данных.
+  LIVE.auto      = window.FaEntryTrace ? window.FaEntryTrace.mergeAuto(LIVE.auto, ds.auto || null) : (ds.auto || null);
   LIVE.ready     = true;
   // гидратация сохранённой модели издержек (аудит D8) - не во время редактирования
   if(ds.settings && ds.settings.costs && !costFocusActive()) Object.assign(COSTS, ds.settings.costs);
@@ -5075,9 +5078,14 @@ function renderFaAuto(){
   if(FA_JOURNAL.loaded && FA_JOURNAL.sig !== faRecordsSig()) faLoadRecords(true);
 }
 
+/* Виджет расчёта входа. Отрисовка обёрнута отдельно: это наблюдение, а не пульт, и его ошибка не
+   имеет права оставить пульт, честность и журнал непрорисованными на этом же пуше. */
 function renderFaEntryTrace(){
-  window.FaEntryTrace.render({ auto:LIVE.auto, positions:LIVE.positions, t,
-    usd:fmtUSDfull, date:faAutoDate, code:faCodeText, side:faSideText, bind:faBindText });
+  if(!window.FaEntryTrace) return;
+  try{
+    window.FaEntryTrace.render({ auto:LIVE.auto, positions:LIVE.positions, t,
+      usd:fmtUSDfull, date:faAutoDate, code:faCodeText, side:faSideText, bind:faBindText });
+  }catch(e){ console.warn('fa entry trace render', e); }
 }
 
 /* ── ЧЕСТНОСТЬ СЧЁТА. Четыре замера, и каждый означает одно: показанная прибыль БОЛЬШЕ настоящей.
@@ -5799,6 +5807,7 @@ const HELP_FUNDING_ARB = {
   'fa-history': { tk:'help.fa-history.t', bk:'help.fa-history.b' },
   'fa-journal': { tk:'help.fa-journal.t', bk:'help.fa-journal.b' },
   'fa-eval': { tk:'help.fa-eval.t', bk:'help.fa-eval.b' },
+  'fa-entry': { tk:'help.fa-entry.t', bk:'help.fa-entry.b' },
   'fa-archive': { tk:'help.fa-archive.t', bk:'help.fa-archive.b' },
 };
 
@@ -6243,7 +6252,7 @@ updateFreshness();
       applyDataset(ds);
     }
     window.fa.onPush(ds2=>applyDataset(ds2));
-    if(window.fa.auto && typeof window.fa.auto.onTrace==='function'){
+    if(window.FaEntryTrace && window.fa.auto && typeof window.fa.auto.onTrace==='function'){
       window.fa.auto.onTrace(trace=>{
         LIVE.auto = window.FaEntryTrace.receive(LIVE.auto, trace);
         renderFaEntryTrace();

@@ -3,6 +3,7 @@
 #faEntryCard [hidden]{ display:none!important; }
 .fa-entry-head{ display:flex; align-items:flex-start; gap:12px; padding:18px 18px 12px; }
 .fa-entry-heading{ flex:1; min-width:0; }
+.fa-entry-head .help-btn{ margin-top:2px; }
 .fa-entry-heading h2{ margin:0 0 5px; font:600 15px var(--f-sans); letter-spacing:.1px; }
 .fa-entry-subtitle{ color:var(--txt-dim); font:400 11px/1.5 var(--f-sans); }
 .fa-entry-status{ display:inline-flex; align-items:center; gap:7px; padding:5px 9px; border:1px solid var(--line-2);

@@ -141,7 +141,7 @@ test("fa-ui: в текстах карточки честности нет год
   const dicts = loadDicts();
   for (const [code, dict] of Object.entries(dicts)) {
     for (const [k, v] of Object.entries(dict)) {
-      if (!/^fa\.(hon|hist|jr|ev|arc)\./.test(k) && !/^help\.fa-(honesty|eval|history|journal|archive)\./.test(k)) continue;
+      if (!/^fa\.(hon|hist|jr|ev|arc|entry)\./.test(k) && !/^help\.fa-(honesty|eval|history|journal|archive|entry)\./.test(k)) continue;
       for (const re of PROMISES[code]) {
         assert.ok(!re.test(v), `${code}[${k}]: обещание будущего дохода (${re}) на карточке честности`);
       }
@@ -194,13 +194,14 @@ test("бесконечных анимаций на постоянных сост
 test("fa-ui: длинных тире нет ни в разметке, ни в словарях", () => {
   // Длинное тире запрещено везде; короткое остаётся только там, где оно означает ДИАПАЗОН
   // («У9–14», «{a}–{b}σ»), поэтому у нового пласта фазы 6 оно проверяется отдельно и строго.
-  const files = { "index.html": HTML, "locales/ru.js": R("locales/ru.js"), "locales/en.js": R("locales/en.js") };
+  const files = { "index.html": HTML, "entry-trace.js": R("entry-trace.js"), "entry-trace.css": R("entry-trace.css"),
+    "locales/ru.js": R("locales/ru.js"), "locales/en.js": R("locales/en.js") };
   for (const [name, text] of Object.entries(files)) {
     assert.equal((text.match(/\u2014/g) || []).length, 0, `${name}: длинное тире (U+2014)`);
   }
   const dicts = loadDicts();
-  const isPhase6 = (k) => /^fa\.(code|bind|gap|side|auto|num|warn|hon|act|hist|jr|ev|za|arc)\./.test(k)
-    || /^help\.fa-(auto|honesty|eval|history|journal|archive)\./.test(k) || /^home\.fa\.power/.test(k);
+  const isPhase6 = (k) => /^fa\.(code|bind|gap|side|auto|num|warn|hon|act|hist|jr|ev|za|arc|entry)\./.test(k)
+    || /^help\.fa-(auto|honesty|eval|history|journal|archive|entry)\./.test(k) || /^home\.fa\.power/.test(k);
   for (const [code, dict] of Object.entries(dicts)) {
     for (const [k, v] of Object.entries(dict)) {
       if (!isPhase6(k)) continue;
@@ -213,13 +214,13 @@ test("fa-ui: длинных тире нет ни в разметке, ни в с
   assert.ok(!/[\u2013\u2014]/.test(block), "разметка карточек фазы 6: тире вместо дефиса");
 });
 
-test("fa-ui: все шесть карточек фазы 6 на месте и у каждой своя справка", () => {
-  for (const id of ["faAutoCard", "faEvalCard", "faHonestyCard", "faHistoryCard", "faJournalCard", "faArchiveCard"]) {
+test("fa-ui: все семь карточек фазы 6 на месте и у каждой своя справка", () => {
+  for (const id of ["faAutoCard", "faEntryCard", "faEvalCard", "faHonestyCard", "faHistoryCard", "faJournalCard", "faArchiveCard"]) {
     assert.ok(HTML.includes(`id="${id}"`), `нет карточки ${id}`);
   }
   // Оракул селекторов держит биекцию кнопка-статья, но он требует Electron и в быстрый цикл не
   // заходит; здесь проверяется дешёвая половина: и кнопка, и запись реестра существуют.
-  for (const h of ["fa-auto", "fa-eval", "fa-honesty", "fa-history", "fa-journal", "fa-archive"]) {
+  for (const h of ["fa-auto", "fa-entry", "fa-eval", "fa-honesty", "fa-history", "fa-journal", "fa-archive"]) {
     assert.ok(HTML.includes(`data-help="${h}"`), `нет кнопки справки ${h}`);
     assert.ok(HTML.includes(`'${h}': { tk:'help.${h}.t', bk:'help.${h}.b' }`), `нет записи реестра справок ${h}`);
   }
