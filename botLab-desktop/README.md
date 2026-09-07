@@ -147,6 +147,17 @@ It feeds real engine progress into the renderer in an isolated temporary profile
 progress, ranking, the replay of recorded size checks, the retained entry calculation, trade closure,
 both languages and layout.
 
+The same fixture drives a live demonstration window, because in the app the entry calculation
+happens once a day and the pass itself takes a fraction of a second:
+
+```
+npm run demo:fa-entry-trace
+```
+
+It opens the real renderer in a temporary profile with no venue access, walks the card through
+preparation, the live calculation, an opened paper trade and the replay, then leaves the window open
+for you. `DEMO_AUTOCLOSE=1` closes it right after the replay.
+
 ### Live checks (they hit the real exchanges)
 
 ```

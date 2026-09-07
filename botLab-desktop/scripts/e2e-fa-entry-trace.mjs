@@ -9,22 +9,16 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { armAuto, autoHorizonH, autoTick, autoViewWindowDays, createAutoState } from "../src/engine/fa/auto.js";
-import { DEFAULT_COSTS } from "../src/engine/costs.js";
-import { ALL_MARKETS } from "../src/engine/universe.js";
 import { closePosition, openPosition, positionSummary } from "../src/engine/paper.js";
-import { faEvalOfTick } from "../src/main/fa-eval.js";
-import { advanceFaEntryTrace, bindFaEntryTrace, closeFaEntryTrace, displayFaEntryTrace, finishFaEntryTrace } from "../src/main/fa-entry-trace.js";
-import { hour } from "../test/fa-helpers.mjs";
+import { bindFaEntryTrace, closeFaEntryTrace, displayFaEntryTrace } from "../src/main/fa-entry-trace.js";
+import { createFaEntryFixture } from "./fa-entry-fixture.mjs";
 
 const APP_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const req = createRequire(join(APP_DIR, "package.json"));
 const { _electron } = req("playwright-core");
-const H = autoHorizonH();
-const NOW = Date.UTC(2026, 8, 5, 12);
-const BOOT = NOW - 3600_000;
-const POLL_SEC = 300;
-const clone = (value) => JSON.parse(JSON.stringify(value));
+// Тестовая вселенная и сборка набора общие с демонстрацией (`fa-entry-fixture.mjs`); дата заморожена
+// ради воспроизводимых скриншотов.
+const { H, NOW, BOOT, POLL_SEC, clone, armed, MARKETS, runTick, dataset } = createFaEntryFixture({ now: Date.UTC(2026, 8, 5, 12) });
 const economics = (rows) => rows.map((r) => ({ id: r.id, status: r.status, rank: r.rank, cells: r.cells.slice(2, 6) }));
 const usdNumber = (text) => Number(String(text).replace(/−/g, "-").replace(/[$,\s]/g, ""));
 const profileRoot = mkdtempSync(join(tmpdir(), "botlab-entry-trace-profile-"));
@@ -33,63 +27,6 @@ const SHOTS = process.env.E2E_SHOTS ? resolve(process.env.E2E_SHOTS) : mkdtempSy
 mkdirSync(SHOTS, { recursive: true });
 mkdirSync(profile, { recursive: true });
 
-function armed(extra = {}) {
-  const state = armAuto(createAutoState({ nowMs: BOOT }), { nowMs: BOOT });
-  state.lastTickAt = NOW - POLL_SEC * 1000;
-  state.uptime = { ticks: 10, firstAt: BOOT, lastAt: state.lastTickAt, maxGapMs: POLL_SEC * 1000, gaps: [], nominalSec: POLL_SEC };
-  return Object.assign(state, extra);
-}
-
-function market(token, { totalFunding = 4000, hours = H, bases = true, strategy = "two", ...extra } = {}) {
-  const rows = Array.from({ length: hours }, (_, h) => hour(h, {
-    pot: totalFunding / (3600 * hours), bShort: 1e5, bLong: 1e12, bases,
-  }));
-  return {
-    token, strategy, config: strategy === "one" ? null : "A", rows, markPx: 100, hlMaxLev: 25,
-    chain: ALL_MARKETS.find((m) => m.key === token)?.chain ?? null,
-    live: { bOwnUsd: 1e5, bOtherUsd: 1e12 }, impact: null, ...extra,
-  };
-}
-
-// Same five market identities used by the app. The engine supplies each evaluated
-// direction; the UI must never invent an extra candidate or choose its own winner.
-const MARKETS = [
-  market("ETH", { totalFunding: 4000 }),
-  market("BTC", { totalFunding: 60 }),
-  market("ETH-Arb", { strategy: "one", totalFunding: 3400 }),
-  market("BTC-Arb", { strategy: "one", bases: false }),
-  market("ETH-Avax", { strategy: "one", hours: 24 }),
-];
-
-function runTick(extra = {}) {
-  const progress = [];
-  let trace = null;
-  const tick = autoTick({
-    now: NOW, bootAt: BOOT, nominalSec: POLL_SEC, state: armed(),
-    markets: MARKETS, costs: DEFAULT_COSTS,
-    onProgress: (event) => {
-      trace = advanceFaEntryTrace(trace, event);
-      progress.push(clone(trace));
-    }, ...extra,
-  });
-  return { tick, progress, trace: finishFaEntryTrace(trace, tick, (extra.now ?? NOW) + 1) };
-}
-
-function dataset(tick = null, extraAuto = {}, positions = []) {
-  const state = tick?.state || createAutoState();
-  return {
-    selection: { strat: null, asset: null, cfg: null, win: autoViewWindowDays(), horizonH: H, windowH: H, from: null },
-    twoLeg: {}, oneLeg: {}, series: null, positions, account: null,
-    fresh: { ageSec: 0, stale: false, gateOk: true, pollMinutes: 5, backfilling: [] },
-    settings: { costs: DEFAULT_COSTS },
-    auto: {
-      ...state, corrupt: false, foreignOpen: false,
-      last: tick ? { at: NOW, kind: tick.kind, why: tick.why, gate: tick.gate, refusals: tick.refusals, margin: tick.margin } : null,
-      lastEval: faEvalOfTick(tick, { nowMs: NOW, cadenceH: state.params?.cadenceH, capitalUsd: state.params?.capitalUsd }),
-      ...extraAuto,
-    },
-  };
-}
 
 // The harness main owns a new profile before Electron starts. Its minimal read-only
 // fixture bridge exercises the real onTrace subscription but exposes no mutations.
