@@ -318,6 +318,7 @@ registerLocale('ru', {
   'fa.trade.ifClosedNet': 'если закрыть сейчас (нетто)',
   'fa.trade.accSum': 'Σ счёт · {n} поз., {open} откр. (нетто)',
   'fa.trade.aprSubReal': 'реализованный · нетто · {h} ч с t0',
+  'fa.trade.aprSubOpen': 'если закрыть сейчас · {h} ч с t0',
   'fa.trade.aprSubWait': 'нужно ≥24 ч начисления · прошло {h} ч',
   'fa.trade.oneLegShort': 'одна нога',
   'fa.trade.oneLegCarry': 'одна нога · GMX-карри',

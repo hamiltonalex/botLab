@@ -4386,7 +4386,7 @@ function renderTrade(){
   $('tradeRetSub').textContent = isOpen ? t('fa.cockpit.retSubOpen') : t('fa.cockpit.retSub');
   if(s.aprReliable){
     $('tradeApr').textContent=fmtPct(s.apr); $('tradeApr').className='v '+clsSign(s.apr);
-    $('tradeAprSub').textContent=t('fa.trade.aprSubReal',{h:s.hoursElapsed.toFixed(1)});
+    $('tradeAprSub').textContent=isOpen ? t('fa.trade.aprSubOpen',{h:s.hoursElapsed.toFixed(1)}) : t('fa.trade.aprSubReal',{h:s.hoursElapsed.toFixed(1)});
   } else {
     $('tradeApr').textContent='-'; $('tradeApr').className='v faint';
     $('tradeAprSub').textContent=t('fa.trade.aprSubWait',{h:s.hoursElapsed.toFixed(1)});

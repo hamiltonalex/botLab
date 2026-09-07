@@ -384,7 +384,7 @@ try {
     if (acc && acc.count > 0) check("разбивка: Σ счёт", brk[3], usdFull(acc.netPnl));
     check("доходность", S.dom.tradeRet, pctS(s.netPnl / p.capital));
     check("APR", S.dom.tradeApr, s.aprReliable ? pctS(s.apr) : "-");
-    check("подпись APR", S.dom.tradeAprSub, s.aprReliable ? tpl("fa.trade.aprSubReal", { h: s.hoursElapsed.toFixed(1) }) : tpl("fa.trade.aprSubWait", { h: s.hoursElapsed.toFixed(1) }));
+    check("подпись APR", S.dom.tradeAprSub, s.aprReliable ? tpl(p.status === "open" ? "fa.trade.aprSubOpen" : "fa.trade.aprSubReal", { h: s.hoursElapsed.toFixed(1) }) : tpl("fa.trade.aprSubWait", { h: s.hoursElapsed.toFixed(1) }));
     const pb = (S.dom.paperBox || []).map((x) => [norm(x.k), norm(x.v)]);
     const want = [["t0", started], [tpl("fa.trade.elapsed"), tpl("fa.unit.hoursN", { h: s.hoursElapsed.toFixed(1) })], [tpl("fa.trade.grossAccum"), usdFull(s.grossPnl)],
       [norm(tpl("fa.trade.entryPaid2").replace(/<[^>]+>/g, "")), MINUS + usdFull(entryUsd)],

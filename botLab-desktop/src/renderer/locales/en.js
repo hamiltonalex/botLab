@@ -295,6 +295,7 @@ registerLocale('en', {
   'fa.trade.ifClosedNet': 'if closed now (net)',
   'fa.trade.accSum': 'Σ account · {n} pos., {open} open (net)',
   'fa.trade.aprSubReal': 'realized · net · {h} h since t0',
+  'fa.trade.aprSubOpen': 'if closed now · {h} h since t0',
   'fa.trade.aprSubWait': 'needs ≥24 h of accrual · {h} h elapsed',
   'fa.trade.oneLegShort': 'single leg',
   'fa.trade.oneLegCarry': 'single leg · GMX carry',
