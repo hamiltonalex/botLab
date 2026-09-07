@@ -8,9 +8,9 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { openPosition, accrue, recordUnpricedGap, positionSummary } from "../src/engine/paper.js";
+import { openPosition, accrue, recordUnpricedGap, positionSummary, closePosition } from "../src/engine/paper.js";
 import { buildLedger, ledgerTotals, ledgerReconciles, ledgerView, LEDGER_TYPES } from "../src/engine/ledger.js";
-import { roundTripCost, roundTripCostBreakdown } from "../src/engine/costs.js";
+import { roundTripCost, roundTripCostBreakdown, splitRoundTripCost } from "../src/engine/costs.js";
 
 const HOUR = 3600 * 1000;
 const BASE = 1699999200000; // hour-aligned epoch ms
@@ -38,13 +38,19 @@ test("buildLedger: open_costs is always seq 0 at t0, even with zero accruals", (
   assert.equal(ev[0].seq, 0);
   assert.equal(ev[0].type, "open_costs");
   assert.equal(ev[0].t, BASE);
-  near(ev[0].amount, -4.1, 1e-12, "open costs are an expense");
-  near(ev[0].expense, 4.1, 1e-12, "expense column");
+  // входная половина круга: открытие 1 + половина impact 0.5 + половина газа 0.5 + taker одной стороны 0.05
+  near(ev[0].amount, -2.05, 1e-12, "entry costs are an expense");
+  near(ev[0].expense, 2.05, 1e-12, "expense column");
   assert.equal(ev[0].income, 0);
   assert.equal(ev[0].priceAtOp, 3210.5, "t0 mark frozen on the position");
-  assert.ok(ev[0].breakdown && ev[0].breakdown.gmxGasUsd === 1, "breakdown snapshot carried");
+  assert.ok(ev[0].breakdown && ev[0].breakdown.gmxGasUsd === 0.5 && ev[0].breakdown.gmxOpenUsd === 1, "entry breakdown carried (halves)");
+  assert.equal(ev[0].breakdown.gmxCloseUsd, undefined, "no close fee on the entry row");
+  near(ev[0].breakdown.roundTripUsd, 4.1, 1e-12, "the full round trip stands for reference");
   const rec = ledgerReconciles(p, ev);
   assert.ok(rec.ok, `empty-accrual ledger reconciles: ${JSON.stringify(rec)}`);
+  near(rec.positionBookedNetPnl, -2.05, 1e-12, "booked = gross - entry while open");
+  near(rec.pendingExitUsd, 2.05, 1e-12, "the exit half is pending");
+  near(rec.positionNetPnl, -4.1, 1e-12, "netPnl still carries the full round trip");
 });
 
 test("buildLedger: 1h two-leg accrual → funding + borrow + HL rows, split sums to dPnlGmx", () => {
@@ -65,8 +71,63 @@ test("buildLedger: 1h two-leg accrual → funding + borrow + HL rows, split sums
   assert.ok(ev.every((e, i) => e.seq === i), "seq is dense and monotonic");
   const rec = ledgerReconciles(p, ev);
   assert.ok(rec.ok, `reconciles: ${JSON.stringify(rec)}`);
-  near(rec.netFromEvents, positionSummary(p).netPnl, 1e-9, "sum(income)-sum(expense) = netPnl");
-  near(ev[ev.length - 1].runningBalance, positionSummary(p).netPnl, 1e-9, "last running balance = netPnl");
+  const s = positionSummary(p);
+  near(rec.netFromEvents, s.bookedNetPnl, 1e-9, "sum(income)-sum(expense) = booked net (exit not charged yet)");
+  near(ev[ev.length - 1].runningBalance, s.bookedNetPnl, 1e-9, "last running balance = booked net");
+  near(s.bookedNetPnl - s.exitPendingUsd, s.netPnl, 1e-9, "booked - pending exit = netPnl");
+});
+
+test("splitRoundTripCost: вход + выход = круг побитово, половины по соглашению, без детализации пополам", () => {
+  for (const oneLeg of [false, true]) {
+    const total = roundTripCost({}, 2500, oneLeg);
+    const b = roundTripCostBreakdown({}, 2500, oneLeg);
+    const sp = splitRoundTripCost({ roundTripCost: total, costBreakdown: b });
+    assert.equal(sp.byModel, true);
+    assert.equal(sp.entryUsd + sp.exitUsd, total, `identity entry + exit = round trip (oneLeg=${oneLeg})`);
+    near(sp.entryUsd, b.gmxOpenUsd + b.gmxImpactUsd / 2 + b.gmxGasUsd / 2 + b.hlTakerUsd / 2, 1e-12, "entry half by convention");
+    assert.equal(sp.entry.gmxCloseUsd, undefined);
+    assert.equal(sp.exit.gmxOpenUsd, undefined);
+    if (!oneLeg) near(sp.entryUsd, 4.375, 1e-12, "$2500 two-leg: $4.375 at entry");
+  }
+  const plain = splitRoundTripCost({ roundTripCost: 8.75 });
+  assert.deepEqual([plain.entryUsd, plain.exitUsd, plain.byModel, plain.entry], [4.375, 4.375, false, null]);
+  assert.equal(splitRoundTripCost({ roundTripCost: NaN }), null);
+  assert.equal(splitRoundTripCost({ roundTripCost: 4, costBreakdown: { gmxOpenUsd: 1 } }).byModel, false, "неполная детализация читается как её отсутствие");
+});
+
+test("buildLedger: закрытая позиция несёт строку close_costs на момент закрытия, журнал сходится с нетто целиком", () => {
+  const p = openTwoLeg();
+  accrue(p, SNAP, BASE + HOUR, { markPx: 3300 });
+  closePosition(p, BASE + HOUR + 1000);
+  const ev = buildLedger(p);
+  assert.deepEqual(ev.map((e) => e.type), ["open_costs", "gmx_funding", "gmx_borrow", "hl_funding", "close_costs"]);
+  const c = ev[ev.length - 1];
+  assert.equal(c.t, BASE + HOUR + 1000, "close costs land on closedAt");
+  near(c.amount, -2.05, 1e-12, "exit half charged at close");
+  assert.equal(c.source, "close");
+  assert.ok(c.breakdown && c.breakdown.gmxCloseUsd === 1 && c.breakdown.gmxOpenUsd === undefined, "exit breakdown: close fee, no open fee");
+  assert.ok(ev.every((e, i) => e.seq === i), "seq dense through the close row");
+  const s = positionSummary(p);
+  assert.equal(s.exitCharged, true);
+  assert.equal(s.exitPendingUsd, 0);
+  near(s.bookedNetPnl, s.netPnl, 1e-12, "after close booked = net");
+  const rec = ledgerReconciles(p, ev);
+  assert.ok(rec.ok, `closed ledger reconciles: ${JSON.stringify(rec)}`);
+  near(rec.netFromEvents, s.netPnl, 1e-9, "sum over the closed ledger = netPnl");
+  const v = ledgerView(p);
+  assert.equal(v.pending.open, false);
+  assert.equal(v.counts.close_costs, 1);
+});
+
+test("ledgerView.pending: у открытой позиции несёт не списанный выход и оба нетто, отрисовщику вычитать нечего", () => {
+  const p = openTwoLeg();
+  accrue(p, SNAP, BASE + HOUR, { markPx: 3300 });
+  const v = ledgerView(p);
+  assert.equal(v.pending.open, true);
+  near(v.pending.exitUsd, 2.05, 1e-12);
+  near(v.pending.bookedNetPnl - v.pending.exitUsd, v.pending.netPnl, 1e-9);
+  near(v.recon.positionBookedNetPnl, v.totalsAll.net, 1e-9, "totals of the open ledger equal booked");
+  assert.equal(v.counts.close_costs, 0);
 });
 
 test("buildLedger: legacy accrual entries (no split) render as ONE aggregated funding row", () => {

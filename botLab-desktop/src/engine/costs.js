@@ -61,3 +61,28 @@ export function roundTripCostBreakdown(costs, notional, isOneLeg) {
     hlTakerUsd: isOneLeg ? 0 : notional * (c.hlTaker / 100) * c.hlSides,
   };
 }
+
+// РАЗНЕСЕНИЕ КРУГА НА ВХОД И ВЫХОД: СОГЛАШЕНИЕ, А НЕ ЗАМЕР (решение владельца 2026-09-07).
+// Модель мерила круг целиком: `gmxGas` и `gmxImpact` взяты один раз за круг, хотя платятся и на
+// открытии, и на закрытии (шапка `fa/exit.js`). Правилу выхода деление не нужно, а леджеру и
+// интерфейсу нужно: круг, списанный целиком при входе, показывал минус круг с первой секунды и
+// называл его «реализовано». Соглашение: вход = открытие GMX + половина проскальзывания + половина
+// газа + taker HL одной стороны; выход = закрытие GMX + те же половины; выход считается ОСТАТКОМ от
+// круга, чтобы тождество вход + выход = круг держалось побитово. Позиция без детализации делится
+// пополам. Замороженная при открытии детализация не пересчитывается: модель редактируема, и число,
+// плывущее от тика к тику, разошлось бы со списанием при закрытии.
+export function splitRoundTripCost({ roundTripCost, costBreakdown = null } = {}) {
+  const total = Number(roundTripCost);
+  if (!Number.isFinite(total) || total < 0) return null;
+  const b = costBreakdown;
+  const parts = b ? [b.gmxOpenUsd, b.gmxCloseUsd, b.gmxImpactUsd, b.gmxGasUsd, b.hlTakerUsd] : null;
+  if (parts && parts.every((x) => Number.isFinite(x))) {
+    const entry = { gmxOpenUsd: b.gmxOpenUsd, gmxImpactUsd: b.gmxImpactUsd / 2, gmxGasUsd: b.gmxGasUsd / 2, hlTakerUsd: b.hlTakerUsd / 2 };
+    const entryUsd = entry.gmxOpenUsd + entry.gmxImpactUsd + entry.gmxGasUsd + entry.hlTakerUsd;
+    const exitUsd = total - entryUsd;
+    const exit = { gmxCloseUsd: b.gmxCloseUsd, gmxImpactUsd: b.gmxImpactUsd / 2, gmxGasUsd: b.gmxGasUsd / 2, hlTakerUsd: b.hlTakerUsd / 2 };
+    return { entryUsd, exitUsd, entry, exit, byModel: true };
+  }
+  const entryUsd = total / 2;
+  return { entryUsd, exitUsd: total - entryUsd, entry: null, exit: null, byModel: false };
+}

@@ -373,18 +373,23 @@ try {
     const s = p.summary;
     const started = new Date(p.createdAt).toISOString().replace("T", " ").slice(0, 16) + " UTC";
     check("статус", S.dom.tradeStatus, p.status === "open" ? tpl("fa.trade.open") : tpl("fa.trade.closed"));
-    check("большой P&L (нетто, до доллара)", S.dom.tradePnl, (s.netPnl < 0 ? MINUS + "$" : "$") + int(Math.round(Math.abs(s.netPnl))));
+    check("большой P&L (нетто, до доллара)", S.dom.tradePnl, (p.status === "open" ? "≈" : "") + (s.netPnl < 0 ? MINUS + "$" : "$") + int(Math.round(Math.abs(s.netPnl))));
     check("контекст", S.dom.tradeCtx, `${usd(p.capital, 0)} · ${p.leverage}x · ${tpl("fa.trade.since", { d: started })}`);
     const brk = (S.dom.tradeBreak || []).map((x) => norm(x.v));
+    const entryUsd = Number.isFinite(s.entryCostUsd) ? s.entryCostUsd : s.roundTripCost;
+    const exitUsd = Number.isFinite(s.exitCostUsd) ? s.exitCostUsd : 0;
     check("разбивка: брутто", brk[0], usdFull(s.grossPnl));
-    check("разбивка: издержки", brk[1], MINUS + usdFull(s.roundTripCost));
-    if (acc && acc.count > 0) check("разбивка: Σ счёт", brk[2], usdFull(acc.netPnl));
+    check("разбивка: уплачено на входе", brk[1], MINUS + usdFull(entryUsd));
+    check("разбивка: выход по модели", brk[2], MINUS + usdFull(exitUsd));
+    if (acc && acc.count > 0) check("разбивка: Σ счёт", brk[3], usdFull(acc.netPnl));
     check("доходность", S.dom.tradeRet, pctS(s.netPnl / p.capital));
     check("APR", S.dom.tradeApr, s.aprReliable ? pctS(s.apr) : "-");
     check("подпись APR", S.dom.tradeAprSub, s.aprReliable ? tpl("fa.trade.aprSubReal", { h: s.hoursElapsed.toFixed(1) }) : tpl("fa.trade.aprSubWait", { h: s.hoursElapsed.toFixed(1) }));
     const pb = (S.dom.paperBox || []).map((x) => [norm(x.k), norm(x.v)]);
     const want = [["t0", started], [tpl("fa.trade.elapsed"), tpl("fa.unit.hoursN", { h: s.hoursElapsed.toFixed(1) })], [tpl("fa.trade.grossAccum"), usdFull(s.grossPnl)],
-      [norm(tpl("fa.trade.rtCosts2").replace(/<[^>]+>/g, "")), MINUS + usdFull(s.roundTripCost)], [tpl("fa.trade.realizedNet"), usdFull(s.netPnl)],
+      [norm(tpl("fa.trade.entryPaid2").replace(/<[^>]+>/g, "")), MINUS + usdFull(entryUsd)],
+      [norm(tpl(p.status === "open" ? "fa.trade.exitModel2" : "fa.trade.exitPaid2").replace(/<[^>]+>/g, "")), MINUS + usdFull(exitUsd)],
+      [tpl(p.status === "open" ? "fa.trade.ifClosedNet" : "fa.trade.realizedNet"), usdFull(s.netPnl)],
       [tpl("fa.trade.aprNet"), s.aprReliable ? pctS(s.apr) : tpl("fa.trade.aprNeed", { h: s.hoursElapsed.toFixed(1) })], [tpl("fa.chart.dd"), usdFull(s.maxDrawdown)]];
     if (s.gapSkippedSec > 60) want.push([tpl("fa.trade.gapNote"), tpl("fa.unit.minN", { n: Math.round(s.gapSkippedSec / 60) })]);
     if (p.config) want.push([norm(tpl("fa.trade.cfgRow").replace(/<[^>]+>/g, "")), p.config === "A" ? "A · short GMX + long HL" : "B · long GMX + short HL"]);
@@ -394,7 +399,7 @@ try {
     check("таблица позиций: строк", S.dom.tradeRows?.length, sorted.length);
     sorted.forEach((q, i) => {
       const d = S.dom.tradeRows?.[i] || [];
-      check(`таблица позиций: ${q.instrumentKey}`, d.slice(0, 5).join(" | "), [q.instrumentKey, q.strategy === "one" ? tpl("fa.trade.oneLegShort") : (q.config || "-"), `${usd(q.capital, 0)} × ${q.leverage}`, usdFull(q.summary.netPnl), q.status === "open" ? tpl("fa.trade.open") : tpl("fa.trade.closed")].join(" | "));
+      check(`таблица позиций: ${q.instrumentKey}`, d.slice(0, 5).join(" | "), [q.instrumentKey, q.strategy === "one" ? tpl("fa.trade.oneLegShort") : (q.config || "-"), `${usd(q.capital, 0)} × ${q.leverage}`, (q.status === "open" ? "≈ " : "") + usdFull(q.summary.netPnl), q.status === "open" ? tpl("fa.trade.open") : tpl("fa.trade.closed")].join(" | "));
     });
     checkBool("кнопка закрытия видна у открытой позиции", S.dom.tradeCloseHidden === (p.status !== "open"));
   }
@@ -423,7 +428,8 @@ try {
     check("строка статуса (автомат без сделки)", home.status, tpl("home.fa.auto", { state: tpl(hs === "live" ? "fa.auto.tokLive" : "fa.auto.tokHunting"), why: codeText(ha.last.why) }), { contains: true });
   } else if (faRun) {
     const faOpen = (HL.positions || []).filter((q) => q.status === "open").length;
-    check("строка статуса (сделка)", home.status, `${tpl("home.openOf", { open: faOpen, total: hacc.count })} · ${tpl("home.pnlNet")} ${usdFull(hacc.netPnl)}`);
+    const exitTail = Number.isFinite(hacc.exitPendingUsd) && hacc.exitPendingUsd > 0 ? ` · ${tpl("home.fa.exitModel", { v: MINUS + usdFull(hacc.exitPendingUsd) })}` : "";
+    check("строка статуса (сделка)", home.status, `${tpl("home.openOf", { open: faOpen, total: hacc.count })} · ${tpl("home.fa.ifClosed")} ${usdFull(hacc.netPnl)}${exitTail}`);
     const hsKey = ha.corrupt ? "fa.auto.tokCorrupt" : ha.positionId ? (ha.stopRequested ? "fa.auto.tokWinddown" : "fa.auto.tokLive") : (ha.stopRequested ? "fa.auto.tokStopping" : "fa.auto.tokHunting");
     check("жетон карточки", home.tag, ha.on || ha.corrupt ? tpl(hsKey) : tpl("home.tag.pos"));
   } else check("строка статуса (пусто)", home.status, hacc && hacc.count > 0 ? tpl("home.fa.closed", { n: hacc.count }) : tpl("home.fa.idle"));

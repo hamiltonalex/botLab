@@ -737,6 +737,7 @@ table.scan tr:hover td{ background:color-mix(in srgb, var(--slate) 5%, transpare
 #tradeBreak .row{ display:grid; grid-template-columns:1fr auto; gap:10px; padding:3px 0;
   border-bottom:1px solid var(--line-soft); font-size:12.5px; }
 #tradeBreak .row .k{ color:var(--txt-dim); }
+#tradeBreak .row .num.dim, #paperBox .prow .num.dim{ color:var(--txt-dim); }
 .rowpick{ font:600 12px var(--f-mono); color:var(--txt); background:none; border:none;
   cursor:pointer; padding:0; letter-spacing:.3px; }
 .rowpick:focus-visible, .trade-empty .goto:focus-visible{ outline:1px solid var(--accent); outline-offset:2px; }
@@ -1815,7 +1816,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
         <span class="rule"></span>
       </div>
       <div class="pnl-hero" aria-live="polite" aria-atomic="true">
-        <span class="lbl"><span data-i18n="fa.cockpit.lbl">реализовано · нетто (после разовых издержек) ·</span> <span id="tradeCtx" class="mono">-</span></span>
+        <span class="lbl"><span id="tradePnlLbl"></span> <span id="tradeCtx" class="mono">-</span></span>
         <span class="val" id="tradePnl"><span class="cur">$</span>-</span>
       </div>
       <div id="tradeBreak"></div>
@@ -1823,7 +1824,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
         <div class="kpi">
           <div class="lbl" data-i18n="fa.cockpit.ret">Доходность с t0</div>
           <div class="v" id="tradeRet">-</div>
-          <div class="sub" data-i18n="fa.cockpit.retSub">нетто · к капиталу позиции</div>
+          <div class="sub" id="tradeRetSub"></div>
         </div>
         <div class="kpi">
           <div class="lbl" data-i18n="fa.cockpit.apr">APR с t0</div>
@@ -1923,6 +1924,9 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
         <div class="lt"><span class="lbl" data-i18n="ledger.totRecon">сверка с позицией</span><span class="v num" id="ledgerReconCell">-</span></div>
       </div>
       <div class="ledger-subtotal faint" id="ledgerFiltered" hidden></div>
+      <!-- НЕ СПИСАННЫЙ ВЫХОД: не строка (строка это операция, а её ещё не было), а подвал под итогами.
+           Число приходит из ledgerView().pending, отрисовщик ничего не вычитает. -->
+      <div class="ledger-subtotal faint" id="ledgerPending" hidden></div>
       <div class="table-scroll" id="ledgerScroll" style="max-height:420px" tabindex="0" role="region"
            aria-label="Журнал операций выбранной позиции, прокручиваемая таблица" data-i18n-aria="ledger.scrollAria">
         <table class="raw ledger" id="ledgerTable">
@@ -4346,6 +4350,8 @@ function renderTrade(){
     $('tradeStatus').textContent=t('fa.trade.notStarted'); $('tradeStatus').className='tag';
     setBigPnl($('tradePnl'), NaN);
     $('tradeCtx').textContent='-';
+    $('tradePnlLbl').textContent=t('fa.cockpit.lbl');
+    $('tradeRetSub').textContent=t('fa.cockpit.retSub');
     $('tradeBreak').innerHTML='';
     $('tradeRet').textContent='-'; $('tradeRet').className='v faint';
     $('tradeApr').textContent='-'; $('tradeApr').className='v faint';
@@ -4359,17 +4365,25 @@ function renderTrade(){
   const p=tradeSelectedPosition(); const s=p.summary; const sc=v=> v>=0?'pos':'neg';
   const started=new Date(p.createdAt).toISOString().replace('T',' ').slice(0,16)+' UTC';
   const isOpen=p.status==='open';
-  // - кокпит: всегда НЕТТО после разовых издержек, от режима брутто/нетто анализа не зависит -
+  // - кокпит: одно главное число за всю жизнь сделки, брутто минус вход минус выход по модели.
+  //   У открытой это «если закрыть сейчас» (≈, режим est), у закрытой «реализовано · нетто».
+  //   Круг разнесён движком (`splitRoundTripCost`): вход списан при открытии, выход по модели
+  //   не списан и показывается тусклым, не красным (красный = деньги ушли). -
   $('tradeStatus').textContent=isOpen?t('fa.trade.open'):t('fa.trade.closed');
   $('tradeStatus').className='tag'+(isOpen?' amber':'');
-  setBigPnl($('tradePnl'), s.netPnl);
+  $('tradePnlLbl').textContent = isOpen ? t('fa.cockpit.lblOpen') : t('fa.cockpit.lbl');
+  setBigPnl($('tradePnl'), s.netPnl, isOpen);
   $('tradeCtx').textContent=fmtUSD(p.capital,0)+' · '+p.leverage+'x · '+t('fa.trade.since',{d:started});
+  const entryUsd = Number.isFinite(s.entryCostUsd) ? s.entryCostUsd : s.roundTripCost;
+  const exitUsd = Number.isFinite(s.exitCostUsd) ? s.exitCostUsd : 0;
   $('tradeBreak').innerHTML=
     tradeRow(t('fa.trade.grossAccum'), fmtUSDfull(s.grossPnl), sc(s.grossPnl))+
-    tradeRow(t('fa.trade.rtCosts'), '−'+fmtUSDfull(s.roundTripCost).replace('+',''), 'neg')+
+    tradeRow(t('fa.trade.entryPaid'), '−'+fmtUSDfull(entryUsd).replace('+',''), 'neg')+
+    tradeRow(isOpen ? t('fa.trade.exitModel') : t('fa.trade.exitPaid'), '−'+fmtUSDfull(exitUsd).replace('+',''), isOpen ? 'dim' : 'neg')+
     (acc && acc.count>0 ? tradeRow(t('fa.trade.accSum',{n:acc.count,open:acc.open}), fmtUSDfull(acc.netPnl), clsSign(acc.netPnl)) : '');
   const ret = p.capital ? s.netPnl/p.capital : null;
   $('tradeRet').textContent=fmtPct(ret); $('tradeRet').className='v '+clsSign(ret);
+  $('tradeRetSub').textContent = isOpen ? t('fa.cockpit.retSubOpen') : t('fa.cockpit.retSub');
   if(s.aprReliable){
     $('tradeApr').textContent=fmtPct(s.apr); $('tradeApr').className='v '+clsSign(s.apr);
     $('tradeAprSub').textContent=t('fa.trade.aprSubReal',{h:s.hoursElapsed.toFixed(1)});
@@ -4386,7 +4400,7 @@ function renderTrade(){
       '<td class="lft sym"><button class="rowpick" aria-pressed="'+sel+'">'+q.instrumentKey+'</button></td>'+
       '<td class="lft">'+cfg+'</td>'+
       '<td class="num">'+fmtUSD(q.capital,0)+' × '+q.leverage+'</td>'+
-      '<td class="num '+clsSign(qs.netPnl)+'">'+fmtUSDfull(qs.netPnl)+'</td>'+
+      '<td class="num '+clsSign(qs.netPnl)+'">'+(q.status==='open'?'≈ ':'')+fmtUSDfull(qs.netPnl)+'</td>'+
       '<td class="lft '+(q.status==='open'?'pos':'faint')+'">'+(q.status==='open'?t('fa.trade.open'):t('fa.trade.closed'))+'</td>'+
       '<td>'+(q.status==='open'?'<button class="paperbtn close mini" data-close-id="'+q.id+'">'+t('fa.trade.closeBtn')+'</button>':'')+'</td>'+
     '</tr>';
@@ -4400,8 +4414,9 @@ function renderTrade(){
     '<div class="prow"><span class="k">t0</span><span class="num">'+started+'</span></div>'+
     '<div class="prow"><span class="k">'+t('fa.trade.elapsed')+'</span><span class="num">'+t('fa.unit.hoursN',{h:s.hoursElapsed.toFixed(1)})+'</span></div>'+
     '<div class="prow"><span class="k">'+t('fa.trade.grossAccum')+'</span><span class="num '+sc(s.grossPnl)+'">'+fmtUSDfull(s.grossPnl)+'</span></div>'+
-    '<div class="prow"><span class="k">'+t('fa.trade.rtCosts2')+'</span><span class="num neg">−'+fmtUSDfull(s.roundTripCost).replace('+','')+'</span></div>'+
-    '<div class="prow"><span class="k">'+t('fa.trade.realizedNet')+'</span><span class="num '+sc(s.netPnl)+'">'+fmtUSDfull(s.netPnl)+'</span></div>'+
+    '<div class="prow"><span class="k">'+t('fa.trade.entryPaid2')+'</span><span class="num neg">−'+fmtUSDfull(entryUsd).replace('+','')+'</span></div>'+
+    '<div class="prow"><span class="k">'+(isOpen?t('fa.trade.exitModel2'):t('fa.trade.exitPaid2'))+'</span><span class="num '+(isOpen?'dim':'neg')+'">−'+fmtUSDfull(exitUsd).replace('+','')+'</span></div>'+
+    '<div class="prow"><span class="k">'+(isOpen?t('fa.trade.ifClosedNet'):t('fa.trade.realizedNet'))+'</span><span class="num '+sc(s.netPnl)+'">'+fmtUSDfull(s.netPnl)+'</span></div>'+
     '<div class="prow"><span class="k">'+t('fa.trade.aprNet')+'</span>'+aprHtml+'</div>'+
     '<div class="prow"><span class="k">'+t('fa.chart.dd')+'</span><span class="num neg">'+fmtUSDfull(s.maxDrawdown)+'</span></div>'+
     gapNote+
@@ -4445,9 +4460,11 @@ function drawForward(p){
    (tradeSelectedPosition) и НЕ читает селекторы анализа (win/mode/cap/lev). */
 const LEDGER_PAGE = 200;
 const fmtLedgerUSD = v => (v<0?'−':'') + '$' + Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:4,maximumFractionDigits:4});
-const ledgerTypeLbl = ty => ({ open_costs:t('ledger.chip.openCosts'), gmx_funding:t('ledger.chip.gmxFunding'), gmx_borrow:t('ledger.chip.gmxBorrow'), hl_funding:t('ledger.chip.hlFunding'), gap_unpriced:t('ledger.chip.gap'), manual_adjustment:t('ledger.chip.adj') }[ty] || ty);
-const LEDGER_CHIP_CLS  = { open_costs:'t-exp', gmx_funding:'t-gmxf', gmx_borrow:'t-exp', hl_funding:'t-hlf', gap_unpriced:'t-gap', manual_adjustment:'t-adj' };
-const ledgerSrcLbl = srcv => ({ live:t('ledger.src.live'), history:t('ledger.src.history'), skipped:t('ledger.src.skipped'), open:t('ledger.src.open') }[srcv]);
+const ledgerTypeLbl = ty => ({ open_costs:t('ledger.type.entryCosts'), close_costs:t('ledger.type.exitCosts'), gmx_funding:t('ledger.chip.gmxFunding'), gmx_borrow:t('ledger.chip.gmxBorrow'), hl_funding:t('ledger.chip.hlFunding'), gap_unpriced:t('ledger.chip.gap'), manual_adjustment:t('ledger.chip.adj') }[ty] || ty);
+const LEDGER_CHIP_CLS  = { open_costs:'t-exp', close_costs:'t-exp', gmx_funding:'t-gmxf', gmx_borrow:'t-exp', hl_funding:'t-hlf', gap_unpriced:'t-gap', manual_adjustment:'t-adj' };
+// Чип «издержки» один на два типа: вход при открытии и выход при закрытии фильтруются вместе.
+const LEDGER_CHIP_TYPES = ty => (ty==='open_costs' ? ['open_costs','close_costs'] : [ty]);
+const ledgerSrcLbl = srcv => ({ live:t('ledger.src.live'), history:t('ledger.src.history'), skipped:t('ledger.src.skipped'), open:t('ledger.src.open'), close:t('ledger.src.close') }[srcv]);
 const LEDGER = { posId:null, sig:null, order:'desc', types:new Set(), limit:LEDGER_PAGE,
   view:null, viewAccrual:null, fetching:null, fetchPromise:null, expandedSeq:null, keepScroll:false, delTimer:null, msgTimer:null };
 const ledgerEsc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -4532,16 +4549,19 @@ function ledgerDetailHtml(e){
   if(e.meta && e.meta.gapSkippedSec>0) row(t('fa.trade.gapNote'), ledgerDur(e.meta.gapSkippedSec), 'neu');
   if(e.meta && e.meta.reason) row(t('ledger.rowReason'), ledgerEsc(e.meta.reason), 'neu');
   if(e.breakdown){
+    // детализация половины круга: у входа комиссия открытия, у выхода закрытия, остальное половинами;
+    // круг целиком стоит справочно последней строкой
     const b=e.breakdown;
     row(t('ledger.bdHead'),'');
-    row(t('ledger.bdOpen'),'−'+fmtLedgerUSD(b.gmxOpenUsd||0),'neg');
-    row(t('ledger.bdClose'),'−'+fmtLedgerUSD(b.gmxCloseUsd||0),'neg');
+    if(Number.isFinite(b.gmxOpenUsd)) row(t('ledger.bdOpen'),'−'+fmtLedgerUSD(b.gmxOpenUsd),'neg');
+    if(Number.isFinite(b.gmxCloseUsd)) row(t('ledger.bdClose'),'−'+fmtLedgerUSD(b.gmxCloseUsd),'neg');
     row(t('ledger.bdImpact'),'−'+fmtLedgerUSD(b.gmxImpactUsd||0),'neg');
     row(t('ledger.bdGas'),'−'+fmtLedgerUSD(b.gmxGasUsd||0),'neg');
     row(t('ledger.bdTaker'),'−'+fmtLedgerUSD(b.hlTakerUsd||0),'neg');
     const sum=(b.gmxOpenUsd||0)+(b.gmxCloseUsd||0)+(b.gmxImpactUsd||0)+(b.gmxGasUsd||0)+(b.hlTakerUsd||0);
     row(t('ledger.bdSum'),'−'+fmtLedgerUSD(sum),'neg');
-  } else if(e.type==='open_costs'){
+    if(Number.isFinite(b.roundTripUsd)) row(t('ledger.bdRound'),'−'+fmtLedgerUSD(b.roundTripUsd),'dim');
+  } else if(e.type==='open_costs' || e.type==='close_costs'){
     row(t('ledger.bdNoneK'), t('ledger.bdNoneV'), 'faint');
   }
   return '<tr class="ldetail" id="ledgerDet-'+e.seq+'"><td colspan="7"><div class="dl">'+dl.join('')+'</div></td></tr>';
@@ -4561,7 +4581,7 @@ function applyLedgerDom(p, view){
     const ty=b.dataset.type;
     const cnt=b.querySelector('.cnt');
     if(ty==='all'){ if(cnt) cnt.textContent=(view.allCount||0).toLocaleString('en-US'); b.setAttribute('aria-pressed', LEDGER.types.size===0?'true':'false'); return; }
-    const n=(view.counts&&view.counts[ty])||0;
+    const n=LEDGER_CHIP_TYPES(ty).reduce((acc2,x)=>acc2+((view.counts&&view.counts[x])||0),0);
     if(cnt) cnt.textContent=n.toLocaleString('en-US');
     if(ty==='manual_adjustment') b.hidden = n===0;
     b.setAttribute('aria-pressed', LEDGER.types.has(ty)?'true':'false');
@@ -4573,6 +4593,16 @@ function applyLedgerDom(p, view){
     fl.innerHTML=t('ledger.filtered',{labels:ledgerEsc(labels),n:view.totalCount.toLocaleString('en-US'),
       inc:'<span class="pos">'+fmtLedgerUSD(view.filteredTotals.income)+'</span>',exp:'<span class="neg">−'+fmtLedgerUSD(view.filteredTotals.expense)+'</span>'});
   } else { fl.hidden=true; fl.textContent=''; }
+  // подвал «не списано»: выход по модели открытой позиции и «если закрыть сейчас»
+  const pd=$('ledgerPending');
+  if(pd){
+    const pending=view.pending;
+    if(pending && pending.open && Number.isFinite(pending.exitUsd) && pending.exitUsd>0){
+      pd.hidden=false;
+      pd.innerHTML=t('ledger.pending',{exit:'<span class="dim">−'+fmtLedgerUSD(pending.exitUsd)+'</span>',
+        net:'<span class="'+clsSign(pending.netPnl)+'">'+fmtLedgerUSD(pending.netPnl)+'</span>'});
+    } else { pd.hidden=true; pd.textContent=''; }
+  }
   // таблица
   const body=$('ledgerBody'), emptyEl=$('ledgerEmpty'), scroll=$('ledgerScroll');
   const keep = LEDGER.keepScroll ? scroll.scrollTop : 0;
@@ -4723,8 +4753,8 @@ if($('ledgerFilters')) $('ledgerFilters').addEventListener('click', e=>{
   const b=e.target.closest('.lchip'); if(!b) return;
   const ty=b.dataset.type;
   if(ty==='all') LEDGER.types.clear();
-  else if(LEDGER.types.has(ty)) LEDGER.types.delete(ty);
-  else LEDGER.types.add(ty);
+  else if(LEDGER.types.has(ty)) LEDGER_CHIP_TYPES(ty).forEach(x=>LEDGER.types.delete(x));
+  else LEDGER_CHIP_TYPES(ty).forEach(x=>LEDGER.types.add(x));
   LEDGER.limit=LEDGER_PAGE;
   ledgerUserRefresh();
 });
@@ -6144,7 +6174,8 @@ function refreshOverview(){
   const faPreAuto = !faAutoOn && !!(LIVE.auto && LIVE.auto.foreignOpen);
   // - карточка/точка funding-arb -
   overviewCard('funding-arb', faRun, faPnl,
-    faRun ? t('home.openOf',{open:faOpen,total:acc.count})+' · '+t('home.pnlNet')+' <span class="'+clsSign(faPnl)+'">'+fmtUSDfull(faPnl)+'</span>'
+    faRun ? t('home.openOf',{open:faOpen,total:acc.count})+' · '+t('home.fa.ifClosed')+' <span class="'+clsSign(faPnl)+'">'+fmtUSDfull(faPnl)+'</span>'
+             +(acc && Number.isFinite(acc.exitPendingUsd) && acc.exitPendingUsd>0 ? ' · '+t('home.fa.exitModel',{v:'−'+fmtUSDfull(acc.exitPendingUsd).replace('+','')}) : '')
              +(faPreAuto ? ' · '+t('home.fa.preAuto') : '')
       : (acc && acc.count>0 ? t('home.fa.closed',{n:acc.count}) : t('home.fa.idle')));
   /* ПОДСКАЗКА ЖЕТОНА ОБНУЛЯЕТСЯ БЕЗУСЛОВНО, А СТАВИТСЯ ПО УСЛОВИЮ. Прежняя редакция чистила её

@@ -8,8 +8,9 @@
 // The ledger conforms to positionSummary(), never the reverse.
 
 import { legModel, positionSummary } from "./paper.js";
+import { splitRoundTripCost } from "./costs.js";
 
-export const LEDGER_TYPES = ["open_costs", "gmx_funding", "gmx_borrow", "hl_funding", "gap_unpriced", "manual_adjustment"];
+export const LEDGER_TYPES = ["open_costs", "close_costs", "gmx_funding", "gmx_borrow", "hl_funding", "gap_unpriced", "manual_adjustment"];
 
 // ИСТОЧНИК СТАВКИ РАСЧЁТА HL (paper.js, `hlSettleFromObservations`): расчётная ставка биржи, последний
 // снимок до границы часа или снимок после неё (прогноз следующего часа: так считали все записи до
@@ -70,15 +71,20 @@ export function buildLedger(position) {
   const hlDirection = hlPerHourSign === -1 ? "long" : hlPerHourSign === 1 ? "short" : null;
   const oneLeg = position.strategy === "one";
 
-  // seq 0 - the round-trip costs, charged once at t0 (the engine's honest Phase-1 model prices
-  // open+close as one prepaid scalar; splitting a fabricated "close fee at close time" would
-  // invent precision the engine does not have).
-  push(position.createdAt, "open_costs", -(position.roundTripCost || 0), {
+  // seq 0 - ИЗДЕРЖКИ ВХОДА. Круг по модели разнесён соглашением `splitRoundTripCost` (решение
+  // владельца 2026-09-07): при открытии списывается входная половина, выходная спишется строкой
+  // `close_costs` при закрытии; пока позиция открыта, выход стоит в `ledgerView().pending` и в суммы
+  // не входит. Раньше весь круг списывался здесь одной строкой, и нетто с первой секунды равнялось
+  // минус кругу под подписью «реализовано».
+  const split = splitRoundTripCost({ roundTripCost: position.roundTripCost, costBreakdown: position.costBreakdown });
+  const entryUsd = split ? split.entryUsd : 0;
+  const exitUsd = split ? split.exitUsd : 0;
+  push(position.createdAt, "open_costs", -entryUsd, {
     strategyLeg: oneLeg ? "gmx" : "both",
     priceAtOp: Number.isFinite(position.openMarkPx) ? position.openMarkPx : null,
     source: "open",
-    description: "разовые издержки входа-выхода · зафиксированы при открытии",
-    breakdown: position.costBreakdown || null,
+    description: "издержки входа · по модели, зафиксированы при открытии",
+    breakdown: split && split.entry ? { ...split.entry, roundTripUsd: position.roundTripCost } : null,
   });
 
   for (const a of position.accruals || []) {
@@ -146,6 +152,18 @@ export function buildLedger(position) {
       });
     }
   }
+  // ИЗДЕРЖКИ ВЫХОДА: выходная половина того же замороженного круга, строкой на момент закрытия.
+  // Выводится из `status`/`closedAt`, ничего нового не хранится: журнал остаётся чистой функцией
+  // позиции. Момент закрытия не раньше последнего начисления (закрытие сначала доначисляет).
+  if (position.status === "closed" && Number.isFinite(position.closedAt)) {
+    push(position.closedAt, "close_costs", -exitUsd, {
+      strategyLeg: oneLeg ? "gmx" : "both",
+      priceAtOp: null,
+      source: "close",
+      description: "издержки выхода · по модели, списаны при закрытии",
+      breakdown: split && split.exit ? { ...split.exit, roundTripUsd: position.roundTripCost } : null,
+    });
+  }
   return events;
 }
 
@@ -160,19 +178,27 @@ export function ledgerTotals(events) {
 }
 
 // The reconciliation identity, usable by tests, the oracle and the fa:getLedger handler alike.
+// Сверяется УЧТЁННЫЙ результат (`bookedNetPnl`: брутто минус списанное), а не «нетто с кругом»:
+// пока позиция открыта, выходная половина в журнале не стоит. Второе тождество замыкает круг:
+// учтено минус не списанный выход равно `netPnl`, то есть «если закрыть сейчас по модели».
 export function ledgerReconciles(position, events, tol = 1e-6) {
   const s = positionSummary(position);
+  const booked = Number.isFinite(s.bookedNetPnl) ? s.bookedNetPnl : s.netPnl;
+  const pending = Number.isFinite(s.exitPendingUsd) ? s.exitPendingUsd : 0;
   const last = events && events.length ? events[events.length - 1].runningBalance : 0;
   const { income, expense, net } = ledgerTotals(events);
-  const scale = Math.max(1, Math.abs(s.netPnl));
-  const okBalance = Math.abs(last - s.netPnl) <= tol * scale;
-  const okSum = Math.abs(net - s.netPnl) <= tol * scale;
+  const scale = Math.max(1, Math.abs(booked));
+  const okBalance = Math.abs(last - booked) <= tol * scale;
+  const okSum = Math.abs(net - booked) <= tol * scale;
+  const okPending = Math.abs(booked - pending - s.netPnl) <= tol * Math.max(1, Math.abs(s.netPnl));
   return {
-    ok: okBalance && okSum,
-    delta: net - s.netPnl,
+    ok: okBalance && okSum && okPending,
+    delta: net - booked,
     lastRunningBalance: last,
     netFromEvents: net,
     positionNetPnl: s.netPnl,
+    positionBookedNetPnl: booked,
+    pendingExitUsd: pending,
     sumIncome: income,
     sumExpense: expense,
   };
@@ -220,7 +246,13 @@ export function ledgerView(position, opts = {}) {
     counts,
     totalsAll,
     filteredTotals,
-    recon: { ok: recon.ok, delta: recon.delta, positionNetPnl: recon.positionNetPnl, netFromEvents: recon.netFromEvents },
+    recon: {
+      ok: recon.ok, delta: recon.delta, positionNetPnl: recon.positionNetPnl, netFromEvents: recon.netFromEvents,
+      positionBookedNetPnl: recon.positionBookedNetPnl, pendingExitUsd: recon.pendingExitUsd,
+    },
+    // НЕ СПИСАННЫЙ ВЫХОД для подвала журнала: строкой он быть не может (строка это операция, а её
+    // ещё не было), поэтому едет отдельным полем, и отрисовщик ничего не вычитает сам.
+    pending: { open: position.status === "open", exitUsd: recon.pendingExitUsd, netPnl: recon.positionNetPnl, bookedNetPnl: recon.positionBookedNetPnl },
     dayNets,
     order,
     offset,

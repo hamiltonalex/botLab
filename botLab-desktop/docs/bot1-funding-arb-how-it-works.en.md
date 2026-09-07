@@ -480,7 +480,8 @@ roughly the whole gross of the window at any speed of reversal. The drawdown sto
 where the realized result takes part in the behaviour, and it stands next to the rule, not inside it.
 
 On every tick the guard reads three numbers from the ledger of the trade itself: the accumulated
-gross since entry, its peak and the round trip of costs charged at entry. When the peak minus the
+gross since entry, its peak and the model round trip of costs (the entry charged at open, the exit
+charged at close). When the peak minus the
 accumulated reaches two round trips, the trade is closed on that very tick (`drawdown_stop`) without
 waiting for the cadence, and the next decision comes with the cadence: an immediate re-entry into the
 same market on the same trailing would be a quarrel between the guard and the entry rule. In the
@@ -560,9 +561,12 @@ and the last tick stamp on the console and in the growth of the snapshot file.
   observation, not a decision: the exit rule and the guards do not see these numbers, because on
   three history periods closing on decay loses to the rule by round trips (the Z7 measurement,
   2026-09-05).
-- **Zone Ⅱ · Trading**: account P&L since launch (net, after one-off costs), the positions table,
-  the parameters of the selected position, the forward equity curve from t0, the ledger with CSV,
-  XLSX and JSON export.
+- **Zone Ⅱ · Trading**: account P&L since launch (for an open trade "if closed now": gross minus
+  entry minus the modelled exit; for a closed one "realized · net"), paid at entry and the modelled
+  exit shown apart, the positions table, the parameters of the selected position, the forward
+  equity curve from t0, the ledger with CSV, XLSX and JSON export. The round trip of costs is split
+  by convention: the entry is charged as a row at open, the exit as a row at close, and while the
+  trade is open the modelled exit stands under the ledger totals and is not part of the sums.
 - **Zone Ⅰ · The bot's market**: the panels of the trade's market over a 30 day window equal to the
   rule's horizon.
 - **Automaton trade history**: the open trade stands as a row with the chip "live" and a dash instead
@@ -826,7 +830,7 @@ flowchart LR
     B --> B3["a price gap between ticks:<br/>the guard is too late, the ledger does not book price"]
     B --> B4["no cross margin between exchanges:<br/>the loss of one leg is not covered by the profit of the other"]
     B --> B5["basis of GMX and Hyperliquid marks at exit:<br/>the price result is not booked"]
-    C --> C1["the model round trip is charged at entry;<br/>a real exit costlier than the model is not seen"]
+    C --> C1["the model entry is charged at open, the exit at close;<br/>a real exit costlier than the model is not seen"]
     C --> C2["a switch pays a new round trip:<br/>an excess of a full round trip is required"]
     C --> C3["idle churn cash and entry:<br/>entry at net above a round trip, exit at gross below zero"]
     C --> C4["a switch on a reversal with the lag of the window:<br/>median lead minus 54 hours"]
@@ -870,10 +874,10 @@ are no toggles in either.
 | Recording archive | Read from disk on demand: window, polling slot coverage and gaps by cause, markets vanished from polling, codes outside the registries, room to liquidation by record, volume per day and on disk, retention in the subjunctive; a "Re-read" button; no deletion |
 | Automaton trade history | A row per trade: number, instrument, configuration, requested and working size, entered, exited, hours, costs, result in dollars and percent, why it exited |
 | Decision and scanning journal | A row per decision cycle: time, candidates, best, size, net, retained share, opposite side, what bound the size, rank of the held one, decision, exit rule triple, reason; newest first, 30 days and up to 500 rows |
-| Account P&L since t0 | Realized result net after one-off costs, return on capital, APR since t0 after 24 hours of accrual |
+| Account P&L since t0 | For an open trade "if closed now" (gross minus entry minus the modelled exit), for a closed one the realized net result; paid at entry and the modelled exit shown apart; return on capital, APR since t0 after 24 hours of accrual |
 | Positions and parameters | Table of all account positions (open and closed), parameters of the selected one, a close button for a position opened before the switch to the automaton, deletion of a closed position |
 | Forward curve | Accumulated net equity since t0: GMX per second, Hyperliquid hourly |
-| Ledger | Every accrual and position event as a row with filters and CSV, XLSX, JSON export |
+| Ledger | Every accrual and position event as a row with filters and CSV, XLSX, JSON export; entry costs as a row at open, exit costs at close, the uncharged exit as a footer under the totals |
 | Zone Ⅰ · The bot's market | The pill "trade: market" or "candidate: market", an honest empty state until the first cycle; market data of both exchanges, net spread by intervals, decomposition by legs, reference price (Binance), raw hourly data; a 30 day window equal to the rule's horizon |
 | Transaction costs · model | Editable items of the round trip (GMX fees, GMX slippage, gas, Hyperliquid fee, number of sides) at the bot's size; the net over the horizon is taken ready-made from the rule's evaluation |
 | Freshness stamp and polling | The LIVE pill blinks on the arrival of a snapshot, "STALE" after 15 minutes without data, the stamp "data as of UTC"; polling interval 1, 5 or 15 minutes; clicking the pill refreshes the data now |

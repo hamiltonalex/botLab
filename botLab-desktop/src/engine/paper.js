@@ -58,6 +58,7 @@
 
 import { SEC_PER_HOUR, HOURS_PER_YEAR } from "./math.js";
 import { NO_DILUTION, dilutedFundingRate, isFlowHour, resolveBase } from "./fa/dilution.js";
+import { splitRoundTripCost } from "./costs.js";
 
 const HOUR_MS = SEC_PER_HOUR * 1000;
 let idCounter = 0;
@@ -386,10 +387,26 @@ export function positionSummary(position) {
   // 8.8%, при $10 000 уже 6.3%. У позиции без разбавления числа нет вовсе, и
   // показывать вместо него 100% нельзя: это ровно тот фантом, ради которого правило и заведено.
   const dilutionRetained = flowQuoted > 0 ? flowReceived / flowQuoted : null;
+  // КРУГ, РАЗНЕСЁННЫЙ НА ВХОД И ВЫХОД (`splitRoundTripCost`, решение владельца 2026-09-07). `netPnl`
+  // остаётся «брутто минус круг», то есть «если закрыть сейчас по модели», и книги охраны его
+  // печатают как прежде; рядом появляется УЧТЁННОЕ: брутто минус то, что списано на самом деле
+  // (вход при открытии, выход при закрытии). Пока позиция открыта, выходная половина не списана и
+  // едет полем `exitPendingUsd`; тождество `bookedNetPnl - exitPendingUsd = netPnl` стережёт леджер.
+  const split = splitRoundTripCost({ roundTripCost: position.roundTripCost, costBreakdown: position.costBreakdown });
+  const closed = position.status === "closed";
+  const entryCostUsd = split ? split.entryUsd : null;
+  const exitCostUsd = split ? split.exitUsd : null;
+  const exitPendingUsd = split && !closed ? split.exitUsd : 0;
+  const bookedNetPnl = split ? grossPnl - split.entryUsd - (closed ? split.exitUsd : 0) : netPnl;
   return {
     grossPnl,
     netPnl,
     roundTripCost: position.roundTripCost,
+    entryCostUsd, // уплачено на входе (по модели, заморожено при открытии)
+    exitCostUsd, // выход по модели: спишется при закрытии
+    exitCharged: closed,
+    exitPendingUsd, // не списано: у открытой позиции равно exitCostUsd, у закрытой 0
+    bookedNetPnl, // учтённый результат: брутто минус списанное
     equityGross: position.capital + grossPnl,
     equityNet: position.capital + netPnl,
     ret,
@@ -456,10 +473,14 @@ export function accountSummary(positions) {
   let firstT0 = Infinity;
   let lastT = 0;
   let open = 0;
+  let exitPendingUsd = 0;
+  let bookedNetPnl = 0;
   for (const p of ps) {
     const s = positionSummary(p);
     netPnl += s.netPnl;
     grossPnl += s.grossPnl;
+    exitPendingUsd += s.exitPendingUsd || 0;
+    bookedNetPnl += Number.isFinite(s.bookedNetPnl) ? s.bookedNetPnl : s.netPnl;
     capitalAll += p.capital;
     notionalAll += p.notional;
     gapSkippedSec += s.gapSkippedSec;
@@ -481,6 +502,8 @@ export function accountSummary(positions) {
     closed: ps.length - open,
     netPnl,
     grossPnl,
+    exitPendingUsd, // выход по модели открытых позиций, ещё не списанный
+    bookedNetPnl, // учтённый результат счёта
     capitalAll,
     notionalAll,
     ret,
