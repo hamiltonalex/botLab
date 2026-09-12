@@ -9,6 +9,8 @@ SYMBOLS = ["BTC", "ETH", "SOL", "AVAX", "XRP", "XMR", "TRX", "ARB"]
 WINDOW = 200  # окно обучения: столько завершённых свечей до каждой сделки
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "klines-cache")  # кэш истории рядом со скриптом
 CACHE_TTL_SEC = 6 * 3600  # кэш живёт шесть часов, потом история качается заново
+FEE_ROUND_TRIP = 0.001  # комиссия за круг долей оборота: тейкер фьючерсов Binance 0,05% на сторону; для Hyperliquid 0.0007
+SLIPPAGE_ON_STOP = 0.0  # проскальзывание при исполнении стопа долей цены стопа, по умолчанию нет
 
 # ============================
 #   BINANCE СВЕЧИ
@@ -110,8 +112,9 @@ def decide_signal(state, trans, allowed_states):
 #   БЭКТЕСТ ДЛЯ КОМБИНАЦИИ
 # ============================
 
-def trade_pnl(prev, cur, sig):
-    # одна сделка: вход по открытию свечи cur, выход по её закрытию, стоп на экстремуме свечи prev
+def trade_pnl(prev, cur, sig, fee=0.0, slippage=0.0):
+    # одна сделка: вход по открытию свечи cur, выход по её закрытию, стоп на экстремуме свечи prev;
+    # fee вычитается из каждой сделки, slippage ухудшает цену исполнения стопа
     entry, exit_ = cur["open"], cur["close"]
     prev_low, prev_high = prev["low"], prev["high"]
     # стоп срабатывает, если экстремум торгуемой свечи его коснулся (low для лонга, high для шорта),
@@ -122,7 +125,7 @@ def trade_pnl(prev, cur, sig):
         if stoploss >= entry:
             pnl = 0.0
         elif cur["low"] <= stoploss:
-            pnl = (stoploss - entry) / entry
+            pnl = (stoploss * (1 - slippage) - entry) / entry
         else:
             pnl = (exit_ - entry) / entry
     else:
@@ -130,31 +133,31 @@ def trade_pnl(prev, cur, sig):
         if stoploss <= entry:
             pnl = 0.0
         elif cur["high"] >= stoploss:
-            pnl = (entry - stoploss) / entry
+            pnl = (entry - stoploss * (1 + slippage)) / entry
         else:
             pnl = (entry - exit_) / entry
-    return pnl
+    return pnl - fee
 
-def backtest(rows, states, trans, allowed_states):
+def backtest(rows, states, trans, allowed_states, fee=0.0, slippage=0.0):
     equity, trades, wins = 1.0, 0, 0
     for i in range(len(rows)-2):
         s = states[i]
         sig = decide_signal(s, trans, allowed_states)
         if sig == "FLAT":
             continue
-        pnl = trade_pnl(rows[i], rows[i+1], sig)
+        pnl = trade_pnl(rows[i], rows[i+1], sig, fee, slippage)
         equity *= (1 + pnl)
         trades += 1
         if pnl > 0:
             wins += 1
     return equity, trades, wins
 
-def select_combo(rows, states, trans):
+def select_combo(rows, states, trans, fee=0.0, slippage=0.0):
     # перебор всех комбинаций состояний на окне, как в adaptive_model(): equity комбинации равно
     # произведению equity по состояниям (сделки разных дней перемножаются независимо), поэтому
     # backtest() вызывается по разу на состояние, а не 31 раз
     all_states = [1, 2, 3, 4, 5]
-    by_state = {s: backtest(rows, states, trans, (s,)) for s in all_states}
+    by_state = {s: backtest(rows, states, trans, (s,), fee, slippage) for s in all_states}
     best_score = -1
     best = None
     for r in range(1, 6):
@@ -176,22 +179,23 @@ def select_combo(rows, states, trans):
                 best = (combo, equity, trades, wins)
     return best
 
-def walk_forward(rows, window=WINDOW):
+def walk_forward(rows, window=WINDOW, fee=0.0, slippage=0.0):
     # обучение только по прошлому: для каждого дня t квантили, матрица переходов и лучшая комбинация
-    # считаются по окну из window завершённых свечей до t, сигнал по состоянию свечи t-1, сделка на свече t
+    # считаются по окну из window завершённых свечей до t, сигнал по состоянию свечи t-1, сделка на свече t;
+    # комиссия и проскальзывание учитываются и при отборе комбинации на окне, и в самой сделке
     equity, trades, wins = 1.0, 0, 0
     peak, max_drawdown = 1.0, 0.0
     for t in range(window, len(rows)):
         win = rows[t - window:t]
         states = build_states(compute_returns(win))
         trans = build_transition_matrix(states)
-        best = select_combo(win, states, trans)
+        best = select_combo(win, states, trans, fee, slippage)
         if best is None:
             continue
         sig = decide_signal(states[-1], trans, best[0])
         if sig == "FLAT":
             continue
-        pnl = trade_pnl(rows[t - 1], rows[t], sig)
+        pnl = trade_pnl(rows[t - 1], rows[t], sig, fee, slippage)
         equity *= (1 + pnl)
         trades += 1
         if pnl > 0:
@@ -202,7 +206,7 @@ def walk_forward(rows, window=WINDOW):
     win = rows[-window:]
     states = build_states(compute_returns(win))
     trans = build_transition_matrix(states)
-    best = select_combo(win, states, trans)
+    best = select_combo(win, states, trans, fee, slippage)
     combo = best[0] if best else None
     signal = decide_signal(states[-1], trans, combo) if combo else "FLAT"
     day = lambda ms: time.strftime("%Y-%m-%d", time.gmtime(ms / 1000))
@@ -222,8 +226,10 @@ def adaptive_model(symbol):
         print("Сигнал: FLAT")
         return
 
-    # доходность считается только по сделкам, для которых обучение шло по прошлым свечам
-    res = walk_forward(rows, WINDOW)
+    # доходность считается только по сделкам, для которых обучение шло по прошлым свечам;
+    # основной прогон с комиссией и проскальзыванием, справочный без комиссии (проскальзывание то же)
+    res = walk_forward(rows, WINDOW, FEE_ROUND_TRIP, SLIPPAGE_ON_STOP)
+    gross = walk_forward(rows, WINDOW, 0.0, SLIPPAGE_ON_STOP)
 
     # Если ни одной комбинации не дала сделок
     if res["combo"] is None:
@@ -232,12 +238,14 @@ def adaptive_model(symbol):
         return
 
     print(f"Период прогона: {res['start']}..{res['end']} (обучение на {WINDOW} свечах до каждой сделки; комбинация, состояние и сигнал по последнему окну)")
+    print(f"Комиссия: {FEE_ROUND_TRIP * 100:.2f}% за круг, проскальзывание на стопе {SLIPPAGE_ON_STOP * 100:.2f}%")
     print(f"Лучшая комбинация состояний: {res['combo']}")
     print(f"Сделок: {res['trades']}")
     print(f"Win-rate: {res['wins'] / res['trades'] * 100:.2f}%" if res["trades"] else "Win-rate: нет сделок")
     print(f"Доходность: {(res['equity'] - 1) * 100:.2f}%")
     print(f"Equity: {res['equity']:.4f}")
     print(f"Макс. просадка: {res['max_drawdown'] * 100:.2f}%")
+    print(f"Доходность без комиссии: {(gross['equity'] - 1) * 100:.2f}% (equity {gross['equity']:.4f}, сделок {gross['trades']}, макс. просадка {gross['max_drawdown'] * 100:.2f}%)")
 
     print(f"Текущее состояние: S{res['state']}")
     print(f"Сигнал: {res['signal']}")
