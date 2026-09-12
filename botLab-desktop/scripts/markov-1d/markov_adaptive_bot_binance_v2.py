@@ -1,5 +1,6 @@
 import requests
 import itertools
+import time
 
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
 SYMBOLS = ["BTC", "ETH", "SOL", "AVAX", "XRP", "XMR", "TRX", "ARB"]
@@ -9,10 +10,14 @@ SYMBOLS = ["BTC", "ETH", "SOL", "AVAX", "XRP", "XMR", "TRX", "ARB"]
 # ============================
 
 def fetch_klines_binance(symbol, limit=200):
-    params = {"symbol": symbol + "USDT", "interval": "1d", "limit": limit}
+    # запрашиваем на одну свечу больше, потому что последняя свеча Binance обычно ещё не закрыта
+    params = {"symbol": symbol + "USDT", "interval": "1d", "limit": limit + 1}
+    now_ms = int(time.time() * 1000)  # момент до запроса: свеча, закрывшаяся во время запроса, тоже отбрасывается
     r = requests.get(BINANCE_URL, params=params, timeout=10)
     r.raise_for_status()
     data = r.json()
+    # только завершённые свечи: время закрытия (поле k[6]) уже наступило
+    data = [k for k in data if k[6] < now_ms][-limit:]
     rows = [{"open": float(k[1]), "high": float(k[2]), "low": float(k[3]), "close": float(k[4])} for k in data]
     return rows
 

@@ -80,6 +80,7 @@ def fetch_raw_klines(symbol, ttl_sec=6 * 3600, refresh=False):
     path = os.path.join(CACHE, f"{symbol}USDT-1d.json")
     if not refresh and os.path.exists(path) and time.time() - os.path.getmtime(path) < ttl_sec:
         return json.load(open(path))
+    fetched_at = int(time.time() * 1000)  # момент до скачивания: свеча, закрывшаяся во время скачивания, не считается завершённой
     data, start = [], 0
     while True:
         q = urllib.parse.urlencode({"symbol": symbol + "USDT", "interval": "1d", "limit": 1000, "startTime": start})
@@ -92,7 +93,6 @@ def fetch_raw_klines(symbol, ttl_sec=6 * 3600, refresh=False):
         if len(page) < 1000:
             break
         start = page[-1][0] + 1
-    fetched_at = int(time.time() * 1000)
     data = [k for k in data if k[6] < fetched_at]
     json.dump(data, open(path, "w"))
     return data
