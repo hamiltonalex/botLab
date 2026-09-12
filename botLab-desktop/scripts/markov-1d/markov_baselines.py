@@ -1,10 +1,9 @@
 """Базовые линии и разбивка по годам к markov_walkforward.py (кэш свечей тот же)."""
 import sys, os, json, time, random, statistics, itertools
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import markov_adaptive_bot_binance_v2 as dm
-from markov_walkforward import fetch_all_daily, trade_pnl, fit_window, COMBOS, ALL, shuffled_rows, walk_forward
+from markov_walkforward import ORIG as dm, fetch_all_daily, trade_pnl, fit_window, COMBOS, ALL, shuffled_rows, walk_forward
 
-def year(r): return time.gmtime(r["t"] / 1000).tm_year
+def year(r): return time.gmtime(r["time"] / 1000).tm_year
 
 def run_signal(rows, W, sigfn, mode, fee):
     """Единый прогон: sigfn(t) даёт LONG/SHORT/FLAT для свечи t; сделка по правилам скрипта."""

@@ -1,10 +1,9 @@
 """Разбор ETH/XRP/TRX и распределение монеток при честном стопе."""
 import sys, os, json, time, random, statistics
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import markov_adaptive_bot_binance_v2 as dm
-from markov_walkforward import fetch_all_daily, trade_pnl, fit_window, ALL
+from markov_walkforward import ORIG as dm, fetch_all_daily, trade_pnl, fit_window, ALL
 
-def year(r): return time.gmtime(r["t"] / 1000).tm_year
+def year(r): return time.gmtime(r["time"] / 1000).tm_year
 W = 200
 rng = random.Random(11)
 

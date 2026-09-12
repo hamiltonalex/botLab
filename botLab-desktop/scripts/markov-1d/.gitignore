@@ -5,3 +5,5 @@ stub/
 # выдача прогонов хранится вне репозитория
 *.json
 *.txt
+# байткод Python от importlib и py_compile
+__pycache__/
