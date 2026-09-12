@@ -79,12 +79,25 @@ def backtest(rows, states, trans, allowed_states):
             continue
         entry, exit_ = rows[i+1]["open"], rows[i+1]["close"]
         prev_low, prev_high = rows[i]["low"], rows[i]["high"]
+        # стоп срабатывает, если экстремум торгуемой свечи его коснулся (low для лонга, high для шорта),
+        # а не если за ним оказалось закрытие; стоп не ниже входа для лонга (не выше для шорта)
+        # означает закрытие по входу, pnl = 0
         if sig == "LONG":
             stoploss = prev_low
-            pnl = (stoploss - entry) / entry if exit_ < stoploss else (exit_ - entry) / entry
+            if stoploss >= entry:
+                pnl = 0.0
+            elif rows[i+1]["low"] <= stoploss:
+                pnl = (stoploss - entry) / entry
+            else:
+                pnl = (exit_ - entry) / entry
         else:
             stoploss = prev_high
-            pnl = (entry - stoploss) / entry if exit_ > stoploss else (entry - exit_) / entry
+            if stoploss <= entry:
+                pnl = 0.0
+            elif rows[i+1]["high"] >= stoploss:
+                pnl = (entry - stoploss) / entry
+            else:
+                pnl = (entry - exit_) / entry
         equity *= (1 + pnl)
         trades += 1
         if pnl > 0:
