@@ -1,0 +1,7 @@
+# кэш дневных свечей Binance, качается стендом и скриптом заново
+klines-cache/
+# заглушка requests для машин без пакета requests (cp requests_stub.py stub/requests.py)
+stub/
+# выдача прогонов хранится вне репозитория
+*.json
+*.txt
