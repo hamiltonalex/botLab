@@ -18,8 +18,10 @@
 делистинга) отбрасываются при чтении. Кэш живёт шесть часов, ключ --refresh качает заново.
 
 Контракт для рабочей копии (появляется с правкой «обучение только по прошлому»):
-    walk_forward(rows, window, fee, slippage) -> dict с ключами
+    walk_forward(rows, window, fee=0.0, slippage=0.0) -> dict с ключами
         equity, trades, wins, max_drawdown, combo, state, signal, start, end
+    Параметры fee и slippage необязательные: стенд передаёт их именованно и только если функция
+    их принимает (как и для backtest()), поэтому до правки о комиссии их может не быть.
     rows: список словарей open/high/low/close (плюс любые ключи), только завершённые свечи.
     Для каждого t от window до len(rows)-1: окно rows[t-window:t]; квантили, матрица и лучшая
     комбинация только по окну (перебор как в adaptive_model(): порядок itertools.combinations по
@@ -277,7 +279,15 @@ def backtest_with_signal(mod, rows, sigfn, fee=0.0, slip=0.0):
 def script_walk_forward(mod, rows, W, fee, slip):
     """Столбец walk-forward рабочей копии по контракту из шапки; None, если функции ещё нет."""
     fn = getattr(mod, "walk_forward", None)
-    return None if fn is None else fn(rows, W, fee, slip)
+    if fn is None:
+        return None
+    params = inspect.signature(fn).parameters
+    kw = {}
+    if "fee" in params:
+        kw["fee"] = fee
+    if "slippage" in params:
+        kw["slippage"] = slip
+    return fn(rows, W, **kw)
 
 
 def strategy_same(rows):

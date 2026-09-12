@@ -1,9 +1,14 @@
 import requests
 import itertools
 import time
+import os
+import json
 
 BINANCE_URL = "https://api.binance.com/api/v3/klines"
 SYMBOLS = ["BTC", "ETH", "SOL", "AVAX", "XRP", "XMR", "TRX", "ARB"]
+WINDOW = 200  # окно обучения: столько завершённых свечей до каждой сделки
+CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "klines-cache")  # кэш истории рядом со скриптом
+CACHE_TTL_SEC = 6 * 3600  # кэш живёт шесть часов, потом история качается заново
 
 # ============================
 #   BINANCE СВЕЧИ
@@ -19,6 +24,36 @@ def fetch_klines_binance(symbol, limit=200):
     # только завершённые свечи: время закрытия (поле k[6]) уже наступило
     data = [k for k in data if k[6] < now_ms][-limit:]
     rows = [{"open": float(k[1]), "high": float(k[2]), "low": float(k[3]), "close": float(k[4])} for k in data]
+    return rows
+
+def fetch_all_klines_binance(symbol):
+    # вся дневная история постранично по 1000 свечей; кэш klines-cache/ рядом со скриптом
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    path = os.path.join(CACHE_DIR, symbol + "USDT-1d.json")
+    if os.path.exists(path) and time.time() - os.path.getmtime(path) < CACHE_TTL_SEC:
+        with open(path) as f:
+            data = json.load(f)
+    else:
+        now_ms = int(time.time() * 1000)  # момент до скачивания: свеча, закрывшаяся во время скачивания, не считается завершённой
+        data, start = [], 0
+        while True:
+            params = {"symbol": symbol + "USDT", "interval": "1d", "limit": 1000, "startTime": start}
+            r = requests.get(BINANCE_URL, params=params, timeout=10)
+            r.raise_for_status()
+            page = r.json()
+            if not page:
+                break
+            data.extend(page)
+            if len(page) < 1000:
+                break
+            start = page[-1][0] + 1
+        # в кэш попадают только свечи, завершённые на момент скачивания
+        data = [k for k in data if k[6] < now_ms]
+        with open(path, "w") as f:
+            json.dump(data, f)
+    # свечи короче суток (день листинга или делистинга) отбрасываются
+    data = [k for k in data if k[6] - k[0] >= 86400000 - 1000]
+    rows = [{"open": float(k[1]), "high": float(k[2]), "low": float(k[3]), "close": float(k[4]), "time": k[0]} for k in data]
     return rows
 
 # ============================
@@ -75,6 +110,31 @@ def decide_signal(state, trans, allowed_states):
 #   БЭКТЕСТ ДЛЯ КОМБИНАЦИИ
 # ============================
 
+def trade_pnl(prev, cur, sig):
+    # одна сделка: вход по открытию свечи cur, выход по её закрытию, стоп на экстремуме свечи prev
+    entry, exit_ = cur["open"], cur["close"]
+    prev_low, prev_high = prev["low"], prev["high"]
+    # стоп срабатывает, если экстремум торгуемой свечи его коснулся (low для лонга, high для шорта),
+    # а не если за ним оказалось закрытие; стоп не ниже входа для лонга (не выше для шорта)
+    # означает закрытие по входу, pnl = 0
+    if sig == "LONG":
+        stoploss = prev_low
+        if stoploss >= entry:
+            pnl = 0.0
+        elif cur["low"] <= stoploss:
+            pnl = (stoploss - entry) / entry
+        else:
+            pnl = (exit_ - entry) / entry
+    else:
+        stoploss = prev_high
+        if stoploss <= entry:
+            pnl = 0.0
+        elif cur["high"] >= stoploss:
+            pnl = (entry - stoploss) / entry
+        else:
+            pnl = (entry - exit_) / entry
+    return pnl
+
 def backtest(rows, states, trans, allowed_states):
     equity, trades, wins = 1.0, 0, 0
     for i in range(len(rows)-2):
@@ -82,54 +142,29 @@ def backtest(rows, states, trans, allowed_states):
         sig = decide_signal(s, trans, allowed_states)
         if sig == "FLAT":
             continue
-        entry, exit_ = rows[i+1]["open"], rows[i+1]["close"]
-        prev_low, prev_high = rows[i]["low"], rows[i]["high"]
-        # стоп срабатывает, если экстремум торгуемой свечи его коснулся (low для лонга, high для шорта),
-        # а не если за ним оказалось закрытие; стоп не ниже входа для лонга (не выше для шорта)
-        # означает закрытие по входу, pnl = 0
-        if sig == "LONG":
-            stoploss = prev_low
-            if stoploss >= entry:
-                pnl = 0.0
-            elif rows[i+1]["low"] <= stoploss:
-                pnl = (stoploss - entry) / entry
-            else:
-                pnl = (exit_ - entry) / entry
-        else:
-            stoploss = prev_high
-            if stoploss <= entry:
-                pnl = 0.0
-            elif rows[i+1]["high"] >= stoploss:
-                pnl = (entry - stoploss) / entry
-            else:
-                pnl = (entry - exit_) / entry
+        pnl = trade_pnl(rows[i], rows[i+1], sig)
         equity *= (1 + pnl)
         trades += 1
         if pnl > 0:
             wins += 1
     return equity, trades, wins
 
-# ============================
-#   АДАПТИВНАЯ МОДЕЛЬ
-# ============================
-
-def adaptive_model(symbol):
-    print(f"\n=== АДАПТИВНАЯ МОДЕЛЬ 1D (Binance) для {symbol} ===")
-    rows = fetch_klines_binance(symbol)
-    rets = compute_returns(rows)
-    states = build_states(rets)
-    trans = build_transition_matrix(states)
+def select_combo(rows, states, trans):
+    # перебор всех комбинаций состояний на окне, как в adaptive_model(): equity комбинации равно
+    # произведению equity по состояниям (сделки разных дней перемножаются независимо), поэтому
+    # backtest() вызывается по разу на состояние, а не 31 раз
     all_states = [1, 2, 3, 4, 5]
-
+    by_state = {s: backtest(rows, states, trans, (s,)) for s in all_states}
     best_score = -1
-    best_equity = None
-    best_combo = None
-    best_trades = None
-    best_wins = None
-
+    best = None
     for r in range(1, 6):
         for combo in itertools.combinations(all_states, r):
-            equity, trades, wins = backtest(rows, states, trans, combo)
+            equity, trades, wins = 1.0, 0, 0
+            for s in combo:
+                e, t, w = by_state[s]
+                equity *= e
+                trades += t
+                wins += w
             if trades == 0:
                 continue
 
@@ -138,27 +173,74 @@ def adaptive_model(symbol):
 
             if score > best_score:
                 best_score = score
-                best_equity = equity
-                best_combo = combo
-                best_trades = trades
-                best_wins = wins
+                best = (combo, equity, trades, wins)
+    return best
+
+def walk_forward(rows, window=WINDOW):
+    # обучение только по прошлому: для каждого дня t квантили, матрица переходов и лучшая комбинация
+    # считаются по окну из window завершённых свечей до t, сигнал по состоянию свечи t-1, сделка на свече t
+    equity, trades, wins = 1.0, 0, 0
+    peak, max_drawdown = 1.0, 0.0
+    for t in range(window, len(rows)):
+        win = rows[t - window:t]
+        states = build_states(compute_returns(win))
+        trans = build_transition_matrix(states)
+        best = select_combo(win, states, trans)
+        if best is None:
+            continue
+        sig = decide_signal(states[-1], trans, best[0])
+        if sig == "FLAT":
+            continue
+        pnl = trade_pnl(rows[t - 1], rows[t], sig)
+        equity *= (1 + pnl)
+        trades += 1
+        if pnl > 0:
+            wins += 1
+        peak = max(peak, equity)
+        max_drawdown = max(max_drawdown, 1 - equity / peak)
+    # последнее окно: лучшая комбинация, текущее состояние и сигнал на следующую свечу
+    win = rows[-window:]
+    states = build_states(compute_returns(win))
+    trans = build_transition_matrix(states)
+    best = select_combo(win, states, trans)
+    combo = best[0] if best else None
+    signal = decide_signal(states[-1], trans, combo) if combo else "FLAT"
+    day = lambda ms: time.strftime("%Y-%m-%d", time.gmtime(ms / 1000))
+    return {"equity": equity, "trades": trades, "wins": wins, "max_drawdown": max_drawdown,
+            "combo": combo, "state": states[-1], "signal": signal,
+            "start": day(rows[window]["time"]), "end": day(rows[-1]["time"])}
+
+# ============================
+#   АДАПТИВНАЯ МОДЕЛЬ
+# ============================
+
+def adaptive_model(symbol):
+    print(f"\n=== АДАПТИВНАЯ МОДЕЛЬ 1D (Binance) для {symbol} ===")
+    rows = fetch_all_klines_binance(symbol)
+    if len(rows) < WINDOW + 1:
+        print(f"Истории меньше {WINDOW + 1} завершённых свечей, прогон невозможен.")
+        print("Сигнал: FLAT")
+        return
+
+    # доходность считается только по сделкам, для которых обучение шло по прошлым свечам
+    res = walk_forward(rows, WINDOW)
 
     # Если ни одной комбинации не дала сделок
-    if best_combo is None:
+    if res["combo"] is None:
         print("Нет комбинаций состояний, которые дают хотя бы одну сделку.")
         print("Сигнал: FLAT")
         return
 
-    print(f"Лучшая комбинация состояний: {best_combo}")
-    print(f"Сделок: {best_trades}")
-    print(f"Win-rate: {best_wins / best_trades * 100:.2f}%")
-    print(f"Доходность: {(best_equity - 1) * 100:.2f}%")
-    print(f"Equity: {best_equity:.4f}")
+    print(f"Период прогона: {res['start']}..{res['end']} (обучение на {WINDOW} свечах до каждой сделки; комбинация, состояние и сигнал по последнему окну)")
+    print(f"Лучшая комбинация состояний: {res['combo']}")
+    print(f"Сделок: {res['trades']}")
+    print(f"Win-rate: {res['wins'] / res['trades'] * 100:.2f}%" if res["trades"] else "Win-rate: нет сделок")
+    print(f"Доходность: {(res['equity'] - 1) * 100:.2f}%")
+    print(f"Equity: {res['equity']:.4f}")
+    print(f"Макс. просадка: {res['max_drawdown'] * 100:.2f}%")
 
-    last_state = states[-1]
-    sig = decide_signal(last_state, trans, best_combo)
-    print(f"Текущее состояние: S{last_state}")
-    print(f"Сигнал: {sig}")
+    print(f"Текущее состояние: S{res['state']}")
+    print(f"Сигнал: {res['signal']}")
 
 # ============================
 #   MAIN
