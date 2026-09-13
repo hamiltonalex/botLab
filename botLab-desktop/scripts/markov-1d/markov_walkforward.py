@@ -15,7 +15,8 @@
 
 Данные. Кэш klines-cache/<SYMBOL>USDT-1d.json хранит сырые дневные свечи Binance, только завершённые
 на момент скачивания (closeTime, поле k[6], уже наступил); свечи короче суток (обрезанная свеча
-делистинга) отбрасываются при чтении. Кэш живёт шесть часов, ключ --refresh качает заново.
+делистинга) отбрасываются при чтении. Кэш живёт шесть часов и перекачивается, как только после его последней
+свечи закрылся новый день UTC; ключ --refresh качает заново.
 
 Контракт для рабочей копии (появляется с правкой «обучение только по прошлому»):
     walk_forward(rows, window, fee=0.0, slippage=0.0) -> dict с ключами
@@ -81,7 +82,10 @@ def fetch_raw_klines(symbol, ttl_sec=6 * 3600, refresh=False):
     os.makedirs(CACHE, exist_ok=True)
     path = os.path.join(CACHE, f"{symbol}USDT-1d.json")
     if not refresh and os.path.exists(path) and time.time() - os.path.getmtime(path) < ttl_sec:
-        return json.load(open(path))
+        data = json.load(open(path))
+        # кэш годен, только пока после его последней свечи не закрылся новый день UTC (иначе сигнал отстал бы на день)
+        if data and time.time() * 1000 < data[-1][6] + DAY_MS:
+            return data
     fetched_at = int(time.time() * 1000)  # момент до скачивания: свеча, закрывшаяся во время скачивания, не считается завершённой
     data, start = [], 0
     while True:

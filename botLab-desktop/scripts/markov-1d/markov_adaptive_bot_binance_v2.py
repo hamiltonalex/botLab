@@ -42,10 +42,16 @@ def fetch_all_klines_binance(symbol):
     # для этого нужны все годы, а не одно окно. Скачанное лежит в папке klines-cache рядом со скриптом.
     os.makedirs(CACHE_DIR, exist_ok=True)
     path = os.path.join(CACHE_DIR, symbol + "USDT-1d.json")
+    data = None
     if os.path.exists(path) and time.time() - os.path.getmtime(path) < CACHE_TTL_SEC:
         with open(path) as f:
             data = json.load(f)
-    else:
+        # Шести часов по времени файла мало: после полуночи UTC в сохранённой истории ещё нет только что закрывшегося
+        # дня, и скрипт до шести часов давал сигнал по позавчерашней свече. Поэтому вдобавок к шести часам: если после
+        # последней сохранённой свечи уже закрылся новый день, история качается заново.
+        if not data or time.time() * 1000 >= data[-1][6] + 86400000:
+            data = None
+    if data is None:
         now_ms = int(time.time() * 1000)  # время до скачивания, причина та же, что в fetch_klines_binance
         data, start = [], 0
         while True:
