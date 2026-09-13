@@ -493,23 +493,37 @@ def main():
         # C. walk-forward: опора стенда и рабочая копия
         ref = walk_forward(rows, W, mode, fee, slip)
         ref.pop("curve"); trade_days = ref.pop("log")
-        # монетка в те же дни, что сделки модели, с теми же стопом и комиссией: проверка направления на сопоставимых сделках
-        coins_same = []
+        # монетка в те же дни, что сделки модели, с теми же стопом и комиссией: проверка направления на сопоставимых
+        # сделках; бросок фиксирован на (семя, день), поэтому ежедневная монетка ниже и эта спарены по семенам
+        coins_same, perms = [], []
+        directions = [sig for _, sig in trade_days]
         for k in range(a.coins):
-            r4 = random.Random(900 + k); e = 1.0
+            r4 = random.Random(500 + k)
+            flips = {t: r4.choice(("LONG", "SHORT")) for t in range(W, len(rows))}
+            e = 1.0
             for t, _ in trade_days:
-                e *= 1 + trade_pnl(rows[t - 1], rows[t], r4.choice(("LONG", "SHORT")), mode, fee, slip)
+                e *= 1 + trade_pnl(rows[t - 1], rows[t], flips[t], mode, fee, slip)
             coins_same.append(e)
+            # перестановка собственных направлений модели по её же дням: сохраняет долю лонгов и шортов,
+            # проверяет, есть ли в привязке направления к состоянию что-то сверх перекоса в одну сторону
+            r5 = random.Random(1300 + k); shuffled = directions[:]; r5.shuffle(shuffled); e = 1.0
+            for (t, _), sig in zip(trade_days, shuffled):
+                e *= 1 + trade_pnl(rows[t - 1], rows[t], sig, mode, fee, slip)
+            perms.append(e)
         model_pct = sum(x < ref["equity"] for x in coins_same) / a.coins  # доля монеток хуже модели
+        perm_pct = sum(x < ref["equity"] for x in perms) / a.coins  # доля перестановок хуже модели
+        n_long = sum(1 for d in directions if d == "LONG")
         wf = script_walk_forward(WORK, rows, W, fee, slip)
         last_full = next(r for r in reversed(rows) if r["full"])
         bh = last_full["close"] / rows[W]["open"]  # купил и держи до последнего полного дня
         coins_wf = []
         for k in range(a.coins):
-            r3 = random.Random(500 + k); e = 1.0
+            r3 = random.Random(500 + k)
+            flips = {t: r3.choice(("LONG", "SHORT")) for t in range(W, len(rows))}  # тот же бросок на день, что у монетки в дни модели
+            e = 1.0
             for t in range(W, len(rows)):
                 if tradable(rows[t - 1], rows[t]):
-                    e *= 1 + trade_pnl(rows[t - 1], rows[t], r3.choice(("LONG", "SHORT")), mode, fee, slip)
+                    e *= 1 + trade_pnl(rows[t - 1], rows[t], flips[t], mode, fee, slip)
             coins_wf.append(e)
         if mode == "intraday" and wf and not close_enough(ref, wf):
             problems.append(f"{sym}: walk-forward исправлено != опора")
@@ -517,7 +531,9 @@ def main():
                              "buy_hold": bh, "coin_median": statistics.median(coins_wf),
                              "coin_share_above_1": sum(x > 1 for x in coins_wf) / a.coins,
                              "coin_same_days": len(trade_days), "coin_same_median": statistics.median(coins_same),
-                             "model_better_than_share_of_coins": model_pct}
+                             "model_better_than_share_of_coins": model_pct,
+                             "perm_median": statistics.median(perms), "model_better_than_share_of_perms": perm_pct,
+                             "longs": n_long, "shorts": len(directions) - n_long}
         wr = lambda v: 100 * v["wins"] / v["trades"] if v["trades"] else 0.0
         print(f"walk-forward {ref['start']}..{ref['end']} (опора: {mode}, fee {fee}, slip {slip}):")
         print(f"  опора стенда:     доходность {pct(ref['equity']):>12}%  сделок {ref['trades']:5d}  win-rate {wr(ref):5.1f}%  "
@@ -532,7 +548,9 @@ def main():
         print(f"  купил и держи {pct(bh)}%; монетка каждый день ({mode}, fee {fee}), {a.coins} семян: "
               f"медиана {pct(R['walk_forward']['coin_median'])}%, в плюсе {100 * R['walk_forward']['coin_share_above_1']:.0f}%; "
               f"монетка в дни сделок модели ({len(trade_days)} дней): медиана {pct(R['walk_forward']['coin_same_median'])}%, "
-              f"модель лучше {100 * model_pct:.0f}% монеток")
+              f"модель лучше {100 * model_pct:.0f}% монеток; перестановка её же направлений ({n_long} лонгов, "
+              f"{len(directions) - n_long} шортов): медиана {pct(statistics.median(perms))}%, модель лучше {100 * perm_pct:.0f}% перестановок "
+              f"(диагностические процентили по {a.coins} семенам, не p-value)")
 
         # D. плацебо, спаренное по одним перемешиваниям (при --reps 0 блок пропускается)
         sets = [shuffled_rows(lastW, rng) for _ in range(a.reps)] if a.reps > 0 else []
@@ -617,12 +635,14 @@ def main():
     # сводка
     print("\n=== сводка: доходность, % ===")
     print(f"{'sym':5} {'внутри: получено':>16} {'внутри: исправл.':>16} {'==опоре':>7} | {'wf опора':>10} {'wf исправл.':>11} {'совпад.':>7} | "
-          f"{'B&H':>8} {'монетка/день':>12} {'монетка в дни модели':>20} {'лучше %':>7} | {'монетка backtest %/день: получено':>34} {'исправл.':>9}")
+          f"{'B&H':>8} {'монетка/день':>12} {'монетка в дни модели':>20} {'лучше %':>7} {'перестановка':>12} {'лучше %':>7} | "
+          f"{'монетка backtest %/день: получено':>34} {'исправл.':>9}")
     for sym, R in out["symbols"].items():
         i, wfb, fl = R["insample"], R["walk_forward"], R["floor"]
         print(f"{sym:5} {pct(i['orig']['equity']):>16} {pct(i['work']['equity']):>16} {str(i['work_eq_stand']):>7} | "
               f"{pct(wfb['stand']['equity']):>10} {pct(wfb['work']['equity']) if wfb['work'] else 'нет':>11} {str(wfb['match']):>7} | "
-              f"{pct(wfb['buy_hold']):>8} {pct(wfb['coin_median']):>12} {pct(wfb['coin_same_median']):>20} {100 * wfb['model_better_than_share_of_coins']:>6.0f}% | "
+              f"{pct(wfb['buy_hold']):>8} {pct(wfb['coin_median']):>12} {pct(wfb['coin_same_median']):>20} {100 * wfb['model_better_than_share_of_coins']:>6.0f}% "
+              f"{pct(wfb['perm_median']):>12} {100 * wfb['model_better_than_share_of_perms']:>6.0f}% | "
               f"{100 * fl['coin_orig_daily_log_median']:>+34.4f} {100 * fl['coin_work_daily_log_median']:>+9.4f}")
     out["problems"] = problems
     if a.out:
