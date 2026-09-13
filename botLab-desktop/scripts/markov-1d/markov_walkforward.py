@@ -226,7 +226,7 @@ def stand_insample(rows, mode, fee, slip, last_pair=True):
 def walk_forward(rows, W=200, mode="intraday", fee=0.0, slip=0.0, selection="best"):
     """Опора по контракту из шапки: обучение на rows[t-W:t], сигнал по rows[t-1], сделка на rows[t]."""
     equity, trades, wins, peak, mdd = 1.0, 0, 0, 1.0, 0.0
-    combos_seen, prev_combo, changes, curve = set(), None, 0, []
+    combos_seen, prev_combo, changes, curve, log = set(), None, 0, [], []
     for t in range(W, len(rows)):
         best, sig_of, states, trans, _ = fit_window(rows[t - W:t], mode, fee, slip)
         combo = (best if selection == "best" else ALL) if best else None
@@ -242,14 +242,14 @@ def walk_forward(rows, W=200, mode="intraday", fee=0.0, slip=0.0, selection="bes
         p = trade_pnl(rows[t - 1], rows[t], sig, mode, fee, slip)
         equity *= 1 + p; trades += 1; wins += (p > 0)
         peak = max(peak, equity); mdd = max(mdd, 1 - equity / peak)
-        curve.append((rows[t]["time"], equity))
+        curve.append((rows[t]["time"], equity)); log.append((t, sig))
     best, sig_of, states, trans, _ = fit_window(rows[-W:], mode, fee, slip)
     combo = (best if selection == "best" else ALL) if best else None
     last_full = next(r for r in reversed(rows) if r.get("full", True))  # конец периода: последний полный день
     return {"equity": equity, "trades": trades, "wins": wins, "max_drawdown": mdd,
             "combo": combo, "state": states[-1], "signal": dm.decide_signal(states[-1], trans, combo) if combo else "FLAT",
             "start": iso(rows[W]["time"]), "end": iso(last_full["time"]),
-            "combos": len(combos_seen), "combo_changes": changes, "curve": curve}
+            "combos": len(combos_seen), "combo_changes": changes, "curve": curve, "log": log}
 
 # ---------- прогон модулей Дмитрия их же функциями ----------
 
@@ -486,7 +486,15 @@ def main():
 
         # C. walk-forward: опора стенда и рабочая копия
         ref = walk_forward(rows, W, mode, fee, slip)
-        ref.pop("curve")
+        ref.pop("curve"); trade_days = ref.pop("log")
+        # монетка в те же дни, что сделки модели, с теми же стопом и комиссией: проверка направления на сопоставимых сделках
+        coins_same = []
+        for k in range(a.coins):
+            r4 = random.Random(900 + k); e = 1.0
+            for t, _ in trade_days:
+                e *= 1 + trade_pnl(rows[t - 1], rows[t], r4.choice(("LONG", "SHORT")), mode, fee, slip)
+            coins_same.append(e)
+        model_pct = sum(x < ref["equity"] for x in coins_same) / a.coins  # доля монеток хуже модели
         wf = script_walk_forward(WORK, rows, W, fee, slip)
         last_full = next(r for r in reversed(rows) if r["full"])
         bh = last_full["close"] / rows[W]["open"]  # купил и держи до последнего полного дня
@@ -501,7 +509,9 @@ def main():
             problems.append(f"{sym}: walk-forward исправлено != опора")
         R["walk_forward"] = {"stand": ref, "work": wf, "match": close_enough(ref, wf) if (wf and mode == "intraday") else None,
                              "buy_hold": bh, "coin_median": statistics.median(coins_wf),
-                             "coin_share_above_1": sum(x > 1 for x in coins_wf) / a.coins}
+                             "coin_share_above_1": sum(x > 1 for x in coins_wf) / a.coins,
+                             "coin_same_days": len(trade_days), "coin_same_median": statistics.median(coins_same),
+                             "model_better_than_share_of_coins": model_pct}
         wr = lambda v: 100 * v["wins"] / v["trades"] if v["trades"] else 0.0
         print(f"walk-forward {ref['start']}..{ref['end']} (опора: {mode}, fee {fee}, slip {slip}):")
         print(f"  опора стенда:     доходность {pct(ref['equity']):>12}%  сделок {ref['trades']:5d}  win-rate {wr(ref):5.1f}%  "
@@ -513,8 +523,10 @@ def main():
                   f"совпадение до 4-го знака: {R['walk_forward']['match']}")
         else:
             print("  исправлено:       walk_forward() в рабочей копии ещё нет")
-        print(f"  купил и держи {pct(bh)}%, монетка в те же дни по стенду ({mode}, fee {fee}), {a.coins} семян: "
-              f"медиана {pct(R['walk_forward']['coin_median'])}%, в плюсе {100 * R['walk_forward']['coin_share_above_1']:.0f}%")
+        print(f"  купил и держи {pct(bh)}%; монетка каждый день ({mode}, fee {fee}), {a.coins} семян: "
+              f"медиана {pct(R['walk_forward']['coin_median'])}%, в плюсе {100 * R['walk_forward']['coin_share_above_1']:.0f}%; "
+              f"монетка в дни сделок модели ({len(trade_days)} дней): медиана {pct(R['walk_forward']['coin_same_median'])}%, "
+              f"модель лучше {100 * model_pct:.0f}% монеток")
 
         # D. плацебо, спаренное по одним перемешиваниям (при --reps 0 блок пропускается)
         sets = [shuffled_rows(lastW, rng) for _ in range(a.reps)] if a.reps > 0 else []
@@ -583,12 +595,13 @@ def main():
     # сводка
     print("\n=== сводка: доходность, % ===")
     print(f"{'sym':5} {'внутри: получено':>16} {'внутри: исправл.':>16} {'==опоре':>7} | {'wf опора':>10} {'wf исправл.':>11} {'совпад.':>7} | "
-          f"{'B&H':>8} {'монетка wf':>10} | {'монетка backtest %/день: получено':>34} {'исправл.':>9}")
+          f"{'B&H':>8} {'монетка/день':>12} {'монетка в дни модели':>20} {'лучше %':>7} | {'монетка backtest %/день: получено':>34} {'исправл.':>9}")
     for sym, R in out["symbols"].items():
         i, wfb, fl = R["insample"], R["walk_forward"], R["floor"]
         print(f"{sym:5} {pct(i['orig']['equity']):>16} {pct(i['work']['equity']):>16} {str(i['work_eq_stand']):>7} | "
               f"{pct(wfb['stand']['equity']):>10} {pct(wfb['work']['equity']) if wfb['work'] else 'нет':>11} {str(wfb['match']):>7} | "
-              f"{pct(wfb['buy_hold']):>8} {pct(wfb['coin_median']):>10} | {100 * fl['coin_orig_daily_log_median']:>+34.4f} {100 * fl['coin_work_daily_log_median']:>+9.4f}")
+              f"{pct(wfb['buy_hold']):>8} {pct(wfb['coin_median']):>12} {pct(wfb['coin_same_median']):>20} {100 * wfb['model_better_than_share_of_coins']:>6.0f}% | "
+              f"{100 * fl['coin_orig_daily_log_median']:>+34.4f} {100 * fl['coin_work_daily_log_median']:>+9.4f}")
     out["problems"] = problems
     if a.out:
         json.dump(out, open(a.out, "w"), ensure_ascii=False, indent=1, default=str)
