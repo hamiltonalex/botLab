@@ -45,7 +45,9 @@ backtest() рабочей копии принимает fee и slippage имен
 Запуск (если пакета requests нет: mkdir -p stub && cp requests_stub.py stub/requests.py):
     PYTHONPATH=./stub python3 markov_walkforward.py [--mode asis|intraday] [--fee 0.001] [--slip 0]
         [--window 200] [--reps 300] [--wf-reps 20] [--coins 100] [--symbols BTC,ETH]
-        [--check-combos] [--refresh] [--no-live] [--out файл.json]
+        [--check-combos] [--refresh] [--no-live] [--strict] [--out файл.json]
+    --strict: любое расхождение рабочей копии с опорой (стратегия, внутри выборки, всегда лонг, walk-forward,
+    живая свеча) печатается списком и завершает стенд с кодом 1; так намеренная ошибка ломает проверку.
 """
 import sys, os, json, time, math, itertools, random, statistics, argparse, inspect, importlib.util
 import urllib.request, urllib.parse
@@ -374,7 +376,7 @@ def close_enough(a, b, tol=1e-4):
     ca = None if a["combo"] is None else tuple(a["combo"])
     cb = None if b["combo"] is None else tuple(b["combo"])
     return (abs(a["equity"] - b["equity"]) <= tol and abs(a["max_drawdown"] - b["max_drawdown"]) <= tol
-            and ca == cb and all(a[k] == b[k] for k in ("trades", "wins", "state", "signal")))
+            and ca == cb and all(a[k] == b[k] for k in ("trades", "wins", "state", "signal", "start", "end")))
 
 
 def log1(p):
@@ -394,8 +396,12 @@ def main():
     ap.add_argument("--check-combos", action="store_true", help="сверить выбор комбинации опоры с перебором оригинала на каждом окне")
     ap.add_argument("--refresh", action="store_true", help="скачать свечи заново, не глядя на кэш")
     ap.add_argument("--no-live", action="store_true")
+    ap.add_argument("--strict", action="store_true", help="любое расхождение рабочей копии с опорой завершает стенд с кодом 1")
     ap.add_argument("--out", default="")
     a = ap.parse_args()
+    if a.coins < 1 or a.reps < 0 or a.wf_reps < 0 or a.window < 3:
+        ap.error("нужны --coins >= 1, --reps >= 0, --wf-reps >= 0, --window >= 3")
+    problems = []  # расхождения для --strict
     W, mode, fee, slip = a.window, a.mode, a.fee, a.slip
     rng = random.Random(20260913)
     acc = accepts(WORK)
@@ -416,6 +422,8 @@ def main():
               f"неполных дней {len(R['partial_days'])} {R['partial_days'][:3]}, пропусков {len(R['gaps'])} {R['gaps'][:3]} ===")
 
         R["strategy_same"] = strategy_same(lastW)
+        if not R["strategy_same"]:
+            problems.append(f"{sym}: стратегия рабочей копии расходится с оригиналом")
         print(f"стратегия (доходности, состояния, матрица, решения) у оригинала и рабочей копии: {'совпадает' if R['strategy_same'] else 'РАСХОДИТСЯ'}")
 
         # A. внутри выборки на последних W завершённых свечах
@@ -425,6 +433,10 @@ def main():
         s_asis = stand_insample(lastW, "asis", 0.0, 0.0, last_pair=False)  # как в оригинале: последняя свеча не торгуется
         R["insample"] = {"orig": o, "work": w, "stand": s, "work_eq_orig": same_exact(o, w),
                          "stand_asis_id_orig": same_tol(o, s_asis), "work_eq_stand": same_tol(w, s) if mode == "intraday" else None}
+        if not R["insample"]["stand_asis_id_orig"]:
+            problems.append(f"{sym}: опора asis не тождественна перебору оригинала")
+        if R["insample"]["work_eq_stand"] is False:
+            problems.append(f"{sym}: внутри выборки исправлено != опора")
         print(f"внутри выборки ({W} свечей)          combo            equity     trades wins state signal")
         for name, v in (("как получено", o), ("исправлено", w), (f"опора стенда ({mode}, fee {fee})", s)):
             print(f"  {name:36} {str(v['combo']):16} {v['equity']:10.6f} {v['trades']:6d} {v['wins']:4d}  S{v['state']}  {v['signal']}")
@@ -485,6 +497,8 @@ def main():
                 if tradable(rows[t - 1], rows[t]):
                     e *= 1 + trade_pnl(rows[t - 1], rows[t], r3.choice(("LONG", "SHORT")), mode, fee, slip)
             coins_wf.append(e)
+        if mode == "intraday" and wf and not close_enough(ref, wf):
+            problems.append(f"{sym}: walk-forward исправлено != опора")
         R["walk_forward"] = {"stand": ref, "work": wf, "match": close_enough(ref, wf) if (wf and mode == "intraday") else None,
                              "buy_hold": bh, "coin_median": statistics.median(coins_wf),
                              "coin_share_above_1": sum(x > 1 for x in coins_wf) / a.coins}
@@ -502,17 +516,18 @@ def main():
         print(f"  купил и держи {pct(bh)}%, монетка в те же дни по стенду ({mode}, fee {fee}), {a.coins} семян: "
               f"медиана {pct(R['walk_forward']['coin_median'])}%, в плюсе {100 * R['walk_forward']['coin_share_above_1']:.0f}%")
 
-        # D. плацебо, спаренное по одним перемешиваниям
-        sets = [shuffled_rows(lastW, rng) for _ in range(a.reps)]
+        # D. плацебо, спаренное по одним перемешиваниям (при --reps 0 блок пропускается)
+        sets = [shuffled_rows(lastW, rng) for _ in range(a.reps)] if a.reps > 0 else []
         po = [script_insample(ORIG, x) for x in sets]
         pw = [script_insample(WORK, x, fee, slip) for x in sets]
         pl_o = placebo_stats([x["equity"] if x else None for x in po])
         pl_w = placebo_stats([x["equity"] if x else None for x in pw])
-        paired = statistics.median(math.log(b["equity"]) - math.log(c["equity"]) for b, c in zip(pw, po) if b and c) if a.reps else 0.0
+        paired = statistics.median(math.log(b["equity"]) - math.log(c["equity"]) for b, c in zip(pw, po) if b and c) if sets else 0.0
         R["placebo"] = {"orig_insample": pl_o, "work_insample": pl_w, "paired_log_diff_median": paired}
-        print(f"плацебо внутри выборки, {a.reps} одних и тех же перемешиваний: как получено медиана {pct(pl_o['median'])}% "
-              f"(в плюсе {100 * pl_o['share_above_1']:.0f}%), исправлено медиана {pct(pl_w['median'])}% (в плюсе {100 * pl_w['share_above_1']:.0f}%), "
-              f"парная медиана ln(исправлено/как получено) {paired:+.4f}")
+        if sets:
+            print(f"плацебо внутри выборки, {a.reps} одних и тех же перемешиваний: как получено медиана {pct(pl_o['median'])}% "
+                  f"(в плюсе {100 * pl_o['share_above_1']:.0f}%), исправлено медиана {pct(pl_w['median'])}% (в плюсе {100 * pl_w['share_above_1']:.0f}%), "
+                  f"парная медиана ln(исправлено/как получено) {paired:+.4f}")
         if a.wf_reps > 0:
             seg = rows[-(W + 300):]
             wsets = [shuffled_rows(seg, rng) for _ in range(a.wf_reps)]
@@ -526,10 +541,22 @@ def main():
                 line += f"; исправлено медиана {pct(pl_wf['median'])}%, в плюсе {100 * pl_wf['share_above_1']:.0f}%"
             print(line)
 
-        # E. живая сверка состояния: fetch каждого модуля против того же числа завершённых свечей кэша
+        # E. живая сверка: сначала реальный загрузчик адаптивной модели (тот, что зовёт adaptive_model),
+        # потом fetch на 200 свечей у обоих модулей (его использует fixed-копия)
         if not a.no_live:
             try:
                 live = {}
+                loader = getattr(WORK, "fetch_all_klines_binance", None)
+                if loader is not None:
+                    lr = loader(sym)
+                    last_closed_open = (int(time.time() * 1000) // DAY_MS - 1) * DAY_MS  # открытие последнего закрытого дня UTC
+                    same_last = lr[-1]["time"] == rows[-1]["time"] and lr[-1]["close"] == rows[-1]["close"]
+                    fresh = lr[-1]["time"] == last_closed_open
+                    live["загрузчик adaptive_model"] = {"candles": len(lr), "same_last_as_stand": same_last, "last_is_last_closed_utc_day": fresh}
+                    print(f"загрузчик adaptive_model: {len(lr)} свечей, последняя {iso(lr[-1]['time'])}; та же, что у стенда: {same_last}; "
+                          f"это последний закрытый день UTC: {fresh}" + ("" if fresh else " (данные старые: делистинг или сбой, сигнала быть не должно)"))
+                    if not same_last:
+                        problems.append(f"{sym}: загрузчик рабочей копии и стенд видят разные последние свечи")
                 for name, mod in (("как получено", ORIG), ("исправлено", WORK)):
                     lr = mod.fetch_klines_binance(sym)
                     st = mod.build_states(mod.compute_returns(lr))
@@ -540,6 +567,10 @@ def main():
                                   "state_match": (st[-1] == stand_state) if aligned else None, "last_close": lr[-1]["close"]}
                 R["live"] = live
                 for n, v in live.items():
+                    if "state" not in v:
+                        continue
+                    if n == "исправлено" and v["state_match"] is False:
+                        problems.append(f"{sym}: состояние живой свечи у рабочей копии расходится со стендом")
                     print(f"живая свеча, {n}: {v['candles']} свечей, close последней {v['last_close']}, состояние S{v['state']}; "
                           f"стенд на тех же {v['candles']} завершённых свечах S{v['stand_state']}; "
                           + ("последняя свеча та же, состояние " + ("совпадает" if v["state_match"] else "РАСХОДИТСЯ") if v["aligned"]
@@ -558,9 +589,16 @@ def main():
         print(f"{sym:5} {pct(i['orig']['equity']):>16} {pct(i['work']['equity']):>16} {str(i['work_eq_stand']):>7} | "
               f"{pct(wfb['stand']['equity']):>10} {pct(wfb['work']['equity']) if wfb['work'] else 'нет':>11} {str(wfb['match']):>7} | "
               f"{pct(wfb['buy_hold']):>8} {pct(wfb['coin_median']):>10} | {100 * fl['coin_orig_daily_log_median']:>+34.4f} {100 * fl['coin_work_daily_log_median']:>+9.4f}")
+    out["problems"] = problems
     if a.out:
         json.dump(out, open(a.out, "w"), ensure_ascii=False, indent=1, default=str)
         print(f"json: {a.out}")
+    if problems:
+        print("\nРАСХОЖДЕНИЯ:\n  " + "\n  ".join(problems))
+        if a.strict:
+            sys.exit(1)
+    elif a.strict:
+        print("\nстрогий режим: расхождений нет")
 
 
 if __name__ == "__main__":
