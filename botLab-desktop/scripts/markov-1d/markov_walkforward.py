@@ -46,11 +46,13 @@ backtest() рабочей копии принимает fee и slippage имен
     PYTHONPATH=./stub python3 markov_walkforward.py [--mode asis|intraday] [--fee 0.001] [--slip 0]
         [--window 200] [--reps 300] [--wf-reps 20] [--coins 100] [--symbols BTC,ETH]
         [--check-combos] [--refresh] [--no-live] [--strict] [--out файл.json]
-    --strict: любое расхождение рабочей копии с опорой (стратегия, внутри выборки, всегда лонг, walk-forward,
-    живая свеча) печатается списком и завершает стенд с кодом 1; так намеренная ошибка ломает проверку.
+    --strict (только в режиме intraday): любое расхождение рабочей копии с опорой (стратегия, внутри выборки,
+    тождество опоры с оригиналом, всегда лонг по тем же парам, walk-forward с датами, живая свеча и загрузчик
+    adaptive_model, падение загрузчика) печатается списком и завершает стенд с кодом 1; сетевые ошибки живой
+    сверки только печатаются. Так намеренная ошибка ломает проверку.
 """
 import sys, os, json, time, math, itertools, random, statistics, argparse, inspect, importlib.util
-import urllib.request, urllib.parse
+import urllib.request, urllib.parse, urllib.error, tempfile, shutil
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 try:
@@ -401,6 +403,8 @@ def main():
     a = ap.parse_args()
     if a.coins < 1 or a.reps < 0 or a.wf_reps < 0 or a.window < 3:
         ap.error("нужны --coins >= 1, --reps >= 0, --wf-reps >= 0, --window >= 3")
+    if a.strict and a.mode != "intraday":
+        ap.error("--strict только в режиме intraday: в режиме asis рабочая копия с опорой не сверяется")
     problems = []  # расхождения для --strict
     W, mode, fee, slip = a.window, a.mode, a.fee, a.slip
     rng = random.Random(20260913)
@@ -465,6 +469,8 @@ def main():
         for i in pairs_work:
             exp_work *= 1 + trade_pnl(rows[i], rows[i + 1], "LONG", "intraday", fee, slip)
         work_long_ok = math.isclose(exp_work, ew[0], rel_tol=REL_TOL) and ew[1] == len(pairs_work)
+        if not work_long_ok:
+            problems.append(f"{sym}: всегда лонг исправлено != опора по тем же парам")
         gap = (math.log(eo[0]) - math.log(ew[0])) / n_days
         floor_log = statistics.mean(log1(trade_pnl(rows[i], rows[i + 1], "LONG", "asis")) - log1(trade_pnl(rows[i], rows[i + 1], "LONG", "intraday"))
                                     for i in pairs_work)
@@ -560,7 +566,17 @@ def main():
                 live = {}
                 loader = getattr(WORK, "fetch_all_klines_binance", None)
                 if loader is not None:
-                    lr = loader(sym)
+                    # загрузчик идёт своим путём (скачивание, отсечка незакрытой свечи, правило свежести) в отдельную папку,
+                    # а не читает файл, который стенд только что записал в общий кэш
+                    tmp_cache, old_cache = tempfile.mkdtemp(prefix="markov-live-"), getattr(WORK, "CACHE_DIR", None)
+                    try:
+                        if old_cache is not None:
+                            WORK.CACHE_DIR = tmp_cache
+                        lr = loader(sym)
+                    finally:
+                        if old_cache is not None:
+                            WORK.CACHE_DIR = old_cache
+                        shutil.rmtree(tmp_cache, ignore_errors=True)
                     last_closed_open = (int(time.time() * 1000) // DAY_MS - 1) * DAY_MS  # открытие последнего закрытого дня UTC
                     same_last = lr[-1]["time"] == rows[-1]["time"] and lr[-1]["close"] == rows[-1]["close"]
                     fresh = lr[-1]["time"] == last_closed_open
@@ -583,13 +599,19 @@ def main():
                         continue
                     if n == "исправлено" and v["state_match"] is False:
                         problems.append(f"{sym}: состояние живой свечи у рабочей копии расходится со стендом")
+                    if n == "исправлено" and not v["aligned"] and rows[-1]["time"] == (int(time.time() * 1000) // DAY_MS - 1) * DAY_MS:
+                        problems.append(f"{sym}: fetch_klines_binance рабочей копии вернул не последнюю закрытую свечу при свежем кэше стенда")
                     print(f"живая свеча, {n}: {v['candles']} свечей, close последней {v['last_close']}, состояние S{v['state']}; "
                           f"стенд на тех же {v['candles']} завершённых свечах S{v['stand_state']}; "
                           + ("последняя свеча та же, состояние " + ("совпадает" if v["state_match"] else "РАСХОДИТСЯ") if v["aligned"]
                              else "последняя живая свеча не совпадает с последней завершённой в кэше (незавершённая или кэш отстаёт), сверки нет"))
-            except Exception as e:  # сеть или делистинг
+            except (urllib.error.URLError, TimeoutError, ConnectionError, RuntimeError) as e:  # сеть или ответ биржи (делистинг)
                 R["live"] = {"error": str(e)}
-                print(f"живая свеча: не проверена ({e})")
+                print(f"живая свеча: не проверена, сеть или ответ биржи ({e})")
+            except Exception as e:  # ошибка в самом загрузчике рабочей копии: это расхождение
+                R["live"] = {"error": str(e)}
+                problems.append(f"{sym}: живая сверка упала на ошибке загрузчика: {e!r}")
+                print(f"живая свеча: ОШИБКА загрузчика ({e!r})")
         out["symbols"][sym] = R
 
     # сводка
