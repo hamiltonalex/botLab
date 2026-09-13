@@ -52,9 +52,16 @@ def fetch_klines_binance(symbol, limit=200):
             "high": float(k[2]),
             "low": float(k[3]),
             "close": float(k[4]),
-            "time": k[0]  # время открытия свечи, нужно для проверки свежести данных
+            "time": k[0],  # время открытия свечи, нужно для проверки свежести данных
+            "full": k[6] - k[0] >= 86400000 - 1000  # свеча покрывает полные сутки; неполный день не торгуем
         })
     return rows
+
+def tradable(prev, cur):
+    # Неполный день или пропуск между днями: сделку не открываем, стоп и выход на таких данных честно не посчитать.
+    if not prev["full"] or not cur["full"] or cur["time"] - prev["time"] != 86400000:
+        return False
+    return True
 
 def data_is_stale(rows):
     # Если свечи старые (монеты на бирже уже нет, как у XMR с февраля 2024), раньше скрипт молча давал сигнал
@@ -146,7 +153,7 @@ def backtest_fixed(symbol):
     for i in range(len(rows)-1):
         s = states[i]
         sig = decide_signal(s, trans, allowed)
-        if sig == "FLAT":
+        if sig == "FLAT" or not tradable(rows[i], rows[i+1]):
             continue
 
         entry = rows[i+1]["open"]

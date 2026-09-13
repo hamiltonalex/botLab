@@ -14,9 +14,10 @@
 минимуму и максимуму дня, поэтому её столбцы сверяются с опорой только в режиме intraday.
 
 Данные. Кэш klines-cache/<SYMBOL>USDT-1d.json хранит сырые дневные свечи Binance, только завершённые
-на момент скачивания (closeTime, поле k[6], уже наступил); свечи короче суток (обрезанная свеча
-делистинга) отбрасываются при чтении. Кэш живёт шесть часов и перекачивается, как только после его последней
-свечи закрылся новый день UTC; ключ --refresh качает заново.
+на момент скачивания (closeTime, поле k[6], уже наступил); свечи короче суток (техработы, свеча делистинга)
+не отбрасываются, а помечаются флагом full=False и не торгуются, как и пары с пропуском между днями (tradable).
+Кэш живёт шесть часов и перекачивается, как только после его последней свечи закрылся новый день UTC;
+ключ --refresh качает заново.
 
 Контракт для рабочей копии (появляется с правкой «обучение только по прошлому»):
     walk_forward(rows, window, fee=0.0, slippage=0.0) -> dict с ключами
@@ -27,7 +28,8 @@
     Для каждого t от window до len(rows)-1: окно rows[t-window:t]; квантили, матрица и лучшая
     комбинация только по окну (перебор как в adaptive_model(): порядок itertools.combinations по
     r от 1 до 5, строгое «больше», score = equity / (1 + trades / 100), комбинации без сделок
-    пропускаются; внутри окна торгуются все пары закрытых свечей, то есть свечи 1..window-1); сигнал по состоянию
+    пропускаются; внутри окна торгуются все годные пары закрытых свечей, то есть свечи 1..window-1, кроме пар
+    с неполным днём или пропуском, см. tradable); сигнал по состоянию
     последней свечи окна rows[t-1]; сделка на rows[t]: вход по открытию, выход по закрытию, стоп на
     экстремуме rows[t-1]. День без комбинации (все без сделок) пропускается без сделки. Сделка:
     pnl = ... минус fee (комиссия за круг долей оборота, вычитается аддитивно из каждой сделки),
@@ -105,9 +107,25 @@ def fetch_raw_klines(symbol, ttl_sec=6 * 3600, refresh=False):
 
 
 def to_rows(klines):
-    """Строки в формате скрипта плюс время открытия и закрытия; свечи короче суток отброшены."""
+    """Строки в формате скрипта плюс время открытия и закрытия и флаг полных суток; ничего не выбрасывается,
+    неполный день (full=False) и пропуск между днями просто не торгуются (см. tradable)."""
+    klines = sorted(klines, key=lambda k: k[0])
     return [{"open": float(k[1]), "high": float(k[2]), "low": float(k[3]), "close": float(k[4]),
-             "time": k[0], "close_time": k[6]} for k in klines if k[6] - k[0] >= DAY_MS - 1000]
+             "time": k[0], "close_time": k[6], "full": k[6] - k[0] >= DAY_MS - 1000} for k in klines]
+
+
+def tradable(prev, cur):
+    """Пара дней годится для сделки: оба дня полные и идут подряд без пропуска."""
+    if not prev.get("full", True) or not cur.get("full", True):
+        return False
+    if "time" in prev and "time" in cur and cur["time"] - prev["time"] != DAY_MS:
+        return False
+    return True
+
+
+def gaps(rows):
+    """Список пропусков между соседними днями (для печати)."""
+    return [(iso(a["time"]), iso(b["time"])) for a, b in zip(rows, rows[1:]) if b["time"] - a["time"] != DAY_MS]
 
 
 def fetch_all_daily(symbol, refresh=False):
@@ -160,8 +178,8 @@ def fit_window(win, mode="intraday", fee=0.0, slip=0.0, last_pair=True):
     equity(C) = произведение equity({s}) по s из C, потому что сделки разных дней перемножаются независимо;
     это тождественно циклу backtest() скрипта с точностью до порядка умножения float (ключ --check-combos
     сверяет выбранную комбинацию с перебором оригинала на каждом окне).
-    last_pair=True: торгуются все пары закрытых свечей (исправленный скрипт); False: последняя свеча окна не
-    торгуется, как в оригинале, где она была незакрытой."""
+    last_pair=True: торгуются все годные пары закрытых свечей (исправленный скрипт: неполный день и пропуск
+    не торгуются); False: как в оригинале, последняя свеча окна не торгуется, а неполные дни торгуются."""
     rets = dm.compute_returns(win)
     states = dm.build_states(rets)
     trans = dm.build_transition_matrix(states)
@@ -169,7 +187,7 @@ def fit_window(win, mode="intraday", fee=0.0, slip=0.0, last_pair=True):
     eq = {s: 1.0 for s in ALL}; tr = {s: 0 for s in ALL}; wn = {s: 0 for s in ALL}
     for i in range(len(win) - (1 if last_pair else 2)):
         s = states[i]; sig = sig_of[s]
-        if sig == "FLAT":
+        if sig == "FLAT" or (last_pair and not tradable(win[i], win[i + 1])):  # в режиме оригинала неполные дни торгуются
             continue
         p = trade_pnl(win[i], win[i + 1], sig, mode, fee, slip)
         eq[s] *= 1 + p; tr[s] += 1; wn[s] += (p > 0)
@@ -196,7 +214,7 @@ def stand_insample(rows, mode, fee, slip, last_pair=True):
     e, t, w = 1.0, 0, 0
     for i in range(len(rows) - (1 if last_pair else 2)):
         s = states[i]
-        if s not in best or sig_of[s] == "FLAT":
+        if s not in best or sig_of[s] == "FLAT" or (last_pair and not tradable(rows[i], rows[i + 1])):
             continue
         p = trade_pnl(rows[i], rows[i + 1], sig_of[s], mode, fee, slip)
         e *= 1 + p; t += 1; w += (p > 0)
@@ -217,7 +235,7 @@ def walk_forward(rows, W=200, mode="intraday", fee=0.0, slip=0.0, selection="bes
             changes += 1
         prev_combo = combo
         sig = dm.decide_signal(states[-1], trans, combo)
-        if sig == "FLAT":
+        if sig == "FLAT" or not tradable(rows[t - 1], rows[t]):
             continue
         p = trade_pnl(rows[t - 1], rows[t], sig, mode, fee, slip)
         equity *= 1 + p; trades += 1; wins += (p > 0)
@@ -225,9 +243,10 @@ def walk_forward(rows, W=200, mode="intraday", fee=0.0, slip=0.0, selection="bes
         curve.append((rows[t]["time"], equity))
     best, sig_of, states, trans, _ = fit_window(rows[-W:], mode, fee, slip)
     combo = (best if selection == "best" else ALL) if best else None
+    last_full = next(r for r in reversed(rows) if r.get("full", True))  # конец периода: последний полный день
     return {"equity": equity, "trades": trades, "wins": wins, "max_drawdown": mdd,
             "combo": combo, "state": states[-1], "signal": dm.decide_signal(states[-1], trans, combo) if combo else "FLAT",
-            "start": iso(rows[W]["time"]), "end": iso(rows[-1]["time"]),
+            "start": iso(rows[W]["time"]), "end": iso(last_full["time"]),
             "combos": len(combos_seen), "combo_changes": changes, "curve": curve}
 
 # ---------- прогон модулей Дмитрия их же функциями ----------
@@ -310,11 +329,12 @@ def strategy_same(rows):
 def shuffled_rows(rows, rng):
     """Те же свечи в случайном порядке, сцепленные так, что open следующей = close предыдущей. Распределение
     дневных доходностей и форма свечей сохранены, последовательность (на ней строится матрица) уничтожена."""
+    rows = [r for r in rows if r.get("full", True)]  # только полные дни: неполная свеча не должна становиться «днём»
     shapes = [(r["close"] / r["open"], r["high"] / r["open"], r["low"] / r["open"]) for r in rows]
     rng.shuffle(shapes)
     out, o = [], rows[0]["open"]
     for (c, h, l), src in zip(shapes, rows):
-        out.append({"open": o, "high": o * h, "low": o * l, "close": o * c, "time": src["time"], "close_time": src["close_time"]})
+        out.append({"open": o, "high": o * h, "low": o * l, "close": o * c, "time": src["time"], "close_time": src["close_time"], "full": True})
         o = o * c
     return out
 
@@ -390,8 +410,10 @@ def main():
     for sym in a.symbols.split(","):
         rows = fetch_all_daily(sym, refresh=a.refresh)
         lastW = rows[-W:]
-        R = {"candles": len(rows), "first": iso(rows[0]["time"]), "last": iso(rows[-1]["time"]), "cache": cache_stamp(sym)}
-        print(f"\n=== {sym}: {len(rows)} завершённых свечей {R['first']}..{R['last']}, кэш скачан {R['cache']} ===")
+        R = {"candles": len(rows), "first": iso(rows[0]["time"]), "last": iso(rows[-1]["time"]), "cache": cache_stamp(sym),
+             "partial_days": [iso(r["time"]) for r in rows if not r["full"]], "gaps": gaps(rows)}
+        print(f"\n=== {sym}: {len(rows)} завершённых свечей {R['first']}..{R['last']}, кэш скачан {R['cache']}; "
+              f"неполных дней {len(R['partial_days'])} {R['partial_days'][:3]}, пропусков {len(R['gaps'])} {R['gaps'][:3]} ===")
 
         R["strategy_same"] = strategy_same(lastW)
         print(f"стратегия (доходности, состояния, матрица, решения) у оригинала и рабочей копии: {'совпадает' if R['strategy_same'] else 'РАСХОДИТСЯ'}")
@@ -426,7 +448,7 @@ def main():
         eo = backtest_with_signal(ORIG, rows, lambda: "LONG")
         ew = backtest_with_signal(WORK, rows, lambda: "LONG", fee, slip)
         n_days = len(rows) - 2  # оригинал торгует пары 0..len-3: последняя свеча у него не торговалась
-        pairs_work = list(range(len(rows) - 1))  # исправленный скрипт: все пары закрытых свечей
+        pairs_work = [i for i in range(len(rows) - 1) if tradable(rows[i], rows[i + 1])]  # исправленный скрипт: все годные пары
         exp_work = 1.0
         for i in pairs_work:
             exp_work *= 1 + trade_pnl(rows[i], rows[i + 1], "LONG", "intraday", fee, slip)
@@ -454,12 +476,14 @@ def main():
         ref = walk_forward(rows, W, mode, fee, slip)
         ref.pop("curve")
         wf = script_walk_forward(WORK, rows, W, fee, slip)
-        bh = rows[-1]["close"] / rows[W]["open"]
+        last_full = next(r for r in reversed(rows) if r["full"])
+        bh = last_full["close"] / rows[W]["open"]  # купил и держи до последнего полного дня
         coins_wf = []
         for k in range(a.coins):
             r3 = random.Random(500 + k); e = 1.0
             for t in range(W, len(rows)):
-                e *= 1 + trade_pnl(rows[t - 1], rows[t], r3.choice(("LONG", "SHORT")), mode, fee, slip)
+                if tradable(rows[t - 1], rows[t]):
+                    e *= 1 + trade_pnl(rows[t - 1], rows[t], r3.choice(("LONG", "SHORT")), mode, fee, slip)
             coins_wf.append(e)
         R["walk_forward"] = {"stand": ref, "work": wf, "match": close_enough(ref, wf) if (wf and mode == "intraday") else None,
                              "buy_hold": bh, "coin_median": statistics.median(coins_wf),

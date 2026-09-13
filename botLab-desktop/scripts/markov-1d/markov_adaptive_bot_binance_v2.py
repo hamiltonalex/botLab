@@ -33,7 +33,8 @@ def fetch_klines_binance(symbol, limit=200):
     data = r.json()
     # оставляем только свечи, которые уже закрылись (сравниваем время закрытия свечи с текущим временем)
     data = [k for k in data if k[6] < now_ms][-limit:]
-    rows = [{"open": float(k[1]), "high": float(k[2]), "low": float(k[3]), "close": float(k[4])} for k in data]
+    rows = [{"open": float(k[1]), "high": float(k[2]), "low": float(k[3]), "close": float(k[4]), "time": k[0],
+             "full": k[6] - k[0] >= 86400000 - 1000} for k in data]  # full: свеча покрывает полные сутки
     return rows
 
 def fetch_all_klines_binance(symbol):
@@ -69,9 +70,17 @@ def fetch_all_klines_binance(symbol):
         data = [k for k in data if k[6] < now_ms]
         with open(path, "w") as f:
             json.dump(data, f)
-    # свечи короче суток (первый день торгов монеты или день снятия с биржи) выбрасываем: это не полный день
-    data = [k for k in data if k[6] - k[0] >= 86400000 - 1000]
-    rows = [{"open": float(k[1]), "high": float(k[2]), "low": float(k[3]), "close": float(k[4]), "time": k[0]} for k in data]
+    # Раньше свечи короче суток (например, 28 минут за 2018-02-08, день техработ Binance) выбрасывались, и соседние
+    # дни склеивались, как будто между ними не было дня. Теперь ни одна свеча не выбрасывается: неполный день только
+    # помечается (full = False), и сделка в такой день не считается. Если в истории есть пропущенные дни, скрипт
+    # об этом пишет, а через пропуск сделки не открывает.
+    data.sort(key=lambda k: k[0])
+    rows = [{"open": float(k[1]), "high": float(k[2]), "low": float(k[3]), "close": float(k[4]), "time": k[0],
+             "full": k[6] - k[0] >= 86400000 - 1000} for k in data]
+    for a, b in zip(rows, rows[1:]):
+        if b["time"] - a["time"] != 86400000:
+            print(f"Внимание: в истории {symbol} пропуск между {time.strftime('%Y-%m-%d', time.gmtime(a['time'] / 1000))} "
+                  f"и {time.strftime('%Y-%m-%d', time.gmtime(b['time'] / 1000))}, через него сделки не открываются.")
     return rows
 
 # ============================
@@ -128,6 +137,14 @@ def decide_signal(state, trans, allowed_states):
 #   БЭКТЕСТ ДЛЯ КОМБИНАЦИИ
 # ============================
 
+def tradable(prev, cur):
+    # Неполный день или пропуск между днями: сделку не открываем, стоп и выход на таких данных честно не посчитать.
+    if not prev.get("full", True) or not cur.get("full", True):
+        return False
+    if "time" in prev and "time" in cur and cur["time"] - prev["time"] != 86400000:
+        return False
+    return True
+
 def trade_pnl(prev, cur, sig, fee=0.0, slippage=0.0):
     # Одна сделка: вход по открытию дня, выход по закрытию, стоп на минимуме (лонг) или максимуме (шорт) вчерашнего дня.
     # Расчёт вынесен отдельно, чтобы старый бэктест и новая проверка по дням считали сделку одинаково.
@@ -162,7 +179,7 @@ def backtest(rows, states, trans, allowed_states, fee=0.0, slippage=0.0):
     for i in range(len(rows)-1):
         s = states[i]
         sig = decide_signal(s, trans, allowed_states)
-        if sig == "FLAT":
+        if sig == "FLAT" or not tradable(rows[i], rows[i+1]):
             continue
         pnl = trade_pnl(rows[i], rows[i+1], sig, fee, slippage)  # сама сделка теперь считается в trade_pnl: честный стоп и комиссия
         equity *= (1 + pnl)
@@ -213,7 +230,7 @@ def walk_forward(rows, window=WINDOW, fee=0.0, slippage=0.0):
         if best is None:
             continue
         sig = decide_signal(states[-1], trans, best[0])
-        if sig == "FLAT":
+        if sig == "FLAT" or not tradable(rows[t - 1], rows[t]):
             continue
         pnl = trade_pnl(rows[t - 1], rows[t], sig, fee, slippage)
         equity *= (1 + pnl)
@@ -231,9 +248,10 @@ def walk_forward(rows, window=WINDOW, fee=0.0, slippage=0.0):
     combo = best[0] if best else None
     signal = decide_signal(states[-1], trans, combo) if combo else "FLAT"
     day = lambda ms: time.strftime("%Y-%m-%d", time.gmtime(ms / 1000))
+    last_full = next(r for r in reversed(rows) if r["full"])  # конец периода: последний полный день, неполный не торгуется
     return {"equity": equity, "trades": trades, "wins": wins, "max_drawdown": max_drawdown,
             "combo": combo, "state": states[-1], "signal": signal,
-            "start": day(rows[window]["time"]), "end": day(rows[-1]["time"])}
+            "start": day(rows[window]["time"]), "end": day(last_full["time"])}
 
 # ============================
 #   АДАПТИВНАЯ МОДЕЛЬ
