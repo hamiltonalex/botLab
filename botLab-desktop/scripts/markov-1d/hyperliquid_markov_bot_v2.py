@@ -1,4 +1,5 @@
 import requests
+import time
 
 # ============================
 #   НАСТРОЙКИ
@@ -20,19 +21,27 @@ FIXED_COMBOS = {
     "ARB": (4, 5),
 }
 
+FEE_ROUND_TRIP = 0.001  # комиссия за круг долей оборота: тейкер фьючерсов Binance 0,05% на сторону; для Hyperliquid 0.0007
+SLIPPAGE_ON_STOP = 0.0  # проскальзывание при исполнении стопа долей цены стопа, по умолчанию нет
+MAX_STALE_DAYS = 2  # если последняя завершённая свеча старше, данные протухли (монета делистингована) и сигнала нет
+
 # ============================
 #   BINANCE СВЕЧИ
 # ============================
 
 def fetch_klines_binance(symbol, limit=200):
+    # запрашиваем на одну свечу больше, потому что последняя свеча Binance обычно ещё не закрыта
     params = {
         "symbol": symbol + "USDT",
         "interval": "1d",
-        "limit": limit
+        "limit": limit + 1
     }
+    now_ms = int(time.time() * 1000)  # момент до запроса: свеча, закрывшаяся во время запроса, тоже отбрасывается
     r = requests.get(BINANCE_URL, params=params, timeout=10)
     r.raise_for_status()
     data = r.json()
+    # только завершённые свечи: время закрытия (поле k[6]) уже наступило
+    data = [k for k in data if k[6] < now_ms][-limit:]
 
     rows = []
     for k in data:
@@ -40,9 +49,19 @@ def fetch_klines_binance(symbol, limit=200):
             "open": float(k[1]),
             "high": float(k[2]),
             "low": float(k[3]),
-            "close": float(k[4])
+            "close": float(k[4]),
+            "time": k[0]
         })
     return rows
+
+def data_is_stale(rows):
+    # протухшие данные: последняя завершённая свеча закрылась больше MAX_STALE_DAYS суток назад
+    last_close_ms = rows[-1]["time"] + 86400000
+    if time.time() * 1000 - last_close_ms > MAX_STALE_DAYS * 86400000:
+        last_day = time.strftime("%Y-%m-%d", time.gmtime(rows[-1]["time"] / 1000))
+        print(f"Последняя завершённая свеча {last_day} старше {MAX_STALE_DAYS} суток: нет свежих данных, сигнала нет.")
+        return True
+    return False
 
 # ============================
 #   МАРКОВСКАЯ МОДЕЛЬ
@@ -107,12 +126,15 @@ def backtest_fixed(symbol):
     print(f"\n=== БЭКТЕСТ 1D (Binance + стоплосс) для {symbol} ===")
 
     rows = fetch_klines_binance(symbol)
+    if data_is_stale(rows):
+        return
     rets = compute_returns(rows)
     states = build_states(rets)
     trans = build_transition_matrix(states)
     allowed = FIXED_COMBOS[symbol]
 
     equity = 1.0
+    equity_net = 1.0  # то же с комиссией за круг на каждой сделке
     trades = 0
     wins = 0
 
@@ -128,20 +150,28 @@ def backtest_fixed(symbol):
         prev_low = rows[i]["low"]
         prev_high = rows[i]["high"]
 
+        # стоп срабатывает, если экстремум торгуемой свечи его коснулся (low для лонга, high для шорта),
+        # а не если за ним оказалось закрытие; стоп не ниже входа для лонга (не выше для шорта)
+        # означает закрытие по входу, pnl = 0; проскальзывание ухудшает цену исполнения стопа
         if sig == "LONG":
             stoploss = prev_low
-            if exit_ < stoploss:
-                pnl = (stoploss - entry) / entry
+            if stoploss >= entry:
+                pnl = 0.0
+            elif rows[i+1]["low"] <= stoploss:
+                pnl = (stoploss * (1 - SLIPPAGE_ON_STOP) - entry) / entry
             else:
                 pnl = (exit_ - entry) / entry
         else:
             stoploss = prev_high
-            if exit_ > stoploss:
-                pnl = (entry - stoploss) / entry
+            if stoploss <= entry:
+                pnl = 0.0
+            elif rows[i+1]["high"] >= stoploss:
+                pnl = (entry - stoploss * (1 + SLIPPAGE_ON_STOP)) / entry
             else:
                 pnl = (entry - exit_) / entry
 
         equity *= (1 + pnl)
+        equity_net *= (1 + pnl - FEE_ROUND_TRIP)
         trades += 1
         if pnl > 0:
             wins += 1
@@ -152,6 +182,7 @@ def backtest_fixed(symbol):
         print(f"Win-rate: {wins/trades*100:.2f}%")
     print(f"Доходность: {(equity-1)*100:.2f}%")
     print(f"Equity: {equity:.4f}")
+    print(f"Доходность с комиссией {FEE_ROUND_TRIP*100:.2f}% за круг: {(equity_net-1)*100:.2f}% (equity {equity_net:.4f})")
 
 # ============================
 #   РЕАЛЬНЫЙ СИГНАЛ (БЕЗ ОРДЕРОВ)
@@ -161,6 +192,8 @@ def live_signal(symbol):
     print(f"\n=== РЕАЛЬНЫЙ СИГНАЛ для {symbol} (Binance) ===")
 
     rows = fetch_klines_binance(symbol)
+    if data_is_stale(rows):
+        return
     rets = compute_returns(rows)
     states = build_states(rets)
     trans = build_transition_matrix(states)
@@ -178,6 +211,9 @@ def live_signal(symbol):
 # ============================
 
 def main():
+    print("ВНИМАНИЕ: комбинации FIXED_COMBOS заморожены с одного из прошлых запусков адаптивной версии")
+    print("и с тем, что она выбирает сегодня, не совпадают; бэктест ниже считается на тех же свечах,")
+    print("по которым построена матрица переходов (внутри выборки).")
     for s in SYMBOLS:
         backtest_fixed(s)
 
