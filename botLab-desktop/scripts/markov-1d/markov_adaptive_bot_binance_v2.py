@@ -11,6 +11,7 @@ CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "klines-cac
 CACHE_TTL_SEC = 6 * 3600  # кэш живёт шесть часов, потом история качается заново
 FEE_ROUND_TRIP = 0.001  # комиссия за круг долей оборота: тейкер фьючерсов Binance 0,05% на сторону; для Hyperliquid 0.0007
 SLIPPAGE_ON_STOP = 0.0  # проскальзывание при исполнении стопа долей цены стопа, по умолчанию нет
+MAX_STALE_DAYS = 2  # если последняя завершённая свеча старше, данные протухли (монета делистингована) и сигнала нет
 
 # ============================
 #   BINANCE СВЕЧИ
@@ -224,6 +225,12 @@ def adaptive_model(symbol):
     if len(rows) < WINDOW + 1:
         print(f"Истории меньше {WINDOW + 1} завершённых свечей, прогон невозможен.")
         print("Сигнал: FLAT")
+        return
+    # протухшие данные: последняя завершённая свеча закрылась больше MAX_STALE_DAYS суток назад
+    last_close_ms = rows[-1]["time"] + 86400000
+    if time.time() * 1000 - last_close_ms > MAX_STALE_DAYS * 86400000:
+        last_day = time.strftime("%Y-%m-%d", time.gmtime(rows[-1]["time"] / 1000))
+        print(f"Последняя завершённая свеча {last_day} старше {MAX_STALE_DAYS} суток: нет свежих данных, сигнала нет.")
         return
 
     # доходность считается только по сделкам, для которых обучение шло по прошлым свечам;
