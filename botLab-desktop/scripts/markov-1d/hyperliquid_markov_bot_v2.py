@@ -141,7 +141,9 @@ def backtest_fixed(symbol):
     trades = 0
     wins = 0
 
-    for i in range(len(rows)-2):
+    # Раньше цикл не доходил до последней свечи: в оригинале она была ещё не закрыта. Теперь все свечи закрыты,
+    # поэтому последняя пара дней тоже идёт в расчёт, как и все остальные.
+    for i in range(len(rows)-1):
         s = states[i]
         sig = decide_signal(s, trans, allowed)
         if sig == "FLAT":

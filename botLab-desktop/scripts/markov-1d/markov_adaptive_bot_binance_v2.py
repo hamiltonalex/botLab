@@ -157,7 +157,9 @@ def trade_pnl(prev, cur, sig, fee=0.0, slippage=0.0):
 
 def backtest(rows, states, trans, allowed_states, fee=0.0, slippage=0.0):
     equity, trades, wins = 1.0, 0, 0
-    for i in range(len(rows)-2):
+    # Раньше цикл не доходил до последней свечи: в оригинале она была ещё не закрыта. Теперь все свечи закрыты,
+    # поэтому последняя пара дней тоже идёт в оценку комбинации, как и все остальные.
+    for i in range(len(rows)-1):
         s = states[i]
         sig = decide_signal(s, trans, allowed_states)
         if sig == "FLAT":

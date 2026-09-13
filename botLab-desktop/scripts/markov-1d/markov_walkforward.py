@@ -27,7 +27,7 @@
     Для каждого t от window до len(rows)-1: окно rows[t-window:t]; квантили, матрица и лучшая
     комбинация только по окну (перебор как в adaptive_model(): порядок itertools.combinations по
     r от 1 до 5, строгое «больше», score = equity / (1 + trades / 100), комбинации без сделок
-    пропускаются; внутри окна торгуются свечи 1..window-2, как в backtest()); сигнал по состоянию
+    пропускаются; внутри окна торгуются все пары закрытых свечей, то есть свечи 1..window-1); сигнал по состоянию
     последней свечи окна rows[t-1]; сделка на rows[t]: вход по открытию, выход по закрытию, стоп на
     экстремуме rows[t-1]. День без комбинации (все без сделок) пропускается без сделки. Сделка:
     pnl = ... минус fee (комиссия за круг долей оборота, вычитается аддитивно из каждой сделки),
@@ -155,17 +155,19 @@ def trade_pnl(prev, cur, sig, mode="intraday", fee=0.0, slip=0.0):
 
 # ---------- опора стенда: отбор комбинации на окне ----------
 
-def fit_window(win, mode="intraday", fee=0.0, slip=0.0):
+def fit_window(win, mode="intraday", fee=0.0, slip=0.0, last_pair=True):
     """Процедура скрипта на окне win с заданным учётом. Перебор 31 комбинации через произведение по состояниям:
     equity(C) = произведение equity({s}) по s из C, потому что сделки разных дней перемножаются независимо;
     это тождественно циклу backtest() скрипта с точностью до порядка умножения float (ключ --check-combos
-    сверяет выбранную комбинацию с перебором оригинала на каждом окне)."""
+    сверяет выбранную комбинацию с перебором оригинала на каждом окне).
+    last_pair=True: торгуются все пары закрытых свечей (исправленный скрипт); False: последняя свеча окна не
+    торгуется, как в оригинале, где она была незакрытой."""
     rets = dm.compute_returns(win)
     states = dm.build_states(rets)
     trans = dm.build_transition_matrix(states)
     sig_of = {s: dm.decide_signal(s, trans, ALL) for s in ALL}
     eq = {s: 1.0 for s in ALL}; tr = {s: 0 for s in ALL}; wn = {s: 0 for s in ALL}
-    for i in range(len(win) - 2):  # тот же диапазон, что в backtest(): последняя свеча окна не торгуется
+    for i in range(len(win) - (1 if last_pair else 2)):
         s = states[i]; sig = sig_of[s]
         if sig == "FLAT":
             continue
@@ -185,14 +187,14 @@ def fit_window(win, mode="intraday", fee=0.0, slip=0.0):
     return best, sig_of, states, trans, {s: (eq[s], tr[s], wn[s]) for s in ALL}
 
 
-def stand_insample(rows, mode, fee, slip):
+def stand_insample(rows, mode, fee, slip, last_pair=True):
     """Опора стенда внутри выборки: та же процедура, что adaptive_model(), но с учётом по параметрам.
     Equity выбранной комбинации пересчитана последовательным проходом по дням, как в backtest()."""
-    best, sig_of, states, trans, ps = fit_window(rows, mode, fee, slip)
+    best, sig_of, states, trans, ps = fit_window(rows, mode, fee, slip, last_pair)
     if best is None:
         return None
     e, t, w = 1.0, 0, 0
-    for i in range(len(rows) - 2):
+    for i in range(len(rows) - (1 if last_pair else 2)):
         s = states[i]
         if s not in best or sig_of[s] == "FLAT":
             continue
@@ -398,7 +400,7 @@ def main():
         o = script_insample(ORIG, lastW)
         w = script_insample(WORK, lastW, fee, slip)
         s = stand_insample(lastW, mode, fee, slip)
-        s_asis = stand_insample(lastW, "asis", 0.0, 0.0)
+        s_asis = stand_insample(lastW, "asis", 0.0, 0.0, last_pair=False)  # как в оригинале: последняя свеча не торгуется
         R["insample"] = {"orig": o, "work": w, "stand": s, "work_eq_orig": same_exact(o, w),
                          "stand_asis_id_orig": same_tol(o, s_asis), "work_eq_stand": same_tol(w, s) if mode == "intraday" else None}
         print(f"внутри выборки ({W} свечей)          combo            equity     trades wins state signal")
@@ -413,7 +415,7 @@ def main():
             mism = 0
             for t in range(W, len(rows) + 1):
                 win = rows[t - W:t]
-                b = fit_window(win, "asis", 0.0, 0.0)[0]
+                b = fit_window(win, "asis", 0.0, 0.0, last_pair=False)[0]
                 so = script_insample(ORIG, win)
                 if (so["combo"] if so else None) != b:
                     mism += 1
@@ -423,22 +425,27 @@ def main():
         # B. цена пола на тех же днях, что backtest(): всегда лонг через backtest() каждого модуля и по стенду
         eo = backtest_with_signal(ORIG, rows, lambda: "LONG")
         ew = backtest_with_signal(WORK, rows, lambda: "LONG", fee, slip)
-        n_days = len(rows) - 2
+        n_days = len(rows) - 2  # оригинал торгует пары 0..len-3: последняя свеча у него не торговалась
+        pairs_work = list(range(len(rows) - 1))  # исправленный скрипт: все пары закрытых свечей
+        exp_work = 1.0
+        for i in pairs_work:
+            exp_work *= 1 + trade_pnl(rows[i], rows[i + 1], "LONG", "intraday", fee, slip)
+        work_long_ok = math.isclose(exp_work, ew[0], rel_tol=REL_TOL) and ew[1] == len(pairs_work)
         gap = (math.log(eo[0]) - math.log(ew[0])) / n_days
-        floor_log = statistics.mean(log1(trade_pnl(rows[i], rows[i + 1], "LONG", "asis")) - log1(trade_pnl(rows[i], rows[i + 1], "LONG", "intraday", fee, slip))
-                                    for i in range(n_days))
+        floor_log = statistics.mean(log1(trade_pnl(rows[i], rows[i + 1], "LONG", "asis")) - log1(trade_pnl(rows[i], rows[i + 1], "LONG", "intraday"))
+                                    for i in pairs_work)
         coins_o, coins_w = [], []
         for k in range(a.coins):
             r1, r2 = random.Random(100 + k), random.Random(100 + k)
             coins_o.append(math.log(backtest_with_signal(ORIG, rows, lambda: r1.choice(("LONG", "SHORT")))[0]) / n_days)
-            coins_w.append(math.log(backtest_with_signal(WORK, rows, lambda: r2.choice(("LONG", "SHORT")), fee, slip)[0]) / n_days)
-        R["floor"] = {"always_long_orig": eo[0], "always_long_work": ew[0], "days": n_days, "log_gap_per_day": gap,
-                      "floor_log_per_day": floor_log, "gap_minus_floor": gap - floor_log,
+            coins_w.append(math.log(backtest_with_signal(WORK, rows, lambda: r2.choice(("LONG", "SHORT")), fee, slip)[0]) / max(1, len(pairs_work)))
+        R["floor"] = {"always_long_orig": eo[0], "always_long_work": ew[0], "days": n_days, "pairs_work": len(pairs_work),
+                      "work_long_matches_stand": work_long_ok, "log_gap_per_day": gap, "floor_log_per_day": floor_log,
                       "coin_orig_daily_log_median": statistics.median(coins_o), "coin_work_daily_log_median": statistics.median(coins_w),
                       "coin_orig_share_positive": sum(x > 0 for x in coins_o) / a.coins, "coin_work_share_positive": sum(x > 0 for x in coins_w) / a.coins}
-        print(f"всегда лонг через backtest() на {n_days} днях: как получено {pct(eo[0])}%, исправлено {pct(ew[0])}%; "
-              f"разрыв столбцов {100 * gap:.4f}% в день (лог), цена пола по стенду {100 * floor_log:.4f}% в день (лог, те же дни, те же fee/slip), "
-              f"разность {100 * (gap - floor_log):+.5f}")
+        print(f"всегда лонг через backtest(): как получено {pct(eo[0])}% ({eo[1]} пар), исправлено {pct(ew[0])}% ({ew[1]} пар); "
+              f"исправлено == опора по тем же парам: {work_long_ok}; разрыв столбцов {100 * gap:.4f}% в день (лог), "
+              f"цена пола стопа по закрытию {100 * floor_log:.4f}% в день (лог, без комиссии, пары исправленного)")
         print(f"монетка через backtest(), {a.coins} семян, медиана лог-доходности в день: как получено {100 * R['floor']['coin_orig_daily_log_median']:+.4f}% "
               f"(в плюсе {100 * R['floor']['coin_orig_share_positive']:.0f}% семян), исправлено {100 * R['floor']['coin_work_daily_log_median']:+.4f}% "
               f"(в плюсе {100 * R['floor']['coin_work_share_positive']:.0f}%)")
