@@ -222,7 +222,12 @@ export async function fetchGmxCurrent(chain = "arbitrum") {
     const c = gmxMarketToCanonical(m);
     if (c) byMarket.set(String(m.marketToken).toLowerCase(), c);
   }
-  return { chain: chainKey(chain), byMarket, fetchedAt: Date.now() };
+  // СЫРЫЕ СТРОКИ РЯДОМ С ПРИВЕДЁННЫМИ, И ЭТО НЕ ДУБЛИРОВАНИЕ. Приведение `gmxMarketToCanonical`
+  // теряет `isListed` и `listingDate`, а нелистингованный рынок выбрасывает вовсе, поэтому правило
+  // отбора вселенной (`fa/universe-scan.js`) на приведённых строках отказало бы ВСЕМ рынкам кодом
+  // `univ_not_listed`. Отбор обязан видеть ответ площадки таким, каким он пришёл; снимкам и
+  // начислению по-прежнему нужна `byMarket`, и она не трогается.
+  return { chain: chainKey(chain), byMarket, markets: d.markets || [], fetchedAt: Date.now() };
 }
 
 export async function fetchHlCurrent() {
@@ -231,7 +236,11 @@ export async function fetchHlCurrent() {
   meta.universe.forEach((u, i) => {
     if (ctxs[i]) byCoin.set(u.name, hlCtxToCanonical(u.name, u, ctxs[i]));
   });
-  return { byCoin, fetchedAt: Date.now() };
+  // МАССИВ `universe` РЯДОМ С КАРТОЙ, по той же причине и с той же ценой ошибки. Приведение
+  // `hlCtxToCanonical` не переносит признак делистинга, и карта `byCoin` содержит ВСЕ монеты
+  // ответа (ЗАМЕР 16.09: 234 монеты, из них 56 делистингованы). Отбор, накормленный картой, принял
+  // бы делистингованную монету за годную ногу хеджа - то есть ошибся бы молча, а не заметно.
+  return { byCoin, universe: meta.universe || [], fetchedAt: Date.now() };
 }
 
 // СТАКАН ОДНОЙ МОНЕТЫ Hyperliquid. Нужен правилу входа бота 1: без стакана проскальзывание

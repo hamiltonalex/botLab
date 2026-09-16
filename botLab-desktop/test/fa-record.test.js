@@ -27,6 +27,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FA_SIZING_REFUSALS, FA_SIZING_BINDINGS, FA_SIZING_DEFAULTS } from "../src/engine/fa/sizing.js";
 import { FA_EXIT_REASONS } from "../src/engine/fa/exit.js";
+import { FA_UNIVERSE_DEFAULTS, FA_UNIVERSE_SOURCES } from "../src/engine/fa/universe-scan.js";
 import {
   FA_GAP_CAUSES, FA_GAP_SLOTS, FA_LIQ_SOURCES, FA_POS_MISSING, FA_RECORD_KINDS, FA_RECORD_PREFIX,
   FA_RECORD_SIZE, FA_RECORD_SOURCES, FA_RECORD_VERSION, FA_SNAP_LEG_FIELDS, FA_SNAP_MISSING,
@@ -651,6 +652,20 @@ test("при названном сроке хранения сутки за кр
 // 9. ОБЪЁМ. Числа шапки сверяются с настоящими строками
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ПЕРЕПИСЬ ОТКАЗОВ ЖИВОГО СНИМКА 16.09 при пороге 10%: пять кодов, 98 отказов. Блок вселенной
+// мерится и проверяется на ней, а не на выдуманном одном коде: счётчиков столько, сколько кодов.
+const UNIV_CENSUS = [["univ_oi_share", 56], ["univ_no_hl", 24], ["univ_no_room", 9], ["univ_not_perp", 7], ["univ_not_listed", 2]];
+const univRefusals = (() => {
+  const out = [];
+  for (const [code, n] of UNIV_CENSUS) for (let i = 0; i < n; i += 1) out.push({ key: `SYM${out.length}-arb-poolpool`, code });
+  return out;
+})();
+const univBlock = (full, refusals = univRefusals) => ({
+  at: T0 - 3600_000, source: "scan", instruments: 51, scanned: 147, cfg: FA_UNIVERSE_DEFAULTS, refusals, full,
+});
+const snapU = (full) => buildFaSnapRecord({ t: T0, gmxAgeSec: 2.1, hlAgeSec: 1.8, markets: [], position: null, universe: univBlock(full) });
+const snapUFull = (n) => buildFaSnapRecord({ t: T0, gmxAgeSec: 2.1, hlAgeSec: 1.8, markets: [], position: null, universe: univBlock(true, univRefusals.slice(0, n)) });
+
 test("FA_RECORD_SIZE сверяется с ДЛИНОЙ настоящих строк: добавленное поле роняет тест", () => {
   // Осознанно строгая проверка. Она обязана падать при любой правке формы строки, потому что
   // таблица мегабайтов в шапке модуля посчитана ИЗ ЭТИХ ЧИСЕЛ и иначе тихо разойдётся с явью.
@@ -683,6 +698,77 @@ test("FA_RECORD_SIZE сверяется с ДЛИНОЙ настоящих ст�
     t: T0, event: "switch", why: "alt_beats_hold", ageSec: 2.1, decisionAt: T0 - 1000,
     opened: tradeSide("ETH"), closed: tradeSide("BTC", { realizedUsd: 41.2719 }), costs: COSTS,
   })), FA_RECORD_SIZE.trade, "паспорт перекладки: самая длинная строка записи");
+
+  // БЛОК ВСЕЛЕННОЙ. Мерится на ПЕРЕПИСИ ЖИВОГО СНИМКА 16.09 при пороге 10% (пять кодов, 98
+  // отказов), а не на выдуманной: счётчики по кодам занимают столько, сколько кодов реально
+  // встречается, и синтетический один код дал бы число, которого в записи не бывает.
+  assert.equal(bytes(snapU(false)) - bytes(bare), FA_RECORD_SIZE.snapUniverse, "блок вселенной со счётчиками по кодам");
+  assert.equal(bytes(snapUFull(2)) - bytes(snapUFull(1)), FA_RECORD_SIZE.snapUnivRefusal, "одна пара «ключ, код» полного перечня");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9a. ВСЕЛЕННАЯ В СТРОКЕ СНИМКА. Без неё решение о составе невосстановимо
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("блока вселенной НЕТ, пока живой отбор выключен: строка прежняя ПОБИТОВО", () => {
+  // Главное свойство фазы 2: при `FA_UNIVERSE_SCAN=0` запись не меняется ни на байт, поэтому
+  // сверяются САМИ СТРОКИ, а не их длины. Длина совпала бы и у строки с переставленными полями.
+  const args = { t: T0, gmxAgeSec: 2.1, hlAgeSec: 1.8, markets: [market("BTC"), market("ETH")], position: position() };
+  const before = buildFaSnapRecord(args);
+  const after = buildFaSnapRecord({ ...args, universe: null });
+  assert.equal(before.u, undefined, "выключенный отбор не добавляет в строку ни байта");
+  assert.equal(JSON.stringify(before), JSON.stringify(after));
+  // Блок вселенной ПРИСТРАИВАЕТСЯ, а не перестраивает строку: всё, что было, остаётся тем же.
+  const withU = buildFaSnapRecord({ ...args, universe: univBlock(false) });
+  for (const k of Object.keys(before)) assert.deepEqual(withU[k], before[k], `поле ${k} сдвинулось из-за блока вселенной`);
+});
+
+test("состав, источник, пороги и ПЕРЕПИСЬ отказов по кодам едут в каждой строке", () => {
+  const u = snapU(false).u;
+  assert.equal(u.n, 51, "инструментов приложения");
+  assert.equal(u.sc, 147, "рынков просмотрено");
+  assert.equal(u.s, "scan");
+  assert.ok(FA_UNIVERSE_SOURCES.includes(u.s));
+  // Перепись по кодам это ответ «сколько и почему» без полного перечня.
+  assert.deepEqual(u.x, { univ_oi_share: 56, univ_no_hl: 24, univ_no_room: 9, univ_not_perp: 7, univ_not_listed: 2 });
+  assert.equal(Object.values(u.x).reduce((a, b) => a + b, 0), 98);
+  // ПОРОГИ В СИЛЕ. Состав, отобранный по другому тикету или другой доле интереса, это ДРУГОЙ
+  // состав, и восстановить отбор задним числом без его порогов нельзя.
+  assert.equal(u.cf.tk, 2500);
+  assert.equal(u.cf.oi, 10);
+  assert.equal(u.cf.ag, 0, "порог возраста выключен решением владельца 16.09");
+  assert.equal(u.r, undefined, "полного перечня в обычной строке нет");
+});
+
+test("ПОЛНЫЙ перечень отказов едет только в строке пересборки списка", () => {
+  const full = snapU(true).u;
+  assert.equal(full.r.length, 98, "по паре «ключ, код» на каждый отвергнутый рынок (И4)");
+  assert.deepEqual(full.r[0], ["SYM0-arb-poolpool", "univ_oi_share"]);
+  // Перепись при этом остаётся: читателю архива не придётся пересчитывать её самому.
+  assert.equal(full.x.univ_oi_share, 56);
+  // Цена полного перечня платится раз в каданс решения, а не 288 раз в сутки.
+  assert.ok(bytes(snapU(true)) - bytes(snapU(false)) > 3000);
+});
+
+test("неизвестный источник состава в строку НЕ попадает, а обнуляется", () => {
+  const u = buildFaSnapRecord({
+    t: T0, markets: [], position: null,
+    universe: { at: T0, source: "выдумка", instruments: 5, scanned: 5, cfg: FA_UNIVERSE_DEFAULTS, refusals: [] },
+  }).u;
+  assert.equal(u.s, null, "реестр источников закрыт, как и все прочие реестры записи");
+});
+
+test("объём с живым отбором: клетка шапки воспроизводится вызовом", () => {
+  // 51 инструмент, опрос пять минут, 98 отказов и одна пересборка в сутки.
+  const v = faVolumePerDay({ markets: 51, pollSec: 300, universeOn: true, universeRefusals: 98, decisionsPerDay: 1, tradesPerDay: 0.1, gapsPerDay: 1 });
+  assert.equal(Number((v.total / 1e6).toFixed(2)), 5.85, "5.85 МБ в сутки, как в таблице шапки");
+  assert.equal(Number((v.total * 365 / 1e9).toFixed(2)), 2.14, "2.14 ГБ в год");
+  // Сам блок вселенной в этом почти ничего не весит: дорог рост числа рынков, а не состав.
+  const off = faVolumePerDay({ markets: 51, pollSec: 300, decisionsPerDay: 1, tradesPerDay: 0.1, gapsPerDay: 1 });
+  assert.equal(Number(((v.total - off.total) / 1e6).toFixed(2)), 0.06);
+  // И выключенный отбор не меняет НИ ОДНОЙ прежней клетки.
+  assert.equal(faVolumePerDay({ markets: 5, pollSec: 300, decisionsPerDay: 1, tradesPerDay: 0.1, gapsPerDay: 1 }).total,
+    faVolumePerDay({ markets: 5, pollSec: 300, universeOn: false, decisionsPerDay: 1, tradesPerDay: 0.1, gapsPerDay: 1 }).total);
 });
 
 test("объём в сутки: боевая клетка шапки воспроизводится вызовом, а не переписана руками", () => {

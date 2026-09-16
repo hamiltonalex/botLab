@@ -49,7 +49,8 @@
     "make:icon": "node scripts/make-icon.mjs",
     "e2e:fa-cards": "node scripts/e2e-fa-cards.mjs",
     "e2e:fa-entry-trace": "node scripts/e2e-fa-entry-trace.mjs",
-    "demo:fa-entry-trace": "node scripts/demo-fa-entry-trace.mjs"
+    "demo:fa-entry-trace": "node scripts/demo-fa-entry-trace.mjs",
+    "smoke:universe": "node scripts/smoke-fa-universe.mjs"
   },
   "author": "Alex Hamilton",
   "license": "MIT",

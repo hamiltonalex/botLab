@@ -17,7 +17,9 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadBotStateQuarantine, loadFaBases, saveBotState, saveFaBases } from "../src/engine/store.js";
+import { loadBotStateQuarantine, loadFaBases, loadFaUniverse, saveBotState, saveFaBases, saveFaUniverse } from "../src/engine/store.js";
+import { FA_UNIVERSE_DEFAULTS, instrumentFor, resolveUniverse, schemeOf } from "../src/engine/fa/universe-scan.js";
+import { ALL_MARKETS } from "../src/engine/universe.js";
 import {
   AUTO_SCHEMA_VERSION, FA_AUTO_BOT_ID, armAuto, autoTick, createAutoState, ensureAutoState,
 } from "../src/engine/fa/auto.js";
@@ -191,5 +193,74 @@ test("автомат НЕ создаёт файлов бота 2 и не тро�
     const raw = JSON.parse(readFileSync(join(dir, `${ID}.json`), "utf8"));
     assert.equal(raw.botId, ID, "чужой читатель обязан по одному полю понять, чей это файл");
     assert.equal(raw.schemaVersion, AUTO_SCHEMA_VERSION);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. ЖИВОЙ СПИСОК ВСЕЛЕННОЙ ПЕРЕЖИВАЕТ РЕСТАРТ, и от этого зависит живая сделка
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// ЧТО ИМЕННО ЗДЕСЬ ЛОВИТСЯ. `closeOrphanedPositions()` главного процесса закрывает на старте любую
+// ОТКРЫТУЮ позицию, чей инструмент не опознан, и фиксирует P&L. При зашитом наборе это было
+// безопасно; при живом списке рынок может выпасть из отбора сам, и тогда перезагрузка приложения
+// закрывает сделку без единого решения правила. Между этим и потерей сделки стоит ровно одно:
+// список, поднятый С ДИСКА ДО ловушки, из которого удерживаемый инструмент прикрепляется обратно.
+
+test("СПИСОК ВСЕЛЕННОЙ ПЕРЕЖИВАЕТ РЕСТАРТ, и удерживаемый инструмент прикрепляется обратно", () => {
+  const dir = tmp();
+  try {
+    assert.equal(loadFaUniverse(dir), null, "списка ещё не было, и это не ошибка");
+
+    // Вчерашний список: запас плюс рынок, на котором стоит сделка.
+    const held = { key: "SOL-arb-solusdc", token: "SOL", hlCoin: "SOL", hlMaxLev: 20, gmxName: "SOL/USD [SOL-USDC]", gmxAddr: "0xc0de", chain: "Arbitrum" };
+    const yesterday = resolveUniverse({ scan: { instruments: [held], refusals: [] }, fallback: ALL_MARKETS });
+    assert.equal(yesterday.instruments.length, ALL_MARKETS.length + 1);
+    saveFaUniverse(dir, {
+      at: T, source: yesterday.source, scanned: 147, cfg: FA_UNIVERSE_DEFAULTS,
+      instruments: yesterday.instruments, refusals: [{ key: "X-arb-x", code: "univ_no_hl" }],
+    });
+    assert.ok(existsSync(join(dir, "funding-arb-universe.json")), "список лежит своим файлом профиля");
+
+    // РЕСТАРТ. Зеркало `faLoadUniverse()`: площадки ещё не отвечали, поэтому отбора нет вовсе.
+    const saved = loadFaUniverse(dir);
+    assert.equal(saved.refusals[0].code, "univ_no_hl", "отказы переживают рестарт вместе со списком");
+    const back = resolveUniverse({ scan: null, saved: saved.instruments, fallback: ALL_MARKETS, held: [{ strategy: "two", key: "SOL-arb-solusdc" }] });
+    assert.equal(back.source, "saved");
+    // Инструмент сделки опознаётся - значит ловушка сирот его НЕ закроет.
+    const inst = instrumentFor(back.instruments, "two", "SOL-arb-solusdc", ALL_MARKETS);
+    assert.ok(inst, "после рестарта инструмент открытой сделки обязан опознаваться");
+    assert.equal(inst.gmxAddr, "0xc0de", "и это тот же рынок, а не одноимённый");
+    // Пять ключей запаса на месте, схемы прежние.
+    for (const m of ALL_MARKETS) {
+      assert.ok(instrumentFor(back.instruments, schemeOf(m), m.key, ALL_MARKETS), `ключ запаса ${m.key} пропал`);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("БЕЗ СОХРАНЁННОГО СПИСКА удерживаемый рынок ТЕРЯЕТСЯ: цена файла названа падающей проверкой", () => {
+  // Обратная сторона предыдущей проверки. Она нужна, чтобы «список на диске» не выглядело
+  // украшением: без него ровно та же перезагрузка не находит инструмента, и позиция закрывается.
+  const back = resolveUniverse({ scan: null, saved: null, fallback: ALL_MARKETS, held: [{ strategy: "two", key: "SOL-arb-solusdc" }] });
+  assert.equal(instrumentFor(back.instruments, "two", "SOL-arb-solusdc", ALL_MARKETS), null);
+  assert.deepEqual(back.orphans, [{ key: "SOL-arb-solusdc", strategy: "two", why: "not_found" }]);
+});
+
+test("битый файл списка НЕ роняет бут и НЕ закрывает сделку: читается как «списка нет»", () => {
+  const dir = tmp();
+  try {
+    writeFileSync(join(dir, "funding-arb-universe.json"), "{это не json");
+    assert.equal(loadFaUniverse(dir), null);
+    // Запас при этом отвечает за все пять ключей, то есть пять имён работают как прежде.
+    const back = resolveUniverse({ scan: null, saved: null, fallback: ALL_MARKETS });
+    assert.deepEqual(back.instruments.map((i) => i.key), ALL_MARKETS.map((i) => i.key));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("список пишется СВОИМ файлом и не задевает ни кадров, ни состояний, ни бота 2", () => {
+  const dir = tmp();
+  try {
+    saveFaUniverse(dir, { at: T, source: "scan", scanned: 1, cfg: null, instruments: ALL_MARKETS, refusals: [] });
+    assert.deepEqual(readdirSync(dir), ["funding-arb-universe.json"]);
+    assert.ok(!existsSync(join(dir, "funding-arb-universe.json.tmp")), "времянка атомарной записи убрана");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

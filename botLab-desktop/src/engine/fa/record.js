@@ -12,6 +12,16 @@
 //       63   5 мин       7.14       2.60
 //       63   1 мин      35.65      13.01
 //
+// С ЖИВЫМ ОТБОРОМ ВСЕЛЕННОЙ (фаза 2, `FA_UNIVERSE_SCAN=1`) в строке снимка появляется блок
+// состава, и объём считается той же функцией с `universeOn`:
+//
+//   инстр.  опрос   МБ в сутки   ГБ в год
+//       51   5 мин       5.85       2.14   <- ОТБОР ПРИ ПОРОГЕ 10% НА СНИМКЕ 16.09
+//
+// ЧИСЛО 3.66 МБ, СТОЯВШЕЕ В ПЛАНЕ РАСШИРЕНИЯ, ОТНОСИЛОСЬ К 32 ИМЕНАМ (клетка «32, 5 мин» этой же
+// модели), а правило отбора при рекомендованном пороге даёт 49 рынков, то есть 51 инструмент
+// вместе с запасом. Блок вселенной из этих 2.19 МБ разницы стоит 0.06 МБ, остальное - рынки.
+//
 // Решение на КАЖДОМ опросе вместо каданса 24 ч добавляет к этому от 0.22 МБ в сутки (5 рынков,
 // 5 мин) до 7.69 МБ в сутки (63 рынка, 1 мин). Снимки составляют 99.5% объёма во всех клетках:
 // поток решений и поток сделок пренебрежимы, и экономить надо было бы только на снимках.
@@ -133,6 +143,9 @@ import { FA_DRAWDOWN_REFUSALS } from "./drawdown.js";
 // кодом «причина вне реестра», то есть штатный исход выглядел бы как дефект записи.
 const FA_TRADE_WHY = Object.freeze([...FA_EXIT_REASONS, ...FA_MARGIN_REFUSALS, ...FA_DRAWDOWN_REFUSALS]);
 import { FA_DECISION_TRIGGERS } from "./events.js";
+// Реестр источников состава вселенной берётся ТАМ ЖЕ, где собирается список: запись обязана
+// называть источник тем же словом, каким его называет правило, иначе архив и журнал разойдутся.
+import { FA_UNIVERSE_SOURCES } from "./universe-scan.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // РЕЕСТРЫ. Реестры отказов входа и выхода СУЩЕСТВУЮТ и переиспользуются как есть; здесь заведено
@@ -270,8 +283,11 @@ function legBlock(leg, missing, present = true) {
 //   markets  - массив наблюдений по рынкам В СЫРОМ ВИДЕ, как их отдали `signs.js` и `l2Book`;
 //   position - открытая позиция со всеми ногами СВОЕЙ схемы либо null. Пусто когда сделки нет, и
 //              это НЕ пропуск наблюдения: кодов `leg_*` в такой строке не появляется. У одноногой
-//              схемы ноги `h` не существует, и в строке она null по той же причине.
-export function buildFaSnapRecord({ t, source = "live", gmxAgeSec, hlAgeSec, markets = [], position = null } = {}) {
+//              схемы ноги `h` не существует, и в строке она null по той же причине;
+//   universe - СОСТАВ ВСЕЛЕННОЙ И ОТКАЗЫ ОТБОРА либо null, когда живой отбор выключен. Без него
+//              решение о составе невосстановимо: сам список читается из ключей `m` (по рынку на
+//              инструмент), а вот ЧТО БЫЛО ОТВЕРГНУТО И ПОЧЕМУ не оставляет в строке иного следа.
+export function buildFaSnapRecord({ t, source = "live", gmxAgeSec, hlAgeSec, markets = [], position = null, universe = null } = {}) {
   if (!fin(t)) return null;
   const m = {};
   for (const o of markets || []) {
@@ -329,6 +345,31 @@ export function buildFaSnapRecord({ t, source = "live", gmxAgeSec, hlAgeSec, mar
     ha: sec(hlAgeSec),
     m,
   };
+  // ВСЕЛЕННАЯ. Счётчики по кодам идут в КАЖДОЙ строке (двести байт), полный перечень отказов
+  // только в строке ПЕРЕСБОРКИ списка (`full`), то есть раз в каданс решения. Писать сто пар
+  // «ключ, код» 288 раз в сутки значило бы тратить мегабайты на одно и то же число.
+  if (universe) {
+    const x = {};
+    for (const r of universe.refusals || []) {
+      const c = r?.code;
+      if (c) x[c] = (x[c] || 0) + 1;
+    }
+    const c = universe.cfg || {};
+    row.u = {
+      at: fin(universe.at) ? universe.at : null,
+      s: FA_UNIVERSE_SOURCES.includes(universe.source) ? universe.source : null,
+      n: int(universe.instruments),
+      sc: int(universe.scanned),
+      // ПОРОГИ В СИЛЕ пишутся рядом с исходом, а не подразумеваются настройкой на диске: состав,
+      // отобранный по другому тикету или другой доле интереса, это ДРУГОЙ состав, и восстановить
+      // отбор задним числом без его порогов нельзя.
+      cf: { tk: usd(c.ticketUsd), oi: rate(c.maxOiSharePct), rm: usd(c.minRoomUsd), mx: int(c.maxInstruments), ag: int(c.minListingAgeDays) },
+      x,
+    };
+    if (universe.full) {
+      row.u.r = (universe.refusals || []).filter((r) => r?.key && r?.code).map((r) => [trim(r.key, 40), r.code]);
+    }
+  }
   const xp = [];
   if (position) {
     row.p = {
@@ -701,6 +742,12 @@ export const FA_RECORD_SIZE = Object.freeze({
   snapFixed: 82, // строка снимка без рынков и без блока позиции
   snapPos: 167, // блок открытой позиции: две ноги по пять полей
   snapMarket: 389, // один рынок со стаканом на восьми узлах
+  // Блок вселенной со счётчиками отказов по кодам и порогами в силе. ЗАМЕРЕН на переписи живого
+  // снимка 16.09 при пороге 10%: пять кодов, 98 отказов. Идёт в КАЖДОЙ строке снимка.
+  snapUniverse: 200,
+  // Одна пара «ключ, код» полного перечня отказов. Идёт ТОЛЬКО в строке пересборки списка, то есть
+  // раз в каданс решения, поэтому в суточном объёме это сотые доли процента.
+  snapUnivRefusal: 38,
   gap: 113, // строка пропуска
   decFixed: 306, // строка решения без рынков и без блока выхода, с блоком ворот `gt`, окном `wn` и поводом `tr`
   decExit: 101, // блок правила выхода
@@ -728,13 +775,19 @@ export const FA_RECORD_SIZE = Object.freeze({
 //   gapsPerDay     - сколько перерывов опроса в сутки.
 export function faVolumePerDay({
   markets = 5, pollSec = 300, funded = null, decisionsPerDay = 1, tradesPerDay = 0.1,
-  gapsPerDay = 1, positionOpen = true,
+  gapsPerDay = 1, positionOpen = true, universeOn = false, universeRefusals = 0,
 } = {}) {
   const S = FA_RECORD_SIZE;
   const polls = pollSec > 0 ? 86400 / pollSec : 0;
   const fund = fin(funded) ? funded : Math.min(markets, Math.max(1, Math.round(markets * 0.3)));
+  // ЖИВОЙ ОТБОР ДОБАВЛЯЕТ ДВА СЛАГАЕМЫХ, и они РАЗНОГО ПОРЯДКА. Блок вселенной идёт каждым
+  // опросом (288 раз в сутки), полный перечень отказов - только в строке пересборки списка, то
+  // есть столько раз, сколько было решений.
+  const univ = universeOn
+    ? polls * S.snapUniverse + decisionsPerDay * universeRefusals * S.snapUnivRefusal
+    : 0;
   const snap = polls * (S.snapFixed + (positionOpen ? S.snapPos : 0) + markets * S.snapMarket)
-    + gapsPerDay * S.gap;
+    + univ + gapsPerDay * S.gap;
   const dec = decisionsPerDay
     * (S.decFixed + S.decExit + fund * S.decMarket + Math.max(0, markets - fund) * S.decRefusal);
   const trade = tradesPerDay * S.trade;

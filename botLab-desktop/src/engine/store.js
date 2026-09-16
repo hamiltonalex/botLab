@@ -237,6 +237,29 @@ export function saveFaBases(baseDir, key, journal) {
   atomicWrite(basesPath(baseDir, key), JSON.stringify(journal));
 }
 
+// ---- живой список вселенной рынков бота 1 (fa/universe-scan.js) ----
+// ПОЧЕМУ СПИСОК ЛЕЖИТ НА ДИСКЕ. Состав вселенной обязан быть НЕПОДВИЖЕН внутри одного решения
+// (инвариант И5 плана расширения): правило выхода сравнивает удерживаемую сделку со всеми
+// альтернативами, и список, поехавший между пересборками, сравнил бы её с другим множеством.
+// Пересборка идёт на кадансе решения (сутки), а между пересборками список живёт здесь и переживает
+// перезапуск приложения.
+//
+// ВТОРАЯ ПРИЧИНА ДОРОЖЕ ПЕРВОЙ: сохранённый список это то, из чего ПРИКРЕПЛЯЕТСЯ удерживаемый
+// инструмент, если его рынок выпал из отбора. Без него перезагрузка приложения закрыла бы живую
+// сделку по ловушке `closeOrphanedPositions`.
+//
+// Запись атомарная и редкая (раз в сутки), файл это полсотни строк: цена хранения нулевая.
+const universePath = (b) => join(b, "funding-arb-universe.json");
+
+export function loadFaUniverse(baseDir) {
+  ensureDir(baseDir);
+  return readJson(universePath(baseDir), null); // null = список ещё не собирался
+}
+export function saveFaUniverse(baseDir, u) {
+  ensureDir(baseDir);
+  atomicWrite(universePath(baseDir), JSON.stringify(u));
+}
+
 // ---- trailing-history CSV cache (per instrument key) ----
 export function readCache(baseDir, key) {
   let p = cachePath(baseDir, key);

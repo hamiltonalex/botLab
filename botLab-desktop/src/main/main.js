@@ -24,15 +24,22 @@ import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts } 
 import { ledgerView, buildLedger } from "../engine/ledger.js";
 import { toLedgerCsv, toLedgerSheet, toLedgerJson, ledgerFileName, dialogFiltersFor } from "./export.js";
 import { buildXlsxBuffer } from "./xlsx-writer.js";
-import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes, readScanRecords, listScanRecordDays, writeCache, loadFaBases, saveFaBases, screenshotName, writeScreenshot, writeScreenshotTo } from "../engine/store.js";
+import { loadPositions, savePositions, loadSettings, saveSettings, saveBotState, loadBotSettings, saveBotSettings, loadBotStateQuarantine, appendScanRecords, scanRecordsBytes, readScanRecords, listScanRecordDays, writeCache, loadFaBases, saveFaBases, loadFaUniverse, saveFaUniverse, screenshotName, writeScreenshot, writeScreenshotTo } from "../engine/store.js";
 // Бот 1, автомат (фаза 4): чистые правила живут в src/engine/fa/, здесь только снабжение,
 // исполнение намерения и диск. Ни одной строки решения в главном процессе нет намеренно - иначе
 // книга охраны прогоняла бы не ту систему, которая работает живьём.
 import * as faauto from "../engine/fa/auto.js";
-import { FA_BOOK_NODES_USD, bookSlippageNodes } from "../engine/fa/sizing.js";
+// Каданс решения. Тот же предикат, которым автомат решает, пора ли считать: стаканы тянутся ровно
+// к решению и ровно тогда, когда оно состоится (см. `faFetchBooks`).
+import { shouldDecideNow } from "../engine/fa/exit.js";
+import { FA_BOOK_NODES_USD, FA_SIZING_DEFAULTS, bookSlippageNodes } from "../engine/fa/sizing.js";
 import { marginGuard as faMarginGuard, positionLegs as faPositionLegs } from "../engine/fa/margin.js";
 import { decayObservation as faDecayObservation } from "../engine/fa/decay.js";
 import { applyObservedBases, backfillBases, baseBackfillWindow, emptyBaseJournal, observeBases } from "../engine/fa/bases.js";
+// Отбор вселенной рынков (фаза 2, снабжение). ПРАВИЛО живёт в движке целиком: здесь только сеть,
+// диск и подстановка списка. Решения о составе в главном процессе нет ни строки - иначе оно
+// оказалось бы вне тестов, как и всякое решение, написанное рядом с `fetch`.
+import { selectUniverse, resolveUniverse, instrumentFor, schemeOf, explainUniverse, FA_UNIVERSE_DEFAULTS } from "../engine/fa/universe-scan.js";
 import { FA_RECORD_PREFIX, buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord, faDecisionsFromRecords, faRecordDayKey, faTradesFromRecords } from "../engine/fa/record.js";
 import { faEvalClears, faEvalFromDisk, faEvalOfTick, faEvalToDisk } from "./fa-eval.js";
 import { advanceFaEntryTrace, finishFaEntryTrace, bindFaEntryTrace, closeFaEntryTrace, faEntryTraceFromDisk, displayFaEntryTrace } from "./fa-entry-trace.js";
@@ -52,7 +59,11 @@ import { runSweep as s1runSweep } from "../engine/btcopt/sweep.js";
 import { summarize as s1summarize } from "../engine/btcopt/metrics.js";
 import { appendLedger as s1appendLedger, planSettleAdjustments as s1planSettleAdjustments } from "../engine/btcopt/pnl.js";
 import { decimate } from "../engine/format.js";
-import { TWO_LEG, ONE_LEG, ALL_MARKETS, twoLegByKey, oneLegByKey, chainsInUse } from "../engine/universe.js";
+// ЗАПАС ВСЕЛЕННОЙ. С фазы 2 расширения `universe.js` это уже не «список рынков приложения», а
+// именно ЗАПАС: список собирается живым отбором, а эти пять строк держат его снизу и опознаются
+// всегда (см. `instFor`). Поиск по ключу (`twoLegByKey`/`oneLegByKey`) отсюда больше не зовётся:
+// опознание живёт одним правилом в движке и смотрит и в список, и в запас.
+import { TWO_LEG, ALL_MARKETS, chainsInUse } from "../engine/universe.js";
 // OTM-сканер (S2): чистый движок каскада otmscan + его пресеты/правила. Вся грязь (fetch, таймеры,
 // диск) остаётся здесь - движок получает готовый inputs-объект (контракт в шапке scan-engine.js).
 import { SCAN_PRESETS, SCAN_DATA_RULES, SCAN_SCHEMA_VERSION, defaultScanSettings, normalizeScanPatch } from "../engine/otmscan/presets.js";
@@ -90,6 +101,17 @@ const S1_AUTOSTART = process.env.S1_AUTOSTART === "1"; // прогон бота 
 // автомат флаг НЕ трогает: повторный взвод обнулил бы накопитель непрерывности и заморозил бы
 // параметры заново под работающей сделкой.
 const FA_AUTO_ARM = process.env.FA_AUTO === "1";
+// FA_UNIVERSE_SCAN=1 - собирать список рынков ЖИВЫМ ОТБОРОМ (`fa/universe-scan.js`) вместо зашитых
+// пяти строк `universe.js`. ПО УМОЛЧАНИЮ ВЫКЛЮЧЕНО, и выключенным флаг возвращает поведение пяти
+// имён побитово: список становится ровно `ALL_MARKETS`, ни одного лишнего запроса, ни одного
+// лишнего байта записи.
+//
+// ЧТО ФЛАГ ДЕЛАЕТ И ЧЕГО НЕ ДЕЛАЕТ. Включённый - собирает, греет, доливает базы, пишет состав в
+// запись и показывает его панелям. В СРЕЗ ПРАВИЛА ВХОДА список НЕ ИДЁТ: автомат продолжает считать
+// по пяти именам, пока не придёт фаза 3 со своим флагом. Разделение нарочное: снабжение можно
+// выкатить под открытой сделкой и сутки смотреть на покрытие слотов и объём записи, ничем не
+// рискуя, а применение менять состав альтернатив правила выхода уже нельзя.
+const FA_UNIVERSE_SCAN = process.env.FA_UNIVERSE_SCAN === "1";
 const SMOKE = process.env.FA_SMOKE === "1" || S1_SMOKE || SCN_SMOKE; // isolate profile + hidden window + skip updater
 isolateSmokeProfile(app, { enabled: SMOKE });
 // А6 (fault-tolerance, находка C1): один профиль - один процесс. Без лока второй `npm start` на том
@@ -109,13 +131,23 @@ app.on("second-instance", () => {
     win.focus();
   }
 });
-const instFor = (strat, key) => (strat === "one" ? oneLegByKey(key) : twoLegByKey(key));
+// ОПОЗНАНИЕ ИНСТРУМЕНТА ПО СХЕМЕ И КЛЮЧУ. Единственная точка: через неё ходят расчёт монеты ноги,
+// ловушка сирот (`closeOrphanedPositions`), предельное плечо, ИСПОЛНЕНИЕ входа, загрузка кадра и
+// выбор рынка панелей. Рынок, которого она не знает, не получит кадра, не откроется, не покажется,
+// а его ОТКРЫТАЯ позиция будет закрыта на ближайшей загрузке приложения.
+//
+// Правило опознания живёт в движке (`instrumentFor`) и там же под тестом: живой список, затем
+// ЗАПАС. Запас смотрится всегда, и это страховка от единственного дорогого исхода - потери ключа
+// запаса живым списком, которая стоила бы закрытия живой сделки.
+const instFor = (strat, key) => instrumentFor(faMarkets(), strat, key, ALL_MARKETS);
 const cacheKeyFor = (strat, key) => (strat === "one" ? `${key}__oneleg` : key);
 const MAX_CURVE_POINTS = 1200; // IPC payload cap; full resolution stays on disk
-// Потолок пер-рыночных отказов, уезжающих на пульт одним тиком. СТРАХОВКА, а не рабочее
-// ограничение: вселенная сегодня пять рынков (`ALL_MARKETS`), отказы уже отфильтрованы решающим
-// кодом, и до потолка список не доходит. Стоит на случай роста вселенной.
-const FA_LAST_REFUSALS_CAP = 8;
+// Потолок пер-рыночных отказов, уезжающих на пульт одним тиком. РОСТ ВСЕЛЕННОЙ ЕГО РАЗБУДИЛ: при
+// пяти рынках после отбора по решающему коду оставалось не больше пяти строк и потолок не
+// срабатывал ни разу, а при полусотне инструментов он режет по-настоящему. Поднят с 8 до 40 и
+// дополнен ПЕРЕПИСЬЮ ПО КОДАМ (`faRefusalCensus`): срезанный хвост перестаёт быть невидимым, потому
+// что число отказов каждого кода уезжает на пульт целиком, сколько бы их ни было.
+const FA_LAST_REFUSALS_CAP = 40;
 // ОКНО ПАНЕЛЕЙ РЫНКА, СУТКИ. Не выбор оператора, а ГОРИЗОНТ ПРАВИЛА: панели зоны «Рынок бота»
 // обязаны показывать те же часы, на которых бот принимает решение; любое другое окно рисовало бы
 // рядом с решением данные, которых решение не видело.
@@ -180,6 +212,17 @@ const state = {
   //              стирать оценку 287 раз между решениями.
   auto: { engine: null, corrupt: false, bases: new Map(), books: new Map(),
     lastTick: null, lastEval: null, latestTrace: null, records: { snap: 0, gap: 0, dec: 0, trade: 0 }, busy: false },
+  // ЖИВОЙ СПИСОК ВСЕЛЕННОЙ (фаза 2). Собирается отбором на КАДАНСЕ РЕШЕНИЯ, а не каждым опросом:
+  // состав, поехавший между решениями, дал бы правилу выхода другое множество альтернатив (И5).
+  // Переживает перезапуск через профиль (`funding-arb-universe.json`), потому что из сохранённого
+  // списка ПРИКРЕПЛЯЕТСЯ удерживаемый инструмент, выпавший из отбора.
+  //   at       - когда список собран; null значит «ещё ни разу»;
+  //   source   - `scan`, `saved` или `fallback` (реестр `FA_UNIVERSE_SOURCES`);
+  //   refusals - отвергнутые рынки С КОДАМИ, по одному на рынок (И4);
+  //   full     - собран ли список на ЭТОМ опросе. Флаг живёт один опрос и решает ровно одно:
+  //              писать ли в строку снимка полный перечень отказов или только счётчики по кодам.
+  universe: { instruments: [], refusals: [], scanned: 0, at: null, source: null, cfg: null, full: false,
+    shadowed: [], pinned: [], orphans: [], skippedChains: [] },
   // Bot 2 «BTC-опционы» (Strategy One) - isolated paper engine + live Deribit source (Phase 1).
   // Read only by the s1:* handlers / assembleDataset1(); never leaks into assembleDataset()/fa:push.
   // Phase 3b: bounded history RINGS live HERE (never in the persisted engine state - it re-serializes
@@ -218,7 +261,10 @@ async function pollLive() {
   const notes = [];
   let hl = { byCoin: new Map(), fetchedAt: 0 };
   const gmxByChain = {};
-  const chains = chainsInUse();
+  // ЦЕПИ ОПРАШИВАЕМЫХ ПЛОЩАДОК. При живом отборе они приходят из ЕГО настройки, а не из списка:
+  // цепь, на которой сегодня нет ни одного инструмента, иначе не опрашивалась бы никогда и ни один
+  // её рынок не попал бы в отбор. Замкнутый круг ловится только тем, что цепи названы порогами.
+  const chains = faUniverseOn() ? [...new Set([...faUniverseCfg().chains, ...chainsInUse()])] : chainsInUse();
   // Sources are independent: an HL outage must pause two-leg positions, but it must not stop a
   // valid GMX-only carry. Promise.all used to couple every instrument to every endpoint.
   const results = await Promise.allSettled([fetchHlCurrent(), ...chains.map((c) => fetchGmxCurrent(c))]);
@@ -241,11 +287,19 @@ async function pollLive() {
     return; // keep last-known snapshots; no exchange-fresh interval exists to accrue
   }
 
+  // ПЕРЕСБОРКА СПИСКА ИДЁТ ДО СНИМКОВ, и порядок значим: имя, появившееся в списке, получает
+  // снимок на ТОМ ЖЕ опросе, а не через пять минут. Каданс свой (сутки), поэтому на 287 опросах из
+  // 288 это условие ложно и не стоит ничего.
+  if (faUniverseOn()) {
+    if (faUniverseDue(Date.now())) faRebuildUniverse(gmxByChain, hl, Date.now());
+    else state.universe.full = false; // полный перечень отказов пишется только в строке пересборки
+  }
+
   const gmxFor = (chain) => gmxByChain[String(chain).toLowerCase().startsWith("ava") ? "avalanche" : "arbitrum"] || { byMarket: new Map() };
   const byKey = {};
   let gateOk = true;
   let accrualOk = true;
-  for (const inst of ALL_MARKETS) {
+  for (const inst of faMarkets()) {
     const g = gmxFor(inst.chain).byMarket.get(inst.gmxAddr.toLowerCase());
     // One-leg instruments have no HL leg; the token's HL ctx (if listed) is used for price context.
     const h = hl.byCoin.get(inst.hlCoin || inst.token) || null;
@@ -570,6 +624,139 @@ function persistFaAuto() {
   }
 }
 
+// ── ЖИВОЙ СПИСОК ВСЕЛЕННОЙ РЫНКОВ (фаза 2: СНАБЖЕНИЕ, не применение).
+//
+// ЧТО ЗДЕСЬ ЕСТЬ И ЧЕГО НЕТ. Здесь сеть, диск, каданс и подстановка списка. Правила отбора,
+// развода схем и прикрепления удерживаемого живут в движке (`fa/universe-scan.js`) целиком и там
+// же под тестом: решение, написанное рядом с `fetch`, оказалось бы вне книг охраны.
+//
+// ЧТО ВИДИТ АВТОМАТ. НИЧЕГО НОВОГО. Срез правила входа (`faAutoMarkets`) по-прежнему берётся с
+// `ALL_MARKETS`, то есть автомат считает по ПЯТИ именам. Новые рынки собираются, греются,
+// доливаются базами, пишутся в запись и показываются панелям, но в перебор не идут: применение это
+// фаза 3 со своим флагом. Разделение куплено ценой ошибки - подача полусотни альтернатив правилу
+// выхода под открытой сделкой закрыла бы её перекладкой в момент выкатки.
+const faUniverseOn = () => FA_UNIVERSE_SCAN;
+
+// СПИСОК ДЛЯ ВСЕГО СНАБЖЕНИЯ: снимки, базы, стаканы, кадры, панели, запись. При выключенном флаге
+// это РОВНО `ALL_MARKETS`, то есть поведение пяти имён побитово прежнее.
+function faMarkets() {
+  if (!faUniverseOn()) return ALL_MARKETS;
+  return state.universe.instruments.length ? state.universe.instruments : ALL_MARKETS;
+}
+
+// ЧЕМ ПИТАЕТСЯ ТИКЕТ ВОРОТ, и это не мелочь (ловушка 4 отчёта фазы 1). Обе воротины отбора считают
+// от размера, которым мы НАМЕРЕНЫ войти: доля открытого интереса это доля от него, и требование к
+// свободной ёмкости это он же. У боевого пресета размера потолок тикета $5000, а капитал сделки
+// $2500, и ворота, посчитанные по $5000, отобрали бы ДРУГУЮ вселенную. Верное число это наибольший
+// тикет, который правило способно разместить в ОДИН рынок, то есть меньшее из двух. На боевых
+// значениях оно равно $2500 - ровно тому тикету, на котором посчитаны все числа отчёта.
+function faUniverseCfg() {
+  const params = state.auto.engine?.params ? { ...faauto.defaultAutoParams(), ...state.auto.engine.params } : faauto.defaultAutoParams();
+  const capUsd = Number(params.capitalUsd);
+  const ticketCap = Number(FA_SIZING_DEFAULTS.ticketCapUsd);
+  const ticketUsd = Math.min(Number.isFinite(capUsd) ? capUsd : Infinity, Number.isFinite(ticketCap) ? ticketCap : Infinity);
+  return { ...FA_UNIVERSE_DEFAULTS, ticketUsd: Number.isFinite(ticketUsd) ? ticketUsd : FA_UNIVERSE_DEFAULTS.ticketUsd };
+}
+
+// Каданс пересборки списка. ТОТ ЖЕ ПРЕДИКАТ И ТОТ ЖЕ КАДАНС, ЧТО У РЕШЕНИЯ, но метка своя
+// (`state.universe.at`): метка решения не двигается, пока автомат не взведён, и список
+// пересобирался бы каждым опросом, то есть ездил бы между решениями (И5).
+function faUniverseDue(nowMs) {
+  const params = state.auto.engine?.params ? { ...faauto.defaultAutoParams(), ...state.auto.engine.params } : faauto.defaultAutoParams();
+  return shouldDecideNow(state.universe.at, nowMs, params.cadenceH);
+}
+
+// Ключи ОТКРЫТЫХ позиций, любых, а не только автоматных: прикрепление защищает деньги, а не слот
+// автомата. Позиция, открытая руками до перехода на автомат, это те же деньги.
+const faHeldKeys = () => state.positions.filter((p) => p.status === "open").map((p) => ({ strategy: p.strategy, key: p.instrumentKey }));
+
+// Перепись отказов по кодам. Нужна и пульту (полный список режется потолком, а перепись нет), и
+// журналу: «доля интереса 56, нет на бирже 24» это ответ, а сорок строк из ста - нет.
+function faRefusalCensus(refusals) {
+  const by = {};
+  for (const r of refusals || []) if (r?.code) by[r.code] = (by[r.code] || 0) + 1;
+  return by;
+}
+
+// Положить собранный список в состояние и на диск. Диск нужен ради ОДНОГО свойства: из
+// сохранённого списка прикрепляется удерживаемый инструмент, выпавший из отбора, и без него
+// перезагрузка приложения закрыла бы живую сделку ловушкой `closeOrphanedPositions`.
+function faApplyUniverse(resolved, { refusals, scanned, cfg, skippedChains, at, full }) {
+  state.universe = {
+    instruments: resolved.instruments, refusals: refusals || [], scanned: scanned || 0, at,
+    source: resolved.source, cfg: cfg || null, full: !!full,
+    shadowed: resolved.shadowed, pinned: resolved.pinned, orphans: resolved.orphans,
+    skippedChains: skippedChains || [],
+  };
+  try {
+    saveFaUniverse(baseDir, {
+      at, source: resolved.source, scanned: state.universe.scanned, cfg: state.universe.cfg,
+      instruments: resolved.instruments, refusals: state.universe.refusals,
+    });
+  } catch (e) {
+    console.warn(`[fa-univ] список не записан: ${String(e.message || e).slice(0, 80)}`);
+  }
+}
+
+// На буте: поднять прошлый список ДО `closeOrphanedPositions`. Порядок здесь не вкусовщина, а
+// единственное, что стоит между живой сделкой и её закрытием: ловушка сирот зовётся один раз на
+// старте и закрывает позицию, чей инструмент не опознан, фиксируя P&L.
+function faLoadUniverse() {
+  if (!faUniverseOn()) return;
+  const saved = loadFaUniverse(baseDir);
+  const resolved = resolveUniverse({ scan: null, saved: saved?.instruments || null, fallback: ALL_MARKETS, held: faHeldKeys() });
+  state.universe = {
+    instruments: resolved.instruments, refusals: saved?.refusals || [], scanned: saved?.scanned || 0,
+    // Метка остаётся ПРОШЛОЙ, а не «сейчас»: иначе перезапуск приложения сдвигал бы каданс
+    // пересборки и список после частых рестартов не обновлялся бы вовсе.
+    at: Number.isFinite(saved?.at) ? saved.at : null,
+    source: resolved.source, cfg: saved?.cfg || null, full: false,
+    shadowed: resolved.shadowed, pinned: resolved.pinned, orphans: resolved.orphans, skippedChains: [],
+  };
+  const n = resolved.instruments.length;
+  console.log(`[fa-univ] на буте поднят список: инструментов ${n}, источник ${resolved.source}`
+    + `${resolved.pinned.length ? `, прикреплено удерживаемых ${resolved.pinned.length} (${resolved.pinned.map((x) => x.key).join(", ")})` : ""}`
+    + `${resolved.orphans.length ? `, БЕЗ ИНСТРУМЕНТА ${resolved.orphans.map((x) => `${x.key}:${x.why}`).join(", ")}` : ""}`);
+}
+
+// Пересобрать список из ЖИВОГО ответа площадок. Зовётся из `pollLive` ДО сборки снимков, чтобы
+// новое имя получило снимок на том же опросе, на котором появилось.
+//
+// СЫРЫЕ СТРОКИ, А НЕ ПРИВЕДЁННЫЕ. Отбору нужны `isListed` и `listingDate`, которых нет у
+// `byMarket`, и признак делистинга монеты биржи, которого нет у `byCoin`; оба источника отдают их
+// вторым выходом (`markets`, `universe`), заведённым ровно для этого.
+function faRebuildUniverse(gmxByChain, hl, nowMs) {
+  const cfg = faUniverseCfg();
+  const marketsByChain = {};
+  for (const [chain, r] of Object.entries(gmxByChain || {})) if (Array.isArray(r?.markets)) marketsByChain[chain] = r.markets;
+  // Площадка не ответила ни одной цепью - отбора НЕТ, и подставлять пустой отбор нельзя: пустой
+  // список это не «рынков нет», это «мы не смотрели». Держим прошлый состав и метку не двигаем.
+  if (!Object.keys(marketsByChain).length || !Array.isArray(hl?.universe) || !hl.universe.length) {
+    console.warn("[fa-univ] отбор пропущен: сырого ответа площадки или монет биржи нет, состав прежний");
+    return;
+  }
+  const scan = selectUniverse({ marketsByChain, hlCoins: hl.universe, cfg, asOfMs: nowMs });
+  const saved = state.universe.instruments.length ? state.universe.instruments : (loadFaUniverse(baseDir)?.instruments || null);
+  const resolved = resolveUniverse({ scan, saved, fallback: ALL_MARKETS, held: faHeldKeys() });
+  faApplyUniverse(resolved, {
+    refusals: scan.refusals, scanned: scan.scanned, cfg: scan.cfg, skippedChains: scan.skippedChains, at: nowMs, full: true,
+  });
+  console.log(`[fa-univ] ${explainUniverse(scan)}; инструментов приложения ${resolved.instruments.length}`
+    + ` (запас ${ALL_MARKETS.length}, рынков отбора под ключом запаса ${resolved.shadowed.length}`
+    + `${resolved.pinned.length ? `, прикреплено ${resolved.pinned.map((x) => x.key).join(", ")}` : ""})`);
+}
+
+// Блок вселенной для строки снимка. ПОЛНЫЙ ПЕРЕЧЕНЬ отказов уезжает только в строке пересборки
+// (`full`), в остальных идут счётчики по кодам: сто пар «ключ, код» 288 раз в сутки это мегабайты
+// на одно и то же число.
+function faUniverseForRecord() {
+  if (!faUniverseOn() || !state.universe.at) return null;
+  return {
+    at: state.universe.at, source: state.universe.source, instruments: state.universe.instruments.length,
+    scanned: state.universe.scanned, cfg: state.universe.cfg, refusals: state.universe.refusals, full: state.universe.full,
+  };
+}
+
 // ── ЖУРНАЛ НАБЛЮДЁННЫХ БАЗ. Копится ВСЕГДА, а не только под взведённым автоматом: журнал это
 // единственный источник базы текущего часа и главный источник каждого часа, который приложение
 // видело своими глазами. С решения владельца 2026-09-02 часы окна ворот БЕЗ наблюдения
@@ -587,7 +774,7 @@ function faBaseJournal(cacheKey) {
 
 function faObserveBases() {
   const tsHour = nowHourTs();
-  for (const inst of ALL_MARKETS) {
+  for (const inst of faMarkets()) {
     const snap = state.snapshots.byKey[inst.key];
     // ГЕЙТ ЗНАКОВ УВАЖАЕТСЯ. Рынок, не прошедший тождество netRate, не начисляется вовсе, и
     // копить его базу в летописи значило бы записывать подозрительные данные под видом наблюдения.
@@ -658,9 +845,38 @@ async function faBackfillBases(cacheKey, inst, rows) {
 
 // ── СТАКАНЫ. Тянутся ТОЛЬКО под взведённым автоматом: без стакана правило входа отказывает кодом
 // `no_book` (проскальзывание неизвестно, а константа это выдуманные издержки), а в простое лишний
-// трафик приложению не нужен. Монет две на пять инструментов, поэтому и запросов два.
+// трафик приложению не нужен.
+//
+// ЧАСТОТА ЭТО НЕ ВКУС, А СЛЕДСТВИЕ ДВУХ ЗАМЕРЕННЫХ ЧИСЕЛ, И ОНИ ТЯНУТ В РАЗНЫЕ СТОРОНЫ.
+//
+// ПЕРВОЕ: `bookMaxAgeSec` правила входа равен 30 СЕКУНДАМ (`FA_SIZING_DEFAULTS`). Стакан старше
+// тридцати секунд отвергается кодом `stale_book` ПО КАЖДОМУ рынку, то есть решение, принятое на
+// вчерашних стаканах, не увидит ни одной альтернативы.
+//
+// ВТОРОЕ: решение случается не только по кадансу. Событие (`events.js`) и сторож залога перебивают
+// каданс и решают ВНЕ его, а войдя в ветку решения, автомат сдвигает `lastDecisionAt` и обнуляет
+// снимок событий БЕЗУСЛОВНО (`auto.js`). Значит форсированное решение на протухших стаканах не
+// откладывается, а СЪЕДАЕТ СОБЫТИЕ: перекладка теряется до следующего каданса, то есть на сутки.
+//
+// ОТСЮДА ПРАВИЛО, И ОНО ТОЧНОЕ, А НЕ ОСТОРОЖНОЕ. Форсировать решение умеют только событие и сторож,
+// и ОБА требуют ОТКРЫТОЙ ПОЗИЦИИ (`detectDecisionEvents` выходит на пустом слоте первой строкой,
+// `marginForces` начинается с `position &&`). Значит:
+//   слот ПУСТ  - решить может только каданс, и стаканы нужны только на нём;
+//   сделка ЕСТЬ - решение возможно на любом тике, и стаканы нужны каждый опрос, как и раньше.
+//
+// ЦЕНА, НАЗВАННАЯ ЧЕСТНО. План расширения обещал этой правкой 32 запроса в сутки вместо 9216. На
+// пустом слоте так и выходит. ПОД ОТКРЫТОЙ СДЕЛКОЙ ЭКОНОМИИ НЕТ ВОВСЕ, и обещать её было нельзя:
+// тридцатисекундный порог свежести несовместим с суточным кадансом стаканов. Связывает при этом не
+// квота биржи (полсотни запросов весом 2 против лимита 1200 в минуту), а покрытие слотов опроса, и
+// оно меряется живым прогоном до применения, а не выводится здесь.
+function faBooksDue(nowMs) {
+  if (state.positions.some((p) => p.status === "open")) return true;
+  const params = state.auto.engine?.params ? { ...faauto.defaultAutoParams(), ...state.auto.engine.params } : faauto.defaultAutoParams();
+  return shouldDecideNow(state.auto.engine?.lastDecisionAt, nowMs, params.cadenceH);
+}
+
 async function faFetchBooks() {
-  const coins = [...new Set(ALL_MARKETS.map((i) => i.hlCoin || i.token))];
+  const coins = [...new Set(faMarkets().map((i) => i.hlCoin || i.token))];
   await Promise.allSettled(coins.map(async (coin) => {
     try {
       const b = await fetchHlBook(coin);
@@ -678,6 +894,13 @@ async function faFetchBooks() {
 
 // ── СРЕЗ ДЛЯ ПРАВИЛ. Форма ровно та, которую принимает `sizeUniverse`, плюс марка и предельное
 // плечо биржи для сторожа залога.
+//
+// СРЕЗ БЕРЁТСЯ С `ALL_MARKETS`, А НЕ С ЖИВОГО СПИСКА, И ЭТО НАМЕРЕННО. Фаза 2 расширения вселенной
+// это СНАБЖЕНИЕ: новые рынки собираются, греются, доливаются базами и пишутся в запись, но автомат
+// продолжает решать по ПЯТИ именам. Подача живого списка сюда это фаза 3 со своим флагом, и цена
+// смешения фаз названа числом: под открытой сделкой первый же каданс дал бы полсотни альтернатив,
+// среди них нашлась бы лучшая по нетто, и правило закрыло бы сделку перекладкой в момент выкатки -
+// то есть решение приняло бы расписание релиза, а не рынок.
 function faAutoMarkets() {
   const nowMs = Date.now();
   const f = state.snapshots.fresh;
@@ -794,7 +1017,7 @@ function faAppendRecord(kind, ts, row) {
 // вывод», и всё считаемое (годовых, ранг, запас) читатель архива считает сам.
 function faSnapMarkets() {
   const nowMs = Date.now();
-  return ALL_MARKETS.map((inst) => {
+  return faMarkets().map((inst) => {
     const snap = state.snapshots.byKey[inst.key];
     const raw = snap?.raw || {};
     const bk = state.auto.books.get(inst.hlCoin || inst.token) || null;
@@ -950,7 +1173,7 @@ async function faAutoStep(sources) {
   }
   // Начало перерыва потреблено: следующая дыра меряется от строки, которая ляжет ниже.
   if (armed) st.offSince = null;
-  if (armed) await faFetchBooks();
+  if (armed && faBooksDue(nowMs)) await faFetchBooks();
 
   const f = state.snapshots.fresh;
   const gmxAgeSec = f.gmxAt ? (nowMs - f.gmxAt) / 1000 : undefined;
@@ -962,6 +1185,9 @@ async function faAutoStep(sources) {
     const wrote = faAppendRecord("snap", nowMs, buildFaSnapRecord({
       t: nowMs, source: "live", gmxAgeSec, hlAgeSec, markets: faSnapMarkets(),
       position: posBefore ? { ...posBefore, ...faLegsOf(posBefore, params) } : null,
+      // СОСТАВ ВСЕЛЕННОЙ И ОТКАЗЫ ОТБОРА. Без них решение о составе невосстановимо: сам список
+      // читается из ключей рынков строки, а ЧТО БЫЛО ОТВЕРГНУТО И ПОЧЕМУ не оставляет иного следа.
+      universe: faUniverseForRecord(),
     }));
     // Сдвигать метку на НЕудавшейся записи значит прятать дыру, которую сами же и оставили.
     if (wrote) st.lastSnapAt = nowMs;
@@ -998,14 +1224,17 @@ async function faAutoStep(sources) {
   //
   // ПЕР-РЫНОЧНЫЕ ОТКАЗЫ РЕЖУТСЯ ДВАЖДЫ, и оба реза названы. Сначала по РЕШАЮЩЕМУ коду: на экране
   // пульта нужна причина исхода с числами, а не весь журнал (полный журнал пишет фаза 5). Потом
-  // потолком `FA_LAST_REFUSALS_CAP`. Вселенная сегодня ПЯТЬ рынков (`ALL_MARKETS`), поэтому после
-  // первого реза остаётся не больше пяти строк и потолок не срабатывает НИ РАЗУ: он стоит
-  // страховкой на случай роста вселенной, а не как рабочее ограничение. Прежний комментарий
-  // обещал «60+ рынков» и был неверен уже на момент написания.
+  // потолком `FA_LAST_REFUSALS_CAP`. При пяти рынках второй рез не срабатывал ни разу; с живым
+  // отбором вселенная это полсотни инструментов, и потолок (поднятый до 40) стал рабочим. Чтобы
+  // срезанный хвост не оказался невидимым, рядом уезжает ПЕРЕПИСЬ ПО КОДАМ - она без потолка.
   state.auto.lastTick = {
     at: nowMs, kind: tick.kind, why: tick.why, line: faauto.explainAuto(tick),
     refusals: (tick.refusals || []).filter((r) => r.code === tick.why).slice(0, FA_LAST_REFUSALS_CAP),
     codes: [...new Set((tick.refusals || []).map((r) => r.code))],
+    // ПЕРЕПИСЬ ОТКАЗОВ ПО КОДАМ, целиком и без потолка. Список выше режется дважды и на полусотне
+    // инструментов режется по-настоящему; перепись отвечает на вопрос «сколько и почему» числом,
+    // сколько бы строк ни ушло под нож.
+    census: faRefusalCensus(tick.refusals),
     margin: tick.margin ? {
       ok: !!tick.margin.ok, code: tick.margin.code ?? null,
       roomFrac: Number.isFinite(tick.margin.roomFrac) ? tick.margin.roomFrac : null,
@@ -1190,12 +1419,11 @@ async function ensurePrices(inst) {
 
 // Background-backfill every instrument (scanner + panels fill progressively).
 async function warmFrames() {
-  for (const inst of TWO_LEG) {
-    await ensureFrame("two", inst.key).catch(() => {});
-    push();
-  }
-  for (const inst of ONE_LEG) {
-    await ensureFrame("one", inst.key).catch(() => {});
+  // ПО ЖИВОМУ СПИСКУ, И ДОЛИВ БАЗ ПРИХОДИТ ДАРОМ: `ensureFrame` зовёт `faBackfillBases` на каждой
+  // загрузке кадра, поэтому отдельного вызова долива для нового имени не нужно вовсе - достаточно,
+  // чтобы имя попало сюда и в `topUpFrames`. Проверено чтением кода, а не обещанием плана.
+  for (const inst of faMarkets()) {
+    await ensureFrame(schemeOf(inst), inst.key).catch(() => {});
     push();
   }
 }
@@ -1210,8 +1438,7 @@ function topUpFrames() {
   for (const p of state.positions) {
     if (p.status === "open") ensureFrameAsync(p.strategy, p.instrumentKey);
   }
-  for (const inst of TWO_LEG) ensureFrameAsync("two", inst.key);
-  for (const inst of ONE_LEG) ensureFrameAsync("one", inst.key);
+  for (const inst of faMarkets()) ensureFrameAsync(schemeOf(inst), inst.key);
 }
 
 // ---------------------------------------------------------------------------
@@ -1248,13 +1475,13 @@ function assembleDataset() {
   const s = faViewSelection();
   // Окно ОДНО и равно горизонту правила (см. `faViewWindowDays`): панели рынка показывают ровно
   // те часы, на которых бот принимает решение.
+  // ПАНЕЛИ СОБИРАЮТСЯ ПО ЖИВОМУ СПИСКУ, а схема каждого инструмента берётся из него же: разложить
+  // список обратно по двум зашитым наборам значило бы завести вторую точку правды о схемах.
   const twoLeg = {};
-  for (const inst of TWO_LEG) {
-    twoLeg[inst.key] = buildTwoLegEntry(inst, state.frames.get(inst.key), state.snapshots.byKey[inst.key], s.win);
-  }
   const oneLeg = {};
-  for (const inst of ONE_LEG) {
-    oneLeg[inst.key] = buildOneLegEntry(inst, state.frames.get(`${inst.key}__oneleg`), state.snapshots.byKey[inst.key], s.win);
+  for (const inst of faMarkets()) {
+    if (schemeOf(inst) === "two") twoLeg[inst.key] = buildTwoLegEntry(inst, state.frames.get(inst.key), state.snapshots.byKey[inst.key], s.win);
+    else oneLeg[inst.key] = buildOneLegEntry(inst, state.frames.get(`${inst.key}__oneleg`), state.snapshots.byKey[inst.key], s.win);
   }
 
   // series for the current selection, tagged so the renderer never renders it under another selection
@@ -4014,6 +4241,13 @@ app.whenReady().then(async () => {
     persistFaEntryTrace();
     console.log("[fa-auto] FA_AUTO=1: автомат взведён на буте, параметры заморожены значениями по умолчанию");
   }
+  // ЖИВОЙ СПИСОК ПОДНИМАЕТСЯ С ДИСКА ДО ЛОВУШКИ СИРОТ, И ПОРЯДОК ЗДЕСЬ СТОИТ ЖИВОЙ СДЕЛКИ.
+  // `closeOrphanedPositions` ниже закрывает позицию, чей инструмент не опознан, и фиксирует P&L.
+  // При зашитом наборе это было безопасно, потому что набор неизменен; при живом списке рынок может
+  // выпасть из отбора сам (доля интереса подросла, площадка молчала), и перезагрузка приложения
+  // закрыла бы сделку без единого решения правила. Поднятый список прикрепляет удерживаемый
+  // инструмент, и ловушка видит его опознанным.
+  faLoadUniverse();
   // An OPEN paper position whose instrument was removed/delisted can no longer be tracked or closed
   // from the UI. Close it on boot (P&L accrued so far is preserved as realized) so it does not sit as
   // a phantom open forever; the closure is surfaced as a boot note.
