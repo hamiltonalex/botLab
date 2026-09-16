@@ -40,9 +40,10 @@ import { applyObservedBases, backfillBases, baseBackfillWindow, emptyBaseJournal
 // диск и подстановка списка. Решения о составе в главном процессе нет ни строки - иначе оно
 // оказалось бы вне тестов, как и всякое решение, написанное рядом с `fetch`.
 import { selectUniverse, resolveUniverse, instrumentFor, schemeOf, explainUniverse, FA_UNIVERSE_DEFAULTS } from "../engine/fa/universe-scan.js";
+import { buildFaSlice } from "../engine/fa/slice.js";
 import { FA_RECORD_PREFIX, buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord, faDecisionsFromRecords, faRecordDayKey, faTradesFromRecords } from "../engine/fa/record.js";
 import { faEvalClears, faEvalFromDisk, faEvalOfTick, faEvalToDisk } from "./fa-eval.js";
-import { advanceFaEntryTrace, finishFaEntryTrace, bindFaEntryTrace, closeFaEntryTrace, faEntryTraceFromDisk, displayFaEntryTrace } from "./fa-entry-trace.js";
+import { applyFaEntryTraceEvent, snapshotFaEntryTrace, finishFaEntryTrace, bindFaEntryTrace, closeFaEntryTrace, faEntryTraceFromDisk, displayFaEntryTrace } from "./fa-entry-trace.js";
 // Сводка архива записи (фаза 6). Шесть читателей архива движка зовутся ТОЛЬКО оттуда: здесь диск
 // и склейка, счёт под тестом.
 import { faArchiveSummary } from "./fa-archive.js";
@@ -107,11 +108,29 @@ const FA_AUTO_ARM = process.env.FA_AUTO === "1";
 // лишнего байта записи.
 //
 // ЧТО ФЛАГ ДЕЛАЕТ И ЧЕГО НЕ ДЕЛАЕТ. Включённый - собирает, греет, доливает базы, пишет состав в
-// запись и показывает его панелям. В СРЕЗ ПРАВИЛА ВХОДА список НЕ ИДЁТ: автомат продолжает считать
-// по пяти именам, пока не придёт фаза 3 со своим флагом. Разделение нарочное: снабжение можно
-// выкатить под открытой сделкой и сутки смотреть на покрытие слотов и объём записи, ничем не
-// рискуя, а применение менять состав альтернатив правила выхода уже нельзя.
+// запись и показывает его панелям. В СРЕЗ ПРАВИЛА ВХОДА список сам по себе НЕ ИДЁТ: его подаёт
+// туда ВТОРОЙ флаг, `FA_UNIVERSE_APPLY`. Разделение нарочное: снабжение можно выкатить под
+// открытой сделкой и сутки смотреть на покрытие слотов и объём записи, ничем не рискуя, а
+// применение менять состав альтернатив правила выхода уже нельзя.
 const FA_UNIVERSE_SCAN = process.env.FA_UNIVERSE_SCAN === "1";
+// FA_UNIVERSE_APPLY=1 - ПОДАТЬ живой список в срез правил (`faAutoMarkets`), то есть перестать
+// считать по пяти именам. ПО УМОЛЧАНИЮ ВЫКЛЮЧЕНО, и выключенным флаг оставляет срез ровно на
+// `ALL_MARKETS`, побитово как до фазы 3.
+//
+// ПРИМЕНЕНИЕ ТРЕБУЕТ СБОРА, и это не вкусовщина: без `FA_UNIVERSE_SCAN` список никто не собирает,
+// не греет кадрами и не доливает базами, и поданный в срез он состоял бы из рынков без истории -
+// то есть полусотни отказов ворот покрытия вместо вселенной. Просьбу применить без сбора флаг НЕ
+// исполняет молча, а называет в журнале: молчаливое «включил, но ничего не изменилось» это худший
+// из возможных исходов для обкатки на удалённой машине.
+//
+// ВКЛЮЧАТЬ ЭТОТ ФЛАГ ПОД ОТКРЫТОЙ СДЕЛКОЙ ЗАПРЕЩЕНО, и цена названа числом: первый же каданс даёт
+// полусотню альтернатив, среди них найдётся лучшая по нетто, и правило выхода закроет живую сделку
+// перекладкой в момент релиза. Решение принял бы РЕЛИЗ, а не рынок, и круг издержек $8.75 заплатил
+// бы владелец. Порядок выкатки задан фазой 6 плана: сначала закрытие сделки, потом флаг.
+const FA_UNIVERSE_APPLY = process.env.FA_UNIVERSE_APPLY === "1" && FA_UNIVERSE_SCAN;
+if (process.env.FA_UNIVERSE_APPLY === "1" && !FA_UNIVERSE_SCAN) {
+  console.warn("[fa-univ] FA_UNIVERSE_APPLY=1 без FA_UNIVERSE_SCAN=1 - применение ВЫКЛЮЧЕНО, срез остаётся на пяти именах");
+}
 const SMOKE = process.env.FA_SMOKE === "1" || S1_SMOKE || SCN_SMOKE; // isolate profile + hidden window + skip updater
 isolateSmokeProfile(app, { enabled: SMOKE });
 // А6 (fault-tolerance, находка C1): один профиль - один процесс. Без лока второй `npm start` на том
@@ -148,6 +167,12 @@ const MAX_CURVE_POINTS = 1200; // IPC payload cap; full resolution stays on disk
 // дополнен ПЕРЕПИСЬЮ ПО КОДАМ (`faRefusalCensus`): срезанный хвост перестаёт быть невидимым, потому
 // что число отказов каждого кода уезжает на пульт целиком, сколько бы их ни было.
 const FA_LAST_REFUSALS_CAP = 40;
+// Как часто живая трасса расчёта уходит в интерфейс. Не косметика, а потолок стоимости решения:
+// снимок трассы это копия всей трассы, и до прореживания их было по одной на КАЖДЫЙ проверенный
+// размер (2537 штук до 203 КБ на полусотне инструментов). Число выбрано человеком, а не машиной:
+// чаще пяти кадров в секунду анимацию перебора всё равно никто не различает, а записанная трасса
+// от прореживания не теряет ни одного образца (см. `onProgress` в `faAutoStep`).
+const FA_TRACE_PUSH_MS = 200;
 // ОКНО ПАНЕЛЕЙ РЫНКА, СУТКИ. Не выбор оператора, а ГОРИЗОНТ ПРАВИЛА: панели зоны «Рынок бота»
 // обязаны показывать те же часы, на которых бот принимает решение; любое другое окно рисовало бы
 // рядом с решением данные, которых решение не видело.
@@ -892,57 +917,29 @@ async function faFetchBooks() {
   }));
 }
 
-// ── СРЕЗ ДЛЯ ПРАВИЛ. Форма ровно та, которую принимает `sizeUniverse`, плюс марка и предельное
-// плечо биржи для сторожа залога.
+// ── СПИСОК ИНСТРУМЕНТОВ ДЛЯ СРЕЗА ПРАВИЛ. ЕДИНСТВЕННОЕ, ЧТО МЕНЯЕТ ФАЗА 3.
 //
-// СРЕЗ БЕРЁТСЯ С `ALL_MARKETS`, А НЕ С ЖИВОГО СПИСКА, И ЭТО НАМЕРЕННО. Фаза 2 расширения вселенной
-// это СНАБЖЕНИЕ: новые рынки собираются, греются, доливаются базами и пишутся в запись, но автомат
-// продолжает решать по ПЯТИ именам. Подача живого списка сюда это фаза 3 со своим флагом, и цена
-// смешения фаз названа числом: под открытой сделкой первый же каданс дал бы полсотни альтернатив,
-// среди них нашлась бы лучшая по нетто, и правило закрыло бы сделку перекладкой в момент выкатки -
-// то есть решение приняло бы расписание релиза, а не рынок.
+// При выключенном `FA_UNIVERSE_APPLY` это ровно `ALL_MARKETS`, то есть пять имён побитово как
+// раньше, и снабжение при этом может идти по полусотне: `faMarkets()` и этот список РАЗНЫЕ
+// намеренно. Снабжать полусотню под открытой сделкой безопасно, подавать её в правило выхода нет.
+const faAutoUniverse = () => (FA_UNIVERSE_APPLY ? faMarkets() : ALL_MARKETS);
+
+// ── СРЕЗ ДЛЯ ПРАВИЛ. Форма ровно та, которую принимает `sizeUniverse`, плюс марка и предельное
+// плечо биржи для сторожа залога. САМА СКЛАДКА ЖИВЁТ В ДВИЖКЕ (`fa/slice.js`) и там же под тестом:
+// приёмка фазы 3 требует проверить срез на полусотне инструментов, а проверка по копии складки
+// проверяла бы копию. Здесь остаются только три читателя состояния - снимок, стакан и кадр.
 function faAutoMarkets() {
-  const nowMs = Date.now();
   const f = state.snapshots.fresh;
-  const out = [];
-  for (const inst of ALL_MARKETS) {
-    const strategy = inst.hlCoin ? "two" : "one";
-    const snap = state.snapshots.byKey[inst.key];
-    const raw = snap?.raw || {};
-    // Конфигурацию (какая нога GMX) выбирает тот же расчёт, что и в панели: у однуногой её нет.
-    const config = strategy === "two" ? (snap?.chosen ?? "A") : null;
-    const { gmxSide } = legModel(strategy, config);
-    const coin = inst.hlCoin || inst.token;
-    const bk = state.auto.books.get(coin) || null;
-    out.push({
-      token: inst.key,
-      config,
-      strategy,
-      chain: inst.chain,
-      directionKnown: strategy === "one" || !!(snap?.dataComplete && snap?.gateOk !== false),
-      rows: state.frames.get(cacheKeyFor(strategy, inst.key)) || [],
-      markPx: Number.isFinite(snap?.price) ? snap.price : null,
-      hlMaxLev: snap?.hlMaxLev ?? inst.hlMaxLev ?? null,
-      live: {
-        bOwnUsd: gmxSide === "short" ? raw.fbase_short : raw.fbase_long,
-        bOtherUsd: gmxSide === "short" ? raw.fbase_long : raw.fbase_short,
-        baseAgeSec: f.gmxAt ? (nowMs - f.gmxAt) / 1000 : undefined,
-        baseIdentityOk: snap ? snap.gateOk !== false : undefined,
-        bookMissing: !bk,
-        bookAgeSec: bk ? (nowMs - bk.at) / 1000 : undefined,
-        gmxAvailOwnUsd: gmxSide === "short" ? snap?.avail?.shortUsd : snap?.avail?.longUsd,
-        hlVisibleNtl: bk?.slip?.visibleNtl,
-        hlExhaustedFrom: bk?.slip?.exhaustedFrom ?? undefined,
-      },
-      // Кривая удара GMX в приложении отсутствует (см. шапку раздела); стакан Hyperliquid живой.
-      impact: { gmxNodes: [], hlNodes: bk?.slip?.nodes || [] },
-      // ЖИВЫЕ ФАКТОРЫ НОГ, как их отдал источник. Правило размера их не читает: ему нужны базы и
-      // стакан. Их читает сводка оценки (`legSpreadApr`), чтобы назвать котируемую ставку схемы
-      // одним числом - и считает его ДВИЖОК, потому что разбор схемы на ноги живёт там.
-      rates: { f_long: raw.f_long, f_short: raw.f_short, b_long: raw.b_long, b_short: raw.b_short, hl_rate: raw.hl_rate },
-    });
-  }
-  return out;
+  return buildFaSlice({
+    instruments: faAutoUniverse(),
+    nowMs: Date.now(),
+    gmxAt: f.gmxAt,
+    snapshotOf: (inst) => state.snapshots.byKey[inst.key] || null,
+    // Стакан лежит под МОНЕТОЙ БИРЖИ, а не под ключом инструмента: у пяти инструментов запаса
+    // монет три, и один стакан обслуживает несколько ключей.
+    bookOf: (inst) => state.auto.books.get(inst.hlCoin || inst.token) || null,
+    rowsOf: (inst, strategy) => state.frames.get(cacheKeyFor(strategy, inst.key)) || [],
+  });
 }
 
 // Открытая сделка АВТОМАТА в форме правила выхода. Чужая (открытая руками) сюда не попадает: слот
@@ -1194,6 +1191,13 @@ async function faAutoStep(sources) {
   }
 
   let scanTrace = null;
+  let tracePushedAt = 0;
+  // ЧАСЫ ВОКРУГ ПРАВИЛА, И МЕРЯЮТ ОНИ РОВНО ЕГО. Решение идёт СИНХРОННО, и всё это время главный
+  // процесс не обслуживает ни опрос, ни IPC, ни интерфейс. При пяти именах смотреть было не на что
+  // (0.1 с), при полусотне это уже полсекунды, и число обязано быть видно в журнале, а не
+  // выводиться из отчёта. Сборка и запись итоговой трассы ниже в счёт НЕ входят: это одна копия и
+  // одна запись на диск, а число здесь сравнивается со стендом, который меряет одно правило.
+  const decideFrom = Date.now();
   const tick = faauto.autoTick({
     now: nowMs,
     bootAt: APP_BOOT_MS,
@@ -1206,11 +1210,26 @@ async function faAutoStep(sources) {
     foreignOpen: state.positions.some((x) => x.status === "open" && x.id !== st.positionId),
     nominalSec: pollSec(),
     gapHints: { sleepWindow: lastSleepWindow, bootAt: APP_BOOT_MS, sourceErrorSince: sourceErrorFirstAt },
+    // ТРАССА КОПИТСЯ НА МЕСТЕ, А НАРУЖУ УХОДИТ ПО ЧАСАМ. Решение ловушки Л2 фазы 3, и оно куплено
+    // замером, а не осторожностью. ЗАМЕР 16.09 (стенд `trace-cost.mjs`, капитал $2500, медиана трёх
+    // повторов): на 51 рынке решение стоило 3939 мс против 530 мс без трассы, то есть 3.4 секунды
+    // синхронного простоя главного процесса, и это БЕЗ учёта 2537 отправок снимка общим весом
+    // 288 МБ. На 63 рынках было 6481 мс. После правки 560 мс и три отправки весом 277 КБ.
+    //
+    // ПОЧЕМУ ПРОРЕЖИВАНИЕ НИЧЕГО НЕ ОТНИМАЕТ. Кадр чаще, чем `FA_TRACE_PUSH_MS`, всё равно некому
+    // увидеть: интерфейс перерисовывается 60 раз в секунду, а при пяти именах весь перебор длится
+    // 0.1 секунды и досмотреть его человек не успевал вовсе. Записанная трасса не прореживается
+    // НИЧЕМ: образцы пишутся на каждом размере, а итог собирает `finishFaEntryTrace` ниже.
     onProgress: (event) => {
-      scanTrace = advanceFaEntryTrace(scanTrace, event);
-      if (scanTrace) publishFaEntryTrace(scanTrace);
+      scanTrace = applyFaEntryTraceEvent(scanTrace, event);
+      if (!scanTrace) return;
+      const at = Date.now();
+      if (at - tracePushedAt < FA_TRACE_PUSH_MS) return;
+      tracePushedAt = at;
+      publishFaEntryTrace(snapshotFaEntryTrace(scanTrace));
     },
   });
+  const decideMs = Date.now() - decideFrom;
   if (scanTrace) {
     scanTrace = finishFaEntryTrace(scanTrace, tick, Date.now());
     publishFaEntryTrace(scanTrace);
@@ -1275,7 +1294,25 @@ async function faAutoStep(sources) {
   }
   // Лог пишется на СМЕНЕ исхода, а не каждый тик: при опросе раз в пять минут одинаковая строка
   // 288 раз в сутки прячет ту единственную, которая изменилась. Смена исхода это и есть событие.
-  if (!prev || prev.kind !== tick.kind || prev.why !== tick.why) console.log(`[fa-auto] ${state.auto.lastTick.line}`);
+  const outcomeChanged = !prev || prev.kind !== tick.kind || prev.why !== tick.why;
+  if (outcomeChanged) console.log(`[fa-auto] ${state.auto.lastTick.line}`);
+  // СОСТАВ И СТОИМОСТЬ РЕШЕНИЯ ОДНОЙ СТРОКОЙ. При пяти именах состав среза был константой и печатать
+  // его было незачем; с живым отбором он ездит (замер 16.09: 49 рынков на фикстуре 10:33Z, 48 живьём
+  // в 17:33Z, 46 в 18:40Z), и без этой строки ответ на вопрос «по чему бот решал» приходится
+  // собирать из записи задним числом.
+  //
+  // ПЕЧАТАЕТСЯ НА ТРЁХ СОБЫТИЯХ, А НЕ КАЖДЫЙ ТИК. Решение (редкое, каданс сутки), смена исхода и
+  // СМЕНА ЧИСЛА ГОДНЫХ ПО ИСТОРИИ. Третье заведено ради прогрева: кадры приходят по одному около
+  // пятнадцати секунд каждый, и первые двенадцать минут после запуска бот решает НЕ ПО ВСЕЙ
+  // вселенной. Без этой строки рост среза с нуля до полусотни не виден в журнале вовсе, а исход при
+  // этом не меняется ни разу: он всё это время `hist_no_base`.
+  if (tick.decided || outcomeChanged || (prev?.gate?.usable ?? null) !== (tick.gate?.usable ?? null)) {
+    const funded = (tick.universe?.curves || []).filter((c) => !c.refusal).length;
+    const census = Object.entries(faRefusalCensus(tick.refusals)).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c} ${n}`).join(", ");
+    console.log(`[fa-auto] срез ${tick.gate?.markets ?? 0} рынков, годных по истории ${tick.gate?.usable ?? 0},`
+      + `${tick.decided ? ` профинансировано ${funded}, решение ${decideMs} мс` : " решения не было"}`
+      + `${census ? `; отказы: ${census}` : ""}`);
+  }
 
   if (armed && tick.decided) {
     faAppendRecord("dec", nowMs, buildFaDecisionRecord({
