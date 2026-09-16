@@ -1,0 +1,1284 @@
+{
+ "markets": [
+  {
+   "name": "BTC/USD [WBTC.b-USDC]",
+   "marketToken": "0x47c031236e19d024b42f8AE6780E44A573170703",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "6316550059627943919597712300000000000",
+   "openInterestShort": "6086522317333752664621694550000000000",
+   "availableLiquidityLong": "97194247010681399512180384122500000000",
+   "availableLiquidityShort": "96177291688427090160854061001210464771"
+  },
+  {
+   "name": "ETH/USD [ETH-USDC]",
+   "marketToken": "0x70d95587d40A2caf56bd97485aB3Eec10Bee6336",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "5232295102286884241511831904767883414",
+   "openInterestShort": "5861531907519562449152969069929795062",
+   "availableLiquidityLong": "68387836713505054219053774802485628357",
+   "availableLiquidityShort": "68984993479873946641282835230870518078"
+  },
+  {
+   "name": "DOGE/USD [ETH-USDC]",
+   "marketToken": "0x6853EA96FF216fAb11D2d930CE3C508556A4bdc4",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "99205581190084660210819328804250000",
+   "openInterestShort": "128326783391973960447175434864900000",
+   "availableLiquidityLong": "829731379370218473900897894936991640",
+   "availableLiquidityShort": "833762770926403970860489868112334117"
+  },
+  {
+   "name": "SOL/USD [SOL-USDC]",
+   "marketToken": "0x09400D9DB990D5ed3f35D7be61DfAEB900Af03C9",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "1188347455482672070491466313620000000",
+   "openInterestShort": "1326005495824779331401944963180000000",
+   "availableLiquidityLong": "8131354379058879215087128070345000000",
+   "availableLiquidityShort": "8287481366268229619022316741044463991"
+  },
+  {
+   "name": "LTC/USD [ETH-USDC]",
+   "marketToken": "0xD9535bB5f58A1a75032416F2dFe7880C30575a41",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "29848354860959672592097870800000000",
+   "openInterestShort": "62392160614221375511611596900000000",
+   "availableLiquidityLong": "147946895521042463812932363783999831",
+   "availableLiquidityShort": "91709654183791155205441257030000000"
+  },
+  {
+   "name": "UNI/USD [UNI-USDC]",
+   "marketToken": "0xc7Abb2C5f3BF3CEB389dF0Eecd6120D451170B50",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "74768069940756995938308972844211067",
+   "openInterestShort": "74316735773990980379847724909332279",
+   "availableLiquidityLong": "644001148837915851777913752333811168",
+   "availableLiquidityShort": "649630907421763447393602093970670298"
+  },
+  {
+   "name": "LINK/USD [LINK-USDC]",
+   "marketToken": "0x7f1fa204bb700853D36994DA19F830b6Ad18455C",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "708371704617266366634337043339361267",
+   "openInterestShort": "713325334744534870260228599663869458",
+   "availableLiquidityLong": "4659615923825219187469734472568038893",
+   "availableLiquidityShort": "4667381292485614495432374939253128289"
+  },
+  {
+   "name": "ARB/USD [ARB-USDC]",
+   "marketToken": "0xC25cEf6061Cf5dE5eb761b50E4743c1F5D7E5407",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "322077747065071708683321131645282805",
+   "openInterestShort": "316372885834353543417411995914712436",
+   "availableLiquidityLong": "748673618703320726765863602519127793",
+   "availableLiquidityShort": "610114097267547441425431157412211330"
+  },
+  {
+   "name": "SWAP-ONLY [USDC-USDC.e]",
+   "marketToken": "0x9C2433dFD71096C435Be9465220BB2B189375eA7",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "0",
+   "availableLiquidityLong": "0",
+   "availableLiquidityShort": "0"
+  },
+  {
+   "name": "SWAP-ONLY [USDC-USDT]",
+   "marketToken": "0xB686BcB112660343E6d15BDb65297e110C8311c4",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "0",
+   "availableLiquidityLong": "0",
+   "availableLiquidityShort": "0"
+  },
+  {
+   "name": "XRP/USD [ETH-USDC]",
+   "marketToken": "0x0CCB4fAa6f1F1B30911619f1184082aB4E25813c",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "289431972875379034105153162800000000",
+   "openInterestShort": "243549646063995098628478242800000000",
+   "availableLiquidityLong": "2135806997841271965755101763064313088",
+   "availableLiquidityShort": "2218103937941521437184887009889448475"
+  },
+  {
+   "name": "BNB/USD [BNB-USDC]",
+   "marketToken": "0x2d340912Aa47e33c90Efb078e69E70EFe2B34b9B",
+   "isListed": true,
+   "listingDate": "2024-01-25T00:00:00.000Z",
+   "openInterestLong": "1597173179983387652900916705883801",
+   "openInterestShort": "1300689944614654015293066378922424",
+   "availableLiquidityLong": "334516777120444745831978204307084070",
+   "availableLiquidityShort": "302397591802935568561820023562102886"
+  },
+  {
+   "name": "AAVE/USD [AAVE-USDC]",
+   "marketToken": "0x1CbBa6346F110c8A5ea739ef2d1eb182990e4EB2",
+   "isListed": true,
+   "listingDate": "2024-02-29T00:00:00.000Z",
+   "openInterestLong": "40734308756289710053318129344880065",
+   "openInterestShort": "36268012477189082974737735325223268",
+   "availableLiquidityLong": "376742375857875797380032338279456627",
+   "availableLiquidityShort": "155495419452284396917407578409244380"
+  },
+  {
+   "name": "ATOM/USD [ETH-USDC]",
+   "marketToken": "0x248C35760068cE009a13076D573ed3497A47bCD4",
+   "isListed": true,
+   "listingDate": "2024-03-03T00:00:00.000Z",
+   "openInterestLong": "194311840801400588454970000000000",
+   "openInterestShort": "3605272674129656030520817500000000",
+   "availableLiquidityLong": "93815767741849976806974815461481482",
+   "availableLiquidityShort": "83116290996376118982060698652100000"
+  },
+  {
+   "name": "NEAR/USD [ETH-USDC]",
+   "marketToken": "0x63Dc80EE90F26363B3FCD609007CC9e14c8991BE",
+   "isListed": true,
+   "listingDate": "2024-03-03T00:00:00.000Z",
+   "openInterestLong": "74042270452024164793844541188432190",
+   "openInterestShort": "28454193923352823237585467911215920",
+   "availableLiquidityLong": "238580613336493259312611921728642503",
+   "availableLiquidityShort": "272802435197514749679599033091338984"
+  },
+  {
+   "name": "AVAX/USD [AVAX-USDC]",
+   "marketToken": "0x7BbBf946883a5701350007320F525c5379B8178A",
+   "isListed": true,
+   "listingDate": "2024-03-08T00:00:00.000Z",
+   "openInterestLong": "81139568699364869779148356102503688",
+   "openInterestShort": "65796917658494863499130318953250603",
+   "availableLiquidityLong": "105129847474210924132103368660343224",
+   "availableLiquidityShort": "88205820935772504637493748162128594"
+  },
+  {
+   "name": "OP/USD [OP-USDC]",
+   "marketToken": "0x4fDd333FF9cA409df583f306B6F5a7fFdE790739",
+   "isListed": true,
+   "listingDate": "2024-03-20T00:00:00.000Z",
+   "openInterestLong": "1230060139066969974152610685992516",
+   "openInterestShort": "8307956731405641363647574541797972",
+   "availableLiquidityLong": "25215382444717009357095780053568",
+   "availableLiquidityShort": "68417542080899427853202495398874420"
+  },
+  {
+   "name": "BTC/USD [WBTC.b-WBTC.b]",
+   "marketToken": "0x7C11F78Ce78768518D743E81Fdfa2F860C6b9A77",
+   "isListed": true,
+   "listingDate": "2024-04-13T00:00:00.000Z",
+   "openInterestLong": "2395124315879101648349899200000000000",
+   "openInterestShort": "1271560402588548856875323500000000000",
+   "availableLiquidityLong": "2550565926382386725554174600000000000",
+   "availableLiquidityShort": "3635901926199709930075343146378115131"
+  },
+  {
+   "name": "ETH/USD [ETH-ETH]",
+   "marketToken": "0x450bb6774Dd8a756274E0ab4107953259d2ac541",
+   "isListed": true,
+   "listingDate": "2024-04-13T00:00:00.000Z",
+   "openInterestLong": "378828269484129227970743520093209392",
+   "openInterestShort": "336949891221824920582918158085002312",
+   "availableLiquidityLong": "8689172668595159336761652352535059378",
+   "availableLiquidityShort": "8733734380539297319106190667282492372"
+  },
+  {
+   "name": "GMX/USD [GMX-USDC]",
+   "marketToken": "0x55391D178Ce46e7AC8eaAEa50A72D1A5a8A622Da",
+   "isListed": true,
+   "listingDate": "2024-06-04T00:00:00.000Z",
+   "openInterestLong": "96075010866570037364882843043352380",
+   "openInterestShort": "96351375707779468839177925831722485",
+   "availableLiquidityLong": "204332315774116850548868612253924468",
+   "availableLiquidityShort": "176505045715111899770366445363170426"
+  },
+  {
+   "name": "PEPE/USD [PEPE-USDC]",
+   "marketToken": "0x2b477989A149B17073D9C9C82eC9cB03591e20c6",
+   "isListed": true,
+   "listingDate": "2024-07-17T00:00:00.000Z",
+   "openInterestLong": "480513009468901878084036549514347",
+   "openInterestShort": "231526360742359134678084910167318",
+   "availableLiquidityLong": "36103394468285396671048764424785367",
+   "availableLiquidityShort": "47674213958484110187075870211414016"
+  },
+  {
+   "name": "WIF/USD [WIF-USDC]",
+   "marketToken": "0x0418643F94Ef14917f1345cE5C460C37dE463ef7",
+   "isListed": true,
+   "listingDate": "2024-07-17T00:00:00.000Z",
+   "openInterestLong": "52296969540845885440756600000000",
+   "openInterestShort": "12969466190292256178640700000000",
+   "availableLiquidityLong": "4054145417149138383248249840000000",
+   "availableLiquidityShort": "29381021879007103103146635720000"
+  },
+  {
+   "name": "ETH/USD [wstETH-USDe]",
+   "marketToken": "0x0Cf1fb4d1FF67A3D8Ca92c9d6643F8F9be8e03E5",
+   "isListed": true,
+   "listingDate": "2024-07-31T00:00:00.000Z",
+   "openInterestLong": "4117985383265116037876544241155192",
+   "openInterestShort": "1300300067420796599152734114759102",
+   "availableLiquidityLong": "53636624528502697168604933697614467",
+   "availableLiquidityShort": "64363386347873911309872447782756232"
+  },
+  {
+   "name": "SWAP-ONLY [wstETH-ETH]",
+   "marketToken": "0xb56E5E2eB50cf5383342914b0C85Fe62DbD861C8",
+   "isListed": true,
+   "listingDate": "2024-07-31T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "0",
+   "availableLiquidityLong": "0",
+   "availableLiquidityShort": "0"
+  },
+  {
+   "name": "SWAP-ONLY [USDe-USDC]",
+   "marketToken": "0x45aD16Aaa28fb66Ef74d5ca0Ab9751F2817c81a4",
+   "isListed": true,
+   "listingDate": "2024-07-31T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "0",
+   "availableLiquidityLong": "0",
+   "availableLiquidityShort": "0"
+  },
+  {
+   "name": "SHIB/USD [ETH-USDC]",
+   "marketToken": "0xB62369752D8Ad08392572db6d0cc872127888beD",
+   "isListed": true,
+   "listingDate": "2024-08-07T00:00:00.000Z",
+   "openInterestLong": "1021982368765897634180063059404000",
+   "openInterestShort": "5411961745538777635671694522188000",
+   "availableLiquidityLong": "16553197763052211144124568366169922",
+   "availableLiquidityShort": "8235386636965665109898464510000000"
+  },
+  {
+   "name": "APE_deprecated (deprecated)/USD [APE_deprecated (deprecated)-USDC]",
+   "marketToken": "0xdf034cd3df9a80eABFA0556232a91E03Ca67D5Cb",
+   "isListed": false,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "0",
+   "availableLiquidityLong": "0",
+   "availableLiquidityShort": "0"
+  },
+  {
+   "name": "STX/USD [WBTC.b-USDC]",
+   "marketToken": "0xD9377d9B9a2327C7778867203deeA73AB8a68b6B",
+   "isListed": true,
+   "listingDate": "2024-08-14T00:00:00.000Z",
+   "openInterestLong": "1286462485463450404495696200000000",
+   "openInterestShort": "6559849064545630188018997500000000",
+   "availableLiquidityLong": "83227746184675329863828995700000000",
+   "availableLiquidityShort": "77398581322148984918478415411617536"
+  },
+  {
+   "name": "ORDI/USD [WBTC.b-USDC]",
+   "marketToken": "0x93385F7C646A3048051914BDFaC25F4d620aeDF1",
+   "isListed": true,
+   "listingDate": "2024-08-14T00:00:00.000Z",
+   "openInterestLong": "1867843100531226852054578571769803",
+   "openInterestShort": "720247138180343785734184956860808",
+   "availableLiquidityLong": "71461030229382205165423231255519546",
+   "availableLiquidityShort": "71790666019414923583846857039095808"
+  },
+  {
+   "name": "BTC/USD [tBTC-tBTC]",
+   "marketToken": "0xd62068697bCc92AF253225676D618B0C9f17C663",
+   "isListed": true,
+   "listingDate": "2024-09-11T00:00:00.000Z",
+   "openInterestLong": "1565252631439087731762500000000000",
+   "openInterestShort": "1368613862639419401757250000000000",
+   "availableLiquidityLong": "117363757590715747255343218133737080",
+   "availableLiquidityShort": "117410120030611157624804312575488194"
+  },
+  {
+   "name": "EIGEN/USD [ETH-USDC]",
+   "marketToken": "0xD4b737892baB8446Ea1e8Bb901db092fb1EC1791",
+   "isListed": true,
+   "listingDate": "2024-10-10T00:00:00.000Z",
+   "openInterestLong": "3972843882790784694194444356025196",
+   "openInterestShort": "350294208599528707742281456889616",
+   "availableLiquidityLong": "60156130871781959177436205875824908",
+   "availableLiquidityShort": "56438637955885769593559352683510272"
+  },
+  {
+   "name": "SATS/USD [WBTC.b-USDC]",
+   "marketToken": "0x8ea4Fb801493DaD8724F90Fb2e279534fa591366",
+   "isListed": true,
+   "listingDate": "2024-10-10T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "0",
+   "availableLiquidityLong": "15086436399857103896640000000000",
+   "availableLiquidityShort": "12297092922499330731166200000000"
+  },
+  {
+   "name": "POL/USD [ETH-USDC]",
+   "marketToken": "0xD0a1AFDDE31Eb51e8b53bdCE989EB8C2404828a4",
+   "isListed": true,
+   "listingDate": "2024-10-17T00:00:00.000Z",
+   "openInterestLong": "1163857913801690550042219300000000",
+   "openInterestShort": "1917178212813388650306979020000000",
+   "availableLiquidityLong": "35256317764960565318556494694175792",
+   "availableLiquidityShort": "33541678554920024410667118522792960"
+  },
+  {
+   "name": "AAVE/USD [ETH-USDC]",
+   "marketToken": "0x77B2eC357b56c7d05a87971dB0188DBb0C7836a5",
+   "isListed": true,
+   "listingDate": "2024-10-17T00:00:00.000Z",
+   "openInterestLong": "9274141880725271177472041601585",
+   "openInterestShort": "183516019080115693754263731366099",
+   "availableLiquidityLong": "4558355186350168151535638124311597",
+   "availableLiquidityShort": "865511289487715991830592800000000"
+  },
+  {
+   "name": "UNI/USD [ETH-USDC]",
+   "marketToken": "0xD8471b9Ea126272E6d32B5e4782Ed76DB7E554a4",
+   "isListed": true,
+   "listingDate": "2024-10-17T00:00:00.000Z",
+   "openInterestLong": "61545901531750408618476967604782",
+   "openInterestShort": "1299722924782933592544774480013",
+   "availableLiquidityLong": "96831101348351234297758065863892904",
+   "availableLiquidityShort": "82808586141696014926129276340000000"
+  },
+  {
+   "name": "PEPE/USD [ETH-USDC]",
+   "marketToken": "0x0Bb2a83F995E1E1eae9D7fDCE68Ab1ac55b2cc85",
+   "isListed": true,
+   "listingDate": "2024-10-17T00:00:00.000Z",
+   "openInterestLong": "29504457982422163120680442487756565",
+   "openInterestShort": "12859415525515612169764158079435911",
+   "availableLiquidityLong": "12868034926841755743531738342122813",
+   "availableLiquidityShort": "20074135274366329771990604550335124"
+  },
+  {
+   "name": "APE/USD [APE-USDC]",
+   "marketToken": "0xdAB21c4d1F569486334C93685Da2b3F9b0A078e8",
+   "isListed": true,
+   "listingDate": "2024-10-24T00:00:00.000Z",
+   "openInterestLong": "10340664648084347854561089731509164",
+   "openInterestShort": "4141163105752213543230566888432568",
+   "availableLiquidityLong": "13057506781621832571519061309178302",
+   "availableLiquidityShort": "44231090837044572862934586289208586"
+  },
+  {
+   "name": "SUI/USD [ETH-USDC]",
+   "marketToken": "0x6Ecf2133E2C9751cAAdCb6958b9654baE198a797",
+   "isListed": true,
+   "listingDate": "2024-10-24T00:00:00.000Z",
+   "openInterestLong": "175955525417812164509566915471900000",
+   "openInterestShort": "169390557668321626861370800740400000",
+   "availableLiquidityLong": "203022040855135552322947020843956677",
+   "availableLiquidityShort": "192122027419473549674906959642258463"
+  },
+  {
+   "name": "SEI/USD [ETH-USDC]",
+   "marketToken": "0xB489711B1cB86afDA48924730084e23310EB4883",
+   "isListed": true,
+   "listingDate": "2024-10-24T00:00:00.000Z",
+   "openInterestLong": "321780544000344653622932530197963",
+   "openInterestShort": "867184338930615155941816788317016",
+   "availableLiquidityLong": "40574531533064667701250040777465638",
+   "availableLiquidityShort": "39617239207658791581820816000000000"
+  },
+  {
+   "name": "APT/USD [ETH-USDC]",
+   "marketToken": "0x66A69c8eb98A7efE22A22611d1967dfec786a708",
+   "isListed": true,
+   "listingDate": "2024-10-31T00:00:00.000Z",
+   "openInterestLong": "27223992129109418588931582564000000",
+   "openInterestShort": "13186781952969957564614311116000000",
+   "availableLiquidityLong": "31415387945393703822537025857309939",
+   "availableLiquidityShort": "36059544429380037204445226591963584"
+  },
+  {
+   "name": "TIA/USD [ETH-USDC]",
+   "marketToken": "0xBeB1f4EBC9af627Ca1E5a75981CE1AE97eFeDA22",
+   "isListed": true,
+   "listingDate": "2024-10-31T00:00:00.000Z",
+   "openInterestLong": "10882527331697906961046950000000",
+   "openInterestShort": "623219596881071295528241650000000",
+   "availableLiquidityLong": "28629381212308213449924678723869157",
+   "availableLiquidityShort": "26540283934185211941366742540000000"
+  },
+  {
+   "name": "TRX/USD [ETH-USDC]",
+   "marketToken": "0x3680D7bFE9260D3c5DE81AEB2194c119a59A99D1",
+   "isListed": true,
+   "listingDate": "2024-11-07T00:00:00.000Z",
+   "openInterestLong": "9973396438225678628041824225000000",
+   "openInterestShort": "4900559920317337355617192200000000",
+   "availableLiquidityLong": "16777251906073722994714192008092544",
+   "availableLiquidityShort": "17781192309388128981778699918192896"
+  },
+  {
+   "name": "TAO/USD [WBTC.b-USDC]",
+   "marketToken": "0xe55e1A29985488A2c8846a91E925c2B7C6564db1",
+   "isListed": true,
+   "listingDate": "2024-11-15T00:00:00.000Z",
+   "openInterestLong": "131385488047397460269394805480000000",
+   "openInterestShort": "128757394317483220351805291280000000",
+   "availableLiquidityLong": "162504995528605595316824006980000000",
+   "availableLiquidityShort": "152599070137055252407105441500061495"
+  },
+  {
+   "name": "BONK/USD [ETH-USDC]",
+   "marketToken": "0xFaC5fF56c269432706d47DC82Ab082E9AE7D989E",
+   "isListed": true,
+   "listingDate": "2024-11-15T00:00:00.000Z",
+   "openInterestLong": "1006081019162209356940910805000000",
+   "openInterestShort": "273200712614149400685157245000000",
+   "availableLiquidityLong": "29084733002150834579326994164026891",
+   "availableLiquidityShort": "27993259028981450626900382884917664"
+  },
+  {
+   "name": "WLD/USD [ETH-USDC]",
+   "marketToken": "0x872b5D567a2469Ed92D252eaCB0EB3BB0769e05b",
+   "isListed": true,
+   "listingDate": "2024-11-15T00:00:00.000Z",
+   "openInterestLong": "1924597618822250066685279123234540",
+   "openInterestShort": "9867512514502621934332079416320",
+   "availableLiquidityLong": "41571742951814367405119298141035050",
+   "availableLiquidityShort": "46421855737238854818687651490000000"
+  },
+  {
+   "name": "BOME/USD [WBTC.b-USDC]",
+   "marketToken": "0x71237F8C3d1484495A136022E16840b70fF84a69",
+   "isListed": true,
+   "listingDate": "2024-11-21T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "7711824098425465058323041000000",
+   "availableLiquidityLong": "13285192998933952810620000000000",
+   "availableLiquidityShort": "5988902116969879230837280000000"
+  },
+  {
+   "name": "MEME/USD [WBTC.b-USDC]",
+   "marketToken": "0x6CB901Cc64c024C3Fe4404c940FF9a3Acc229D2C",
+   "isListed": true,
+   "listingDate": "2024-11-21T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "0",
+   "availableLiquidityLong": "5282040950629011534850000000000",
+   "availableLiquidityShort": "4385529643711568331803600000000"
+  },
+  {
+   "name": "FLOKI/USD [WBTC.b-USDC]",
+   "marketToken": "0xfD46a5702D4d97cE0164375744c65F0c31A3901b",
+   "isListed": true,
+   "listingDate": "2024-11-21T00:00:00.000Z",
+   "openInterestLong": "1144359956491225799542992311590500",
+   "openInterestShort": "192652415979581361363649094133500",
+   "availableLiquidityLong": "8172217632731401778779545317950250",
+   "availableLiquidityShort": "8956087191666794202140417369575168"
+  },
+  {
+   "name": "MEW/USD [WBTC.b-USDC]",
+   "marketToken": "0x71B7fF592a974e2B501D8A7a11f5c42DcD365244",
+   "isListed": true,
+   "listingDate": "2024-11-21T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "0",
+   "availableLiquidityLong": "6701243748007886675400000000000",
+   "availableLiquidityShort": "5515861816012130332311600000000"
+  },
+  {
+   "name": "PENDLE/USD [PENDLE-USDC]",
+   "marketToken": "0x784292E87715d93afD7cb8C941BacaFAAA9A5102",
+   "isListed": true,
+   "listingDate": "2024-11-22T00:00:00.000Z",
+   "openInterestLong": "11870686289702477033438003394527040",
+   "openInterestShort": "3082969488791810411083903027450035",
+   "availableLiquidityLong": "144970792419383585397107045645318160",
+   "availableLiquidityShort": "132742520391973507824496261697855930"
+  },
+  {
+   "name": "GMX/USD [GMX-GMX]",
+   "marketToken": "0xbD48149673724f9cAeE647bb4e9D9dDaF896Efeb",
+   "isListed": true,
+   "listingDate": "2024-11-22T00:00:00.000Z",
+   "openInterestLong": "50587279081789182603762599443188285",
+   "openInterestShort": "48888425780077934999977388613994805",
+   "availableLiquidityLong": "70695600701019402267988250007166587",
+   "availableLiquidityShort": "73047329751919717083345173270635407"
+  },
+  {
+   "name": "ADA/USD [WBTC.b-USDC]",
+   "marketToken": "0xcaCb964144f9056A8f99447a303E60b4873Ca9B4",
+   "isListed": true,
+   "listingDate": "2024-11-28T00:00:00.000Z",
+   "openInterestLong": "39298505308865758915000000000000000",
+   "openInterestShort": "33825580255604119555000000000000000",
+   "availableLiquidityLong": "40251603419671872261620950000000000",
+   "availableLiquidityShort": "41813210711741376153960733760503542"
+  },
+  {
+   "name": "BCH/USD [WBTC.b-USDC]",
+   "marketToken": "0x62feB8Ec060A7dE5b32BbbF4AC70050f8a043C17",
+   "isListed": true,
+   "listingDate": "2024-11-28T00:00:00.000Z",
+   "openInterestLong": "10707063779804788266368003800000000",
+   "openInterestShort": "4595110935007412208346365200000000",
+   "availableLiquidityLong": "29309755259749257689421413078000000",
+   "availableLiquidityShort": "35508093685059560814741730388462960"
+  },
+  {
+   "name": "DOT/USD [WBTC.b-USDC]",
+   "marketToken": "0x7B2D09fca2395713dcc2F67323e4876F27b9ecB2",
+   "isListed": true,
+   "listingDate": "2024-11-28T00:00:00.000Z",
+   "openInterestLong": "6391163684703223969149208252000000",
+   "openInterestShort": "1427852585269588909883665735600000",
+   "availableLiquidityLong": "65669957942255541414216887726000000",
+   "availableLiquidityShort": "67736195876524527336597929000000000"
+  },
+  {
+   "name": "ICP/USD [WBTC.b-USDC]",
+   "marketToken": "0xdc4e96A251Ff43Eeac710462CD8A9D18Dc802F18",
+   "isListed": true,
+   "listingDate": "2024-11-28T00:00:00.000Z",
+   "openInterestLong": "12970097622948190951381085568000000",
+   "openInterestShort": "23256324640893865386014206200000000",
+   "availableLiquidityLong": "149427614984379955664034996056000000",
+   "availableLiquidityShort": "136267245259558875632135413700000000"
+  },
+  {
+   "name": "XLM/USD [WBTC.b-USDC]",
+   "marketToken": "0xe902D1526c834D5001575b2d0Ef901dfD0aa097A",
+   "isListed": true,
+   "listingDate": "2024-11-29T00:00:00.000Z",
+   "openInterestLong": "43280746930953290738530043080000000",
+   "openInterestShort": "25415295675028089703594279460000000",
+   "availableLiquidityLong": "15704844748105755372847035380000000",
+   "availableLiquidityShort": "29366075762624800029947075089098161"
+  },
+  {
+   "name": "RENDER/USD [ETH-USDC]",
+   "marketToken": "0x4c505e0062459cf8F60FfF13279c92ea15aE6e2D",
+   "isListed": true,
+   "listingDate": "2024-11-29T00:00:00.000Z",
+   "openInterestLong": "2170549044514149689244788841492184",
+   "openInterestShort": "1884686112907596906162025649864104",
+   "availableLiquidityLong": "33036659489413635981242551630507104",
+   "availableLiquidityShort": "24051270316811028785794451860000000"
+  },
+  {
+   "name": "SOL/USD [SOL-SOL]",
+   "marketToken": "0xf22CFFA7B4174554FF9dBf7B5A8c01FaaDceA722",
+   "isListed": true,
+   "listingDate": "2024-11-29T00:00:00.000Z",
+   "openInterestLong": "59218480242569496614940952050000000",
+   "openInterestShort": "34401120798077220862134664540000000",
+   "availableLiquidityLong": "41785959265450602973080759200000000",
+   "availableLiquidityShort": "57216923721889793028808612921209426"
+  },
+  {
+   "name": "FIL/USD [WBTC.b-USDC]",
+   "marketToken": "0x262B5203f0fe00D9fe86ffecE01D0f54fC116180",
+   "isListed": true,
+   "listingDate": "2024-12-12T00:00:00.000Z",
+   "openInterestLong": "18495424660922860926329614876893678",
+   "openInterestShort": "1783633325727694653442110952964898",
+   "availableLiquidityLong": "64960520290782315553005893749044369",
+   "availableLiquidityShort": "81311778726005446361991509556471308"
+  },
+  {
+   "name": "INJ/USD [WBTC.b-USDC]",
+   "marketToken": "0x16466a03449CB9218EB6A980Aa4a44aaCEd27C25",
+   "isListed": true,
+   "listingDate": "2024-12-26T00:00:00.000Z",
+   "openInterestLong": "6906903459807974146050927716657552",
+   "openInterestShort": "1161367766810603292555592231948940",
+   "availableLiquidityLong": "67775117382390643742733933709419616",
+   "availableLiquidityShort": "73839660661263403905505759350000000"
+  },
+  {
+   "name": "DYDX/USD [WBTC.b-USDC]",
+   "marketToken": "0x467C4A46287F6C4918dDF780D4fd7b46419c2291",
+   "isListed": true,
+   "listingDate": "2024-12-26T00:00:00.000Z",
+   "openInterestLong": "8866088023321147088380877381077396",
+   "openInterestShort": "3462172292201143852159856088914890",
+   "availableLiquidityLong": "23210831234680164611733229142353906",
+   "availableLiquidityShort": "27768231141302623357819188329882042"
+  },
+  {
+   "name": "TRUMP/USD [ETH-USDC]",
+   "marketToken": "0xFec8f404FBCa3b11aFD3b3f0c57507C2a06dE636",
+   "isListed": true,
+   "listingDate": "2025-01-20T00:00:00.000Z",
+   "openInterestLong": "1714851687859185098698966350000000",
+   "openInterestShort": "4083896045746135479752597250000000",
+   "availableLiquidityLong": "41037762447565631712239660311369632",
+   "availableLiquidityShort": "40363741962678579722713374140040800"
+  },
+  {
+   "name": "ENA/USD [ETH-USDC]",
+   "marketToken": "0x9F159014CC218e942E9E9481742fE5BFa9ac5A2C",
+   "isListed": true,
+   "listingDate": "2025-01-23T00:00:00.000Z",
+   "openInterestLong": "28393471951015779034620723453026148",
+   "openInterestShort": "11500707433071192639840112042307492",
+   "availableLiquidityLong": "59739469842574781833808424639529795",
+   "availableLiquidityShort": "76115180072977292373144996665617920"
+  },
+  {
+   "name": "ANIME/USD [ANIME-USDC]",
+   "marketToken": "0x5707673D95a8fD317e2745C4217aCD64ca021B68",
+   "isListed": true,
+   "listingDate": "2025-01-30T00:00:00.000Z",
+   "openInterestLong": "108067796888840108919844622063120",
+   "openInterestShort": "59481919381767594571066617274380",
+   "availableLiquidityLong": "829312692443845733960961643559632",
+   "availableLiquidityShort": "1727827925947958502011885930000000"
+  },
+  {
+   "name": "FARTCOIN/USD [WBTC.b-USDC]",
+   "marketToken": "0xe2730Ffe2136aA549327EBce93D58160df7821CB",
+   "isListed": true,
+   "listingDate": "2025-01-30T00:00:00.000Z",
+   "openInterestLong": "118989820424280189000000000000000000",
+   "openInterestShort": "45603836238165167000000000000000000",
+   "availableLiquidityLong": "12587434954655644383847450000000000",
+   "availableLiquidityShort": "74856307260669338041126579381389881"
+  },
+  {
+   "name": "BERA/USD [ETH-USDC]",
+   "marketToken": "0x876Ff160d63809674e03f82DC4D3C3Ae8B0acF28",
+   "isListed": true,
+   "listingDate": "2025-02-07T00:00:00.000Z",
+   "openInterestLong": "389752261055991499562397711344610",
+   "openInterestShort": "1045564011557860301495705099553795",
+   "availableLiquidityLong": "36137591757477493972128656632156660",
+   "availableLiquidityShort": "34458351208533079775824782109559808"
+  },
+  {
+   "name": "LDO/USD [ETH-USDC]",
+   "marketToken": "0xE61e608Ba010fF48A7dcE8eDd8B906744263d33E",
+   "isListed": true,
+   "listingDate": "2025-02-07T00:00:00.000Z",
+   "openInterestLong": "23545406024095052664279475853657266",
+   "openInterestShort": "12392891577029529440509493248069960",
+   "availableLiquidityLong": "9636930044836342666184340521286356",
+   "availableLiquidityShort": "19824377635088585959898211948055290"
+  },
+  {
+   "name": "PENGU/USD [WBTC.b-USDC]",
+   "marketToken": "0x0c11Ed89889Fd03394E8d9d685cC5b85be569C99",
+   "isListed": true,
+   "listingDate": "2025-02-13T00:00:00.000Z",
+   "openInterestLong": "34221192226599224605142821000000000",
+   "openInterestShort": "21648618861034309881502957112500000",
+   "availableLiquidityLong": "171463775801029044224071244540000000",
+   "availableLiquidityShort": "180634841964453631258485179476000000"
+  },
+  {
+   "name": "VIRTUAL/USD [WBTC.b-USDC]",
+   "marketToken": "0x75F190E0Be6E8B933A01423EFE398c6C721A5CfF",
+   "isListed": true,
+   "listingDate": "2025-02-13T00:00:00.000Z",
+   "openInterestLong": "14789300043931340178782142837851210",
+   "openInterestShort": "15008175879350144365261540535285063",
+   "availableLiquidityLong": "56169949841805715591907501628333910",
+   "availableLiquidityShort": "54511254164545668166028642360700825"
+  },
+  {
+   "name": "ONDO/USD [ETH-USDC]",
+   "marketToken": "0xa8A455Ed94b315460CfF7d96966d91330f6A3bA0",
+   "isListed": true,
+   "listingDate": "2025-02-20T00:00:00.000Z",
+   "openInterestLong": "228851676579812225413976866537790370",
+   "openInterestShort": "217663419898368816658272933225514950",
+   "availableLiquidityLong": "46045917035430842210647753071905897",
+   "availableLiquidityShort": "21671760124366545922527635903674304"
+  },
+  {
+   "name": "FET/USD [ETH-USDC]",
+   "marketToken": "0x970e578fF01589Bb470CE38a2f1753152A009366",
+   "isListed": true,
+   "listingDate": "2025-02-20T00:00:00.000Z",
+   "openInterestLong": "2464455116581925004862481662038272",
+   "openInterestShort": "4714533395166843543660169303597880",
+   "availableLiquidityLong": "80789993151987615318832948989649347",
+   "availableLiquidityShort": "83022852142482407381390618834560000"
+  },
+  {
+   "name": "AIXBT/USD [ETH-USDC]",
+   "marketToken": "0x04DecfB37e46075189324817df80a32D22b9eD8D",
+   "isListed": true,
+   "listingDate": "2025-02-27T00:00:00.000Z",
+   "openInterestLong": "4414076024487972840806352778764841",
+   "openInterestShort": "1061084604902014349300276777842408",
+   "availableLiquidityLong": "18748410871032406845612220995822825",
+   "availableLiquidityShort": "15548040193912098106816690368554848"
+  },
+  {
+   "name": "CAKE/USD [WBTC.b-USDC]",
+   "marketToken": "0xdE967676db7b1ccdBA2bD94B01B5b19DE4b563e4",
+   "isListed": true,
+   "listingDate": "2025-02-27T00:00:00.000Z",
+   "openInterestLong": "16273144376010711050725777579941820",
+   "openInterestShort": "15217341900756763976837319247907240",
+   "availableLiquidityLong": "24701805597468087299301879369034580",
+   "availableLiquidityShort": "24868946699085074369630189513174144"
+  },
+  {
+   "name": "S/USD [WBTC.b-USDC]",
+   "marketToken": "0x4d9bA415649c4B3c703562770C8ff3033478Cea1",
+   "isListed": true,
+   "listingDate": "2025-02-27T00:00:00.000Z",
+   "openInterestLong": "143044876370818992297750583553262",
+   "openInterestShort": "17850576248181394197466129481376",
+   "availableLiquidityLong": "11191055238475759902626815585408107",
+   "availableLiquidityShort": "11582247845475394848235629910000000"
+  },
+  {
+   "name": "HYPE/USD [WBTC.b-USDC]",
+   "marketToken": "0xBcb8FE13d02b023e8f94f6881Cc0192fd918A5C0",
+   "isListed": true,
+   "listingDate": "2025-03-06T00:00:00.000Z",
+   "openInterestLong": "466265693568831098319958193100000000",
+   "openInterestShort": "448915397160748485824276534100000000",
+   "availableLiquidityLong": "1666831510465189139847078493450000000",
+   "availableLiquidityShort": "1679277014288901591056039311948807137"
+  },
+  {
+   "name": "JUP/USD [WBTC.b-USDC]",
+   "marketToken": "0x7DE8E1A1fbA845A330A6bD91118AfDA09610fB02",
+   "isListed": true,
+   "listingDate": "2025-03-06T00:00:00.000Z",
+   "openInterestLong": "22428338738368841575868032700000000",
+   "openInterestShort": "14187303664540559307100219800000000",
+   "availableLiquidityLong": "104644557746181629503888356900000000",
+   "availableLiquidityShort": "111730348816639528590533778349797341"
+  },
+  {
+   "name": "DOLO/USD [ETH-USDC]",
+   "marketToken": "0x4D3Eb91efd36C2b74181F34B111bc1E91a0d0cb4",
+   "isListed": true,
+   "listingDate": "2025-04-24T00:00:00.000Z",
+   "openInterestLong": "730559657897113478002095178345256",
+   "openInterestShort": "3857735117764038644009009790844360",
+   "availableLiquidityLong": "37481120476512811465699778873011828",
+   "availableLiquidityShort": "33541545001362502782078111173832960"
+  },
+  {
+   "name": "ZRO/USD [ETH-USDC]",
+   "marketToken": "0x9e79146b3A022Af44E0708c6794F03Ef798381A5",
+   "isListed": true,
+   "listingDate": "2025-05-08T00:00:00.000Z",
+   "openInterestLong": "3660881534059102744122169143640137",
+   "openInterestShort": "2958621973786148093381162469794347",
+   "availableLiquidityLong": "1271338491779610090146649277409461",
+   "availableLiquidityShort": "1733563119517065114792635500000000"
+  },
+  {
+   "name": "MOODENG/USD [WBTC.b-USDC]",
+   "marketToken": "0x2523B89298908FEf4c5e5bd6F55F20926e22058f",
+   "isListed": true,
+   "listingDate": "2025-06-02T00:00:00.000Z",
+   "openInterestLong": "243694587420988749115200000000",
+   "openInterestShort": "14245719844305780599090400000000",
+   "availableLiquidityLong": "9344010985047845103076613200000000",
+   "availableLiquidityShort": "9556291701226200187248742700000000"
+  },
+  {
+   "name": "XMR/USD [WBTC.b-USDC]",
+   "marketToken": "0x7c54D547FAD72f8AFbf6E5b04403A0168b654C6f",
+   "isListed": true,
+   "listingDate": "2025-06-02T00:00:00.000Z",
+   "openInterestLong": "81515192198594886766740000000000000",
+   "openInterestShort": "204471377975266341760245000000000000",
+   "availableLiquidityLong": "194447317315813076105973050000000000",
+   "availableLiquidityShort": "72925828568699525334640724144361158"
+  },
+  {
+   "name": "CRV/USD [ETH-USDC]",
+   "marketToken": "0x0e46941F9bfF8d0784BFfa3d0D7883CDb82D7aE7",
+   "isListed": true,
+   "listingDate": "2025-06-02T00:00:00.000Z",
+   "openInterestLong": "98202703098395153479586778700485594",
+   "openInterestShort": "95282785821355061934385088073493830",
+   "availableLiquidityLong": "66158347057141862311239413654533704",
+   "availableLiquidityShort": "72451630512952754461766849409796414"
+  },
+  {
+   "name": "PUMP/USD [WBTC.b-USDC]",
+   "marketToken": "0x4C0Bb704529Fa49A26bD854802d70206982c6f1B",
+   "isListed": true,
+   "listingDate": "2025-07-15T00:00:00.000Z",
+   "openInterestLong": "18402638813004134042386515266459000",
+   "openInterestShort": "17998420011999700891561629284666600",
+   "availableLiquidityLong": "102640935987736905465685609896700700",
+   "availableLiquidityShort": "99109097207560396099012538559000000"
+  },
+  {
+   "name": "ARB/USD [ARB-ARB]",
+   "marketToken": "0x672fEA44f4583DdaD620d60C1Ac31021F47558Cb",
+   "isListed": true,
+   "listingDate": "2025-07-17T00:00:00.000Z",
+   "openInterestLong": "1568184155760741448617538308253845",
+   "openInterestShort": "1092137304598830838803975275229768",
+   "availableLiquidityLong": "15282467386711852386187422115722576",
+   "availableLiquidityShort": "15850289930807939217544297895426986"
+  },
+  {
+   "name": "SPX6900/USD [ETH-USDC]",
+   "marketToken": "0x8263bC3766a09f6dD4Bab04b4bf8D45F2B0973FF",
+   "isListed": true,
+   "listingDate": "2025-08-06T00:00:00.000Z",
+   "openInterestLong": "24947773189424944983814699086000000",
+   "openInterestShort": "5671819152254317207717814484000000",
+   "availableLiquidityLong": "10477221221032931145701580289908342",
+   "availableLiquidityShort": "31162680279495521652173368365095936"
+  },
+  {
+   "name": "MNT/USD [ETH-USDC]",
+   "marketToken": "0x40dAEAc02dCf6b3c51F9151f532C21DCEF2F7E63",
+   "isListed": true,
+   "listingDate": "2025-08-06T00:00:00.000Z",
+   "openInterestLong": "1088770459878304057299422955000",
+   "openInterestShort": "14921857338585629748004619030000",
+   "availableLiquidityLong": "20557918028142286843426314385111216",
+   "availableLiquidityShort": "20637598203473076641800552400000000"
+  },
+  {
+   "name": "ALGO/USD [WBTC.b-USDC]",
+   "marketToken": "0x3B7f4e4Cf2fa43df013d2B32673e6A01d29ab2Ac",
+   "isListed": true,
+   "listingDate": "2025-08-13T00:00:00.000Z",
+   "openInterestLong": "1201313060793334107258196050000000",
+   "openInterestShort": "1952472408849926812858562550000000",
+   "availableLiquidityLong": "11988189548158889313242255925000000",
+   "availableLiquidityShort": "11567097133862888849401674750000000"
+  },
+  {
+   "name": "HBAR/USD [WBTC.b-USDC]",
+   "marketToken": "0x9f0849FB830679829d1FB759b11236D375D15C78",
+   "isListed": true,
+   "listingDate": "2025-08-13T00:00:00.000Z",
+   "openInterestLong": "44244300812224876867652568456600000",
+   "openInterestShort": "33726507293392120491723181625400000",
+   "availableLiquidityLong": "46641463916012535409924539597500000",
+   "availableLiquidityShort": "54419568704422012487735697819715615"
+  },
+  {
+   "name": "CRO/USD [WBTC.b-USDC]",
+   "marketToken": "0xa29FfE4152B65A0347512Ae5c6A4Bbc7a3d6d51B",
+   "isListed": true,
+   "listingDate": "2025-08-13T00:00:00.000Z",
+   "openInterestLong": "7298389619155948319225000000000000",
+   "openInterestShort": "4374198619281499317400000000000000",
+   "availableLiquidityLong": "38107802729440686946147200000000000",
+   "availableLiquidityShort": "38800087157596924631864941200000000"
+  },
+  {
+   "name": "OKB/USD [ETH-USDC]",
+   "marketToken": "0x2a331e51a3D17211852d8625a1029898450e539B",
+   "isListed": true,
+   "listingDate": "2025-08-21T00:00:00.000Z",
+   "openInterestLong": "2247352402161979395657755000934704",
+   "openInterestShort": "3083039058209004739630037123908504",
+   "availableLiquidityLong": "14912999861402496487308500808216732",
+   "availableLiquidityShort": "8128826878883489262232641742333694"
+  },
+  {
+   "name": "CVX/USD [ETH-USDC]",
+   "marketToken": "0x41E3bC5B72384C8B26b559B7d16C2B81Fd36fbA2",
+   "isListed": true,
+   "listingDate": "2025-08-21T00:00:00.000Z",
+   "openInterestLong": "66249836274721329110459018801376600",
+   "openInterestShort": "60733567399422192524502151960844250",
+   "availableLiquidityLong": "27995515277784764782586978717281432",
+   "availableLiquidityShort": "21097987809873344443741685768595683"
+  },
+  {
+   "name": "KAS/USD [WBTC.b-USDC]",
+   "marketToken": "0x4024418592450E4d62faB15e2f833FC03A3447dc",
+   "isListed": true,
+   "listingDate": "2025-08-21T00:00:00.000Z",
+   "openInterestLong": "4340693959552509600000000000000000",
+   "openInterestShort": "3735150603029394000000000000000000",
+   "availableLiquidityLong": "40965915426833863701582700000000000",
+   "availableLiquidityShort": "41863528327358537926016182331748176"
+  },
+  {
+   "name": "WIF/USD [WBTC.b-USDC]",
+   "marketToken": "0x3f649eab7f4CE4945F125939C64429Be2C5d0cB4",
+   "isListed": true,
+   "listingDate": "2025-08-21T00:00:00.000Z",
+   "openInterestLong": "6214851996948676231016000000000",
+   "openInterestShort": "470696554318486349054873500000000",
+   "availableLiquidityLong": "6941830009784651285877754000000000",
+   "availableLiquidityShort": "6355240774040895495556547905616000"
+  },
+  {
+   "name": "BRETT/USD [ETH-USDC]",
+   "marketToken": "0x6EeE8098dBC106aEde99763FA5F955A5bBc42C50",
+   "isListed": true,
+   "listingDate": "2025-08-27T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "0",
+   "availableLiquidityLong": "14450541990961094126428725577708",
+   "availableLiquidityShort": "11182430255411006538157900000000"
+  },
+  {
+   "name": "AERO/USD [ETH-USDC]",
+   "marketToken": "0xfaEaE570B07618D3F10360608E43c241181c4614",
+   "isListed": true,
+   "listingDate": "2025-08-27T00:00:00.000Z",
+   "openInterestLong": "37905326960271158970303186083481870",
+   "openInterestShort": "43883607124811784689142499159414845",
+   "availableLiquidityLong": "9920816184768295995289592185005184",
+   "availableLiquidityShort": "2770521788210978088660370368893127"
+  },
+  {
+   "name": "WLFI/USD [ETH-USDC]",
+   "marketToken": "0xb3588455858a49D3244237CEe00880CcB84b91Dd",
+   "isListed": true,
+   "listingDate": "2025-09-01T00:00:00.000Z",
+   "openInterestLong": "2270210327709066529393331495398914",
+   "openInterestShort": "21131247226269628785167978928534",
+   "availableLiquidityLong": "29892451912233847243897026472125976",
+   "availableLiquidityShort": "31080061059775941328186332679482112"
+  },
+  {
+   "name": "VVV/USD [ETH-USDC]",
+   "marketToken": "0x947C521E44f727219542B0f91a85182193c1D2ad",
+   "isListed": true,
+   "listingDate": "2025-09-04T00:00:00.000Z",
+   "openInterestLong": "181507445326001871907336690715142404",
+   "openInterestShort": "168501248216205001970548347122820386",
+   "availableLiquidityLong": "141231861190904232718126440656548232",
+   "availableLiquidityShort": "168831419994138014197896542077888303"
+  },
+  {
+   "name": "MORPHO/USD [ETH-USDC]",
+   "marketToken": "0x4De268aC68477f794C3eAC5A419Cbcffc2cD5e02",
+   "isListed": true,
+   "listingDate": "2025-09-04T00:00:00.000Z",
+   "openInterestLong": "4155446355823850646345947501200837",
+   "openInterestShort": "3710085839397432696799326140145739",
+   "availableLiquidityLong": "28982381243135018846893831688642256",
+   "availableLiquidityShort": "30719909262963342899242112149755343"
+  },
+  {
+   "name": "LINK/USD [ETH-USDC]",
+   "marketToken": "0xF913B4748031EF569898ED91e5BA0d602bB93298",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "17002915002803335463019794490585",
+   "openInterestShort": "43503778978325903167564886383938",
+   "availableLiquidityLong": "4902643829996250997804009856647837",
+   "availableLiquidityShort": "5009049478087479695359716000000000"
+  },
+  {
+   "name": "ZORA/USD [ETH-USDC]",
+   "marketToken": "0xac484106d935f0f20F1485b631fA6F65AeEff550",
+   "isListed": true,
+   "listingDate": "2025-09-18T00:00:00.000Z",
+   "openInterestLong": "2514768209089071932039899217384506",
+   "openInterestShort": "1086531169919414180151730480123942",
+   "availableLiquidityLong": "8098053098578049386377979372679985",
+   "availableLiquidityShort": "8084935885495315636087011074710000"
+  },
+  {
+   "name": "XPL/USD [WBTC.b-USDC]",
+   "marketToken": "0x4b67aa8F754b17b1029Ad2DB4fb6a276CCe350c4",
+   "isListed": true,
+   "listingDate": "2025-09-25T00:00:00.000Z",
+   "openInterestLong": "56410051839430983058981461304845150",
+   "openInterestShort": "56521782703972220531279385968946480",
+   "availableLiquidityLong": "58723344844552791029506967895596410",
+   "availableLiquidityShort": "10122345541152714169509566481784770"
+  },
+  {
+   "name": "SOL/USD [WBTC.b-USDC]",
+   "marketToken": "0xcf083d35AD306A042d4Fb312fCdd8228b52b82f8",
+   "isListed": true,
+   "listingDate": "2025-09-25T00:00:00.000Z",
+   "openInterestLong": "2342917619662094984177358690000000",
+   "openInterestShort": "6382008584538906381482397880000000",
+   "availableLiquidityLong": "51958642455433087619355165440000000",
+   "availableLiquidityShort": "47682824346653888920797895354000000"
+  },
+  {
+   "name": "BNB/USD [WBTC.b-USDC]",
+   "marketToken": "0x065577D05c3D4C11505ed7bc97BBF85d462A6A6f",
+   "isListed": true,
+   "listingDate": "2025-09-25T00:00:00.000Z",
+   "openInterestLong": "54156540802291788544788613485573296",
+   "openInterestShort": "39891732792620954905611254160238615",
+   "availableLiquidityLong": "60678106730990363212146645695350048",
+   "availableLiquidityShort": "69739543898733546004229335455984208"
+  },
+  {
+   "name": "LINEA/USD [ETH-USDC]",
+   "marketToken": "0x6d9430A116ed4d4FC6FE1996A5493662d555b07E",
+   "isListed": true,
+   "listingDate": "2025-10-09T00:00:00.000Z",
+   "openInterestLong": "13709377434849876940864831082381268",
+   "openInterestShort": "10017637197174877930884222594272640",
+   "availableLiquidityLong": "16980132882744252204453884229685046",
+   "availableLiquidityShort": "17756912594422990028730333185201252"
+  },
+  {
+   "name": "AVNT/USD [ETH-USDC]",
+   "marketToken": "0xCEff9D261A96Cb78Df35f9333ba9F2F4CFcb8a68",
+   "isListed": true,
+   "listingDate": "2025-10-09T00:00:00.000Z",
+   "openInterestLong": "4602090805491676630232513696622164",
+   "openInterestShort": "775518489438848133685737492841874",
+   "availableLiquidityLong": "26761639086501919286037622461229770",
+   "availableLiquidityShort": "24978027668639851668857665600579000"
+  },
+  {
+   "name": "0G/USD [WBTC.b-USDC]",
+   "marketToken": "0xe024188850A822409F362209C1EF2cFdc7c4DE4C",
+   "isListed": true,
+   "listingDate": "2025-10-09T00:00:00.000Z",
+   "openInterestLong": "607520552194161238860566362122771",
+   "openInterestShort": "758278486200406770202903291389705",
+   "availableLiquidityLong": "43134281226020221016349793830628271",
+   "availableLiquidityShort": "43105896859443764957442605500000000"
+  },
+  {
+   "name": "ASTER/USD [WBTC.b-USDC]",
+   "marketToken": "0x0164B6c847c65e07C9F6226149ADBFA7C1dE40Cf",
+   "isListed": true,
+   "listingDate": "2025-10-09T00:00:00.000Z",
+   "openInterestLong": "10898180250436281235536477618320048",
+   "openInterestShort": "9727496549682863526508037795664680",
+   "availableLiquidityLong": "41164345790099374692662232203198292",
+   "availableLiquidityShort": "41538277001771498593951774532252453"
+  },
+  {
+   "name": "MON/USD [ETH-USDC]",
+   "marketToken": "0x66AB9D61A0124b61C8892A4ac687Ac48DbA8ff2c",
+   "isListed": true,
+   "listingDate": "2025-12-22T00:00:00.000Z",
+   "openInterestLong": "3261535213448906897212227934137852",
+   "openInterestShort": "2638649848083774943705524258775650",
+   "availableLiquidityLong": "37184180806923275366244281128467904",
+   "availableLiquidityShort": "38586942412558274892270267200000000"
+  },
+  {
+   "name": "ZEC/USD [WBTC.b-USDC]",
+   "marketToken": "0x587759c237acCa739bCE3911647BacF56C876E60",
+   "isListed": true,
+   "listingDate": "2025-12-22T00:00:00.000Z",
+   "openInterestLong": "125015558802514948855644199250000000",
+   "openInterestShort": "141040242897267748142177572000000000",
+   "availableLiquidityLong": "1183276172253455260182096753375000000",
+   "availableLiquidityShort": "1170462044201071851837445221885794562"
+  },
+  {
+   "name": "SKY/USD [ETH-USDC]",
+   "marketToken": "0x00310c6d8A9F821e3FE991f4835f2cA4d87034Cf",
+   "isListed": true,
+   "listingDate": "2025-12-22T00:00:00.000Z",
+   "openInterestLong": "45814803444236944176310318629563038",
+   "openInterestShort": "38831500212586940548557618006716141",
+   "availableLiquidityLong": "9450243944285621379265261450711658",
+   "availableLiquidityShort": "15343941306392678527937416972670720"
+  },
+  {
+   "name": "AR/USD [WBTC.b-USDC]",
+   "marketToken": "0xfa19f7d23a475575BD0270AE7de4FC6852442945",
+   "isListed": true,
+   "listingDate": "2026-01-09T00:00:00.000Z",
+   "openInterestLong": "14616212150664194708998095134632900",
+   "openInterestShort": "9576160805474975404206241546255650",
+   "availableLiquidityLong": "21226610201318401172318239211233850",
+   "availableLiquidityShort": "25915120633158614836650240662639616"
+  },
+  {
+   "name": "DASH/USD [WBTC.b-USDC]",
+   "marketToken": "0x728Ff0679c89267434D6EF1824c8C8eED4aC3DBC",
+   "isListed": true,
+   "listingDate": "2026-01-09T00:00:00.000Z",
+   "openInterestLong": "10487465604099253772372512500000000",
+   "openInterestShort": "5619864081041710282166989800000000",
+   "availableLiquidityLong": "53330300572381132387015831250000000",
+   "availableLiquidityShort": "58041603060696793854270884283125000"
+  },
+  {
+   "name": "SYRUP/USD [ETH-USDC]",
+   "marketToken": "0x8965e821c7C8c09c6eB3Cb9cCf7Eb6f386441EA2",
+   "isListed": true,
+   "listingDate": "2026-01-09T00:00:00.000Z",
+   "openInterestLong": "931176954372635340898853938284845",
+   "openInterestShort": "1147153933101052467219059199512811",
+   "availableLiquidityLong": "22313310999283929709784286186804117",
+   "availableLiquidityShort": "12862525664058133306775780907489784"
+  },
+  {
+   "name": "JTO/USD [WBTC.b-USDC]",
+   "marketToken": "0x3B4689d69516b9D4b1aaf7545c6fC4d3ED70b70b",
+   "isListed": true,
+   "listingDate": "2026-01-09T00:00:00.000Z",
+   "openInterestLong": "523016520545504004577141248000000",
+   "openInterestShort": "13141667301899877065984400000000",
+   "availableLiquidityLong": "14963663217920055070832834121600000",
+   "availableLiquidityShort": "15518428117157008458644666102000000"
+  },
+  {
+   "name": "CHZ/USD [ETH-USDC]",
+   "marketToken": "0x3600592DdEd7e6E0B05029DfB637fFc5A85D6f6B",
+   "isListed": true,
+   "listingDate": "2026-01-09T00:00:00.000Z",
+   "openInterestLong": "272099626036177863955775979111",
+   "openInterestShort": "271964711211003661245366371769",
+   "availableLiquidityLong": "5873063240768361024743518204984947",
+   "availableLiquidityShort": "4183177766282496225938886600000000"
+  },
+  {
+   "name": "XAUT (deprecated)/USD [WBTC.b-USDC]",
+   "marketToken": "0xAbDb2530E24f0736DfbF6dA2600B52Bd6455acDd",
+   "isListed": false,
+   "listingDate": "2026-01-23T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "0",
+   "availableLiquidityLong": "14396611398931461650000000000",
+   "availableLiquidityShort": "19708119949793069097000000000"
+  },
+  {
+   "name": "LIT/USD [ETH-USDC]",
+   "marketToken": "0x044dFE01863CE85f9ECd5639eE5485c90AC320FC",
+   "isListed": true,
+   "listingDate": "2026-01-23T00:00:00.000Z",
+   "openInterestLong": "23498320155677534897359556625602262",
+   "openInterestShort": "10995355012431763556041818168563526",
+   "availableLiquidityLong": "33872029064474426095497500190324592",
+   "availableLiquidityShort": "48784701622267665531127840322022055"
+  },
+  {
+   "name": "XAUT.v2/USD [WBTC.b-USDC]",
+   "marketToken": "0xeb28aD1a2e497F4Acc5D9b87e7B496623C93061E",
+   "isListed": true,
+   "listingDate": "2026-01-23T00:00:00.000Z",
+   "openInterestLong": "61998734045066672482640814176880947",
+   "openInterestShort": "27854271808683732389048449454741420",
+   "availableLiquidityLong": "67954580356754272506643697385423385",
+   "availableLiquidityShort": "102107164587092413346618531679303556"
+  },
+  {
+   "name": "CC/USD [WBTC.b-USDC]",
+   "marketToken": "0x45F0331a6e175B556Bc7d28E0A1c349525006d4E",
+   "isListed": true,
+   "listingDate": "2026-02-12T00:00:00.000Z",
+   "openInterestLong": "13123178250950581705014399993958912",
+   "openInterestShort": "12628913209339967707869418709105960",
+   "availableLiquidityLong": "16537736328999509798435333197072448",
+   "availableLiquidityShort": "14579199543135936933591564009393691"
+  },
+  {
+   "name": "MET/USD [WBTC.b-USDC]",
+   "marketToken": "0xbA30e198CFFeBEf0A84D6943cC8B2e356E324112",
+   "isListed": true,
+   "listingDate": "2026-02-12T00:00:00.000Z",
+   "openInterestLong": "32412510847518688823571956150388448",
+   "openInterestShort": "26840184993539892226375018473571120",
+   "availableLiquidityLong": "27678900070557570655986855431201752",
+   "availableLiquidityShort": "29749083530164882924306374670947601"
+  },
+  {
+   "name": "GOLD/USD [ETH-USDC]",
+   "marketToken": "0x0Df2BE76F517BCF0000AbfFcB6344B3b2aC4Cc4f",
+   "isListed": true,
+   "listingDate": "2026-04-09T00:00:00.000Z",
+   "openInterestLong": "104934472520098185538427980000000000",
+   "openInterestShort": "104593268098279800333993870000000000",
+   "availableLiquidityLong": "66884180630346375485105026530098750",
+   "availableLiquidityShort": "100630431925159827740882840148386134"
+  },
+  {
+   "name": "SILVER/USD [ETH-USDC]",
+   "marketToken": "0x448Fa722717df299ee197E2F6d8EB7911EFF6cEc",
+   "isListed": true,
+   "listingDate": "2026-04-09T00:00:00.000Z",
+   "openInterestLong": "73045976778406450821673450000000000",
+   "openInterestShort": "49405114658642954905893995000000000",
+   "availableLiquidityLong": "43490531876698447535810613717275935",
+   "availableLiquidityShort": "101132265980805953664920607276564974"
+  },
+  {
+   "name": "WTIOIL/USD [ETH-USDC]",
+   "marketToken": "0xda81cdd397210C08cFc567f93982E148A3aac8a6",
+   "isListed": true,
+   "listingDate": "2026-04-23T00:00:00.000Z",
+   "openInterestLong": "78458409486228531477025910000000000",
+   "openInterestShort": "85948086608526809019309330000000000",
+   "availableLiquidityLong": "71318296605597868511727154799131925",
+   "availableLiquidityShort": "95833442486560731822650738299881054"
+  },
+  {
+   "name": "BRENTOIL/USD [ETH-USDC]",
+   "marketToken": "0x6F287D071800BfA847B4a7a7104BE33F87Ce9E74",
+   "isListed": true,
+   "listingDate": "2026-04-23T00:00:00.000Z",
+   "openInterestLong": "36094955675289697498993020000000000",
+   "openInterestShort": "42919453751006667125170380000000000",
+   "availableLiquidityLong": "130009170600296095455355662079623730",
+   "availableLiquidityShort": "101195714016156052134748934432530874"
+  },
+  {
+   "name": "NATGAS/USD [ETH-USDC]",
+   "marketToken": "0x2Ce2bc8B0f9d000f359d756a5816C125474Bb39b",
+   "isListed": true,
+   "listingDate": "2026-04-23T00:00:00.000Z",
+   "openInterestLong": "47822049812298074975504409000000000",
+   "openInterestShort": "47175447923558083285671118000000000",
+   "availableLiquidityLong": "105577141044527536916952232742670265",
+   "availableLiquidityShort": "133016417776609929623241455336637286"
+  },
+  {
+   "name": "MEGA/USD [ETH-USDC]",
+   "marketToken": "0xE26E7b91143f367445f1c0a5dCf4f4aC8EaDcDb1",
+   "isListed": true,
+   "listingDate": "2026-04-30T00:00:00.000Z",
+   "openInterestLong": "619206788937540773774820991383632",
+   "openInterestShort": "2259121949096545664581227201556006",
+   "availableLiquidityLong": "29717282527559999531555290331753464",
+   "availableLiquidityShort": "29597919904855543229566937337261664"
+  },
+  {
+   "name": "SPCX/USD [ETH-USDC]",
+   "marketToken": "0x470128853D74dab7423904a20eA5AA230e9e561B",
+   "isListed": true,
+   "listingDate": "2026-06-08T00:00:00.000Z",
+   "openInterestLong": "39079501497702178843842675000000000",
+   "openInterestShort": "37868870640726103669911075000000000",
+   "availableLiquidityLong": "55832954864919613667912929336436495",
+   "availableLiquidityShort": "44634147584779780909597031506341371"
+  },
+  {
+   "name": "QQQ/USD [ETH-USDC]",
+   "marketToken": "0x1C132E43029efCd57435eE79ceA98006C6227A6f",
+   "isListed": true,
+   "listingDate": "2026-08-21T00:00:00.000Z",
+   "openInterestLong": "11746621306429692226713360000000000",
+   "openInterestShort": "16169700142799104156445790000000000",
+   "availableLiquidityLong": "36784470528941106683921752160217935",
+   "availableLiquidityShort": "32641107277851129564060669806474686"
+  },
+  {
+   "name": "SPY/USD [ETH-USDC]",
+   "marketToken": "0xcBd4c1b0c89D50793c5A3e8d96d98FcB4f1B1c47",
+   "isListed": true,
+   "listingDate": "2026-08-21T00:00:00.000Z",
+   "openInterestLong": "1943365667049785503286935000000000",
+   "openInterestShort": "2771047534274809024238665000000000",
+   "availableLiquidityLong": "10247002886299204128648863496137490",
+   "availableLiquidityShort": "9383891816466878022053130077451392"
+  }
+ ]
+}

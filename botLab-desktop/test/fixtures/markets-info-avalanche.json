@@ -1,0 +1,194 @@
+{
+ "markets": [
+  {
+   "name": "BTC/USD [BTC-USDC]",
+   "marketToken": "0xFb02132333A79C8B5Bd0b64E3AbccA5f7fAf2937",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "109347242469610584462949825000000000",
+   "openInterestShort": "162426019162152384879933325000000000",
+   "availableLiquidityLong": "1248584918757494480797024240250000000",
+   "availableLiquidityShort": "1160604336576157952007154291278335547"
+  },
+  {
+   "name": "ETH/USD [ETH-USDC]",
+   "marketToken": "0xB7e69749E3d2EDd90ea59A4932EFEa2D41E245d7",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "75478566516266891957400356690631825",
+   "openInterestShort": "77561590284525990933273092121324846",
+   "availableLiquidityLong": "1287566238771952171182048516442361551",
+   "availableLiquidityShort": "822741651255769841041309364055680795"
+  },
+  {
+   "name": "DOGE/USD [AVAX-USDC]",
+   "marketToken": "0x8970B527E84aA17a33d38b65e9a5Ab5817FC0027",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "296525116897377158009071926250000",
+   "openInterestShort": "480617034337435926992336362000000",
+   "availableLiquidityLong": "31241691530366188767098151721425440",
+   "availableLiquidityShort": "28132600735035944733150518829382634"
+  },
+  {
+   "name": "SOL/USD [SOL-USDC]",
+   "marketToken": "0xd2eFd1eA687CD78c41ac262B3Bc9B53889ff1F70",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "10749849179603888066342553625000000",
+   "openInterestShort": "10734106976837880955393381905000000",
+   "availableLiquidityLong": "218135296927333030513049137279750000",
+   "availableLiquidityShort": "206675986738088754407075699011500000"
+  },
+  {
+   "name": "LTC/USD [AVAX-USDC]",
+   "marketToken": "0xA74586743249243D3b77335E15FE768bA8E1Ec5A",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "8279804191991291487897750000000",
+   "openInterestShort": "919719495103996951719750000000",
+   "availableLiquidityLong": "22392132801664379037331149806831400",
+   "availableLiquidityShort": "21411136410099250628737994175000000"
+  },
+  {
+   "name": "AVAX/USD [AVAX-USDC]",
+   "marketToken": "0x913C1F46b48b3eD35E7dc3Cf754d4ae8499F31CF",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "375765302955809039972359702085478986",
+   "openInterestShort": "451673783293999024134548272038866091",
+   "availableLiquidityLong": "2104176277779997851716464672545260028",
+   "availableLiquidityShort": "1912058820223991729324418293228783811"
+  },
+  {
+   "name": "SWAP-ONLY [USDC-USDT.e]",
+   "marketToken": "0xf3652Eba45DC761e7ADd4091627d5Cda21F61613",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "0",
+   "availableLiquidityLong": "0",
+   "availableLiquidityShort": "0"
+  },
+  {
+   "name": "SWAP-ONLY [USDC-USDC.e]",
+   "marketToken": "0x297e71A931C5825867E8Fb937Ae5cda9891C2E99",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "0",
+   "availableLiquidityLong": "0",
+   "availableLiquidityShort": "0"
+  },
+  {
+   "name": "SWAP-ONLY [USDT-USDT.e]",
+   "marketToken": "0xA7b768d6a1f746fd5a513D440DF2970ff099B0fc",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "0",
+   "openInterestShort": "0",
+   "availableLiquidityLong": "0",
+   "availableLiquidityShort": "0"
+  },
+  {
+   "name": "XRP/USD [AVAX-USDC]",
+   "marketToken": "0xD1cf931fa12783c1dd5AbB77a0706c27CF352f25",
+   "isListed": true,
+   "listingDate": "2023-08-08T00:00:00.000Z",
+   "openInterestLong": "742188389119785548588707850000000",
+   "openInterestShort": "659716210446639594170058500000000",
+   "availableLiquidityLong": "97579544774452292761897356928038180",
+   "availableLiquidityShort": "95509494697941034300775906684397392"
+  },
+  {
+   "name": "BTC/USD [BTC-BTC]",
+   "marketToken": "0x3ce7BCDB37Bf587d1C17B930Fa0A7000A0648D12",
+   "isListed": true,
+   "listingDate": "2024-06-27T00:00:00.000Z",
+   "openInterestLong": "69106048718188688358027275000000000",
+   "openInterestShort": "69175619253161418837880325000000000",
+   "availableLiquidityLong": "50650930166245336033877938750000000",
+   "availableLiquidityShort": "43250537557776439675822203221297500"
+  },
+  {
+   "name": "ETH/USD [ETH-ETH]",
+   "marketToken": "0x2A3Cf4ad7db715DF994393e4482D6f1e58a1b533",
+   "isListed": true,
+   "listingDate": "2024-06-27T00:00:00.000Z",
+   "openInterestLong": "4184799555417325777564118976876684",
+   "openInterestShort": "2097812807333332637122142673317625",
+   "availableLiquidityLong": "7777375747260078821659188606746880",
+   "availableLiquidityShort": "9613704611331881142751396705073467"
+  },
+  {
+   "name": "AVAX/USD [AVAX-AVAX]",
+   "marketToken": "0x08b25A2a89036d298D6dB8A74ace9d1ce6Db15E5",
+   "isListed": true,
+   "listingDate": "2024-06-27T00:00:00.000Z",
+   "openInterestLong": "27627129219875345556569879057427350",
+   "openInterestShort": "20708195477799407470412687198524485",
+   "availableLiquidityLong": "1349489990824159485145854494951748",
+   "availableLiquidityShort": "8105012067231438896401908723421680"
+  },
+  {
+   "name": "TRUMP/USD [AVAX-USDC]",
+   "marketToken": "0xfB626c4e3E153947A6A94041814c25E449064dAD",
+   "isListed": true,
+   "listingDate": "2025-04-24T00:00:00.000Z",
+   "openInterestLong": "652827938649670391446800000000",
+   "openInterestShort": "48691130171463802044471150000000",
+   "availableLiquidityLong": "9547829833428701920686094959997576",
+   "availableLiquidityShort": "8632724283423775934239151671427500"
+  },
+  {
+   "name": "MELANIA/USD [AVAX-USDC]",
+   "marketToken": "0xe19da27Bf9733c429445E289B662bECDCa6ce10b",
+   "isListed": true,
+   "listingDate": "2025-04-24T00:00:00.000Z",
+   "openInterestLong": "26893931752759318208459650000000",
+   "openInterestShort": "870593556358545997076550000000",
+   "availableLiquidityLong": "9161430747235018073368507678981864",
+   "availableLiquidityShort": "9165534455324390258637095760000000"
+  },
+  {
+   "name": "PUMP/USD [AVAX-USDC]",
+   "marketToken": "0x94cE6F65188a92F297C7f0A5A7B3cAd9013450F8",
+   "isListed": true,
+   "listingDate": "2025-07-17T00:00:00.000Z",
+   "openInterestLong": "143776119977136825836687167906812",
+   "openInterestShort": "114802869858701680755554624405104",
+   "availableLiquidityLong": "27132255516336559155984777974166182",
+   "availableLiquidityShort": "27273251002052124157966594742620000"
+  },
+  {
+   "name": "WLFI/USD [AVAX-USDC]",
+   "marketToken": "0x1cb9932CE322877A2B86489BD1aA3C3CfF879F0d",
+   "isListed": true,
+   "listingDate": "2025-09-01T00:00:00.000Z",
+   "openInterestLong": "15902021530625038941529471334913",
+   "openInterestShort": "910610083376618655760952183406",
+   "availableLiquidityLong": "7784380870700583500233953609903942",
+   "availableLiquidityShort": "7814620793425740793004964950000000"
+  },
+  {
+   "name": "XAUt0/USD [XAUt0-USDT]",
+   "marketToken": "0x92d3DA41E166A12e3Ede9e2Dd9A272C5c6FC55E1",
+   "isListed": true,
+   "listingDate": "2025-10-17T00:00:00.000Z",
+   "openInterestLong": "77935555240996431444000000000000",
+   "openInterestShort": "24828375142046135670000000000000",
+   "availableLiquidityLong": "18106771846581543314685075000000000",
+   "availableLiquidityShort": "69652652983607183492776206819788000"
+  },
+  {
+   "name": "XAUt0/USD [XAUt0-XAUt0]",
+   "marketToken": "0x1635eF7FBdce68eC80A3672aB710A5a99044f5c9",
+   "isListed": true,
+   "listingDate": "2025-10-17T00:00:00.000Z",
+   "openInterestLong": "237235449177653730156000000000000",
+   "openInterestShort": "20477456743134825060000000000000",
+   "availableLiquidityLong": "21375583199200711187370000000000000",
+   "availableLiquidityShort": "21591852287031902514832409600000000"
+  }
+ ]
+}
