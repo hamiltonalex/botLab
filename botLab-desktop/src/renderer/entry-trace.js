@@ -12,6 +12,9 @@
   const setHtml = (el, value) => { if(el && renderedHtml.get(el)!==value){ el.innerHTML=value; renderedHtml.set(el,value); } };
   let currentId = null;
   const expanded = new Set();
+  /* РАСКРЫТЫЕ ГРУППЫ СВЁРНУТЫХ СТРОК. Живут рядом с раскрытыми кривыми и гаснут вместе с ними при
+     смене расчёта: группа, пережившая расчёт, раскрывала бы строки другого перебора. */
+  const groupsOpen = new Set();
   let lastArgs = null;
 
   function newer(a, b) {
@@ -50,7 +53,39 @@
     return { ...auto, entryTrace:entry || null, latestTrace:latest };
   }
 
+  /* ── СТРОКА БЕЗ ЕДИНОГО ЧИСЛА. ЗАМЕР НА ПОЛУСОТНЕ ИНСТРУМЕНТОВ: из 97 строк карточки 47 это
+     НЕВЫБРАННАЯ нога A/B двуногого рынка (правило считает только выбранную, вторая по построению
+     не считается никогда) и ещё 30 это рынки, отсечённые воротами ДО кривой. Вместе это 79%
+     самой высокой карточки вкладки, и ни в одной из этих строк нет ни размера, ни брутто, ни
+     издержек, ни нетто, ни кривой: только имя рынка и код.
+
+     Такие строки сворачиваются в ОДНУ строку группы с раскрытием, по строке на причину. Ни одно
+     число при этом не уходит: их там нет. Уходит только высота.
+
+     ЧТО НЕ СВОРАЧИВАЕТСЯ НИКОГДА: строка с кривой, строка с рангом и строка, которая прямо сейчас
+     считается или стоит в очереди на расчёт (`pending`/`calculating`). Последнее важно для
+     повтора: свернуть активную анимацию значило бы спрятать ровно то, что она показывает. ── */
+  const foldKey = c => {
+    if(c.status==='direction_skipped') return 'dir';
+    if(c.status!=='rejected') return null;
+    if((Array.isArray(c.points) && c.points.length) || finite(c.sizeUsd) || finite(c.netUsd) || finite(c.rank)) return null;
+    return 'code:'+(c.refusal || '');
+  };
+
+  /* КРИВАЯ СЧИТАЕТСЯ ОДИН РАЗ НА НАБОР ТОЧЕК. Строка `<svg>` зависит ТОЛЬКО от точек, а точки
+     посчитанного рынка больше не меняются: повтор отдаёт тот же массив кадр за кадром. Без памятки
+     каждый кадр перестраивал путь по всем точкам всех уже посчитанных рынков, и стоимость кадра
+     РОСЛА по ходу повтора вместе с числом готовых кривых - ЗАМЕР показал 22 мс на первых рынках и
+     100 мс на последних. Ключ это сам массив точек, память отдаётся вместе с ним. */
+  const sparkCache = new WeakMap();
   function sparkline(points) {
+    const hit = sparkCache.get(points);
+    if(hit !== undefined) return hit;
+    const out = buildSparkline(points);
+    sparkCache.set(points, out);
+    return out;
+  }
+  function buildSparkline(points) {
     const valid = points.filter(p => p && finite(p.sizeUsd) && finite(p.net));
     if(valid.length<2) return '';
     const xMin=Math.min(...valid.map(p=>p.sizeUsd)), xMax=Math.max(...valid.map(p=>p.sizeUsd));
@@ -65,8 +100,22 @@
      Ничего не считает и не выдумывает: каждый кадр это состояние, которое живой расчёт прошёл.
      Живое обновление показываемой трассы (новая ревизия, новый расчёт) повтор прерывает: живое
      главнее. При prefers-reduced-motion на рынок показывается один кадр, последняя проверка. ── */
-  const REPLAY = { marketMs:1300, minStepMs:14, maxStepMs:70, afterMarketMs:420, beforeRankMs:700, emptyMarketMs:450, reducedMs:600 };
-  const replay = { traceId:null, revision:null, order:[], m:0, i:0, timer:null };
+  /* ПОВТОР ДЕРЖИТСЯ В БЮДЖЕТЕ И БОЛЬШЕ НЕ РАСТЁТ С ВСЕЛЕННОЙ. Пейсинг был задан НА РЫНОК, и при
+     пяти именах это давало 13 секунд; тот же счёт на полусотне рынков со ставками даёт 87 секунд,
+     а на шестидесяти трёх 109. Полторы минуты анимации, которую нельзя ни пропустить, ни
+     прокрутить, это уже не показ расчёта, а ожидание. Теперь задан ОБЩИЙ бюджет, а доля рынка
+     считается из него: при пяти именах доля упирается в прежний потолок 1300 мс и повтор идёт
+     СЕКУНДА В СЕКУНДУ как раньше, а дальше держится около 25 секунд на любом числе рынков.
+
+     ЧТО ПРИ ЭТОМ НЕ ТЕРЯЕТСЯ. Когда доли рынка мало на все записанные проверки размера, кадры
+     ПРОРЕЖИВАЮТСЯ: показывается меньше проверок, но каждая показанная это по-прежнему состояние,
+     которое живой расчёт прошёл, и ПОСЛЕДНЯЯ проверка рынка показывается всегда (иначе рынок
+     заканчивался бы на середине своей кривой). Ни одно число с экрана при этом не пропадает:
+     полная кривая лежит в раскрытии строки, и там все точки до единой. */
+  const REPLAY = { budgetMs:24000, marketMs:1300, minMarketMs:240, minStepMs:14, maxStepMs:70,
+    afterMarketMs:420, minAfterMs:90, beforeRankMs:700, emptyMarketMs:450, reducedMs:600 };
+  const replay = { traceId:null, revision:null, order:[], m:0, i:0, timer:null,
+    marketMs:REPLAY.marketMs, afterMs:REPLAY.afterMarketMs, frameMs:REPLAY.minStepMs, frames:0, prevAt:0, wantMs:REPLAY.minStepMs };
   const reducedMotion = () => { try{ return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }catch(e){ return false; } };
   const samplesOf = c => (c && Array.isArray(c.samples)) ? c.samples : [];
   const replayOrder = trace => (trace && Array.isArray(trace.candidates) ? trace.candidates : [])
@@ -87,7 +136,7 @@
         sizeUsd:null, netUsd:null, grossUsd:null, costUsd:null, ratio:null, binding:null, testing:null };
       if(k>replay.m || replay.i<0) return { ...blank, status:'pending' };
       const samples = samplesOf(c);
-      const idx = reduced ? samples.length-1 : Math.min(replay.i, samples.length-1);
+      const idx = reduced ? samples.length-1 : sampleAt(samples.length, replay.i);
       const s = idx>=0 ? samples[idx] : null;
       return { ...blank, status:'calculating', evaluatedSizes:s ? idx+1 : 0,
         testing:s ? { sizeUsd:s[0], grossUsd:s[1], costUsd:s[2], netUsd:s[3] } : null };
@@ -95,32 +144,105 @@
     return { ...trace, candidates, completed:candidates.filter(c=>!['pending','calculating'].includes(c.status)).length,
       activeCandidateId:replay.order[replay.m] || null, selectedCandidateId:null, bestCandidateId:null };
   }
+  // Доля рынка в общем бюджете. Потолок это прежнее значение на рынок, поэтому на малом числе имён
+  // повтор не ускоряется ни на миллисекунду; пол не даёт рынку схлопнуться в мигание.
+  function pace(count) {
+    const share = count>0 ? REPLAY.budgetMs/count : REPLAY.marketMs;
+    return { marketMs: Math.max(REPLAY.minMarketMs, Math.min(REPLAY.marketMs, share*0.76)),
+      afterMs: Math.max(REPLAY.minAfterMs, Math.min(REPLAY.afterMarketMs, share*0.24)) };
+  }
+  /* СКОЛЬКО КАДРОВ ПОКАЗЫВАЕТСЯ НА РЫНКЕ из `n` записанных проверок. Делится доля рынка не на
+     нижний ШАГ, а на ИЗМЕРЕННУЮ стоимость кадра, и это не перестраховка: 14 мс между кадрами
+     достижимы на карточке из семи строк и недостижимы на полусотне рынков, где кадр перерисовывает
+     таблицу и пересобирает снимок трассы. ЗАМЕР ДО ЭТОЙ ПРАВКИ: бюджет обещал 24.7 с, стенные часы
+     показали 37.9 с, то есть таймер отставал в полтора раза и бюджет был не обещанием, а надеждой.
+     Теперь лишние кадры отбрасываются, а бюджет держится.
+
+     Оценка стоимости кадра идёт СКОЛЬЗЯЩИМ СРЕДНИМ по последним кадрам этого же повтора, а не
+     константой: она зависит от числа строк, машины и темы, и любая вписанная сюда цифра была бы
+     верна ровно на одной из них. Пока кадр дёшев, оценка упирается в нижний шаг и прореживания нет
+     вовсе - на пяти именах повтор идёт кадр в кадр как раньше. */
+  const frameBudget = () => Math.max(REPLAY.minStepMs, replay.frameMs);
+  const framesOf = n => Math.max(1, Math.min(n, Math.floor(replay.marketMs/frameBudget())));
+  // Кадр -> записанная проверка. Последний кадр это всегда ПОСЛЕДНЯЯ проверка рынка: кривая обязана
+  // заканчиваться там, где её закончил расчёт. Число кадров рынка ЗАМОРОЖЕНО на входе в него
+  // (`replay.frames`): поехавшая посреди рынка оценка стоимости кадра двигала бы уже показанные
+  // проверки, и кривая прыгала бы назад.
+  function sampleAt(n, frame) {
+    const f = replay.frames || framesOf(n);
+    return f<=1 ? n-1 : Math.min(n-1, Math.round(frame*(n-1)/(f-1)));
+  }
   function stepMs(trace, m) {
     const c = trace.candidates.find(x=>x.id===replay.order[m]);
     const n = samplesOf(c).length;
     if(!n) return REPLAY.emptyMarketMs;
     if(reducedMotion()) return REPLAY.reducedMs;
-    return Math.max(REPLAY.minStepMs, Math.min(REPLAY.maxStepMs, REPLAY.marketMs/n));
+    return Math.max(REPLAY.minStepMs, Math.min(REPLAY.maxStepMs, replay.marketMs/(replay.frames || framesOf(n))));
   }
   function schedule(ms) { replay.timer = setTimeout(replayTick, ms); }
+  const now = () => { try{ return performance.now(); }catch(e){ return Date.now(); } };
+  /* ЧЕМ МЕРИТСЯ СТОИМОСТЬ КАДРА: ФАКТИЧЕСКИМ ПРОМЕЖУТКОМ МЕЖДУ КАДРАМИ. Две более умные попытки
+     промахнулись, и обе ЗАМЕРЕНЫ, а не отброшены рассуждением:
+       секундомер вокруг `render()` - запись в DOM синхронна, а раскладка и отрисовка идут ПОСЛЕ
+         возврата, то есть главная часть стоимости в замер не попадала (38.2 с против 24.7 обещанных);
+       `requestAnimationFrame` - кадр закрывается на ближайшем обновлении экрана (около 18 мс), а
+         фактический промежуток между кадрами при этом 30 мс (медиана, живой замер), и план опять
+         обгонял исполнителя в полтора раза.
+     Промежуток между началами двух соседних кадров это ровно то, что видит человек: в нём и
+     отрисовка, и раскладка, и опоздание таймера. Оценка начинается с нижнего шага и растёт только
+     тогда, когда реальность заставляет, то есть ошибается в безопасную сторону.
+
+     ЧЕМ ПЛАТИМ ЗА ЗАВЫШЕННУЮ ОЦЕНКУ: ЧИСЛОМ КАДРОВ, А НЕ ВРЕМЕНЕМ. Длительность рынка это
+     `кадров x шаг`, где шаг это доля рынка, делённая на кадры, то есть ровно доля рынка при любой
+     оценке. Завышенная оценка отнимает плавность и не может растянуть повтор ни на миллисекунду. */
+  function noteFrame(t0) {
+    if(replay.prevAt){
+      const seen = t0 - replay.prevAt;
+      /* ВВЕРХ БЫСТРО, ВНИЗ МЕДЛЕННО, И БЕЗ ЭТОЙ ПОЛОВИНЫ ОЦЕНКА ЗАСТРЕВАЕТ НАВСЕГДА. Таймер не
+         срабатывает РАНЬШЕ заказанного, поэтому промежуток, равный заказу, не говорит о стоимости
+         кадра ничего: заказали 51 мс - увидели 51 мс - подтвердили 51 мс, и оценка держится на
+         числе, которое сама же и назначила (ЗАМЕР: 354 кадра при медиане 51 мс там, где кадр стоит
+         около 30). Опоздание это единственное честное свидетельство стоимости, и по нему оценка
+         прыгает сразу; когда опоздания нет, она сползает вниз и пробует чаще. */
+      replay.frameMs = seen - replay.wantMs > 2
+        ? replay.frameMs + (seen - replay.frameMs)*0.4
+        : Math.max(REPLAY.minStepMs, replay.frameMs*0.97);
+    }
+    replay.prevAt = t0;
+  }
   function replayTick() {
     replay.timer = null;
     const trace = lastArgs && lastArgs.auto ? lastArgs.auto.entryTrace : null;
     if(!replayActive(trace) || replay.m>=replay.order.length){ stopReplay(true); return; }
     const c = trace.candidates.find(x=>x.id===replay.order[replay.m]);
     const n = samplesOf(c).length;
+    // ЗАМЕР ИДЁТ ПЕРВЫМ: он про промежуток, который УЖЕ прошёл, а не про тот, что сейчас закажут.
+    noteFrame(now());
     let ms;
-    if(replay.i<0){ replay.i = 0; ms = stepMs(trace, replay.m); }
-    else if(!reducedMotion() && replay.i+1<n){ replay.i += 1; ms = stepMs(trace, replay.m); }
-    else { replay.m += 1; replay.i = -1; ms = replay.m>=replay.order.length ? REPLAY.beforeRankMs : REPLAY.afterMarketMs; }
+    if(replay.i<0){ replay.i = 0; replay.frames = framesOf(n); ms = stepMs(trace, replay.m); }
+    else if(!reducedMotion() && replay.i+1<replay.frames){ replay.i += 1; ms = stepMs(trace, replay.m); }
+    else {
+      replay.m += 1; replay.i = -1; replay.frames = 0;
+      ms = replay.m>=replay.order.length ? REPLAY.beforeRankMs : replay.afterMs;
+      /* ПАУЗА МЕЖДУ РЫНКАМИ СТОИМОСТЬЮ КАДРА НЕ ЯВЛЯЕТСЯ, и пока она в неё попадала, вся затея не
+         работала. Пауза в десять раз длиннее кадра, и одного такого образца на рынок хватало, чтобы
+         оценка скакнула втрое и не успевала сползти обратно за оставшиеся кадры: ЗАМЕР показывал
+         353 кадра при медиане 55 мс там, где кадр стоит около 30. Обнулённая метка означает «замер
+         начинается заново со следующего кадра». */
+      replay.prevAt = 0;
+    }
     if(lastArgs) render(lastArgs);
+    replay.wantMs = ms;
     schedule(ms);
   }
   function startReplay(trace) {
     stopReplay(false);
     const order = replayOrder(trace);
     if(!order.length) return;
+    const p = pace(order.length);
     replay.traceId = trace.id; replay.revision = trace.revision || 0; replay.order = order; replay.m = 0; replay.i = 0;
+    replay.marketMs = p.marketMs; replay.afterMs = p.afterMs; replay.frameMs = REPLAY.minStepMs; replay.frames = 0; replay.prevAt = 0;
+    replay.frames = framesOf(samplesOf(trace.candidates.find(x=>x.id===order[0])).length);
     if(lastArgs) render(lastArgs);
     schedule(stepMs(trace, 0));
   }
@@ -128,6 +250,7 @@
     if(replay.timer){ clearTimeout(replay.timer); replay.timer = null; }
     const was = !!replay.traceId;
     replay.traceId = null; replay.revision = null; replay.order = []; replay.m = 0; replay.i = 0;
+    replay.marketMs = REPLAY.marketMs; replay.afterMs = REPLAY.afterMarketMs; replay.frameMs = REPLAY.minStepMs; replay.frames = 0; replay.prevAt = 0;
     if(rerender && was && lastArgs) render(lastArgs);
   }
   function toggleReplay() {
@@ -156,7 +279,7 @@
     const active=candidates.find(c=>c.id===v?.activeCandidateId);
     card.dataset.phase=phase;
     card.dataset.traceId=trace?.id || '';
-    if(currentId!==trace?.id){ expanded.clear(); currentId=trace?.id; }
+    if(currentId!==trace?.id){ expanded.clear(); groupsOpen.clear(); currentId=trace?.id; }
 
     const chain = c => c.chain==='avalanche' || c.chain==='avax' || c.chain===43114 ? 'Avalanche'
       : c.chain==='arbitrum' || c.chain==='arb' || c.chain===42161 ? 'Arbitrum' : String(c.chain || '');
@@ -226,7 +349,18 @@
     const retained = new Set();
     let cursor=body.firstElementChild;
     const place=el=>{ if(el===cursor) cursor=cursor.nextElementSibling; else body.insertBefore(el,cursor); };
-    for(const {candidate:c,index} of rows){
+    /* РАЗБОР НА ВИДИМЫЕ СТРОКИ И ГРУППЫ. Порядок групп это порядок ПЕРВОГО ВХОЖДЕНИЯ, и берётся он
+       из того же отсортированного списка: придумывать группам свой порядок значило бы завести
+       второе правило сортировки рядом с первым. Группы встают ПОД таблицей, потому что строк с
+       рангом среди них нет по определению, а без ранга сортировка и так кладёт их в хвост. */
+    const visible=[], groups=new Map();
+    for(const r of rows){
+      const k=foldKey(r.candidate);
+      if(!k){ visible.push(r); continue; }
+      if(!groups.has(k)) groups.set(k,{ key:k, code:r.candidate.status==='direction_skipped'?null:r.candidate.refusal||null, items:[] });
+      groups.get(k).items.push(r);
+    }
+    const renderRow=({candidate:c,index})=>{
       retained.add(String(c.id));
       let row=Array.from(body.children).find(el=>el.dataset.candidateId===String(c.id));
       if(!row){ row=document.createElement('tr'); row.dataset.candidateId=String(c.id); }
@@ -263,24 +397,58 @@
       if(curveButton) curveButton.setAttribute('aria-expanded',String(expanded.has(c.id)));
       let detail=$(detailId);
       if(!detail || detail.parentNode!==body){ detail=document.createElement('tr'); detail.id=detailId; detail.className='fa-entry-detail'; }
-      // Строка деталей без узлов (рынок ещё считается, повтор) прячется и очищается: прежнее
-      // содержимое от другого состояния той же строки показывать нельзя.
-      detail.dataset.detailFor=String(c.id); detail.hidden=!(expanded.has(c.id) && points.length);
-      if(points.length){
+      /* Строка деталей без узлов (рынок ещё считается, повтор) прячется и очищается: прежнее
+         содержимое от другого состояния той же строки показывать нельзя.
+
+         СОДЕРЖИМОЕ СТРОИТСЯ ТОЛЬКО ДЛЯ РАСКРЫТОЙ СТРОКИ. Раньше перечень точек собирался и для
+         скрытой: запись в DOM не шла (строка та же), но САМА СБОРКА шла каждый кадр по всем точкам
+         всех посчитанных рынков, и стоимость кадра росла вместе с числом готовых кривых. При
+         полусотне инструментов это полсотни точек на рынок и два десятка рынков к концу повтора. */
+      const wantDetail = expanded.has(c.id) && points.length;
+      detail.dataset.detailFor=String(c.id); detail.hidden=!wantDetail;
+      if(wantDetail){
         setHtml(detail,'<td colspan="8"><div class="fa-entry-detail-content"><div class="fa-entry-detail-head"><span>'+esc(t('fa.entry.curveCaption',{market:label(c),n:sizes,points:points.length}))+'</span><span>'+esc(t('fa.entry.binding',{why:bind(c.binding)}))+'</span></div>'
           +'<div class="fa-entry-points" role="list" aria-label="'+esc(t('fa.entry.pointsAria'))+'">'+points.map(p=>'<span class="fa-entry-point" role="listitem" data-best="'+(finite(p.sizeUsd) && p.sizeUsd===c.sizeUsd)+'"><span>'+esc(usd(p.sizeUsd))+'</span><b>'+esc(usd(p.net))+'</b></span>').join('')+'</div></div></td>');
       } else setHtml(detail,'');
       place(detail);
+    };
+    for(const r of visible) renderRow(r);
+    for(const g of groups.values()){
+      const open=groupsOpen.has(g.key), id='grp:'+g.key;
+      retained.add(id);
+      let row=Array.from(body.children).find(el=>el.dataset.candidateId===id);
+      if(!row){ row=document.createElement('tr'); row.dataset.candidateId=id; }
+      row.className='fa-entry-group';
+      row.dataset.status=g.code ? 'rejected' : 'direction_skipped';
+      // Причина названа ТОЙ ЖЕ функцией, что и в строке: у группы отказов это её код, у невыбранной
+      // ноги это её собственная подпись. Своих слов группа не заводит.
+      const why=g.code ? code(g.code) : t('fa.entry.directionSkipped');
+      setHtml(row,'<td colspan="8"><button type="button" class="fa-entry-group-button" data-group="'+esc(g.key)+'" aria-expanded="'+open+'" aria-label="'+esc(t('fa.entry.groupAria',{why,n:g.items.length}))+'">'
+        +'<span class="fa-entry-group-why">'+esc(why)+'</span>'
+        +'<span class="fa-entry-group-n">'+esc(t('fa.entry.groupN',{n:g.items.length}))+'</span>'
+        +'<span class="fa-entry-group-note">'+esc(t('fa.entry.groupNote'))+'</span>'
+        +'<span class="fa-entry-group-caret" aria-hidden="true">'+(open?'⌃':'⌄')+'</span></td>');
+      place(row);
+      if(open) for(const r of g.items) renderRow(r);
     }
     Array.from(body.children).forEach(el=>{ if(!retained.has(el.dataset.candidateId || el.dataset.detailFor)) el.remove(); });
     if(!body.dataset.bound){
       body.dataset.bound='true';
       body.addEventListener('click',event=>{
+        const group=event.target.closest('[data-group]');
+        if(group){
+          const key=group.dataset.group;
+          if(groupsOpen.has(key)) groupsOpen.delete(key); else groupsOpen.add(key);
+          if(lastArgs) render(lastArgs);
+          return;
+        }
         const button=event.target.closest('[data-details]'); if(!button) return;
-        const id=button.dataset.details, detail=$(button.getAttribute('aria-controls'));
+        const id=button.dataset.details;
         if(expanded.has(id)) expanded.delete(id); else expanded.add(id);
-        button.setAttribute('aria-expanded',String(expanded.has(id)));
-        if(detail) detail.hidden=!expanded.has(id);
+        /* РАСКРЫТИЕ ИДЁТ ЧЕРЕЗ ОТРИСОВКУ, А НЕ СНЯТИЕМ `hidden`. Перечень точек собирается только
+           для раскрытой строки (см. `wantDetail`), поэтому у только что раскрытой его ещё нет:
+           показать её, не перерисовав, значит показать пустую строку. */
+        if(lastArgs) render(lastArgs);
       });
     }
     setText('faEntryFoot',t(replaying?'fa.entry.replayNote':selected?'fa.entry.pinnedNote':running?'fa.entry.liveNote':'fa.entry.methodNote'));

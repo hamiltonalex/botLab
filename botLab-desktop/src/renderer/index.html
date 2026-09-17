@@ -1108,6 +1108,41 @@ td.vrd{ font:700 12px var(--f-mono); white-space:nowrap; }
 .fa-hon-sec .stamp{ white-space:normal; }
 #faHonestyCard .fa-flow + .opt-bar{ margin-top:0; }
 
+/* ══════════ СОСТАВ ВСЕЛЕННОЙ, ПОИСК И СВЁРТКА (фаза 4 расширения вселенной) ══════════
+   При пяти именах сводка оценки была списком из пяти строк, и форма ей была не нужна. При
+   полусотне инструментов дорого ровно одно - ЧИТАЕМОСТЬ: датасет на полусотне это 17 мс и 52 КБ
+   (замер), то есть ни потолка строк, ни виртуализации задача не требует. Требует она поиска,
+   сортировки по критерию правила, группировки отказов по коду и свёртки хвоста. */
+.fa-univ{ display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 10px; padding:0 16px 10px;
+  font:500 11px var(--f-mono); color:var(--txt-dim); }
+.fa-univ .k{ font:600 10px var(--f-sans); letter-spacing:.8px; text-transform:uppercase; color:var(--txt-faint); }
+.fa-univ .v{ font-variant-numeric:tabular-nums; }
+.fa-univ-codes{ flex:1 1 100%; display:flex; flex-wrap:wrap; gap:5px; }
+/* Отказ отбора НЕ КЛИКАЕТСЯ, и это не недоделка. Отсечённый рынок в срез правила не попадает
+   вовсе, строки в таблице у него нет, и фильтровать им нечего: кнопка обещала бы строки, которых
+   не существует. Код назван словом, число рядом, и этого довольно. */
+.fa-univ-code{ font:600 10.5px var(--f-mono); color:var(--txt-dim); background:var(--inset);
+  border:1px solid var(--line); border-radius:5px; padding:2px 7px; white-space:nowrap; }
+.fa-univ-code b{ color:var(--txt); font-weight:700; font-variant-numeric:tabular-nums; }
+.fa-univ-more{ font:600 10.5px var(--f-mono); color:var(--txt-dim); background:none;
+  border:1px solid var(--line); border-radius:5px; padding:2px 7px; cursor:pointer; }
+.fa-univ-more:hover{ color:var(--txt); border-color:var(--line-2); }
+
+/* Поиск по имени рынка. `type=search`, потому что это он и есть: браузер даёт крестик очистки и
+   Escape, и заводить их руками значило бы писать хуже штатного. */
+.fa-find{ display:inline-flex; align-items:center; gap:6px; }
+.fa-find input{ font:500 11px var(--f-mono); color:var(--txt); background:var(--inset);
+  border:1px solid var(--line); border-radius:6px; padding:4px 8px; width:150px; }
+.fa-find input:focus{ outline:none; border-color:var(--accent); }
+.fa-find input::placeholder{ color:var(--txt-faint); }
+
+/* Хвост свёрнутых строк. Кнопка стоит ПОД таблицей и называет число, а не «ещё»: «показать все 50»
+   отвечает на вопрос «сколько я не вижу» до нажатия, а не после. */
+.fa-more{ display:flex; justify-content:center; padding:0 16px 10px; }
+.fa-more button{ font:600 11px var(--f-mono); color:var(--txt-dim); background:var(--inset);
+  border:1px solid var(--line); border-radius:6px; padding:5px 14px; cursor:pointer; }
+.fa-more button:hover{ color:var(--txt); border-color:var(--line-2); }
+
 /* ══════════ ТУМБЛЕР ПИТАНИЯ НА КАРТОЧКЕ БОТА 1 («Обзор», фаза 6) ══════════
    Карточка funding-arb перестала быть одной большой кнопкой. Тумблер внутри `<button>` дал бы
    вложенный интерактив: невалидную разметку, сломанный обход с клавиатуры и одну кнопку с двумя
@@ -1459,9 +1494,16 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
     </section>
 
     <!-- ══ ПОСЛЕДНЯЯ ОЦЕНКА ПО РЫНКАМ ══
-         ЧТО ЭТО. Пять строк по числу рынков вселенной: что правило входа увидело по каждому в
+         ЧТО ЭТО. Строка на каждый рынок вселенной: что правило входа увидело по каждому в
          ПОСЛЕДНЕМ ЦИКЛЕ РЕШЕНИЯ. Именно эта карточка отвечает на вопрос «какую сделку бот сейчас
          продумывает»: рынок ранга 1 это тот, в который он войдёт, если войдёт.
+
+         ФОРМА ПОЯВИЛАСЬ ВМЕСТЕ С ЖИВЫМ ОТБОРОМ. При зашитых пяти именах карточка была списком из
+         пяти строк, и ни поиска, ни свёртки ей не требовалось; при полусотне инструментов список
+         перестал читаться. Дорого здесь ровно одно, и это ЧИТАЕМОСТЬ, а не скорость: датасет на
+         полусотне это 17 мс и 52 КБ раз в пять минут (замер), поэтому ни потолка строк, ни
+         виртуализации тут нет и быть не должно. Поиск, порядок по нетто, фильтр по исходу и
+         свёртка хвоста не выводят ни одного числа: они решают, какие СТРОКИ показать.
 
          КАРТОЧКА НЕ ИМЕЕТ ПРАВА ОБЕЩАТЬ ЖИВОЙ ПРОЦЕСС, и это её главное ограничение. Оценка
          СУТОЧНАЯ: каданс решения 24 часа, между решениями движок вселенную не пересчитывает вовсе.
@@ -1484,6 +1526,24 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
         <span class="rule"></span>
         <span class="stamp" id="faEvalStamp"><span class="blip" aria-hidden="true"></span><span aria-live="polite" id="faEvalStampTxt" data-i18n="fa.ev.stamp0"></span></span>
       </div>
+      <!-- СОСТАВ ВСЕЛЕННОЙ. Единственное место, где коды ОТБОРА доходят до экрана: отсечённый
+           отбором рынок в срез правила не попадает вовсе, и строки в таблице ниже у него нет.
+           Поэтому состав стоит НАД таблицей, а не рядом: он объясняет, из чего таблица собрана. -->
+      <div class="fa-univ" id="faEvalUniv" hidden>
+        <span class="k" data-i18n="fa.univ.title"></span>
+        <span class="v" id="faEvalUnivLine"></span>
+        <button class="fa-univ-more" id="faEvalUnivMore" aria-expanded="false" aria-controls="faEvalUnivCodes"></button>
+        <div class="fa-univ-codes" id="faEvalUnivCodes" hidden></div>
+      </div>
+      <div class="ledger-controls">
+        <div class="lchips" id="faEvalFilters" role="group" data-i18n-aria="fa.ev.filtersAria"></div>
+        <label class="fa-find"><span class="sr-only" data-i18n="fa.ev.findLbl"></span>
+          <input type="search" id="faEvalFind" autocomplete="off" spellcheck="false" data-i18n-ph="fa.ev.findPh" data-i18n-aria="fa.ev.findAria"></label>
+        <div class="seg" id="faEvalSortSel" role="group" data-i18n-aria="fa.ev.sortAria">
+          <button data-v="net" aria-pressed="true" data-i18n="fa.ev.sortNet"></button>
+          <button data-v="engine" aria-pressed="false" data-i18n="fa.ev.sortEngine"></button>
+        </div>
+      </div>
       <div class="table-scroll" style="max-height:none" tabindex="0" role="region" data-i18n-aria="fa.ev.tableAria">
         <table class="scan" id="faEvalTable">
           <caption class="sr-only" data-i18n="fa.ev.caption"></caption>
@@ -1503,6 +1563,7 @@ button.bc-open:hover .arw{ transform:translateX(2px); }
         </table>
         <div class="ledger-empty" id="faEvalEmpty" data-i18n="fa.ev.empty"></div>
       </div>
+      <div class="fa-more" id="faEvalMoreWrap" hidden><button id="faEvalMore" aria-controls="faEvalBody"></button></div>
       <div class="ledger-foot" style="padding-top:0"><span class="foot-note" data-i18n="fa.ev.note"></span></div>
     </div>
 
@@ -3456,43 +3517,21 @@ const sci = (v) => { if (v===0) return '0'; const e=v.toExponential(4); return e
 const clsSign = v => v>0?'pos':(v<0?'neg':'neu');
 
 /* ============================================================================
-   СТАРТОВЫЕ СТРУКТУРЫ - ТОЛЬКО МЕТАДАННЫЕ ИНСТРУМЕНТОВ (имена, адреса, сети).
-   НИКАКИХ цифр статистики/ставок/OI до прихода живых данных: все stat-поля null,
-   рендереры показывают «история загружается…». Живой датасет из main-процесса
-   полностью замещает эти объекты (applyDataset). Аудит D4: seed-мок удалён.
+   НАБОРЫ РЫНКОВ. ПУСТЫ ДО ПЕРВОГО ЖИВОГО НАБОРА, И ЭТО ЕДИНСТВЕННОЕ ЧЕСТНОЕ
+   НАЧАЛЬНОЕ ЗНАЧЕНИЕ. Здесь стояли зашитые литералы пяти имён с адресами рынков
+   и сетями - последняя вторая точка правды об инструментах в проекте. Она была
+   безвредна ровно до живого отбора вселенной: список собирается площадкой на
+   кадансе решения, и зашитое имя, из него выпавшее, показывало бы рынок,
+   которого у бота нет. Состав приезжает готовым (`applyDataset`: `ds.twoLeg` и
+   `ds.oneLeg` замещают оба набора ЦЕЛИКОМ), а до прихода набора рынка нет вовсе -
+   `state.asset` тоже `null`, и все пять мест доступа защищены `|| {}`.
    ========================================================================== */
 
-/* ── Двунога (delta-neutral): per (asset, config). ── */
-let TWO_LEG = {
-  ETH: { price:null, hlCoin:'ETH', hlMaxLev:25,
-    gmxName:'ETH/USD [ETH-USDC]', gmxAddr:'0x70d95587d40A2caf56bd97485aB3Eec10Bee6336', gmxChain:'Arbitrum',
-    raw:null, oi:null, chosen:'A', A:null, B:null, hours:0 },
-  BTC: { price:null, hlCoin:'BTC', hlMaxLev:40,
-    gmxName:'BTC/USD [WBTC.b-USDC]', gmxAddr:'0x47c031236e19d024b42f8AE6780E44A573170703', gmxChain:'Arbitrum',
-    raw:null, oi:null, chosen:'B', A:null, B:null, hours:0 },
-};
+/* ── Двунога (delta-neutral): per (asset, config). Ключи приходят из вселенной. ── */
+let TWO_LEG = {};
 
-/* ── Одна нога (GMX-карри): per market (актив×сеть). ── */
-let ONE_LEG = {
-  'ETH-Arb':  { label:'ETH · Arbitrum',  asset:'ETH', price:null, chain:'Arbitrum',
-    gmxName:'ETH/USD [ETH-USDC]', gmxAddr:'0x70d95587d40A2caf56bd97485aB3Eec10Bee6336',
-    raw:null, oi:null, netMean:null, netMedian:null, netMin:null, netMax:null,
-    fundMean:null, fundMedian:null, fundMin:null, fundMax:null,
-    borrowMean:null, borrowMedian:null, borrowMax:null,
-    pctPos:null, flips:null, longsPayPct:null, shortsPayPct:null, ddPct:null, hours:0 },
-  'BTC-Arb':  { label:'BTC · Arbitrum',  asset:'BTC', price:null, chain:'Arbitrum',
-    gmxName:'BTC/USD [WBTC.b-USDC]', gmxAddr:'0x47c031236e19d024b42f8AE6780E44A573170703',
-    raw:null, oi:null, netMean:null, netMedian:null, netMin:null, netMax:null,
-    fundMean:null, fundMedian:null, fundMin:null, fundMax:null,
-    borrowMean:null, borrowMedian:null, borrowMax:null,
-    pctPos:null, flips:null, longsPayPct:null, shortsPayPct:null, ddPct:null, hours:0 },
-  'ETH-Avax': { label:'ETH · Avalanche', asset:'ETH', price:null, chain:'Avalanche',
-    gmxName:'ETH/USD [ETH-USDC]', gmxAddr:'0xB7e69749E3d2EDd90ea59A4932EFEa2D41E245d7',
-    raw:null, oi:null, netMean:null, netMedian:null, netMin:null, netMax:null,
-    fundMean:null, fundMedian:null, fundMin:null, fundMax:null,
-    borrowMean:null, borrowMedian:null, borrowMax:null,
-    pctPos:null, flips:null, longsPayPct:null, shortsPayPct:null, ddPct:null, hours:0 },
-};
+/* ── Одна нога (GMX-карри): per market (актив×сеть). Ключи приходят из вселенной. ── */
+let ONE_LEG = {};
 
 /* ── default cost model (editable) - из AUDIT cost-model; правится в панели ниже ── */
 const COSTS = {
@@ -4880,6 +4919,19 @@ const FA_CODE_TEXT = {
   alt_beats_hold:           () => t('fa.code.altBeatsHold'),
   no_position:              () => t('fa.code.noPosition'),
   short_history:            () => t('fa.code.shortHistory'),
+  /* ОТБОР ВСЕЛЕННОЙ (`FA_UNIVERSE_REFUSALS` в fa/universe-scan.js). Рынок, отсечённый ОТБОРОМ, в
+     срез правила не попадает вовсе, и строки в сводке оценки у него нет: единственное место, где
+     эти восемь кодов доходят до экрана, это состав вселенной над сводкой. Заводить их без него
+     значило бы держать в таблице восемь записей, которых интерфейс не может получить ни при каком
+     состоянии, а мёртвая запись врёт не меньше живой (шапка `test/fa-ui.test.js`). */
+  univ_no_ticket:           () => t('fa.code.univNoTicket'),
+  univ_not_perp:            () => t('fa.code.univNotPerp'),
+  univ_not_listed:          () => t('fa.code.univNotListed'),
+  univ_no_hl:               () => t('fa.code.univNoHl'),
+  univ_no_room:             () => t('fa.code.univNoRoom'),
+  univ_oi_share:            () => t('fa.code.univOiShare'),
+  univ_too_young:           () => t('fa.code.univTooYoung'),
+  univ_capped:              () => t('fa.code.univCapped'),
 };
 /* Неизвестный код показывается КАК ЕСТЬ. Подменить его знакомой подписью значило бы соврать про то,
    почему автомат поступил так, а не иначе (идиома `sellPresetLabel` бота 2). */
@@ -4894,6 +4946,19 @@ const FA_TRIGGER_TEXT = {
   room_drop:  () => t('fa.trig.roomDrop'),
 };
 const faTriggerText = c => (FA_TRIGGER_TEXT[c] ? FA_TRIGGER_TEXT[c]() : String(c || '-'));
+
+/* ЧЕМ СОБРАН СПИСОК ВСЕЛЕННОЙ (`FA_UNIVERSE_SOURCES` в fa/universe-scan.js): живым отбором
+   площадки, сохранённым списком прошлого отбора или запасом зашитых имён. Разница не косметическая:
+   на запасе бот работает по пяти именам, и сказать об этом обязан вслух. Таблица ЯВНАЯ по той же
+   причине, что и коды: склейку `t('fa.univ.src.'+s)` не видит ни проверка ссылочной целостности
+   словарей, ни проверка мёртвых ключей, и первый же источник без строки показал бы машинное слово.
+   Сверяется с реестром движка в обе стороны тестом `fa-ui`. */
+const FA_UNIV_SRC_TEXT = {
+  scan:     () => t('fa.univ.srcScan'),
+  saved:    () => t('fa.univ.srcSaved'),
+  fallback: () => t('fa.univ.srcFallback'),
+};
+const faUnivSrcText = s => (FA_UNIV_SRC_TEXT[s] ? FA_UNIV_SRC_TEXT[s]() : String(s || '-'));
 
 /* Чем СВЯЗАН размер. Это не отказ: рынок профинансирован, но упёрся во что-то одно. `null` в реестре
    движка означает «ничего не связывает», и у него своя строка - прочерк здесь был бы неправдой. */
@@ -5533,10 +5598,97 @@ function renderFaArchive(){
     faArcRow(t('fa.arc.retRow', { k:faArcInt(x.keepDays) }), faArcInt(x.n))).join(''));
 }
 
+/* ФОРМА СВОДКИ: ПОИСК, СОРТИРОВКА, ФИЛЬТР ПО ИСХОДУ, СВЁРТКА ХВОСТА. Состояние вида, а не решения:
+   никуда не сохраняется и на движок не влияет ни одним полем. Гасится вместе с картой при смене
+   цикла оценки не нарочно, а потому, что коды исходов в новом цикле могут быть другими: фильтр,
+   переживший цикл, показывал бы пустую таблицу и выглядел бы поломкой. */
+const faEvalUi = { filter:'all', find:'', sort:'net', all:false, univ:false, evAt:null };
+/* СКОЛЬКО СТРОК РАСКРЫТО В СВЁРНУТОМ ВИДЕ. Число человеческое, а не вычисленное: десять строк это
+   экран, на котором видна вся голова ранжирования и ещё запас. Удерживаемый рынок добавляется
+   сверх него всегда - строка, на которой стоят деньги, не имеет права уехать под свёртку. */
+const FA_EVAL_HEAD = 10;
+
+/* ИСХОД СТРОКИ ОДНИМ КОДОМ, и он же ключ группировки. Ровно та же тройка ветвей, что у чипа в
+   таблице: профинансирован, отказ среза, отказ по этому рынку. Второй копии правила нет. */
+const faEvalCode = m => (m.funded ? 'funded' : (m.refusal || null));
+
+function faEvalRowsView(rows, held){
+  const idx = new Map(rows.map((m, i) => [m, i]));
+  const find = faEvalUi.find.trim().toLowerCase();
+  let list = rows.filter(m => {
+    if(faEvalUi.filter !== 'all' && faEvalCode(m) !== faEvalUi.filter) return false;
+    if(find && !((String(m.token) + ' ' + (m.config || '')).toLowerCase().includes(find))) return false;
+    return true;
+  });
+  /* СОРТИРОВКА ПО НЕТТО ЭТО КРИТЕРИЙ ПРАВИЛА, А НЕ ВКУС. Правило входа выбирает рынок по
+     наибольшему нетто за горизонт (`bestAlternative`), поэтому по умолчанию карточка показывает
+     ответ сверху. Рынки БЕЗ нетто (правило не досчитало до кривой) не сравнимы ни с чем и стоят
+     после посчитанных В ПОРЯДКЕ ДВИЖКА: придумывать им место значило бы придумать им число. */
+  if(faEvalUi.sort === 'net') list = list.slice().sort((x, y) => {
+    const xf = Number.isFinite(x.netUsd), yf = Number.isFinite(y.netUsd);
+    if(xf !== yf) return xf ? -1 : 1;
+    if(xf && x.netUsd !== y.netUsd) return x.netUsd < y.netUsd ? 1 : -1;
+    return idx.get(x) - idx.get(y);
+  });
+  const isMine = m => (held ? m.token === held : m.rank === 1);
+  const hidden = [];
+  if(!faEvalUi.all && list.length > FA_EVAL_HEAD){
+    const head = list.slice(0, FA_EVAL_HEAD);
+    for(const m of list.slice(FA_EVAL_HEAD)) (isMine(m) ? head : hidden).push(m);
+    list = head;
+  }
+  return { list, hidden: hidden.length, isMine };
+}
+
+/* ЧИПЫ ИСХОДОВ СТРОЯТСЯ ИЗ ДАННЫХ, А НЕ ИЗ СПИСКА В РАЗМЕТКЕ. Какие коды придут в цикле, решает
+   движок, и зашитый набор чипов был бы вторым реестром кодов - ровно тем, что запрещено. Перепись
+   и порядок чипов живут ЗДЕСЬ, а не в `renderFaEval`: отрисовка сводки не имеет права выводить ни
+   порядка, ни числа, и сторож этого (`fa-ui`) смотрит на её тело целиком. */
+const faEvalCensus = rows => { const by={}; for(const m of rows){ const c=faEvalCode(m); if(c) by[c]=(by[c]||0)+1; } return by; };
+function renderFaEvalChips(rows, census){
+  const chips = $('faEvalFilters'); if(!chips) return;
+  const want = ['all', ...Object.entries(census).sort((x,y)=>y[1]-x[1]).map(([c])=>c)];
+  if(!want.includes(faEvalUi.filter)) faEvalUi.filter='all';
+  chips.innerHTML = want.map(c => '<button class="lchip" data-code="'+ledgerEsc(c)+'" aria-pressed="'+(faEvalUi.filter===c)+'">'
+    + ledgerEsc(c==='all' ? t('fa.ev.filterAll') : faCodeText(c)) + ' <span class="cnt">'+(c==='all'?rows.length:census[c])+'</span></button>').join('');
+}
+
+function renderFaEvalUniverse(){
+  const box = $('faEvalUniv'); if(!box) return;
+  const u = (LIVE.auto && LIVE.auto.universe) || null;
+  /* СОСТАВА МОЖЕТ НЕ БЫТЬ ВОВСЕ, и это штатно: живой отбор идёт под флагом, а до его первого
+     каданса списка ещё нет. Пустая полоса с прочерками врала бы про отбор, которого не было. */
+  box.hidden = !u;
+  if(!u) return;
+  const n = Number.isFinite(u.refused) ? u.refused : 0;
+  $('faEvalUnivLine').textContent = t('fa.univ.line', {
+    at: faAutoDate(u.at), src: faUnivSrcText(u.source),
+    scanned: Number.isFinite(u.scanned) ? u.scanned : '-',
+    n: Number.isFinite(u.instruments) ? u.instruments : '-',
+    oi: u.cfg && Number.isFinite(u.cfg.maxOiSharePct) ? u.cfg.maxOiSharePct + '%' : t('fa.univ.off'),
+    ticket: u.cfg && Number.isFinite(u.cfg.ticketUsd) ? fmtUSD(u.cfg.ticketUsd, 0) : '-',
+  }) + (u.pinned && u.pinned.length ? ' · ' + t('fa.univ.pinned', { keys: u.pinned.join(', ') }) : '');
+  const more = $('faEvalUnivMore'), codes = $('faEvalUnivCodes');
+  more.hidden = !n;
+  // ДВА ЯВНЫХ ВЫЗОВА, А НЕ ТЕРНАРНИК ВНУТРИ `t()`. Ключ, спрятанный за выражением, невидим и для
+  // проверки ссылочной целостности словарей, и для проверки мёртвых ключей: обе смотрят на литерал
+  // сразу после `t(`. Тот же закон, по которому таблицы кодов написаны явными вызовами.
+  more.textContent = faEvalUi.univ ? t('fa.univ.hide', { n }) : t('fa.univ.show', { n });
+  more.setAttribute('aria-expanded', String(faEvalUi.univ));
+  codes.hidden = !(faEvalUi.univ && n);
+  /* ПЕРЕПИСЬ ПО КОДАМ, А НЕ ПЕРЕЧЕНЬ РЫНКОВ. Полный перечень пар «ключ, код» лежит в записи
+     снимка; на экране он был бы сотней строк про пять чисел. Код называется словом из той же
+     таблицы, что и все прочие коды движка: своих интерфейс не заводит. */
+  codes.innerHTML = codes.hidden ? '' : Object.entries(u.census || {}).sort((a, b) => b[1] - a[1])
+    .map(([c, k]) => '<span class="fa-univ-code">' + ledgerEsc(faCodeText(c)) + ' <b>' + k + '</b></span>').join('');
+}
+
 /* ══ ПОСЛЕДНЯЯ ОЦЕНКА ПО РЫНКАМ ══════════════════════════════════════════════════════════════════
-   Пять строк, по одной на рынок вселенной. ВСЕ числа приезжают готовыми в `auto.lastEval.markets`:
-   ранг, нетто за горизонт, покрытие баз, доля удержания, связывающее ограничение и котируемая
-   ставка схемы. Здесь не считается НИЧЕГО - ни ранг, ни спред ног, ни сравнение с капиталом.
+   Строка на КАЖДЫЙ рынок вселенной: пять при зашитом списке, полсотни при живом отборе. ВСЕ числа
+   приезжают готовыми в `auto.lastEval.markets`: ранг, нетто за горизонт, покрытие баз, доля
+   удержания, связывающее ограничение и котируемая ставка схемы. Здесь не считается НИЧЕГО - ни
+   ранг, ни спред ног, ни сравнение с капиталом. Форма (поиск, порядок, фильтр по исходу, свёртка)
+   числа не трогает вовсе: она решает, какие СТРОКИ показать, и ни одного значения не выводит.
 
    ПУСТОЕ СОСТОЯНИЕ ОТСЧИТЫВАЕТСЯ ОТ ЦИКЛА РЕШЕНИЯ, А НЕ ОТ ТИКА. Тик идёт раз в пять минут и почти
    всегда заканчивается кодом `cadence_wait`: вселенную он не пересчитывает вовсе. Пока цикла не
@@ -5547,6 +5699,11 @@ function renderFaEval(){
   const a = LIVE.auto || null;
   const ev = (a && a.lastEval) || null;
   const rows = (ev && Array.isArray(ev.markets)) ? ev.markets : [];
+  renderFaEvalUniverse();
+  /* НОВЫЙ ЦИКЛ ГАСИТ ФИЛЬТР И СВЁРТКУ. Коды исходов в новом цикле другие, и фильтр по коду,
+     которого в нём нет, показал бы пустую таблицу поверх полной оценки. */
+  if(ev && ev.at !== faEvalUi.evAt){ faEvalUi.evAt = ev.at; faEvalUi.filter='all'; faEvalUi.find=''; faEvalUi.all=false;
+    if($('faEvalFind')) $('faEvalFind').value=''; }
   /* ЧЕТЫРЕ РАЗНЫХ ПУСТОТЫ, И РАНЬШЕ ВСЕ ЧЕТЫРЕ ГОВОРИЛИ ОДНО. Сводка есть; цикла не было вовсе;
      автомат выключен, и следующей оценки не будет; автомат работает, решение было, а данных о нём
      не осталось (сводка не поднялась с диска).
@@ -5575,8 +5732,11 @@ function renderFaEval(){
     else if(evState === 'lost') stamp.textContent = t('fa.ev.stampLost', { at:faAutoDate(a.lastDecisionAt) });
     else stamp.textContent = t('fa.ev.stamp0');
   }
+  const controls = $('faEvalFilters') && $('faEvalFilters').parentElement;
   if(!rows.length){
     body.innerHTML='';
+    if(controls) controls.hidden=true;
+    $('faEvalMoreWrap').hidden=true;
     if(empty){
       empty.hidden=false;
       empty.removeAttribute('data-i18n');
@@ -5588,10 +5748,16 @@ function renderFaEval(){
   }
   if(empty) empty.hidden=true;
   const held = ((LIVE.positions||[]).find(x=>x.status==='open')||{}).instrumentKey || null;
+  const census = faEvalCensus(rows);
+  if(controls) controls.hidden = rows.length <= FA_EVAL_HEAD && Object.keys(census).length < 2;
+  if(controls && !controls.hidden) renderFaEvalChips(rows, census);
+  const sortSel = $('faEvalSortSel');
+  if(sortSel) for(const b of sortSel.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v===faEvalUi.sort));
+  const view = faEvalRowsView(rows, held);
   let html='';
-  for(const m of rows){
+  for(const m of view.list){
     const funded = !!m.funded;
-    const mine = held ? m.token===held : m.rank===1;
+    const mine = view.isMine(m);
     /* ИСХОДОВ ТРИ, И ТРЕТИЙ ЗАВЕДЁН НАРОЧНО. `funded` - правило профинансировало; код ворот или
        код кривой - суждение ОБ ЭТОМ рынке; а `refusalFrom === 'slice'` значит, что правило не
        считало НИЧЕГО (источник лежит, потолок капитала или горизонт не назван), и код описывает
@@ -5618,7 +5784,34 @@ function renderFaEval(){
       '</tr>';
   }
   body.innerHTML=html;
+  /* КНОПКА ХВОСТА НАЗЫВАЕТ ЧИСЛО ДО НАЖАТИЯ. «Ещё» не отвечает на вопрос «сколько я не вижу», а
+     свёртка без ответа на него это не свёртка, а пропажа строк. */
+  const moreWrap = $('faEvalMoreWrap'), moreBtn = $('faEvalMore');
+  moreWrap.hidden = !(view.hidden || faEvalUi.all);
+  if(!moreWrap.hidden){
+    moreBtn.textContent = faEvalUi.all ? t('fa.ev.foldBack', { n:FA_EVAL_HEAD }) : t('fa.ev.showAll', { n:view.hidden });
+    moreBtn.setAttribute('aria-expanded', String(faEvalUi.all));
+  }
 }
+
+/* Управление формой сводки. Перерисовка идёт одним вызовом `renderFaEval()`: вид считается из
+   состояния целиком, и частичных обновлений таблицы нет нигде. */
+/* РАСКРЫТЫЙ ХВОСТ ПЕРЕЖИВАЕТ И ФИЛЬТР, И ПОИСК. Сбрасывать его на смене фильтра значило бы молча
+   отменять явный выбор человека («покажи все») действием, которое его не касается; гасит его
+   только НОВЫЙ ЦИКЛ ОЦЕНКИ, то есть приход других данных. */
+if($('faEvalFilters')) $('faEvalFilters').addEventListener('click', e => {
+  const b = e.target.closest('button[data-code]'); if(!b) return;
+  faEvalUi.filter = b.dataset.code; renderFaEval();
+});
+if($('faEvalSortSel')) $('faEvalSortSel').addEventListener('click', e => {
+  const b = e.target.closest('button[data-v]'); if(!b) return;
+  faEvalUi.sort = b.dataset.v; renderFaEval();
+});
+if($('faEvalFind')) $('faEvalFind').addEventListener('input', function(){
+  faEvalUi.find = this.value || ''; renderFaEval();
+});
+if($('faEvalMore')) $('faEvalMore').addEventListener('click', () => { faEvalUi.all = !faEvalUi.all; renderFaEval(); });
+if($('faEvalUnivMore')) $('faEvalUnivMore').addEventListener('click', () => { faEvalUi.univ = !faEvalUi.univ; renderFaEvalUniverse(); });
 
 /* ── МОСТ АВТОМАТА. Ровно два канала преложения: снять состояние и взвести или остановить. ── */
 async function faAutoGet(){

@@ -1486,6 +1486,16 @@ registerLocale('en', {
   'fa.code.altBeatsHold': 'switch: the alternative repays the round trip and beats holding',
   'fa.code.noPosition': 'there is no open trade',
   'fa.code.shortHistory': 'history is shorter than the horizon',
+  // UNIVERSE SELECTION (`FA_UNIVERSE_REFUSALS`). A market cut by selection never reaches the rule's
+  // slice: it has no row in the evaluation summary and is named only in the universe composition.
+  'fa.code.univNoTicket': 'no ticket named: both selection gates are measured against it',
+  'fa.code.univNotPerp': 'not a perpetual market',
+  'fa.code.univNotListed': 'the market is not listed on the venue',
+  'fa.code.univNoHl': 'the coin is absent from the exchange: nothing to hedge with',
+  'fa.code.univNoRoom': 'the worst side has less free capacity than required',
+  'fa.code.univOiShare': 'our size exceeds the allowed share of open interest',
+  'fa.code.univTooYoung': 'the market is younger than the age threshold',
+  'fa.code.univCapped': 'the list hit the instrument-count cap',
   // What bound the size. Not a refusal: the market was funded but hit a limit.
   'fa.bind.gmx': 'free GMX liquidity',
   'fa.bind.book': 'the visible order book',
@@ -1809,6 +1819,30 @@ registerLocale('en', {
   'fa.ev.thCov': 'Base coverage',
   'fa.ev.thKept': 'Retained share',
   'fa.ev.thApr': 'Scheme rate APR',
+  // SUMMARY FORM (universe expansion, phase 4). At fifty markets the card stopped reading as a list;
+  // the form answers three questions: where is my market, what came out of each outcome, what sits
+  // under the fold. The form derives no numbers at all.
+  'fa.ev.filtersAria': 'Filter rows by the rule outcome',
+  'fa.ev.filterAll': 'all',
+  'fa.ev.findLbl': 'Find a market',
+  'fa.ev.findPh': 'market…',
+  'fa.ev.findAria': 'Search by market name and scheme',
+  'fa.ev.sortAria': 'Row order',
+  'fa.ev.sortNet': 'by net',
+  'fa.ev.sortEngine': 'as the bot counted',
+  'fa.ev.showAll': 'show {n} more',
+  'fa.ev.foldBack': 'fold back to {n}',
+  // UNIVERSE COMPOSITION. It sits above the summary and explains what the summary is built from: a
+  // market cut by SELECTION never reaches the rule slice, so it has no row in the summary.
+  'fa.univ.title': 'universe',
+  'fa.univ.line': 'built {at} · {src} · scanned {scanned}, taken {n} · ticket {ticket}, interest share at most {oi}',
+  'fa.univ.srcScan': 'live venue selection',
+  'fa.univ.srcSaved': 'saved list from the previous selection',
+  'fa.univ.srcFallback': 'the built-in fallback names',
+  'fa.univ.off': 'no threshold',
+  'fa.univ.pinned': 'held markets pinned in: {keys}',
+  'fa.univ.show': '{n} cut, show the reasons',
+  'fa.univ.hide': 'hide the cut reasons ({n})',
   'help.fa-eval.t': 'Last evaluation by market',
   'help.fa-eval.b': '<p>One row per market of the universe: what the entry rule saw on it in the last DECISION CYCLE. The rank-1 market is the one the bot would enter if it entered - and it is the one shown in zone "Ⅰ · The bot\'s market".</p><ul><li><b>The evaluation is daily, not live.</b> The decision cadence is 24 hours: between cycles the universe is re-evaluated only on an off-cadence event, so the header carries two times - when it was taken and when it will be taken again.</li><li><b>Outcome</b> is either "funded" or a refusal code in words. A supply-gate refusal ("history too short", "too few bases") is the normal state of the first hours after launch, not a fault.</li><li><b>What binds the size</b> answers what the optimum ran into: free room on the venue, the order book, the dilution cap or the ticket cap.</li><li><b>Net over the horizon</b> is computed by the engine at the TRADED size and already net of the round-trip cost. The interface does not recompute it.</li><li><b>Base coverage</b> is the share of window hours for which the market\'s funding base is known: without it dilution cannot be computed and the market does not enter the evaluation.</li><li><b>Scheme rate</b> is the rate the market quotes for the legs at evaluation time, before dilution. Our share of it stands in its own column.</li></ul>',
   // Actual entry calculation and the evidence pinned to its resulting paper trade.
@@ -1866,6 +1900,11 @@ registerLocale('en', {
   'fa.entry.calculated': 'Calculated',
   'fa.entry.eligible': 'Eligible',
   'fa.entry.directionSkipped': 'Direction not selected',
+  // A folded group: rows without a single number are folded by reason. No value is lost - such rows
+  // hold none to begin with; only height is.
+  'fa.entry.groupN': '{n} markets',
+  'fa.entry.groupNote': 'no size, no net: these markets were never calculated',
+  'fa.entry.groupAria': 'Expand the folded rows, reason: {why}, markets: {n}',
   'fa.entry.directionBasis': 'A/B compared at current rates; sizing not run',
   'fa.entry.directionFallback': 'Live snapshot missing, incomplete or failed its gate; A/B choice unconfirmed',
   'fa.entry.notEvaluated': 'Calculation unavailable for this decision cycle',

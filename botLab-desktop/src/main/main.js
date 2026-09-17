@@ -771,6 +771,32 @@ function faRebuildUniverse(gmxByChain, hl, nowMs) {
     + `${resolved.pinned.length ? `, прикреплено ${resolved.pinned.map((x) => x.key).join(", ")}` : ""})`);
 }
 
+// Состав вселенной ДЛЯ ИНТЕРФЕЙСА. Отличается от блока записи ровно одним: перечня отказов здесь
+// нет, есть перепись по кодам. Пороги едут рядом с числами, потому что «отсеяно 56 по доле
+// интереса» без порога 10% это половина ответа, а вторую половину интерфейсу взять неоткуда:
+// своей копии порогов у него нет и заводить её нельзя.
+function faUniverseComposition() {
+  if (!faUniverseOn() || !state.universe.at) return null;
+  const cfg = state.universe.cfg || null;
+  return {
+    at: state.universe.at,
+    source: state.universe.source,
+    instruments: state.universe.instruments.length,
+    scanned: state.universe.scanned,
+    refused: (state.universe.refusals || []).length,
+    census: faRefusalCensus(state.universe.refusals),
+    // Прикреплённые это удерживаемые рынки, выпавшие из отбора: они в списке, но отбор их не брал.
+    pinned: (state.universe.pinned || []).map((x) => x.key),
+    cfg: cfg ? {
+      ticketUsd: Number.isFinite(Number(cfg.ticketUsd)) ? Number(cfg.ticketUsd) : null,
+      maxOiSharePct: Number.isFinite(Number(cfg.maxOiSharePct)) ? Number(cfg.maxOiSharePct) : null,
+      minRoomUsd: Number.isFinite(Number(cfg.minRoomUsd)) ? Number(cfg.minRoomUsd) : null,
+      minListingAgeDays: Number.isFinite(Number(cfg.minListingAgeDays)) ? Number(cfg.minListingAgeDays) : null,
+      maxInstruments: Number.isFinite(Number(cfg.maxInstruments)) ? Number(cfg.maxInstruments) : null,
+    } : null,
+  };
+}
+
 // Блок вселенной для строки снимка. ПОЛНЫЙ ПЕРЕЧЕНЬ отказов уезжает только в строке пересборки
 // (`full`), в остальных идут счётчики по кодам: сто пар «ключ, код» 288 раз в сутки это мегабайты
 // на одно и то же число.
@@ -1599,6 +1625,16 @@ function assembleDataset() {
       // на цикле решения и лежит до следующего. Отметка `at` и каданс едут рядом, чтобы карточка
       // могла назвать, КОГДА это снято и когда будет снято снова, а не выдавать сутки за «сейчас».
       lastEval: state.auto.lastEval,
+      // СОСТАВ ВСЕЛЕННОЙ. Единственное место, где коды ОТБОРА доходят до экрана, и заведено оно
+      // ради этого. Рынок, отсечённый отбором, в срез правила не попадает вовсе: строки в сводке
+      // оценки у него нет и быть не может, поэтому без этого блока восемь кодов `univ_*` были бы
+      // переведены в словарях и недостижимы ни при каком состоянии - мёртвые записи, которые
+      // сверка кодов в обе стороны запрещает ровно так же, как неназванный код.
+      //
+      // ПЕРЕПИСЬ, А НЕ ПЕРЕЧЕНЬ. Сто пар «ключ, код» на каждом пуше это мегабайты про одно и то же
+      // число, и полный перечень уже лежит в записи снимка (`faUniverseForRecord`). Наружу идут
+      // счётчики по кодам: «доля интереса 56, нет на бирже 24» это ответ, а сорок строк из ста нет.
+      universe: faUniverseComposition(),
       entryTrace: faDisplayedEntryTrace(),
       latestTrace: state.auto.latestTrace,
     } : null,

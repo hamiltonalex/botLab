@@ -77,6 +77,23 @@
 .fa-entry-outcome[data-tone="active"]{ color:var(--accent); }
 .fa-entry-outcome[data-tone="rejected"]{ color:var(--neu); }
 .fa-entry-outcome-note{ display:block; margin-top:3px; font:400 9px/1.5 var(--f-sans); color:var(--txt-faint); }
+/* ── ГРУППА СВЁРНУТЫХ СТРОК. Замер на полусотне инструментов: 77 строк карточки из 97 не несут ни
+   одного числа (47 невыбранных ног A/B и 30 рынков, отсечённых воротами до кривой), и это почти
+   вся высота самой высокой карточки вкладки. Группа занимает одну строку вместо них и раскрывается
+   по клику; строку с кривой, рангом или идущим расчётом она не сворачивает никогда. ── */
+.fa-entry-table tr.fa-entry-group>td{ padding:0; background:var(--inset); }
+.fa-entry-group-button{ display:flex; align-items:baseline; gap:10px; width:100%; margin:0; padding:9px 12px;
+  border:0; background:none; color:var(--txt-dim); font:400 11px var(--f-sans); text-align:left; cursor:pointer; }
+.fa-entry-group-button:hover{ color:var(--txt); background:var(--accent-bg); }
+.fa-entry-group-button:focus-visible{ outline:2px solid var(--accent); outline-offset:-2px; }
+.fa-entry-group-why{ font-weight:600; color:var(--txt); }
+.fa-entry-group-n{ font:500 10px var(--f-mono); color:var(--txt-dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.fa-entry-group-note{ flex:1; min-width:0; color:var(--txt-faint); font-size:10px; }
+.fa-entry-group-caret{ color:var(--txt-faint); font-size:10px; }
+/* Раскрытые члены группы отступают, иначе они читаются как обычные строки таблицы. */
+.fa-entry-table tr.fa-entry-group ~ tr[data-status="direction_skipped"]>td:first-child,
+.fa-entry-table tr.fa-entry-group ~ tr[data-status="rejected"]>td:first-child{ box-shadow:inset 3px 0 0 var(--line-2); }
+
 .fa-entry-curve-button{ display:inline-flex; flex-direction:column; align-items:flex-end; gap:3px; min-width:85px; margin:0; padding:4px 5px; border:1px solid transparent; border-radius:4px; background:none; color:var(--accent); font:400 9px var(--f-mono); cursor:pointer; }
 .fa-entry-curve-button:hover{ background:var(--accent-bg); border-color:var(--line); }
 .fa-entry-curve-button:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }

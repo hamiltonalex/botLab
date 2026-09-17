@@ -191,6 +191,12 @@ try {
         pollPill: pill && pill.querySelector('b') ? pill.querySelector('b').textContent : null,
         cadenceNote: txt('faAutoCadenceNote'), stamp: txt('faAutoStampTxt'), warnHidden: hid('faAutoWarn'), emptyHidden: hid('faAutoEmpty'), stopHidden: hid('faAutoStopBtn'),
         evalStamp: txt('faEvalStampTxt'), evalRows: rows('faEvalBody'), evalRowCls: rowCls('faEvalBody'), evalEmptyHidden: hid('faEvalEmpty'),
+        evalUnivHidden: hid('faEvalUniv'), evalUnivLine: txt('faEvalUnivLine'), evalUnivMore: txt('faEvalUnivMore'),
+        evalChips: Array.from(document.querySelectorAll('#faEvalFilters .lchip')).map(b => ({ code: b.dataset.code, txt: b.textContent.trim(), on: b.getAttribute('aria-pressed') })),
+        evalMoreHidden: hid('faEvalMoreWrap'), evalMore: txt('faEvalMore'),
+        entryRows: rows('faEntryBody').length,
+        entryGroups: Array.from(document.querySelectorAll('#faEntryBody .fa-entry-group-button')).map(b =>
+          ['why','n','note'].map(k => (b.querySelector('.fa-entry-group-'+k)||{}).textContent||'').join(' | ')),
         honQuoted: txt('faHonQuoted'), honGot: txt('faHonGot'), honRowQuoted: txt('faHonRowQuoted'), honRowGot: txt('faHonRowGot'), honRowKept: txt('faHonRowKept'), honBarPct: txt('faHonBarPct'),
         honWant: txt('faHonWant'), honSize: txt('faHonSize'), honBind: txt('faHonBind'), honRoom: txt('faHonRoom'), honLegs: kv('faHonLegs'), honDilNoneHidden: hid('faHonDilNone'), honSizeNoneHidden: hid('faHonSizeNone'), honRoomNoneHidden: hid('faHonRoomNone'), honDd: txt('faHonDd'), honDdNoneHidden: hid('faHonDdNone'),
         histRows: rows('faHistoryBody'), histFoot: txt('faHistoryFoot'), histEmptyHidden: hid('faHistoryEmpty'),
@@ -265,18 +271,159 @@ try {
   const ev = a.lastEval;
   if (ev && Number.isFinite(ev.at)) {
     check("штамп оценки", S.dom.evalStamp, tpl("fa.ev.stamp", { at: dateU(ev.at), cap: usdFull(ev.capitalUsd), next: dateU(ev.at + ev.cadenceH * 3600 * 1000) }));
-    check("строк как рынков", S.dom.evalRows?.length, ev.markets.length);
     const held = open ? open.instrumentKey : null;
-    ev.markets.forEach((m, i) => {
-      const r = S.dom.evalRows?.[i] || [];
-      const outcome = m.funded ? codeText("funded") : m.refusalFrom === "slice" ? tpl("fa.ev.notRated", { why: codeText(m.refusal) }) : m.refusal ? codeText(m.refusal) : tpl("fa.ev.notRatedBare");
-      const exp = [m.token, m.config ?? "-", Number.isFinite(m.rank) ? String(m.rank) : "-", outcome, m.funded ? bindText(m.binding) : "-",
-        Number.isFinite(m.sizeUsd) ? usd(m.sizeUsd, 0) : "-", Number.isFinite(m.netUsd) ? usdFull(m.netUsd) : "-", pctNS(m.coverage, 1), pctNS(m.dilutionRetained, 1), pctS(m.legApr, 1)];
-      check(`строка ${m.token}`, r.join(" | "), exp.join(" | "));
-      const mine = held ? m.token === held : m.rank === 1;
-      checkBool(`строка ${m.token}: подсветка удерживаемого рынка`, (S.dom.evalRowCls?.[i] === "me") === mine, `class=«${S.dom.evalRowCls?.[i]}»`);
+    // ── ФОРМА СВОДКИ (фаза 4 расширения вселенной). Ожидаемый ПОРЯДОК и ожидаемая СВЁРТКА
+    // считаются здесь своими средствами, как и все прочие ожидания: звать функции отрисовщика
+    // значило бы сверять экран сам с собой. Правило повторено по описанию, а не импортом.
+    //   порядок  - по нетто вниз; рынки без нетто не сравнимы ни с чем и идут после посчитанных
+    //              в порядке движка;
+    //   свёртка  - первые десять строк плюс удерживаемый рынок (при пустом слоте это ранг 1).
+    const HEAD = 10;
+    const isMine = (m) => (held ? m.token === held : m.rank === 1);
+    const idx = new Map(ev.markets.map((m, i) => [m, i]));
+    const sorted = ev.markets.slice().sort((x, y) => {
+      const xf = Number.isFinite(x.netUsd), yf = Number.isFinite(y.netUsd);
+      if (xf !== yf) return xf ? -1 : 1;
+      if (xf && x.netUsd !== y.netUsd) return y.netUsd - x.netUsd;
+      return idx.get(x) - idx.get(y);
     });
+    const folded = sorted.length > HEAD;
+    const shown = folded ? [...sorted.slice(0, HEAD), ...sorted.slice(HEAD).filter(isMine)] : sorted;
+    const hiddenN = sorted.length - shown.length;
+    check("строк в свёрнутом виде", S.dom.evalRows?.length, shown.length);
+    const evRow = (m) => {
+      const outcome = m.funded ? codeText("funded") : m.refusalFrom === "slice" ? tpl("fa.ev.notRated", { why: codeText(m.refusal) }) : m.refusal ? codeText(m.refusal) : tpl("fa.ev.notRatedBare");
+      return [m.token, m.config ?? "-", Number.isFinite(m.rank) ? String(m.rank) : "-", outcome, m.funded ? bindText(m.binding) : "-",
+        Number.isFinite(m.sizeUsd) ? usd(m.sizeUsd, 0) : "-", Number.isFinite(m.netUsd) ? usdFull(m.netUsd) : "-", pctNS(m.coverage, 1), pctNS(m.dilutionRetained, 1), pctS(m.legApr, 1)].join(" | ");
+    };
+    // СВЁРНУТЫЙ ВИД СВЕРЯЕТСЯ ПО СОСТАВУ, РАСКРЫТЫЙ ПО ЧИСЛАМ. Свёртка не имеет права стать дырой в
+    // сверке: до неё харнесс проверял числа во ВСЕХ пятидесяти строках, и проверять только голову
+    // значило бы оставить сорок строк без сверки вовсе. Поэтому здесь сличается, ЧТО показано, а
+    // каждое число каждой строки сверяется ниже, на раскрытом хвосте.
+    check("состав свёрнутого вида", (S.dom.evalRows || []).map((r) => r[0]).join(","), shown.map((m) => m.token).join(","));
+    shown.forEach((m, i) => {
+      checkBool(`строка ${m.token}: подсветка удерживаемого рынка`, (S.dom.evalRowCls?.[i] === "me") === isMine(m), `class=«${S.dom.evalRowCls?.[i]}»`);
+    });
+    // Удерживаемый рынок обязан быть виден ВСЕГДА: строка, на которой стоят деньги, под свёртку не уезжает.
+    if (held) checkBool("удерживаемый рынок не уехал под свёртку", shown.some((m) => m.token === held) && S.dom.evalRows.some((r) => r[0] === held), held);
+    // Чипы исходов: перепись по кодам правила, построенная из данных, и «все» первым.
+    const census = {};
+    for (const m of ev.markets) { const c = m.funded ? "funded" : m.refusal; if (c) census[c] = (census[c] || 0) + 1; }
+    const wantChips = ["all", ...Object.entries(census).sort((a, b) => b[1] - a[1]).map(([c]) => c)];
+    const chipsOn = ev.markets.length > HEAD || Object.keys(census).length >= 2;
+    if (chipsOn) {
+      check("чипы исходов", (S.dom.evalChips || []).map((c) => c.code).join(","), wantChips.join(","));
+      check("числа на чипах", (S.dom.evalChips || []).map((c) => c.txt).join(" | "),
+        wantChips.map((c) => `${c === "all" ? tpl("fa.ev.filterAll") : codeText(c)} ${c === "all" ? ev.markets.length : census[c]}`).join(" | "));
+      checkBool("по умолчанию нажат чип «все»", (S.dom.evalChips || [])[0]?.on === "true");
+    }
+    // Кнопка хвоста называет ЧИСЛО скрытых строк до нажатия.
+    checkBool("кнопка хвоста показана при свёртке", S.dom.evalMoreHidden === !hiddenN, `скрыто ${hiddenN}, hidden=${S.dom.evalMoreHidden}`);
+    if (hiddenN) check("кнопка хвоста", S.dom.evalMore, tpl("fa.ev.showAll", { n: hiddenN }));
+    if (hiddenN) {
+      // РАСКРЫТИЕ ОБЯЗАНО ВЕРНУТЬ ВСЕ СТРОКИ ДО ЕДИНОЙ, и в том же порядке: свёртка прячет хвост,
+      // а не теряет его. Фильтр по коду проверяется тем же приёмом - он обязан оставить ровно
+      // столько строк, сколько насчитала перепись.
+      const all = await win.evaluate(`(function(){ document.getElementById('faEvalMore').click();
+        var b=document.getElementById('faEvalBody');
+        return { n: b.rows.length, first: Array.from(b.rows).map(function(r){ return r.cells[0].textContent.trim(); }), btn: document.getElementById('faEvalMore').textContent };
+      })()`);
+      check("раскрытая сводка: строк как рынков", all.n, ev.markets.length);
+      check("раскрытая сводка: порядок по нетто", all.first.join(","), sorted.map((m) => m.token).join(","));
+      check("кнопка обратной свёртки", all.btn, tpl("fa.ev.foldBack", { n: HEAD }));
+      // КАЖДОЕ ЧИСЛО КАЖДОЙ СТРОКИ, все пятьдесят: свёртка прячет строки, но сверку не сокращает.
+      const allRows = await win.evaluate(`Array.from(document.getElementById('faEvalBody').rows).map(function(r){
+        return Array.from(r.cells).map(function(c){ return c.textContent.trim(); }); })`);
+      sorted.forEach((m, i) => check(`строка ${m.token}`, (allRows[i] || []).join(" | "), evRow(m)));
+      const pick = wantChips[1];
+      const filtered = await win.evaluate(`(function(){ var b=document.querySelector('#faEvalFilters .lchip[data-code="${pick}"]'); b.click();
+        return document.getElementById('faEvalBody').rows.length; })()`);
+      check(`фильтр «${codeText(pick)}» оставил свои строки`, filtered, census[pick]);
+      await win.evaluate(`document.querySelector('#faEvalFilters .lchip[data-code="all"]').click();
+        document.getElementById('faEvalMore').click();`);
+    }
   } else checkBool("сводки оценки нет (пустое состояние)", S.dom.evalEmptyHidden === false);
+
+  // ── состав вселенной ──
+  // ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ДО ЭКРАНА ДОХОДЯТ КОДЫ ОТБОРА. Рынок, отсечённый отбором, в срез
+  // правила не попадает вовсе, и строки в сводке выше у него нет: без этой полосы восемь кодов
+  // `univ_*` были бы переведены и недостижимы.
+  section = "вселенная";
+  const uni = a.universe;
+  if (uni) {
+    checkBool("полоса состава показана", S.dom.evalUnivHidden === false);
+    const srcKey = { scan: "fa.univ.srcScan", saved: "fa.univ.srcSaved", fallback: "fa.univ.srcFallback" }[uni.source];
+    check("строка состава", S.dom.evalUnivLine, tpl("fa.univ.line", {
+      at: dateU(uni.at), src: tpl(srcKey), scanned: uni.scanned, n: uni.instruments,
+      ticket: usd(uni.cfg.ticketUsd, 0), oi: uni.cfg.maxOiSharePct != null ? uni.cfg.maxOiSharePct + "%" : tpl("fa.univ.off"),
+    }), { contains: true });
+    const refused = Object.values(uni.census || {}).reduce((n, k) => n + k, 0);
+    check("число отсеянных в наборе", refused, uni.refused);
+    if (uni.refused) check("кнопка причин отсева", S.dom.evalUnivMore, tpl("fa.univ.show", { n: uni.refused }));
+    // Раскрытие: перепись по кодам, названным СЛОВАМИ из общей таблицы кодов.
+    const codes = await win.evaluate(`(function(){ var b=document.getElementById('faEvalUnivMore'); if(b) b.click();
+      return Array.from(document.querySelectorAll('#faEvalUnivCodes .fa-univ-code')).map(function(e){ return e.textContent.trim(); }); })()`);
+    check("перепись отказов отбора", codes.join(" | "),
+      Object.entries(uni.census || {}).sort((x, y) => y[1] - x[1]).map(([c, n]) => `${codeText(c)} ${n}`).join(" | "));
+    checkBool("каждый код отбора назван словом, а не машинной строкой", codes.every((c) => !/univ_/.test(c)), codes.join(" | "));
+  } else checkBool("состава вселенной нет (отбор выключен)", S.dom.evalUnivHidden === true);
+
+  // ── трасса расчёта: свёртка строк без чисел ──
+  // ЗАМЕР, ИЗ КОТОРОГО ЭТО ВЫРОСЛО: на полусотне инструментов карточка расчёта это 97 строк, и 77
+  // из них не несут НИ ОДНОГО числа - 47 невыбранных ног A/B и 30 рынков, отсечённых воротами до
+  // кривой. Свёртка обязана убрать ровно их и не тронуть ни одной строки с кривой, рангом или
+  // идущим расчётом. Ожидание считается здесь по описанию правила, а не вызовом отрисовщика.
+  section = "трасса";
+  const tr = a.entryTrace;
+  if (tr && Array.isArray(tr.candidates) && tr.candidates.length) {
+    const numberless = (c) => {
+      if (c.status === "direction_skipped") return "dir";
+      if (c.status !== "rejected") return null;
+      if ((c.points || []).length || Number.isFinite(c.sizeUsd) || Number.isFinite(c.netUsd) || Number.isFinite(c.rank)) return null;
+      return "code:" + (c.refusal || "");
+    };
+    const keys = [];
+    for (const c of tr.candidates) { const k = numberless(c); if (k && !keys.includes(k)) keys.push(k); }
+    const shownRows = tr.candidates.filter((c) => !numberless(c)).length;
+    // Строк в теле: видимые кандидаты + по строке на группу + строка деталей на каждого видимого
+    // кандидата (она существует всегда, скрытая при свёрнутой кривой).
+    check("строк трассы свёрнуто", S.dom.entryRows, shownRows * 2 + keys.length);
+    checkBool("свёрнуто строк без чисел", tr.candidates.length - shownRows > 0,
+      `${tr.candidates.length - shownRows} из ${tr.candidates.length} в ${keys.length} групп(ах)`);
+    const wantGroups = keys.map((k) => {
+      const items = tr.candidates.filter((c) => numberless(c) === k);
+      const why = k === "dir" ? tpl("fa.entry.directionSkipped") : codeText(items[0].refusal);
+      return `${why} | ${tpl("fa.entry.groupN", { n: items.length })} | ${tpl("fa.entry.groupNote")}`;
+    });
+    check("строки групп", (S.dom.entryGroups || []).map(norm).join(" || "), wantGroups.map(norm).join(" || "));
+    // Раскрытие группы возвращает ЕЁ строки и не трогает прочих. Кнопка перечитывается ПОСЛЕ
+    // клика: отрисовка перестраивает строку группы целиком, и прежний узел к этому моменту отцеплен.
+    const opened = await win.evaluate(`(function(){ var b=document.querySelector('#faEntryBody .fa-entry-group-button'); if(!b) return null;
+      b.click();
+      return { rows: document.getElementById('faEntryBody').rows.length,
+        on: document.querySelector('#faEntryBody .fa-entry-group-button').getAttribute('aria-expanded') }; })()`);
+    if (opened) {
+      const first = tr.candidates.filter((c) => numberless(c) === keys[0]).length;
+      check("раскрытая группа вернула свои строки", opened.rows, shownRows * 2 + keys.length + first * 2);
+      check("кнопка группы отмечена раскрытой", opened.on, "true");
+      await win.evaluate("document.querySelector('#faEntryBody .fa-entry-group-button').click()");
+    }
+    // РАСКРЫТИЕ КРИВОЙ. Перечень точек собирается ТОЛЬКО для раскрытой строки (иначе каждый кадр
+    // повтора пересобирал бы точки всех посчитанных рынков, и стоимость кадра росла бы по ходу
+    // повтора: замер 22 мс на первых рынках против 100 мс на последних). Отсюда риск, ради
+    // которого стоит эта проверка: раскрыть строку, не перерисовав её, значит показать пустоту.
+    const curve = await win.evaluate(`(function(){ var b=document.querySelector('#faEntryBody [data-details]'); if(!b) return null;
+      b.click(); var d=document.getElementById(b.getAttribute('aria-controls'));
+      var r = { hidden: d.hidden, pts: d.querySelectorAll('.fa-entry-point').length,
+        on: document.querySelector('#faEntryBody [data-details]').getAttribute('aria-expanded') };
+      document.querySelector('#faEntryBody [data-details]').click(); return r; })()`);
+    if (curve) {
+      const withPts = tr.candidates.filter((c) => (c.points || []).length);
+      checkBool("раскрытая кривая показана", curve.hidden === false && curve.on === "true", JSON.stringify(curve));
+      checkBool("раскрытая кривая наполнена точками", curve.pts > 0 && withPts.some((c) => c.points.length === curve.pts),
+        `точек на экране ${curve.pts}`);
+    }
+  } else checkBool("трассы расчёта нет", true);
 
   // ── честность ──
   section = "честность";

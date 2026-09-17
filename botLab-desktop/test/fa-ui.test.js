@@ -25,6 +25,7 @@ import { dirname, join, sep } from "node:path";
 import { FA_AUTO_REFUSALS, FA_AUTO_OUTCOMES } from "../src/engine/fa/auto.js";
 import { FA_SIZING_REFUSALS, FA_SIZING_BINDINGS } from "../src/engine/fa/sizing.js";
 import { FA_EXIT_REASONS, FA_EXIT_ACTIONS } from "../src/engine/fa/exit.js";
+import { FA_UNIVERSE_REFUSALS, FA_UNIVERSE_SOURCES } from "../src/engine/fa/universe-scan.js";
 import { FA_GAP_CAUSES } from "../src/engine/fa/record.js";
 import { FA_DECISION_TRIGGERS } from "../src/engine/fa/events.js";
 
@@ -58,11 +59,18 @@ const GAP_TEXT = tableOf("FA_GAP_CAUSE_TEXT");
 const ACTION_TEXT = tableOf("FA_ACTION_TEXT");
 
 test("fa-ui: каждый код реестров движка назван словами, и лишних кодов нет", () => {
-  // Объединение четырёх реестров: собственные отказы автомата, его единственный положительный
-  // исход, отказы правила размера и причины правила выхода. Пересечения (src_gmx_down и соседи
-  // живут и в размере, и в выходе) схлопываются множеством - код один, текст у него тоже один.
+  // Объединение ПЯТИ реестров: собственные отказы автомата, его единственный положительный исход,
+  // отказы правила размера, причины правила выхода и отказы ОТБОРА ВСЕЛЕННОЙ. Пересечения
+  // (src_gmx_down и соседи живут и в размере, и в выходе) схлопываются множеством - код один,
+  // текст у него тоже один.
+  //
+  // ОТБОР ДОБАВЛЕН ПЯТЫМ, И БЕЗ НЕГО ЗЕЛЁНОГО НЕ БЫЛО БЫ НИ НА ОДНОМ ШАГЕ. Его коды приходят на
+  // экран составом вселенной над сводкой оценки, то есть ровно так же, как все прочие: из реестра
+  // движка. Пока реестра не было в этом списке, ЛЮБОЙ код отбора выглядел для сверки лишним, и
+  // правка садилась четырьмя частями сразу - таблица, обе локали и вот этот список.
   const engine = [...new Set([
     ...FA_AUTO_REFUSALS, ...FA_AUTO_OUTCOMES, ...FA_SIZING_REFUSALS, ...FA_EXIT_REASONS,
+    ...FA_UNIVERSE_REFUSALS,
   ])].sort();
   assert.deepEqual([...CODE_TEXT.keys()].sort(), engine,
     "FA_CODE_TEXT обязан совпадать с объединением реестров движка в обе стороны");
@@ -387,4 +395,101 @@ test("карточка последней оценки не обещает жи�
   assert.ok(/m\.rank/.test(body) && !/sort\(|netUsd\s*>|reduce\(/.test(body),
     "ранг и порядок приезжают из движка: отрисовщик не имеет права их выводить");
   assert.ok(!/annualizeRow|HOURS_PER_YEAR/.test(body), "сведение ног в спред считает движок, а не карточка");
+
+  // ФОРМА СВОДКИ СТОИТ ПОД ТЕМ ЖЕ ЗАКОНОМ, И БЕЗ ЭТОЙ ПОЛОВИНЫ ОН ОБОЙДЁТСЯ ОДНИМ ПЕРЕНОСОМ
+  // СТРОКИ. Фаза 4 расширения вселенной завела `faEvalRowsView`: при полусотне рынков карточка
+  // получила поиск, порядок по нетто и свёртку хвоста. Перенести туда `sort(` из тела отрисовки
+  // означало бы вынести правило из-под сторожа, поэтому вид проверяется отдельно и по существу:
+  // переставлять СТРОКИ ему можно, выводить ЧИСЛА нельзя. Порядок по нетто это СРАВНЕНИЕ готового
+  // поля движка (`x.netUsd < y.netUsd`), а не арифметика по нему: разностный компаратор запрещён
+  // здесь ровно затем, чтобы любое вычисление по нетто оставалось видимым нарушением.
+  const vi = HTML.indexOf("function faEvalRowsView(");
+  assert.ok(vi > 0, "faEvalRowsView не найдена");
+  const view = HTML.slice(vi, HTML.indexOf("\n}", vi));
+  // `=(?!=)` это присваивание, а не сравнение: вид ОБЯЗАН читать `m.rank === 1` (лучший рынок
+  // остаётся раскрытым при свёртке) и не имеет права в него писать.
+  assert.ok(!/\.rank\s*=(?!=)/.test(view), "ранг назначает движок: вид не имеет права его писать");
+  assert.ok(!/netUsd\s*[-+*/]|\bnetUsd\b[^<!=)]*[-+*/]\s*[a-z]/.test(view),
+    "нетто только сравнивается: арифметики по нему в виде быть не может");
+  assert.ok(!/annualizeRow|HOURS_PER_YEAR|reduce\(/.test(view), "вид не сводит и не агрегирует чисел");
+  // Ранг в таблице приходит из поля движка, а не из позиции строки: после сортировки по нетто
+  // номер строки и ранг перестают совпадать, и подмена одного другим была бы вторым рангом.
+  assert.ok(/Number\.isFinite\(m\.rank\)\?m\.rank:/.test(body.replace(/\s+/g, "")),
+    "ячейка ранга обязана печатать m.rank, а не номер строки");
+});
+
+test("fa-ui: свёртка сводки не теряет ни строки и не прячет удерживаемый рынок", () => {
+  // ПРАВИЛО ВИДА ИСПОЛНЯЕТСЯ, А НЕ ЧИТАЕТСЯ. Свёртка это единственное место фазы 4, где интерфейс
+  // решает, ЧТО показать, и ошибка в ней невидима глазами: сорок строк просто не появятся. Функция
+  // берётся из `index.html` тем же разбором, что и таблицы кодов, - проверяется ровно тот код,
+  // который исполняется в приложении.
+  const src = HTML.slice(HTML.indexOf("const faEvalCode ="), HTML.indexOf("\n}", HTML.indexOf("function faEvalRowsView(")) + 2);
+  assert.ok(/function faEvalRowsView/.test(src), "вид сводки не найден в index.html");
+  const box = { faEvalUi: { filter: "all", find: "", sort: "net", all: false }, FA_EVAL_HEAD: 10 };
+  vm.runInNewContext(src + "\n;this.view = faEvalRowsView; this.code = faEvalCode;", box);
+
+  const m = (token, net, rank = null, refusal = null) => ({ token, netUsd: net, rank, refusal, funded: refusal === null && net !== null });
+  const many = [m("W", 30, 1), m("X", 20, 2), ...Array.from({ length: 48 }, (_, i) => m("M" + i, null, null, "hist_short"))];
+
+  // 1. Пять имён: свёртки нет вовсе, порядок движка сохранён для строк без нетто.
+  const five = many.slice(0, 5);
+  assert.equal(box.view(five, null).list.length, 5, "пять строк не сворачиваются");
+  assert.equal(box.view(five, null).hidden, 0);
+
+  // 2. Полсотни: раскрыта голова, хвост ПОСЧИТАН, а не потерян.
+  const big = box.view(many, null);
+  assert.equal(big.list.length, 10, "раскрыта голова");
+  assert.equal(big.hidden, 40, "хвост посчитан");
+  assert.equal(big.list.length + big.hidden, many.length, "ни одна строка не пропала");
+  assert.equal(big.list[0].token, "W", "порядок по нетто: лучший сверху");
+
+  // 3. УДЕРЖИВАЕМЫЙ РЫНОК НЕ УЕЗЖАЕТ ПОД СВЁРТКУ НИКОГДА, где бы он ни стоял в порядке. Строка, на
+  //    которой стоят деньги, это единственная строка карточки, которую человек обязан видеть.
+  const held = box.view(many, "M40");
+  assert.ok(held.list.some((x) => x.token === "M40"), "удерживаемый рынок обязан остаться раскрытым");
+  assert.equal(held.list.length, 11, "удерживаемый добавляется СВЕРХ головы, а не вместо строки");
+  assert.equal(held.list.length + held.hidden, many.length, "ни одна строка не пропала");
+
+  // 4. Раскрытый хвост это ВСЕ строки, и фильтр по коду оставляет ровно свои.
+  box.faEvalUi.all = true;
+  assert.equal(box.view(many, null).list.length, many.length, "раскрытый вид показывает всё");
+  box.faEvalUi.all = false; box.faEvalUi.filter = "hist_short";
+  assert.equal(box.view(many, null).hidden + box.view(many, null).list.length, 48, "фильтр оставляет свои строки");
+  box.faEvalUi.filter = "all"; box.faEvalUi.find = "M1";
+  const found = box.view(many, null);
+  assert.ok(found.list.every((x) => x.token.includes("M1")), "поиск оставляет только совпавшие имена");
+});
+
+test("fa-ui: каждый источник списка вселенной назван словами, и лишних нет", () => {
+  // Источник списка это реестр движка наравне с кодами (`FA_UNIVERSE_SOURCES`), и разница между
+  // его значениями не косметическая: на `fallback` бот работает по пяти зашитым именам, а не по
+  // отбору площадки. Сверка в обе стороны заведена по той же причине, что у кодов.
+  const SRC_TEXT = tableOf("FA_UNIV_SRC_TEXT");
+  assert.deepEqual([...SRC_TEXT.keys()].sort(), FA_UNIVERSE_SOURCES.slice().sort(),
+    "FA_UNIV_SRC_TEXT обязан совпадать с FA_UNIVERSE_SOURCES в обе стороны");
+  const { ru, en } = loadDicts();
+  const camel = (c) => c.split("_").map((w, i) => (i === 0 ? w : w[0].toUpperCase() + w.slice(1))).join("");
+  for (const [src, key] of SRC_TEXT) {
+    assert.equal(key, "fa.univ.src" + camel(src)[0].toUpperCase() + camel(src).slice(1), `ключ источника ${src}`);
+    assert.ok(ru[key]?.trim() && en[key]?.trim(), `нет строки ${key}`);
+  }
+});
+
+test("fa-ui: состав вселенной показан, и коды отбора приходят только из реестра движка", () => {
+  // ЗАЧЕМ ЭТОТ ТЕСТ. Восемь кодов `univ_*` названы словами в обоих словарях, и сверка кодов в обе
+  // стороны это приняла. Но рынок, отсечённый ОТБОРОМ, в срез правила не попадает вовсе: строки в
+  // сводке оценки у него нет и быть не может. Единственное место, где эти коды доходят до экрана,
+  // это состав вселенной над сводкой, и без него перевод описывал бы то, чего интерфейс не может
+  // получить ни при каком состоянии - мёртвую запись, которая врёт не меньше живой.
+  assert.ok(HTML.includes('id="faEvalUniv"'), "полосы состава вселенной нет в разметке");
+  assert.ok(/LIVE\.auto && LIVE\.auto\.universe/.test(HTML), "состав не читается из набора");
+  // Перепись рисуется ТОЙ ЖЕ таблицей кодов, что и всё остальное: своих названий интерфейс не заводит.
+  const ui = HTML.indexOf("function renderFaEvalUniverse()");
+  assert.ok(ui > 0, "renderFaEvalUniverse не найдена");
+  const box = HTML.slice(ui, HTML.indexOf("\n}", HTML.indexOf("census || {}", ui)));
+  assert.ok(/faCodeText\(c\)/.test(box), "коды отбора обязаны называться через общую таблицу кодов");
+  for (const code of FA_UNIVERSE_REFUSALS) {
+    const key = "fa.code." + code.split("_").map((w, i) => (i === 0 ? w : w[0].toUpperCase() + w.slice(1))).join("");
+    assert.equal(CODE_TEXT.get(code), key, `код отбора ${code} не назван в FA_CODE_TEXT`);
+  }
 });
