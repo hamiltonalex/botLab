@@ -1477,6 +1477,7 @@ registerLocale('en', {
   'fa.code.staleBook': 'the order book is stale',
   'fa.code.noFunding': 'the market has no funding at all',
   'fa.code.noRoom': 'there is less room than the minimum ticket',
+  'fa.code.roomUnknown': 'the room on the market was not observed at all: neither market liquidity nor book depth',
   'fa.code.belowMinTicket': 'the optimum sits below the minimum ticket',
   'fa.code.decreasingAtEverySize': 'net decreases with size everywhere',
   'fa.code.negativeAtEverySize': 'net is negative across the whole grid',

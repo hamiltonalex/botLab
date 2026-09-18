@@ -14,7 +14,7 @@ import { DEFAULT_COSTS } from "../src/engine/costs.js";
 import { ALL_MARKETS } from "../src/engine/universe.js";
 import { faEvalOfTick } from "../src/main/fa-eval.js";
 import { advanceFaEntryTrace, finishFaEntryTrace } from "../src/main/fa-entry-trace.js";
-import { hour } from "../test/fa-helpers.mjs";
+import { OBSERVED_ROOM, hour } from "../test/fa-helpers.mjs";
 
 export function createFaEntryFixture({ now = Date.UTC(2026, 8, 5, 12), pollSec = 300 } = {}) {
   const H = autoHorizonH();
@@ -37,7 +37,7 @@ export function createFaEntryFixture({ now = Date.UTC(2026, 8, 5, 12), pollSec =
     return {
       token, strategy, config: strategy === "one" ? null : "A", rows, markPx: 100, hlMaxLev: 25,
       chain: ALL_MARKETS.find((m) => m.key === token)?.chain ?? null,
-      live: { bOwnUsd: 1e5, bOtherUsd: 1e12 }, impact: null, ...extra,
+      live: { bOwnUsd: 1e5, bOtherUsd: 1e12, ...OBSERVED_ROOM }, impact: null, ...extra,
     };
   }
 

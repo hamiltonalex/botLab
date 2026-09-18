@@ -12,7 +12,7 @@ import {
   advanceFaEntryTrace, finishFaEntryTrace, bindFaEntryTrace, closeFaEntryTrace,
   faCandidateId, faEntryTraceFromDisk, displayFaEntryTrace,
 } from "../src/main/fa-entry-trace.js";
-import { hour } from "./fa-helpers.mjs";
+import { OBSERVED_ROOM, hour } from "./fa-helpers.mjs";
 
 const T = 1.7e12;
 const BOOT = T - 3600000;
@@ -20,7 +20,7 @@ const H = FA_SIZING_DEFAULTS.horizonH;
 function market(token, { P = 4000, strategy = "two", config = "A", hours = H, bases = true, markPx = 100 } = {}) {
   const rows = Array.from({ length: hours }, (_, h) => hour(h, { pot: P / (3600 * H), bShort: 1e5, bLong: 1e12, bases }));
   return { token, strategy, config, rows, chain: token.endsWith("Avax") ? "Avalanche" : "Arbitrum",
-    markPx, hlMaxLev: 25, live: { bOwnUsd: 1e5, bOtherUsd: 1e12 }, rates: rows.at(-1), directionKnown: true };
+    markPx, hlMaxLev: 25, live: { bOwnUsd: 1e5, bOtherUsd: 1e12, ...OBSERVED_ROOM }, rates: rows.at(-1), directionKnown: true };
 }
 function armed(over = {}) {
   const state = armAuto(createAutoState({ nowMs: BOOT }), { nowMs: BOOT });

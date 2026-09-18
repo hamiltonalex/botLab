@@ -38,7 +38,7 @@ import {
   roomCeiling, sizeCeiling,
   sizeUniverse, uniformSizeFor, horizonScale, windowHours, windowValid,
 } from "../src/engine/fa/sizing.js";
-import { hour, row } from "./fa-helpers.mjs";
+import { OBSERVED_ROOM, hour, row } from "./fa-helpers.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const near = (a, b, tol, label) => assert.ok(Math.abs(a - b) < tol, `${label}: получено ${a}, ожидалось ${b} (+/-${tol})`);
@@ -66,9 +66,10 @@ const twoModeMarket = ({ quietHours, quietBase, quietPot, moneyHours, moneyBase,
   return out;
 };
 
+// Место объявляется КАЖДЫМ рынком фикстуры: почему именно, написано у `OBSERVED_ROOM`.
 const liveOf = (rows, extra = {}) => {
   const last = rows[rows.length - 1];
-  return { bOwnUsd: last.fbase_short, bOtherUsd: last.fbase_long, ...extra };
+  return { bOwnUsd: last.fbase_short, bOtherUsd: last.fbase_long, ...OBSERVED_ROOM, ...extra };
 };
 
 // Конфигурация A держит КОРОТКУЮ ногу GMX, поэтому наша база это `fbase_short`. Нога Hyperliquid во
@@ -95,7 +96,13 @@ test("О1: место называет СВЯЗЫВАЮЩЕЕ ограничен
   assert.deepEqual(roomCeiling({ gmxAvailOwnUsd: 1000, hlVisibleNtl: 5000 }), { usd: 1000, binding: "gmx" });
   assert.deepEqual(roomCeiling({ gmxAvailOwnUsd: 9000, hlVisibleNtl: 5000 }), { usd: 5000, binding: "book" });
   assert.deepEqual(roomCeiling({ gmxAvailOwnUsd: 9000, hlVisibleNtl: 5000, hlExhaustedFrom: 700 }), { usd: 700, binding: "exhausted" });
-  assert.deepEqual(roomCeiling({}), { usd: Infinity, binding: null }, "ничего не известно значит ничего не связывает");
+  // НЕИЗВЕСТНАЯ ЁМКОСТЬ ЭТО НЕ БЕСКОНЕЧНАЯ ЁМКОСТЬ (находка 6.6 аудита механики 18.09). До правки
+  // здесь стояло `Infinity` с подписью «ничего не известно значит ничего не связывает», то есть
+  // место, которого никто не видел, читалось как неограниченное. Своя конвенция проекта в отборе
+  // вселенной ровно обратная, и теперь они совпадают.
+  const blind = roomCeiling({});
+  assert.ok(Number.isNaN(blind.usd), "ничего не наблюдали значит НЕИЗВЕСТНО, а не бесконечно");
+  assert.equal(blind.binding, null, "связывающего при этом нет: связывать может только наблюдение");
 });
 
 test("круг издержек НЕ константа: $2.55 при $500, $7.20 при $2000, $32.00 при $10000", () => {
@@ -486,6 +493,13 @@ test("каждый код отказа ДОСТИЖИМ, и ни одна вет
   take(bestSizeForMarket({ ...marketOf(rows, { bookMissing: true }) }));
   take(bestSizeForMarket({ ...marketOf(rows, { bookAgeSec: 999 }) }));
   take(bestSizeForMarket({ ...marketOf(rows, { hlVisibleNtl: 100 }) }));
+  // Места не наблюдали ВОВСЕ: ни свободной ликвидности рынка, ни объёма стакана. Своя причина, а не
+  // бесконечная ёмкость (находка 6.6). Поля снимаются с рынка целиком, поэтому не `undefined`
+  // значением, а удалением: `undefined` в объекте это уже наблюдение «поле есть и пусто».
+  take(bestSizeForMarket({ ...marketOf(rows), live: (() => {
+    const { gmxAvailOwnUsd, hlVisibleNtl, ...rest } = liveOf(rows);
+    return rest;
+  })() }));
   take(bestSizeForMarket({ ...marketOf(Array.from({ length: 24 }, (_, h) => row(h, { fs: 0, fl: 0, fbS: 1e6, fbL: 1e6 }))) }));
   take(bestSizeForMarket({ ...marketOf(flatMarket({ P: 500, bShort: 1e6 })) }));
   take(bestSizeForMarket({ ...marketOf(flatMarket({ P: 5000, bShort: 1e6 })) }));

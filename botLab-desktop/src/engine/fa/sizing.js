@@ -163,6 +163,7 @@ export const FA_SIZING_REFUSALS = Object.freeze([
   "stale_book", // стакан старее bookMaxAgeSec
   "no_funding", // ставка нашей стороны тождественно ноль: ОТСУТСТВИЕ ПРЕДМЕТА, а не плохие данные
   "no_room", // места меньше минимального билета
+  "room_unknown", // МЕСТА НЕ НАБЛЮДАЛИ ВОВСЕ: ни ликвидности рынка, ни объёма стакана. Неизвестная ёмкость это не бесконечная ёмкость
   "below_min_ticket", // оптимум есть, но он ниже билета, которым мы умеем войти
   "decreasing_at_every_size", // нетто убывает по размеру ВСЮДУ: настоящий максимум ниже края сетки
   "negative_at_every_size", // на всей сетке нетто отрицательно. НОРМАЛЬНЫЙ исход, а не ошибка
@@ -277,13 +278,24 @@ export function hasFunding(rows, gmxSide) {
 
 // О1: сколько места на рынке. Возвращает и число, и ИМЯ связывающего ограничения: без имени
 // оператор не может отличить «рынок мал» от «стакан тонок», а это разные решения.
+//
+// НЕИЗВЕСТНАЯ ЁМКОСТЬ ЭТО НЕ БЕСКОНЕЧНАЯ ЁМКОСТЬ. До 18.09 отсутствие ВСЕХ трёх наблюдений давало
+// `Infinity`, то есть место, которого никто не видел, читалось как неограниченное, и рынок
+// ограничивался только стаканом либо сеткой (находка 6.6 аудита механики). Своя же конвенция
+// проекта, в отборе вселенной, дословно обратная: «Отсутствующее поле даёт NaN, и ворота,
+// сравнивающие через `!(x >= y)`, отказывают: неизвестная ёмкость это не бесконечная ёмкость»
+// (`universe-scan.js`). Теперь неизвестность возвращается как NaN и отказывает своим кодом
+// `room_unknown` в правиле; молчаливого пропуска нет ни на одной ветке.
+//
+// Цена сегодня ноль: живьём пустой стакан даёт `visibleNtl: 0` и отказ `no_room`, а поля
+// `availableLiquidity*` GMX отдаёт всегда. Достижимо при живом отборе вселенной.
 export function roomCeiling({ gmxAvailOwnUsd, hlVisibleNtl, hlExhaustedFrom } = {}) {
   const cands = [
     { binding: "gmx", usd: gmxAvailOwnUsd },
     { binding: "book", usd: hlVisibleNtl },
     { binding: "exhausted", usd: hlExhaustedFrom },
   ].filter((c) => Number.isFinite(c.usd) && c.usd >= 0);
-  if (!cands.length) return { usd: Infinity, binding: null };
+  if (!cands.length) return { usd: NaN, binding: null };
   let best = cands[0];
   for (const c of cands) if (c.usd < best.usd) best = c;
   return { usd: best.usd, binding: best.binding };
@@ -637,6 +649,12 @@ export function bestSizeForMarket({ token, config, strategy = "two", rows, live,
   // весь период платил, и разбавлять там нечего. Отбор такой рынок всё равно не пройдёт, но
   // потолок О2 обязан остаться конечным, иначе оптимизатор пойдёт вверх без ограничения.
   const weightedBaseUsd = Number.isFinite(weighted.usd) ? weighted.usd : live.bOwnUsd;
+  // МЕСТА НЕ НАБЛЮДАЛИ ВОВСЕ. Проверяется ДО общего потолка, потому что иначе неизвестность
+  // растворилась бы в минимуме: NaN отсеивается сравнением, и рынок ограничился бы сеткой, то есть
+  // получил бы размер, под который места никто не видел.
+  if (!Number.isFinite(roomCeiling(live).usd)) {
+    return refuse(token, config, "room_unknown", { flowWeightedBaseUsd: weightedBaseUsd });
+  }
   const ceil = ceilingsFor({ live, weightedBaseUsd, cfg: c });
   if (!(ceil.usd >= c.minTicketUsd)) {
     return refuse(token, config, "no_room", { ceilingUsd: ceil.usd, binding: ceil.binding, flowWeightedBaseUsd: weightedBaseUsd });

@@ -26,7 +26,7 @@ import {
   FA_EXIT_ACTIONS, FA_EXIT_DEFAULTS, FA_EXIT_REASONS,
   decideExit, explainExit, holdGross, shouldDecideNow,
 } from "../src/engine/fa/exit.js";
-import { hour } from "./fa-helpers.mjs";
+import { OBSERVED_ROOM, hour } from "./fa-helpers.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const near = (a, b, tol, label) => assert.ok(Math.abs(a - b) < tol, `${label}: получено ${a}, ожидалось ${b} (+/-${tol})`);
@@ -52,7 +52,8 @@ const flat = ({ hours = H, P, bShort, bLong = 1e12, recv = "short" }) => {
 // нулевая: она не разбавляется и линейна по размеру, то есть только сдвинула бы оракул.
 const marketOf = (token, rows) => ({
   token, config: "A", strategy: "two", rows,
-  live: { bOwnUsd: rows[rows.length - 1].fbase_short, bOtherUsd: rows[rows.length - 1].fbase_long },
+  // Место объявляется каждым рынком: почему именно, написано у `OBSERVED_ROOM`.
+  live: { bOwnUsd: rows[rows.length - 1].fbase_short, bOtherUsd: rows[rows.length - 1].fbase_long, ...OBSERVED_ROOM },
   impact: null,
 });
 const posOf = (token, sizeUsd) => ({ token, config: "A", strategy: "two", sizeUsd });
@@ -363,7 +364,7 @@ test("APT, BTC и ETH: решение и брутто удержания сов�
     for (const [token, rows] of rowsOf) {
       const trailing = rows.slice(hour0 - H, hour0);
       const config = scanTwoLeg(trailing, { token })?.chosen;
-      markets.push({ token, config, strategy: "two", rows: trailing, live: { bOwnUsd: 1e12, bOtherUsd: 1e12 }, impact: null });
+      markets.push({ token, config, strategy: "two", rows: trailing, live: { bOwnUsd: 1e12, bOtherUsd: 1e12, ...OBSERVED_ROOM }, impact: null });
     }
     const held = markets.find((m) => m.token === "BTC");
     return decideExit({

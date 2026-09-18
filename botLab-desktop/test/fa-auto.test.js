@@ -31,7 +31,7 @@ import {
 } from "../src/engine/fa/auto.js";
 import { annualizeRow } from "../src/engine/math.js";
 import { bestAlternative } from "../src/engine/fa/exit.js";
-import { hour } from "./fa-helpers.mjs";
+import { OBSERVED_ROOM, hour } from "./fa-helpers.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const H = FA_SIZING_DEFAULTS.horizonH; // 720
@@ -63,7 +63,7 @@ const partlyBased = ({ P, bShort, bLong = 1e12, withBase, bs = 0 }) =>
 const market = (token, rows, over = {}) => ({
   token, config: "A", strategy: "two", rows,
   markPx: 100, hlMaxLev: 25,
-  live: { bOwnUsd: 1e5, bOtherUsd: 1e12, ...(over.live || {}) },
+  live: { bOwnUsd: 1e5, bOtherUsd: 1e12, ...OBSERVED_ROOM, ...(over.live || {}) },
   impact: null,
   ...over,
 });
@@ -959,7 +959,7 @@ test("neg_streak зовёт правило ВНЕОЧЕРЕДНО, полоса 
 
 test("pot_drop: поток рынка упал вдвое против снимка, снимок обновляется новым потоком", () => {
   const rows = heldRows();
-  const live = { bOwnUsd: 1e5, bOtherUsd: 1e6 };
+  const live = { bOwnUsd: 1e5, bOtherUsd: 1e6, ...OBSERVED_ROOM };
   const rates = { f_long: -4e-11, f_short: 4e-10, b_long: 0, b_short: 0, hl_rate: 0 }; // поток 4e-5 $/с при снимке 1e-4
   const t = run({ state: decidedJustNow(ctxAt({ potUsdPerSec: 1e-4 })), markets: [heldMarket(rows, { live, rates })], position: held({ token: "HELD" }) });
   assert.equal(t.trigger, "pot_drop");

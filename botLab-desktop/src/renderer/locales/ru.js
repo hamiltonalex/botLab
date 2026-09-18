@@ -1477,6 +1477,7 @@ registerLocale('ru', {
   'fa.code.staleBook': 'стакан устарел',
   'fa.code.noFunding': 'фандинга на рынке нет вовсе',
   'fa.code.noRoom': 'места меньше минимального билета',
+  'fa.code.roomUnknown': 'места на рынке не наблюдали вовсе: ни ликвидности рынка, ни объёма стакана',
   'fa.code.belowMinTicket': 'оптимум ниже минимального билета',
   'fa.code.decreasingAtEverySize': 'нетто убывает по размеру всюду',
   'fa.code.negativeAtEverySize': 'нетто отрицательно на всей сетке',
