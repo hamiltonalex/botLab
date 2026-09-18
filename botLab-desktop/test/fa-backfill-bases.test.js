@@ -114,7 +114,7 @@ test("нулевая база при НУЛЕВОМ потоке записан�
   assert.equal(r.zero, 1, "и посчитана отдельно");
   assert.equal(r.rows[0].fbase_short, 0);
   assert.equal(r.rows[0].fbase_src, "indexer");
-  assert.equal(resolveBase(r.rows[0], "short").reason, "no_base", "отказывает resolveBase своим кодом");
+  assert.equal(resolveBase(r.rows[0], "short").reason, "zero_base", "отказывает resolveBase СВОИМ кодом, а не общим «базы нет»");
   // Ноль индексатора при ЖИВОМ рынке (ставки ненулевые): тождество не сходится, час остаётся дырой.
   // Это и есть известный дефект индексатора (4.88% записей второго года), превращённый в дыру.
   const live = frame(1);

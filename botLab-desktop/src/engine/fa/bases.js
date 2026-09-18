@@ -231,7 +231,14 @@ export function baseCoverage(rows, gmxSide) {
   const hours = rows?.length ?? 0;
   for (const r of rows || []) {
     const b = resolveBase(r, gmxSide);
-    if (!(b.ok && Number.isFinite(b.bOwnUsd) && b.bOwnUsd > 0)) continue;
+    // ПОКРЫТИЕ ЭТО ВОПРОС «ЕСТЬ ЛИ БАЗА НАШЕЙ СТОРОНЫ», а не «сверено ли тождество»: это два разных
+    // вопроса, и предикат обязан говорить, который из них он задаёт. Час считается покрытым, когда
+    // база наблюдена и тождество НЕ ОПРОВЕРГНУТО; час, где тождество проверить было нечем, покрытым
+    // считается, и это решение, а не побочный эффект чтения поля `ok` (находка 6.7 аудита механики:
+    // до 18.09 `resolveBase` отдавал на непроверенном тождестве `ok: true` без всякой пометки, и
+    // здесь это читалось как «проверено и сошлось»). Число часов при этом не изменилось ни на один.
+    const hasBase = Number.isFinite(b.bOwnUsd) && b.bOwnUsd > 0;
+    if (!hasBase || b.reason === "base_identity_broken") continue;
     covered += 1;
     if (r.fbase_src === "live") coveredLive += 1;
     else if (r.fbase_src === "indexer") coveredIndexer += 1;

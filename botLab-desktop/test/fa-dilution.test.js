@@ -42,6 +42,7 @@ import {
 import { openPosition, accrue, accrueFromRows, closePosition, positionSummary, accountSummary } from "../src/engine/paper.js";
 import { buildLedger, ledgerReconciles } from "../src/engine/ledger.js";
 import { buildSnapshot } from "../src/engine/assemble.js";
+import { baseCoverage } from "../src/engine/fa/bases.js";
 import { BASE_S, HOUR_MS, hour, row } from "./fa-helpers.mjs";
 
 const HOUR = HOUR_MS;
@@ -125,11 +126,37 @@ test("база пришла НЕ ТА: тождество не сходится,
   assert.equal(v.reason, "base_identity_broken");
   near(v.relErr, 1 / 6, 1e-9, "невязка 20% отношения");
   assert.equal(resolveBase(scaled, "short").ok, true, "общий множитель сокращается и проверку проходит");
+  assert.equal(resolveBase(good, "short").checked, true, "проверка СОСТОЯЛАСЬ: обе базы и обе ставки на руках");
   // Отказ доходит до ставки: доход обнулён, а не начислен по котировке.
   const p = openPosition({ strategy: "two", instrumentKey: "T", config: "A", capital: 1000, leverage: 1, nowMs: BASE_MS, dilute: true });
   accrueFromRows(p, [bad], BASE_MS + HOUR);
   assert.equal(p.accruals[0].dilutionReason, "base_identity_broken");
   assert.equal(p.accruals[0].fundingUsd, 0);
+});
+
+test("НЕПРОВЕРЕННОЕ тождество не выдаётся за проверенное, и покрытие это другой вопрос", () => {
+  // Находка 6.7 аудита механики 18.09. Проверка выключается ровно в противоречивом состоянии: наша
+  // база есть, базы встречной стороны нет, то есть платить некому, а мы считаем, что получаем. До
+  // правки ответ был `ok: true` без всякой пометки, и потребитель, написавший `if (base.ok)`,
+  // получал молчаливое «сошлось»; `baseCoverage` именно так и написан.
+  const own = { ...hour(0, { pot: 1e-3, bShort: 20000, bLong: 50000 }) };
+  delete own.fbase_long; // базы встречной стороны нет: сверять нечем
+  const v = resolveBase(own, "short");
+  assert.equal(v.ok, true, "не опровергнуто: выбрасывать час, про который плохого не известно, нельзя");
+  assert.equal(v.checked, false, "но и проверенным он не был, и это ТЕПЕРЬ ВИДНО");
+  assert.equal(v.relErr, null, "невязка честна с самого начала: null, а не ноль");
+  assert.equal(v.reason, null);
+  // Отказ базы это третье состояние: ни проверки, ни базы.
+  const none = resolveBase({}, "short");
+  assert.equal(none.ok, false);
+  assert.equal(none.checked, false);
+  assert.equal(none.reason, "no_base");
+  // ПОКРЫТИЕ БАЗАМИ отвечает на свой вопрос: есть ли база нашей стороны. Непроверенный час покрыт,
+  // опровергнутый нет, и оба ответа теперь следуют из предиката, а не из чужого поля.
+  const bad = (() => { const g = hour(1, { pot: 1e-3, bShort: 20000, bLong: 50000 }); return { ...g, fbase_long: g.fbase_long * 1.2 }; })();
+  assert.equal(baseCoverage([own], "short").covered, 1, "непроверенный час покрыт");
+  assert.equal(baseCoverage([bad], "short").covered, 0, "опровергнутый нет: база пришла НЕ ТА");
+  assert.equal(baseCoverage([{}], "short").covered, 0, "без базы тоже нет");
 });
 
 test("живая база в строке индексатора: допуск 5% по метке live, строгий 1e-6 без метки и у долитых", () => {
@@ -159,7 +186,10 @@ test("живая база в строке индексатора: допуск 5
   assert.ok(FA_IDENTITY_MAX_REL_ERR_LIVE > 0.0336, "допуск выше расхождения живой базы с индексатором (максимум 3.36%)");
   assert.ok(FA_IDENTITY_MAX_REL_ERR_LIVE > 0.0092, "и выше невязки подмены поля у BTC (0.92%): поэтому к безметочным строкам он не применяется");
   // Что живой допуск ловит по-прежнему: нулевая база и перепутанные стороны при неравных базах.
-  assert.equal(resolveBase({ ...btc, fbase_src: "live", fbase_long: 0 }, "long").reason, "no_base");
+  // Наблюдённый ноль при этом отказывает СВОИМ кодом (находка 6.10 аудита механики 18.09): «интереса
+  // на этой стороне нет» и «базы мы не знаем» это разные сообщения оператору.
+  assert.equal(resolveBase({ ...btc, fbase_src: "live", fbase_long: 0 }, "long").reason, "zero_base");
+  assert.equal(resolveBase({ ...btc, fbase_src: "live", fbase_long: undefined }, "long").reason, "no_base");
   const swapped = resolveBase({ ...eth, fbase_src: "live", fbase_long: eth.fbase_short, fbase_short: eth.fbase_long }, "long");
   assert.equal(swapped.reason, "base_identity_broken", `перепутанные стороны: невязка ${swapped.relErr}`);
   // `potOf` сам по себе строгий: слабый допуск выбирает только `resolveBase` по метке строки.

@@ -55,6 +55,13 @@ export const FA_DILUTION_REASONS = Object.freeze([
   "no_size", // размер нулевой: рынок нас не заметил
   "we_pay", // платим мы, правило 3
   "no_base", // базы на этот час нет: доход обнулён, издержки ноги остаются
+  // НАБЛЮДЁННЫЙ НОЛЬ это НЕ ПРОПУСК, и код у него свой (находка 6.10 аудита механики 18.09). Две
+  // шапки `bases.js` обещали этот код дважды («интерес стороны равен нулю это наблюдение, а не
+  // пропуск, и `resolveBase` отказывает по нему СВОИМ кодом»), а в реестре его не было, и ноль
+  // уезжал кодом «базы нет». Прямых денег ноль: в час получения при нулевой базе платить
+  // действительно некому, и доход обнуляется одинаково. Цена в ДИАГНОЗЕ: рынок с односторонним
+  // интересом выбывал с сообщением «баз фандинга на окне не хватает», что оператору неправда.
+  "zero_base",
   "base_identity_broken", // база пришла НЕ ТА: тождество не сошлось, доход обнулён
   "diluted", // применён множитель B/(B+S)
 ]);
@@ -66,7 +73,7 @@ export const FA_DILUTION_REASONS = Object.freeze([
 // начисляется. Пока `base_identity_broken` был из списка исключён, подмена базы на открытый интерес
 // в токенах давала «удержано 100.000%» при упавшем брутто с $1067.95 до $590.13, то есть метрика
 // честности показывала полное благополучие ровно в тот момент, когда половина дохода пропала.
-export const FA_FLOW_REASONS = Object.freeze(["diluted", "no_base", "base_identity_broken"]);
+export const FA_FLOW_REASONS = Object.freeze(["diluted", "no_base", "zero_base", "base_identity_broken"]);
 export const isFlowHour = (reason) => FA_FLOW_REASONS.includes(reason);
 
 // Нейтральный результат. Отдельная замороженная константа, а не литерал на месте: вызывающий
@@ -155,22 +162,41 @@ export function potOf(fLong, bLongUsd, fShort, bShortUsd, maxRelErr = FA_IDENTIT
 // нарочно: `b_long` / `b_short` в этом коде уже означают БОРРОУ, и вся история прогонов состоит из
 // путаницы «какая величина какая». Отсутствие поля это не ошибка формата, а обычное состояние
 // строки без баз, поэтому возвращается причина, а не исключение.
+// ЧТО ЗНАЧАТ ТРИ ПОЛЯ ОТВЕТА, И ПУТАТЬ ИХ НЕЛЬЗЯ (находка 6.7 аудита механики 18.09):
+//   `ok`      - тождество НЕ ОПРОВЕРГНУТО. Это не «проверено и сошлось»: когда проверять нечем, оно
+//               тоже true, потому что отказывать по непроверенному значило бы выбрасывать час, про
+//               который ничего плохого не известно;
+//   `checked` - проверка СОСТОЯЛАСЬ. Единственное поле, по которому можно судить о том, сверялась
+//               база или нет. До 18.09 его не было вовсе, и потребитель, написавший `if (base.ok)`,
+//               получал молчаливое «сошлось» там, где не сверялось ничего;
+//   `relErr`  - невязка, и она честна с самого начала: при непроверенном тождестве это null, а не
+//               ноль (комментарий двумя абзацами ниже объясняет, почему именно null).
 export function resolveBase(rowOrSnapshot, gmxSide) {
   const r = rowOrSnapshot || {};
   const bOwnUsd = gmxSide === "short" ? r.fbase_short : r.fbase_long;
   const bOtherUsd = gmxSide === "short" ? r.fbase_long : r.fbase_short;
-  if (!Number.isFinite(bOwnUsd) || bOwnUsd <= 0) return { bOwnUsd, bOtherUsd, relErr: null, ok: false, reason: "no_base" };
+  // НАБЛЮДЁННЫЙ НОЛЬ И ПРОПУСК ЭТО РАЗНЫЕ СОСТОЯНИЯ. Ноль означает «интереса на этой стороне нет»,
+  // то есть платить некому; пропуск означает «мы не знаем». Доход обнуляется в обоих случаях, а
+  // сообщение оператору разное, и обещали его две шапки `bases.js`.
+  if (!Number.isFinite(bOwnUsd)) {
+    return { bOwnUsd, bOtherUsd, relErr: null, ok: false, checked: false, reason: "no_base" };
+  }
+  if (bOwnUsd <= 0) {
+    return { bOwnUsd, bOtherUsd, relErr: null, ok: false, checked: false, reason: bOwnUsd === 0 ? "zero_base" : "no_base" };
+  }
   // Тождество сверяется, КОГДА ЕСТЬ ЧЕМ: нужны обе базы и обе ставки. Одной базы для проверки не
   // хватает, и молчаливое «сошлось» тут было бы хуже честного «не проверялось», поэтому relErr
   // остаётся null, а не нулём.
   const bLong = gmxSide === "short" ? bOtherUsd : bOwnUsd;
   const bShort = gmxSide === "short" ? bOwnUsd : bOtherUsd;
   const checkable = Number.isFinite(bOtherUsd) && bOtherUsd > 0 && Number.isFinite(r.f_long) && Number.isFinite(r.f_short);
-  if (!checkable) return { bOwnUsd, bOtherUsd, relErr: null, ok: true, reason: null };
+  // Противоречивое состояние, в котором проверка и выключается: наша база есть, базы встречной
+  // стороны нет, то есть платить некому, а мы считаем, что получаем.
+  if (!checkable) return { bOwnUsd, bOtherUsd, relErr: null, ok: true, checked: false, reason: null };
   // Допуск выбирается по происхождению базы строки (`FA_IDENTITY_MAX_REL_ERR_LIVE`): живая база против
   // ставок индексатора того же часа сверяется слабее, долитая и безметочная строго.
   const id = potOf(r.f_long, bLong, r.f_short, bShort, identityMaxRelErr(r.fbase_src));
-  return { bOwnUsd, bOtherUsd, relErr: id.relErr, ok: id.ok, reason: id.ok ? null : "base_identity_broken" };
+  return { bOwnUsd, bOtherUsd, relErr: id.relErr, ok: id.ok, checked: true, reason: id.ok ? null : "base_identity_broken" };
 }
 
 // ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ЖИВУТ ВСЕ ТРИ ПРАВИЛА ПРИМЕНЕНИЯ. Возвращает ставку после разбавления,
