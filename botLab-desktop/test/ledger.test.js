@@ -63,7 +63,11 @@ test("buildLedger: 1h two-leg accrual → funding + borrow + HL rows, split sums
   near(f.amount, 1e-8 * 3600 * 100000, 1e-12, "funding priced from its own factor"); // +3.6
   near(f.amount + b.amount, p.accruals[0].dPnlGmx, 0, "split sums EXACTLY to dPnlGmx");
   assert.ok(b.amount < 0, "borrow is an expense");
-  near(h.amount, -1.0, 1e-9, "HL settlement (config A long leg pays)");
+  // НОГА HL КНИЖИТСЯ НА СТОИМОСТЬ ПОЗИЦИИ, а не на ноционал входа: цена ушла с 3210.5 на 3300, и
+  // расчёт биржи вырос вместе с ней (находка 5 аудита механики 18.09; конвенция Hyperliquid
+  // дословно: `position_size * oracle_price * funding_rate`). До правки здесь стояло ровно -1.0,
+  // то есть ноционал входа, и это была конвенция GMX, применённая к чужой бирже.
+  near(h.amount, -1.0 * (3300 / 3210.5), 1e-9, "HL settlement (config A long leg pays), at the position's CURRENT value");
   assert.equal(f.direction, "short");
   assert.equal(h.direction, "long");
   assert.equal(f.priceAtOp, 3300, "live mark recorded on the accrual");

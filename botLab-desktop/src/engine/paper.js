@@ -3,8 +3,12 @@
 // this Phase-1 ledger and must not be inferred from its P&L.
 //
 //   * GMX funding + borrow accrue CONTINUOUSLY: dPnl = factorPerSec * elapsedSeconds * notional.
+//     Ноционал входа здесь ВЕРЕН: у GMX `sizeInUsd` заморожен при открытии.
 //   * HL funding settles DISCRETELY at the top of each hour: a held position pays/receives
-//     hl_rate * notional once per crossed hour boundary (close mid-hour => that hour not charged).
+//     hl_rate * СТОИМОСТЬ ПОЗИЦИИ once per crossed hour boundary (close mid-hour => that hour not
+//     charged). Стоимость, а не ноционал входа: биржа переводит число монет в доллары по цене
+//     ЭТОГО часа (см. `hlValueScale`). В исторической ветке поправка недоступна, потому что колонки
+//     цены в кадре нет, и это названо на месте.
 //   * Round-trip fees (open+close) are modeled once and netted against gross funding P&L.
 //
 // No orders, no keys - this simulates the ledger a real position WOULD produce from live rates.
@@ -149,6 +153,43 @@ function applyDelta(position, nowMs, entry) {
   return point;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// МНОЖИТЕЛЬ СТОИМОСТИ НОГИ HYPERLIQUID. Биржа платит фандинг от СТОИМОСТИ ПОЗИЦИИ СЕЙЧАС, а не от
+// ноционала входа, и это её собственная конвенция, выписанная в документации дословно: «funding
+// payment at the end of the interval is position_size * oracle_price * funding_rate». Настоящая
+// короткая позиция держит фиксированное ЧИСЛО МОНЕТ, поэтому при ходе цены на 10% нога платит и
+// получает на 10% больше.
+//
+// У GMX КОНВЕНЦИЯ ОБРАТНАЯ, и поэтому поправка касается только ноги HL: там `sizeInUsd` заморожен
+// при открытии, то есть ноционал входа для ноги GMX это ВЕРНОЕ число. До 18.09 леджер применял
+// конвенцию GMX к обеим ногам (находка 5 аудита механики). Цена, пересчитанная на закрытой сделке
+// BTC/B (368 расчётов HL, цена входа $77 337, ходила $75 400..$81 453, средний множитель 1.0101):
+// нога HL +$7.7760 против +$7.8559, то есть недооценка $0.0799 или 1.0% ноги. Ошибка
+// пропорциональна дрейфу цены, то есть на альтах расширенной вселенной с ходом 30-50% это 30-50%
+// ноги, а знак её не случаен: расчёт HL положителен там, где лонги платят шортам, то есть в среднем
+// на растущем рынке, поэтому величина ноги систематически ЗАНИЖАЛАСЬ.
+//
+// ЦЕНА БЕРЁТСЯ МАРКОВАЯ, А БИРЖА СЧИТАЕТ ОРАКУЛЬНОЙ, и разница названа честно. Оракульная цена в
+// приложение не доезжает вовсе: `hlCtxToCanonical` её читает, а снимок несёт только `markPx`, и у
+// открытой сделки оракульной цены входа нет и быть не может задним числом. Ошибка от подмены это не
+// сам базис марка к оракулу, а его ИЗМЕНЕНИЕ между входом и расчётом: замер живого контекста
+// Hyperliquid 18.09 по 234 монетам дал базис 4.2 базисного пункта у BTC, 2.0 у ETH, медиана 8.6,
+// p90 55.5. То есть остаточная ошибка порядка десятых долей базисного пункта на множителе, который
+// сам правит около процента ноги. Замер оракульной цены назван остатком в отчёте починки.
+//
+// БЕЗ ЦЕНЫ МНОЖИТЕЛЬ РАВЕН ЕДИНИЦЕ, и это «поправка недоступна», а не «поправка равна нулю»: у
+// двуногой схемы без живого контекста Hyperliquid правило входа отказывает, то есть состояние
+// недостижимо, но молча подставлять единицу в неизвестность нельзя нигде. Когда множитель не равен
+// единице, он едет в журнал начисления полем `hlScale`.
+export function hlValueScale(position, markPx) {
+  const { hlPerHourSign } = legModel(position?.strategy ?? null, position?.config ?? null);
+  if (hlPerHourSign === 0) return 1; // ноги Hyperliquid нет: множителю нечего умножать
+  const open = Number(position?.openMarkPx);
+  const now = Number(markPx);
+  if (!(open > 0) || !(now > 0)) return 1;
+  return now / open;
+}
+
 // Accrue one interval from position.lastAccrualAt -> nowMs using the current live snapshot.
 // snapshot = canonical current factors { f_long, f_short, b_long, b_short, hl_rate } for the instrument.
 // opts.maxDtSec caps how far back a single live-rate step may reach: pricing a long offline gap at
@@ -204,7 +245,13 @@ export function accrue(position, snapshot, nowMs, opts = {}) {
   // Без внешней ставки выражение то же, что и до появления опции, в том же порядке: книги охраны и
   // старые записи не двигаются ни на бит.
   const hlRate = settle ? settle.rate : (hl_rate || 0);
-  const dPnlHl = hlSettlements * hlPerHourSign * hlRate * position.notional;
+  // СТОИМОСТЬ НОГИ НА МОМЕНТ РАСЧЁТА (см. `hlValueScale`). При множителе 1 (цены нет, цена та же,
+  // одноногая схема) исполняется то же выражение в том же порядке, что и до правки: книги охраны и
+  // старые записи не двигаются ни на бит, и это тот же приём, что у множителя разбавления выше.
+  const hlScale = hlValueScale(position, opts.markPx);
+  const dPnlHl = hlScale === 1
+    ? hlSettlements * hlPerHourSign * hlRate * position.notional
+    : hlSettlements * hlPerHourSign * hlRate * position.notional * hlScale;
 
   return applyDelta(position, nowMs, {
     source: "live",
@@ -222,6 +269,9 @@ export function accrue(position, snapshot, nowMs, opts = {}) {
     // же, что и раньше. `venue` это строка биржи, `prev` последний снимок до границы, `live` снимок
     // после неё (прогноз следующего часа, так считали все записи до 05.09.2026).
     ...(hlSettlements > 0 ? { hlRate, hlRateSrc: settle ? (settle.src === "venue" ? "venue" : "prev") : "live" } : null),
+    // Множитель стоимости ноги HL пишется только когда он что-то изменил: у шага без расчёта и у
+    // шага без цены запись та же, что и раньше.
+    ...(hlSettlements > 0 && hlScale !== 1 ? { hlScale } : null),
     ...dilutionEntry(dil, fundingQuotedUsd),
   });
 }
@@ -282,6 +332,16 @@ export function accrueFromRows(position, rows, nowMs) {
     const dPnlGmx = dil.factor === 1 ? dPnlGmxQuoted : fundingUsd + borrowUsd;
     // The hour's settlement lands on its closing boundary; count it only if we crossed it.
     const hlSettlements = hlPerHourSign !== 0 && end === hourEndMs ? 1 : 0;
+    // ЗДЕСЬ НОГА HL КНИЖИТСЯ НА НОЦИОНАЛ ВХОДА, И ЭТО НЕ ЗАБЫТОЕ МЕСТО, А НАЗВАННОЕ ОГРАНИЧЕНИЕ
+    // ДАННЫХ. Живая ветка выше правит ногу множителем стоимости позиции (`hlValueScale`), потому что
+    // цена в снимке есть; у часовой строки кадра колонки цены НЕТ ВОВСЕ (`format.js`), и взять её
+    // задним числом неоткуда. Значит поправка недоступна в принципе, а не пропущена: любая её
+    // подстановка здесь была бы выдуманной ценой. Отсюда два следствия, и оба надо знать:
+    //   * правило входа применить поправку не может даже при желании, то есть на окне 720 часов оно
+    //     считает доход ноги HL по конвенции GMX. Цена этого на годе не мерена: для замера нужна
+    //     новая выгрузка с ценой;
+    //   * четыре книги охраны идут ИМЕННО ЭТОЙ ветвью, поэтому починка живой ветки их не двигает, и
+    //     это проверено прогоном охраны, а не обещано.
     const dPnlHl = hlSettlements * hlPerHourSign * (r.hl_rate || 0) * position.notional;
     applyDelta(position, end, {
       source: "history",

@@ -3998,7 +3998,10 @@ function wireIpc() {
         }
       }
       if (p.status === "open" && snap && snap.accrualOk !== false) {
-        settlePosition(p, rows, snap.raw, now, pollSec() * 3, { hlSettle: await hlSettleFor(p, now) });
+        // ЦЕНА ПЕРЕДАЁТСЯ И ЗДЕСЬ, тем же полем, что в закрытии автоматом. С 18.09 нога Hyperliquid
+        // книжится на СТОИМОСТЬ позиции, и без цены последний расчёт сделки, закрытой руками, ушёл бы
+        // по ноционалу входа, то есть два пути закрытия считали бы последний час по-разному.
+        settlePosition(p, rows, snap.raw, now, pollSec() * 3, { markPx: snap.price, hlSettle: await hlSettleFor(p, now) });
       } else if (p.status === "open") {
         // Use any available actual hourly history first. If the current tail still has no trusted
         // rate, record it explicitly instead of losing it when the position is closed.

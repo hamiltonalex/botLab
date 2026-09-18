@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openPosition, accrue, closePosition, positionSummary, legModel, hlSettleFromObservations } from "../src/engine/paper.js";
+import { openPosition, accrue, accrueFromRows, closePosition, positionSummary, legModel, hlSettleFromObservations, hlValueScale } from "../src/engine/paper.js";
 import { savePositions, loadPositions, writeCache, readCache, saveSettings, loadSettings } from "../src/engine/store.js";
 import { roundTripCost } from "../src/engine/costs.js";
 
@@ -138,6 +138,70 @@ test("расчёт HL на границе: внешняя ставка (бирж
   accrue(one, { f_short: 1e-8, b_short: 2e-9, f_long: 0, b_long: 0, hl_rate: 0 }, BASE + 62 * 60 * 1000, { hlSettle: { rate: 1e-5, src: "venue" } });
   assert.equal(one.accruals[0].dPnlHl, 0);
   assert.ok(!("hlRateSrc" in one.accruals[0]));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// НОГА HYPERLIQUID КНИЖИТСЯ НА СТОИМОСТЬ ПОЗИЦИИ, А НЕ НА НОЦИОНАЛ ВХОДА
+//
+// Находка 5 аудита механики 18.09. Конвенция биржи выписана в её документации дословно: «funding
+// payment at the end of the interval is position_size * oracle_price * funding_rate». Настоящая
+// короткая позиция держит фиксированное ЧИСЛО МОНЕТ, поэтому при ходе цены расчёт идёт от новой
+// стоимости. У GMX наоборот (`sizeInUsd` заморожен при открытии), и леджер применял конвенцию GMX к
+// обеим ногам: на закрытой сделке BTC/B это занижение $0.0799 при ноге +$7.7760, то есть 1.0%.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const twoLegAt = (px) => openPosition({
+  strategy: "two", instrumentKey: "BTC", config: "A", capital: 100000, leverage: 1, nowMs: BASE, openMarkPx: px,
+});
+const SNAP_HL = { f_long: 0, f_short: 0, b_long: 0, b_short: 0, hl_rate: 1e-5 };
+
+test("цена выше входа: нога HL РАСТЁТ пропорционально, ниже входа - уменьшается", () => {
+  // Схема A: длинная нога на Hyperliquid, то есть при положительной ставке она ПЛАТИТ.
+  const base = twoLegAt(100);
+  accrue(base, SNAP_HL, BASE + HOUR, { markPx: 100 });
+  near(base.accruals[0].dPnlHl, -1.0, 1e-12, "цена та же: расчёт по ноционалу входа и есть верный");
+  assert.equal(base.accruals[0].hlScale, undefined, "множитель 1 в журнал не пишется: запись та же, что была");
+
+  const up = twoLegAt(100);
+  accrue(up, SNAP_HL, BASE + HOUR, { markPx: 110 });
+  near(up.accruals[0].dPnlHl, -1.1, 1e-12, "цена +10%: нога платит на 10% больше");
+  near(up.accruals[0].hlScale, 1.1, 1e-12, "множитель назван в журнале начисления");
+
+  const down = twoLegAt(100);
+  accrue(down, SNAP_HL, BASE + HOUR, { markPx: 80 });
+  near(down.accruals[0].dPnlHl, -0.8, 1e-12, "цена -20%: и меньше тоже");
+
+  // Схема B получает ту же ставку, и у неё множитель работает в другую сторону по знаку результата.
+  const recv = openPosition({
+    strategy: "two", instrumentKey: "BTC", config: "B", capital: 100000, leverage: 1, nowMs: BASE, openMarkPx: 100,
+  });
+  accrue(recv, SNAP_HL, BASE + HOUR, { markPx: 110 });
+  near(recv.accruals[0].dPnlHl, +1.1, 1e-12, "схема B получает, и получает от новой стоимости");
+});
+
+test("множитель стоимости: нет цены - единица, одноногой схемы не касается вовсе", () => {
+  // Единица это «поправка недоступна», а не «поправка равна нулю»: подставлять выдуманную цену
+  // нельзя, а молчать о том, что её нет, нельзя тем более (поэтому поле `hlScale` и заведено).
+  assert.equal(hlValueScale(twoLegAt(100), 110), 1.1);
+  assert.equal(hlValueScale(twoLegAt(100), null), 1, "цены сейчас нет");
+  assert.equal(hlValueScale(twoLegAt(null), 110), 1, "цены входа нет");
+  assert.equal(hlValueScale(twoLegAt(0), 110), 1, "ноль это не цена");
+  const one = openPosition({ strategy: "one", instrumentKey: "ETH-Arb", capital: 100000, leverage: 1, nowMs: BASE, openMarkPx: 100 });
+  assert.equal(hlValueScale(one, 110), 1, "у одноногой схемы ноги Hyperliquid нет");
+  accrue(one, { f_long: 0, f_short: 1e-8, b_long: 0, b_short: 0, hl_rate: 1e-5 }, BASE + HOUR, { markPx: 110 });
+  assert.equal(one.accruals[0].dPnlHl, 0, "и расчёта по ней тоже нет");
+});
+
+test("ИСТОРИЧЕСКАЯ ветка поправку не применяет, и это ограничение ДАННЫХ, а не забытое место", () => {
+  // Колонки цены в часовой строке кадра нет вовсе, поэтому взять множитель неоткуда. Живая ветка
+  // правит ногу, историческая нет, и четыре книги охраны идут именно исторической: правка живой
+  // ветки их не двигает.
+  const p = twoLegAt(100);
+  const rows = [{ tsHour: BASE / 1000, f_long: 0, f_short: 0, b_long: 0, b_short: 0, hl_rate: 1e-5 }];
+  accrueFromRows(p, rows, BASE + HOUR);
+  near(p.accruals[0].dPnlHl, -1.0, 1e-12, "нога по ноционалу входа: цены в кадре нет");
+  assert.equal(p.accruals[0].hlScale, undefined);
+  assert.equal(Object.keys(rows[0]).includes("markPx"), false, "если цена в кадре появится, этот тест обязан упасть");
 });
 
 test("hlSettleFromObservations: биржа прежде снимка, снимок строго ДО границы, иначе ничего", () => {
