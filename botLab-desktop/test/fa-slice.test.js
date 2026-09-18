@@ -177,10 +177,19 @@ test("коды `no_book` и `stale_book` приходят ТОЛЬКО от жи
   const slice = sliceOf();
   const withGate = run(slice);
   const withoutGate = run(withoutBookGate(slice));
-  const seen = { no_book: 0, stale_book: 0, funded: 0 };
+  const seen = { no_book: 0, stale_book: 0, funded: 0, oneLeg: 0 };
   for (let i = 0; i < slice.length; i += 1) {
     const cls = bookClassOf(INSTRUMENTS[i]);
     if (cls === BOOK_FRESH) continue;
+    // У ОДНОНОГОЙ СХЕМЫ НОГИ HYPERLIQUID НЕТ, и стакан у неё не спрашивается вовсе (находка 6.5
+    // аудита механики 18.09): `costAtSize` её узлы не читает, тейкера в круге нет. Раньше такой
+    // рынок отказывался по стакану, который к нему не относится ни одним числом.
+    if (schemeOf(INSTRUMENTS[i]) === "one") {
+      assert.ok(!["no_book", "stale_book"].includes(withGate.curves[i].refusal),
+        `${slice[i].token}: одноногая схема отказана по стакану, которого ей не нужно`);
+      seen.oneLeg += 1;
+      continue;
+    }
     const code = cls === BOOK_NONE ? "no_book" : "stale_book";
     assert.equal(withGate.curves[i].refusal, code, `${slice[i].token}: ожидался отказ ${code}`);
     seen[code] += 1;
@@ -192,6 +201,7 @@ test("коды `no_book` и `stale_book` приходят ТОЛЬКО от жи
     if (!withoutGate.curves[i].refusal) seen.funded += 1;
   }
   assert.ok(seen.no_book > 0 && seen.stale_book > 0, `ворота не сработали ни разу: ${JSON.stringify(seen)}`);
+  assert.ok(seen.oneLeg > 0, "одноногих схем в проверке не оказалось: освобождение от стакана непроверяемо");
   // Непустота: если без ворот не профинансировался НИ ОДИН из отсечённых, тест доказывал бы только
   // то, что эти рынки не считаются вовсе.
   assert.ok(seen.funded > 0, "ни один отсечённый воротами рынок без них не профинансирован");

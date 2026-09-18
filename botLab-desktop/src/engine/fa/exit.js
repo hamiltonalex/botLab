@@ -500,7 +500,12 @@ export function decideExit({
   // альтернатив не видно НИ ОДНОЙ, и «альтернатив нет» превратилось бы в «держим», то есть отказ
   // снабжения выглядел бы как вывод правила.
   if (sources && sources.gmxDown) return defer("src_gmx_down");
-  if (sources && sources.hlDown) return defer("src_hl_down");
+  // А ОТКАЗ HYPERLIQUID ОСТАНАВЛИВАЕТ РЕШЕНИЕ ТОЛЬКО У ДВУНОГОЙ ПОЗИЦИИ (находка 6.5 аудита
+  // механики 18.09). У одноногой схемы ноги Hyperliquid нет вовсе: ни удержание, ни издержки, ни
+  // запас залога от неё не зависят, и откладывать по ней решение значит переставать пересматривать
+  // сделку из-за источника, который к ней не относится. Двуногие АЛЬТЕРНАТИВЫ при этом отказывают
+  // сами, каждая своим кодом: `sizeUniverse` получает те же `sources` и режет по рынку.
+  if (sources && sources.hlDown && (position.strategy || "two") !== "one") return defer("src_hl_down");
   if (!rows || rows.length < windowHours(c)) return defer("short_history");
 
   const holdGrossUsd = holdGross({ position, rows, costs, cfg: c });

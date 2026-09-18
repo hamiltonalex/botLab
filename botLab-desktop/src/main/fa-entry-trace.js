@@ -12,9 +12,17 @@ const isDone = (c) => !["pending", "calculating"].includes(c.status);
 
 export function createFaEntryTrace(event) {
   const candidates = [];
-  const sourceRefusal = event.sources?.gmxDown ? "src_gmx_down" : event.sources?.hlDown ? "src_hl_down" : null;
+  // ОТКАЗ ИСТОЧНИКА НАКРЫВАЕТ РОВНО ТЕ СХЕМЫ, КОТОРЫМ ЭТОТ ИСТОЧНИК НУЖЕН (находка 6.5 аудита
+  // механики 18.09). GMX нужен всем: без `markets/info` нет ни баз, ни места ни на одном рынке.
+  // Hyperliquid нужен только двуногим: у одноногой схемы его ноги нет вовсе, и её оценка идёт как
+  // обычно, поэтому помечать её кандидата отказом биржи значило бы сказать про неё неправду ещё до
+  // расчёта. Правило режет так же (`sizeUniverse`, `dataGate`), и трасса обязана это повторять, а
+  // не решать по-своему.
+  const gmxDown = event.sources?.gmxDown ? "src_gmx_down" : null;
+  const hlDown = event.sources?.hlDown ? "src_hl_down" : null;
   for (const market of event.markets || []) {
     const configs = market.strategy === "one" ? [null] : ["A", "B"];
+    const sourceRefusal = gmxDown ?? (market.strategy === "one" ? null : hlDown);
     for (const config of configs) {
       const alternate = market.strategy !== "one" && config !== (market.config ?? null);
       const directionKnown = market.directionKnown !== false && !sourceRefusal;

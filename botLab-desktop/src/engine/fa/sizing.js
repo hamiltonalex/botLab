@@ -565,10 +565,21 @@ const refuse = (token, config, code, extra = {}) => ({
 // Ворота данных. Отказ базы и отказ стакана это РАЗНЫЕ причины, и сливать их в одну нельзя:
 // первая означает «разбавление посчитать нечем», вторая «издержки посчитать нечем», и лечатся они
 // в разных местах.
-function dataGate(live, cfg) {
+//
+// СТАКАН HYPERLIQUID СПРАШИВАЕТСЯ ТОЛЬКО У СХЕМЫ, У КОТОРОЙ ЕСТЬ НОГА HYPERLIQUID (находка 6.5
+// аудита механики 18.09). У одноногой схемы её нет вовсе: `costAtSize` узлы стакана для неё не
+// читает (`if (!isOneLeg && ...)`), тейкера биржи в круге тоже нет. Значит отказ по стакану
+// останавливал рынок, которому стакан не нужен ни одним числом, а живьём одноногих схем три из
+// пяти. Свидетель в том же проекте, `main.js`: «Sources are independent: an HL outage must pause
+// two-leg positions, but it must not stop a valid GMX-only carry».
+//
+// ЧЕГО ЭТА ПРАВКА НАРОЧНО НЕ ДЕЛАЕТ: не убирает стакан из ПОТОЛКА МЕСТА (О1) и из О3 у одноногой
+// схемы. Там он тоже не к месту по той же логике, но это правка ПРАВИЛА: она поднимает потолок
+// размера у одноногих рынков, то есть меняет решения, а не диагностику. Названо остатком.
+function dataGate(live, cfg, isOneLeg = false) {
   if (!live) return "no_base";
   if (live.gmxDown) return "src_gmx_down";
-  if (live.hlDown) return "src_hl_down";
+  if (!isOneLeg && live.hlDown) return "src_hl_down";
   // Источник ответил, но сам себе противоречит. Свой код, а не код тождества баз: оператору нужно
   // знать, ЧТО именно не сошлось, иначе он пойдёт чинить базы там, где разъехались ставки
   // (находка 6.8 аудита механики).
@@ -576,8 +587,8 @@ function dataGate(live, cfg) {
   if (!Number.isFinite(live.bOwnUsd) || live.bOwnUsd <= 0) return "no_base";
   if (Number.isFinite(live.baseAgeSec) && live.baseAgeSec > cfg.baseMaxAgeSec) return "stale_base";
   if (live.baseIdentityOk === false) return "base_identity_broken";
-  if (live.bookMissing) return "no_book";
-  if (Number.isFinite(live.bookAgeSec) && live.bookAgeSec > cfg.bookMaxAgeSec) return "stale_book";
+  if (!isOneLeg && live.bookMissing) return "no_book";
+  if (!isOneLeg && Number.isFinite(live.bookAgeSec) && live.bookAgeSec > cfg.bookMaxAgeSec) return "stale_book";
   return null;
 }
 
@@ -636,7 +647,7 @@ export function bestSizeForMarket({ token, config, strategy = "two", rows, live,
   const c = { ...FA_SIZING_DEFAULTS, ...cfg };
   if (!Number.isFinite(c.horizonH) || c.horizonH <= 0) return refuse(token, config, "horizon_missing");
   if (!windowValid(c)) return refuse(token, config, "window_missing");
-  const gate = dataGate(live, c);
+  const gate = dataGate(live, c, strategy === "one");
   if (gate) return refuse(token, config, gate);
   if (!rows || !rows.length) return refuse(token, config, "no_base");
 
@@ -893,16 +904,21 @@ export function sizeUniverse({ markets, costs = DEFAULT_COSTS, capitalTotal, cfg
   if (sources && sources.gmxDown) {
     return { alloc: new Map(), usedUsd: 0, netTotal: 0, curves: [], refusals: [{ token: null, refusal: "src_gmx_down" }], cfg: c };
   }
-  if (sources && sources.hlDown) {
-    return { alloc: new Map(), usedUsd: 0, netTotal: 0, curves: [], refusals: [{ token: null, refusal: "src_hl_down" }], cfg: c };
-  }
+  // ОТКАЗ HYPERLIQUID ОСТАНАВЛИВАЕТ ДВУНОГИЕ СХЕМЫ, А НЕ ВЕСЬ СРЕЗ (находка 6.5 аудита механики
+  // 18.09). Здесь стоял ранний возврат по всему срезу, и он уносил с собой одноногие рынки, чья
+  // оценка Hyperliquid не требует ни одним числом. Признак едет ПО РЫНКУ полем `live.hlDown`, то
+  // есть отказывает тот самый механизм, который для этого и заведён (`dataGate`), и каждый
+  // отказанный рынок называет свою причину сам, вместо одной строки на весь срез.
+  const hlDown = !!(sources && sources.hlDown);
 
   const build = (uniformSizeUsd) => (markets || []).map((m) => {
     const pass = uniformSizeUsd == null ? 1 : 2;
+    const isOneLeg = (m.strategy || "two") === "one";
     observeFa(onProgress, { type: "market:start", token: m.token, config: m.config, strategy: m.strategy || "two", pass });
     const curve = bestSizeForMarket({
       token: m.token, config: m.config, strategy: m.strategy || "two",
-      rows: m.rows, live: m.live, costs, impact: m.impact || null, cfg: c, uniformSizeUsd, onProgress,
+      rows: m.rows, live: hlDown && !isOneLeg ? { ...m.live, hlDown: true } : m.live,
+      costs, impact: m.impact || null, cfg: c, uniformSizeUsd, onProgress,
     });
     observeFa(onProgress, { type: "market:complete", token: m.token, config: m.config, strategy: m.strategy || "two", pass, curve });
     return curve;

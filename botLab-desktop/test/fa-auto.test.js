@@ -751,19 +751,56 @@ test("сводка оценки: строка на КАЖДЫЙ рынок вс�
    ПРОВЕРКА УМЕЕТ ПАДАТЬ: вернуть подстановку - и `hist_short` появится там, где истории 720 часов.
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 test("сводка оценки: отказ ИСТОЧНИКА называется своим кодом, а не занимает чужой", () => {
-  for (const [flag, code] of [["gmxDown", "src_gmx_down"], ["hlDown", "src_hl_down"]]) {
-    const t = run({ markets: [rich("RICH"), poor("POOR")], sources: { [flag]: true } });
-    assert.equal(t.why, code, "решающий код тика это отказ снабжения");
-    assert.equal(t.evalMarkets.length, 2);
-    for (const m of t.evalMarkets) {
-      assert.equal(m.refusal, code, `${m.token}: строка обязана назвать ТОТ отказ, который случился`);
-      assert.equal(m.refusalFrom, "slice", `${m.token}: код накрыл весь срез, а не этот рынок`);
-      assert.equal(m.funded, false);
-      assert.notEqual(m.refusal, "hist_short",
-        `${m.token}: истории у него 720 часов, и говорить обратное значит объяснять неверно`);
-      assert.equal(m.coverage, 1, "ворота рынок ПРОШЁЛ, и покрытие у него измерено");
-    }
+  // GMX накрывает срез ЦЕЛИКОМ: без `markets/info` неизвестны ни базы, ни место ни на одном рынке.
+  const t = run({ markets: [rich("RICH"), poor("POOR")], sources: { gmxDown: true } });
+  assert.equal(t.why, "src_gmx_down", "решающий код тика это отказ снабжения");
+  assert.equal(t.evalMarkets.length, 2);
+  for (const m of t.evalMarkets) {
+    assert.equal(m.refusal, "src_gmx_down", `${m.token}: строка обязана назвать ТОТ отказ, который случился`);
+    assert.equal(m.refusalFrom, "slice", `${m.token}: код накрыл весь срез, а не этот рынок`);
+    assert.equal(m.funded, false);
+    assert.notEqual(m.refusal, "hist_short",
+      `${m.token}: истории у него 720 часов, и говорить обратное значит объяснять неверно`);
+    assert.equal(m.coverage, 1, "ворота рынок ПРОШЁЛ, и покрытие у него измерено");
   }
+  // А Hyperliquid накрывает только схемы, у которых есть его нога, поэтому его код это суждение О
+  // РЫНКЕ (`curve`), а не отказ всего среза (находка 6.5 аудита механики 18.09).
+  const hl = run({ markets: [rich("RICH"), poor("POOR")], sources: { hlDown: true } });
+  assert.equal(hl.why, "src_hl_down");
+  for (const m of hl.evalMarkets) {
+    assert.equal(m.refusal, "src_hl_down", `${m.token}: двуногая схема без биржи не считается`);
+    assert.equal(m.refusalFrom, "curve", `${m.token}: это суждение о РЫНКЕ, а не о срезе`);
+  }
+});
+
+test("ОТКАЗ HYPERLIQUID не останавливает одноногие рынки, которым он не нужен", () => {
+  // Находка 6.5 аудита механики 18.09. Свидетель в том же проекте, `main.js`: «Sources are
+  // independent: an HL outage must pause two-leg positions, but it must not stop a valid GMX-only
+  // carry». Живьём одноногих схем три из пяти, и их оценка не требует биржи ни одним числом:
+  // `costAtSize` узлы стакана для них не читает, тейкера в круге нет, ноги маржи нет.
+  const one = market("SOLO", flat({ P: 4000, bShort: 1e5 }), { strategy: "one", config: null });
+  const t = run({ markets: [rich("RICH"), one], sources: { hlDown: true } });
+  assert.equal(t.kind, "open", "бот обязан продолжать входить в керри на одной ноге");
+  assert.equal(t.intent.token, "SOLO");
+  const by = Object.fromEntries(t.evalMarkets.map((m) => [m.token, m]));
+  assert.equal(by.SOLO.funded, true, "одноногий рынок посчитан как обычно");
+  assert.equal(by.SOLO.refusal, null);
+  assert.equal(by.RICH.refusal, "src_hl_down", "а двуногий отказан, и своим кодом");
+  // Ведение одноногой сделки биржа тоже не останавливает: правило выхода по ней решает.
+  const holding = run({
+    state: armed({ positionId: "p1", lastDecisionAt: T - 25 * 3600 * 1000 }),
+    position: held({ token: "SOLO", strategy: "one", config: null }),
+    markets: [market("SOLO", flat({ P: 4000, bShort: 1e5 }), { strategy: "one", config: null })],
+    sources: { hlDown: true },
+  });
+  assert.notEqual(holding.exit.action, "defer", "одноногую сделку отказ биржи пересматривать не мешает");
+  // А двуногую мешает, и это не изменилось: у неё нога на бирже есть.
+  const twoLeg = run({
+    state: armed({ positionId: "p1", lastDecisionAt: T - 25 * 3600 * 1000 }),
+    position: held(), markets: [market("HELD", flat({ P: 4000, bShort: 1e5 }))], sources: { hlDown: true },
+  });
+  assert.equal(twoLeg.exit.action, "defer");
+  assert.equal(twoLeg.exit.reason, "src_hl_down");
 });
 
 test("сводка оценки: происхождение кода различает суждение о рынке и отказ всего среза", () => {

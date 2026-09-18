@@ -113,18 +113,40 @@ test("throwing and mutating observers cannot affect execution; prior snapshots r
 });
 
 test("source failure records a blocked slice without fabricating a direction comparison or size calculation", () => {
-  for (const sources of [{ gmxDown: true }, { hlDown: true }]) {
-    const { trace, events, tick } = evaluate(input({ markets: universe().slice(0, 3), sources }));
-    assert.equal(trace.phase, "blocked");
-    assert.equal(trace.selectedCandidateId, null);
-    assert.equal(events.filter((e) => e.type === "market:start").length, 0);
-    for (const c of trace.candidates) {
-      assert.equal(c.status, "rejected");
-      assert.equal(c.refusal, tick.why);
-      assert.equal(c.refusalFrom, "slice");
-      assert.equal(c.evaluatedSizes, 0);
-    }
+  // GMX накрывает срез ЦЕЛИКОМ: без него нет ни баз, ни места ни на одном рынке.
+  const { trace, events, tick } = evaluate(input({ markets: universe().slice(0, 3), sources: { gmxDown: true } }));
+  assert.equal(trace.phase, "blocked");
+  assert.equal(trace.selectedCandidateId, null);
+  assert.equal(events.filter((e) => e.type === "market:start").length, 0);
+  for (const c of trace.candidates) {
+    assert.equal(c.status, "rejected");
+    assert.equal(c.refusal, tick.why);
+    assert.equal(c.refusalFrom, "slice");
+    assert.equal(c.evaluatedSizes, 0);
   }
+});
+
+test("ОТКАЗ HYPERLIQUID трасса приписывает двуногим схемам, а одноногие считает как обычно", () => {
+  // Находка 6.5 аудита механики 18.09: отказ биржи останавливал и одноногие рынки, чья оценка её не
+  // требует ни одним числом. Трасса это ПРОЕКЦИЯ правила, и она обязана резать так же, а не
+  // помечать одноногого кандидата отказом биржи ещё до расчёта.
+  const { trace, events } = evaluate(input({ markets: universe().slice(0, 3), sources: { hlDown: true } }));
+  const byId = Object.fromEntries(trace.candidates.map((c) => [c.id, c]));
+  for (const id of ["ETH|two|A", "ETH|two|B", "BTC|two|A", "BTC|two|B"]) {
+    assert.equal(byId[id].refusal, "src_hl_down", `${id}: двуногая схема без биржи не считается`);
+    assert.equal(byId[id].evaluatedSizes, 0, `${id}: и размеров ей не подбирают`);
+  }
+  const solo = byId["ETH-Arb|one|one"];
+  assert.notEqual(solo.refusal, "src_hl_down", "одноногой схеме биржа не нужна ни одним числом");
+  assert.equal(solo.status, "calculated", "она обязана быть ПОСЧИТАНА");
+  assert.ok(solo.evaluatedSizes > 0, "и размеры ей подбирали на самом деле");
+  // Перебор при этом СТАРТУЕТ по всем рынкам: двуногие отказывают воротами данных внутри правила,
+  // как отказывают любые пер-рыночные коды, и это видно в трассе отказом, а не пропуском строки.
+  assert.deepEqual(events.filter((e) => e.type === "market:start").map((e) => e.token), ["ETH", "BTC", "ETH-Arb"]);
+  const sized = events.filter((e) => e.type === "size");
+  assert.ok(sized.length > 0, "размеров не подбирали вовсе: утверждение ниже непроверяемо");
+  assert.ok(sized.every((e) => e.token === "ETH-Arb"),
+    "размеры подбирались ровно у того рынка, которому источник не нужен");
 });
 
 test("cadence and warmup do not claim a new expensive calculation", () => {
