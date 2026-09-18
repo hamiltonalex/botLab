@@ -238,6 +238,26 @@ test("самолечение слота уважает запрошенную о
   assert.equal(t.kind, "none");
 });
 
+test("УДЕРЖИВАЕМЫЙ РЫНОК, ВЫПАВШИЙ ИЗ СРЕЗА, называется своим кодом, а не «истории мало»", () => {
+  // Находка 6.9 аудита механики 18.09. Рынка в срезе нет вовсе, ворота на нём не взводятся (они
+  // ставятся только внутри цикла по рынкам), и тик уходил в правило выхода с пустым кадром. Правило
+  // отвечало `defer("short_history")` каждый каданс до перезагрузки приложения: сделка висела без
+  // пересмотра, а код говорил «истории меньше горизонта» о рынке, у которого истории 720 часов.
+  const t = run({ state: armed({ positionId: "p1" }), position: held({ token: "GONE" }), markets: [rich("OTHER")] });
+  assert.equal(t.why, "held_missing");
+  assert.equal(t.kind, "none");
+  assert.equal(t.exit, null, "правило выхода по выпавшему рынку не зовётся вовсе: решать нечем");
+  const named = t.refusals.find((r) => r.code === "held_missing");
+  assert.equal(named.token, "GONE", "и в журнале назван ТОТ рынок, которого не хватает");
+  // Рынок В СРЕЗЕ ЕСТЬ, но ворота его не пустили: это ДРУГОЕ состояние и другой код.
+  const shortHist = run({
+    state: armed({ positionId: "p1" }), position: held({ token: "HELD" }),
+    markets: [market("HELD", flat({ P: 4000, bShort: 1e5, hours: 100 })), rich("OTHER")],
+  });
+  assert.equal(shortHist.why, "hist_short");
+  assert.equal(shortHist.refusals.some((r) => r.code === "held_missing"), false, "рынок на месте: жаловаться на его отсутствие нельзя");
+});
+
 test("первый тик после старта и перерыв опроса называются ОТДЕЛЬНО, и оба видны сразу", () => {
   // Бут: прошлого тика не было вовсе.
   const boot = run({ state: armed({ lastTickAt: null }) });
@@ -279,6 +299,64 @@ test("каданс: без него автомат платил бы круг ч
   // Прошли сутки: решение снова разрешено.
   const ok = run({ state: armed({ lastDecisionAt: T - 25 * 3600 * 1000 }) });
   assert.equal(ok.decided, true);
+});
+
+test("ОТЛОЖЕННОЕ решение не тратит ни каданс, ни снимок событий", () => {
+  // Находка 6.2 аудита механики 18.09. Метка решения и снимок событий ставились СРАЗУ после правила,
+  // то есть и на исходе `defer`, когда правило решать отказалось. Каданс тратился на отказ
+  // снабжения (час задержки решения стоит около $2 годового нетто по шапке `exit.js`), а снимок
+  // событий переписывался уже сдвинутыми числами, и событие исчезало без решения.
+  const was = T - 25 * 3600 * 1000; // каданс подошёл
+  const ctx = { token: "HELD", negHours: 0, potUsdPerSec: 1, roomFrac: 0.9 };
+  const markets = [market("HELD", flat({ P: 4000, bShort: 1e5 })), rich("OTHER")];
+  const deferred = run({
+    state: armed({ positionId: "p1", lastDecisionAt: was, lastDecisionCtx: { ...ctx } }),
+    position: held(), markets, sources: { gmxDown: true },
+  });
+  assert.equal(deferred.exit.action, "defer", "правило обязано отложить, иначе тест проверяет не то");
+  assert.equal(deferred.exit.reason, "src_gmx_down");
+  assert.equal(deferred.state.lastDecisionAt, was, "каданс на отказе снабжения НЕ тратится");
+  assert.deepEqual(deferred.state.lastDecisionCtx, ctx, "и снимок событий остаётся тем, от которого меряют");
+  // А состоявшееся решение обе метки двигает, как и раньше.
+  const decided = run({
+    state: armed({ positionId: "p1", lastDecisionAt: was, lastDecisionCtx: { ...ctx } }),
+    position: held(), markets,
+  });
+  assert.equal(decided.exit.action, "hold");
+  assert.equal(decided.state.lastDecisionAt, T, "решение состоялось: каданс потрачен");
+  assert.equal(decided.state.lastDecisionCtx.token, "HELD");
+});
+
+test("ВЗВОД требует решения немедленно, а не через каданс", () => {
+  // Находка 6.4 аудита механики 18.09. `PLAN-bot1-auto.md` раздел 7 обещает немедленный тик решения
+  // при включении, а взвод метку решения не трогал вовсе: до 24 часов простоя после каждого ручного
+  // включения.
+  const before = armed({ lastDecisionAt: T - 1000, lastDecisionCtx: { token: "HELD" } });
+  const st = armAuto(before, { nowMs: T });
+  assert.equal(st.lastDecisionAt, null, "метка решения снята: каданс ждать нечего");
+  assert.equal(st.lastDecisionCtx, null, "и снимок событий тоже: прошлого решения у взведённого нет");
+  // И это доходит до тика: решение принимается на первом же тике после взвода.
+  const t = run({ state: Object.assign(st, { lastTickAt: T - NOM * 1000, uptime: before.uptime }) });
+  assert.equal(t.decided, true, "взвод обязан дать решение сразу");
+  assert.notEqual(t.why, "cadence_wait");
+});
+
+test("заморозка параметров держит ЗНАЧЕНИЯ, а поля, которых при взводе не было, названы", () => {
+  // Находка 6.13 аудита механики 18.09. Тик раскладывает ТЕКУЩИЕ умолчания под замороженный набор,
+  // поэтому поле, появившееся после взвода, приезжает из умолчаний. Живой пример: набор от 01.09 из
+  // семи полей, а сделка от 02.09 велась и событиями, и стопом по просадке, выкаченными позже.
+  const full = run({ state: armed() });
+  assert.deepEqual(full.paramsFromDefaults, [], "взвод полным набором отклонений не даёт");
+  // Набор старой версии: трёх полей в нём нет вовсе.
+  const old = armed();
+  const partial = { ...old.params };
+  delete partial.drawdownStopRounds;
+  delete partial.decisionMaxAgeH;
+  const t = run({ state: Object.assign(old, { params: Object.freeze(partial) }) });
+  assert.deepEqual([...t.paramsFromDefaults].sort(), ["decisionMaxAgeH", "drawdownStopRounds"],
+    "поля, приехавшие из сегодняшних умолчаний, обязаны быть названы");
+  assert.equal(t.params.drawdownStopRounds, defaultAutoParams().drawdownStopRounds,
+    "значение при этом берётся из умолчаний: строгое чтение отключило бы сторож, выкаченный после взвода");
 });
 
 test("запрошенная остановка гасит ВХОД, а не ведение сделки", () => {

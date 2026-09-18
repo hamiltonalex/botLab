@@ -1458,6 +1458,7 @@ registerLocale('en', {
   'fa.code.marginUnknown': 'there is nothing to compute the room to liquidation from',
   'fa.code.drawdownStop': 'the accumulated result of the trade gave back the drawdown stop threshold from its peak',
   'fa.code.capitalMissing': 'the capital cap is not named',
+  'fa.code.heldMissing': 'the market we are standing on is not in the slice at all',
   'fa.code.histShort': 'history is shorter than the horizon',
   'fa.code.histNoBase': 'not enough funding bases on the window',
   'fa.code.noSlot': 'the slot is taken by a position opened before the switch to the automaton',
