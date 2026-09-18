@@ -32,6 +32,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildFaSlice, faSliceRow } from "../src/engine/fa/slice.js";
+import { makeImpactReader, IMPACT_SOURCES } from "../src/engine/fa/impact-curve.js";
+import { loadImpactSnapshot } from "../src/main/impact-load.js";
 import {
   FA_UNIVERSE_DEFAULTS, selectUniverse, resolveUniverse, schemeOf,
 } from "../src/engine/fa/universe-scan.js";
@@ -90,10 +92,14 @@ const liveBookOf = (inst) => {
   return bookOf(cls === BOOK_STALE ? 120 : 1);
 };
 
-const sliceOf = ({ bookFor = liveBookOf, instruments = INSTRUMENTS } = {}) => buildFaSlice({
+const sliceOf = ({ bookFor = liveBookOf, instruments = INSTRUMENTS, impactOf = null } = {}) => buildFaSlice({
   instruments, nowMs: T, gmxAt: GMX_AT, windowH: H,
-  snapshotOf: snapOf, bookOf: bookFor, rowsOf: (inst) => rowsOf(inst),
+  snapshotOf: snapOf, bookOf: bookFor, rowsOf: (inst) => rowsOf(inst), impactOf,
 });
+
+// СНИМОК ГЛУБИНЫ ЧИТАЕТСЯ ИЗ ДАННЫХ ПРИЛОЖЕНИЯ, а не из `../data`: живой бот читает именно эту
+// копию, и тест обязан проверять её, а не соседнюю.
+const SNAP = loadImpactSnapshot().snapshot;
 
 // ТОТ ЖЕ СРЕЗ БЕЗ ЖИВЫХ ВОРОТ. Снимается ровно два поля - те, которых нет у среза стенда. Всё
 // остальное, включая пустую кривую удара GMX и пустые узлы стакана у рынка без стакана, остаётся
@@ -469,6 +475,52 @@ test("УДЕРЖИВАЕМЫЙ РЫНОК СОВПАДАЕТ С ПОЗИЦИЕЙ
   assert.equal(withLive.exit.switchNetUsd, null, "и `sn` был null: выражать перекладку в себя нечем");
 });
 
-test("кривая удара GMX в срезе приложения ПУСТА у каждой строки: живого источника глубины нет", () => {
-  for (const m of sliceOf()) assert.deepEqual(m.impact.gmxNodes, [], `${m.token}: откуда-то взялась кривая удара GMX`);
+// ЧИТАТЕЛЬ КРИВОЙ НЕ ПЕРЕДАН - ПРЕЖНЕЕ ПОВЕДЕНИЕ, И ОНО НАЗВАНО. Пустые узлы здесь не «нет
+// издержки», а плоская константа в `costAtSize`, поэтому источник обязан называться `none`, а не
+// молчать: срез без снимка это состояние, которое оператор должен видеть.
+test("без читателя кривой узлы пусты, и источник назван `none` у каждой строки", () => {
+  for (const m of sliceOf()) {
+    assert.deepEqual(m.impact.gmxNodes, [], `${m.token}: откуда-то взялась кривая удара GMX`);
+    assert.equal(m.live.gmxCurveSrc, "none", `${m.token}: источник кривой обязан называться даже когда узлов нет`);
+  }
+});
+
+// С ЧИТАТЕЛЕМ КРИВАЯ ДОХОДИТ ДО ПРАВИЛА, И ЭТО ТА САМАЯ ПРАВКА. Проверяется не экономика, а то,
+// что узлы непусты, приведены к ИЗДЕРЖКЕ (неотрицательны) и что источник назван у КАЖДОЙ строки.
+test("с читателем кривой у каждой строки среза есть узлы и названный источник", () => {
+  const impactOf = makeImpactReader(SNAP, { fallback: "tier" });
+  const rows = sliceOf({ impactOf });
+  assert.ok(rows.length >= 40, `срез на полусотне инструментов, а не на ${rows.length}`);
+  for (const m of rows) {
+    assert.ok(m.impact.gmxNodes.length > 0, `${m.token}: кривая удара пуста, значит в силе плоская константа`);
+    assert.ok(IMPACT_SOURCES.includes(m.live.gmxCurveSrc), `${m.token}: источник «${m.live.gmxCurveSrc}» вне реестра`);
+    assert.notEqual(m.live.gmxCurveSrc, "none", `${m.token}: узлы есть, а источник «none»`);
+    for (const n of m.impact.gmxNodes) {
+      assert.ok(n.bps >= 0, `${m.token}: bps ${n.bps} отрицателен, знак приведён не к издержке`);
+      assert.ok(n.sizeUsd > 0, `${m.token}: узел с размером ${n.sizeUsd}`);
+    }
+  }
+});
+
+// ОБА ИСХОДА ДОСТИЖИМЫ НА ЖИВОМ СОСТАВЕ, и это главный замер фазы: рынок из снимка получает СВОЮ
+// кривую, рынок вне снимка - названный запасной путь. Если бы достижим был только один, выбор
+// между веткой отказа и запасным путём был бы умозрительным.
+test("на живом составе достижимы и своя кривая рынка, и запасной путь", () => {
+  const impactOf = makeImpactReader(SNAP, { fallback: "tier" });
+  const src = {};
+  for (const m of sliceOf({ impactOf })) src[m.live.gmxCurveSrc] = (src[m.live.gmxCurveSrc] || 0) + 1;
+  assert.ok(src.market > 0, `своя кривая рынка не досталась никому: ${JSON.stringify(src)}`);
+  assert.ok((src.tier || 0) + (src.pooled || 0) > 0, `запасной путь недостижим: ${JSON.stringify(src)}`);
+});
+
+// ВЕТКА ОТКАЗА ТОЖЕ ДОСТИЖИМА. `none` это не мёртвый код: им меряется цена отказа, и он остаётся
+// доступным тому, кто решит, что чужая кривая хуже, чем её отсутствие.
+test("с запасным путём `none` рынок вне снимка остаётся без узлов, и это названо", () => {
+  const impactOf = makeImpactReader(SNAP, { fallback: "none" });
+  const rows = sliceOf({ impactOf });
+  const none = rows.filter((m) => m.live.gmxCurveSrc === "none");
+  const market = rows.filter((m) => m.live.gmxCurveSrc === "market");
+  assert.ok(none.length > 0, "рынка вне снимка на живом составе не нашлось, ветка отказа непроверяема");
+  assert.ok(market.length > 0, "своя кривая рынка не досталась никому");
+  for (const m of none) assert.deepEqual(m.impact.gmxNodes, [], `${m.token}: источник «none», а узлы есть`);
 });

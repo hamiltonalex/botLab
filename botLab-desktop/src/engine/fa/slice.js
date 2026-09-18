@@ -22,9 +22,14 @@
 //      `dataGate` их не проверяет и ни один рынок не отсеивается кодами `no_book` и `stale_book`.
 //      Здесь стакан живой и обязательный. СОВПАДЕНИЕ ЧИСЕЛ С ЧИСЛАМИ СТЕНДА ОЗНАЧАЛО БЫ, ЧТО ЭТОТ
 //      СРЕЗ ПОТЕРЯЛ ВОРОТА СТАКАНА, то есть совпадения надо не добиваться, а бояться.
-//   2. КРИВАЯ УДАРА GMX. У стенда она есть (снимок глубины 30.08), здесь `gmxNodes` пуст: живого
-//      источника глубины GMX у приложения нет. Это открытый риск, названный отчётом фазы 3, а не
-//      недосмотр складки.
+//   2. КРИВАЯ УДАРА GMX. РАЗЛИЧИЕ СНЯТО 18.09, и это предмет отдельной правки. До неё здесь стояло
+//      `gmxNodes: []`, и пустые узлы означали НЕ ноль издержки, а плоскую константу `gmxImpact`
+//      0.1% из `costs.js`: пустая кривая выключает ветку `hasGmxCurve` в `costAtSize`. Измеренная
+//      величина 0.1-1.2 бп за круг, то есть константа завышала удар в 8-100 раз и вместе с ним
+//      круг издержек; цена на 63 рынках при $2500 - **-$64.46 нетто за год** ($840.30 против
+//      $775.84), и она росла с числом рынков. Теперь узлы приносит читатель `impactOf`
+//      (`impact-curve.js`), а рынок, которого в снимке нет, получает НАЗВАННЫЙ запасной путь, а не
+//      молчаливую подстановку: источник каждой строки едет в `live.gmxCurveSrc`.
 //
 // Отсюда предмет проверки: не «те же числа», а ПАРИТЕТ ФОРМЫ - что правило этот срез принимает и
 // что живые ворота стакана остаются ЕДИНСТВЕННЫМ, чем он отличается от среза без них.
@@ -91,7 +96,7 @@ function windowConfig(rows, windowH) {
 //   gmxAt  - момент последнего ответа GMX, им меряется возраст баз;
 //   windowH - окно оценки в часах, по нему выбирается сторона ноги (см. блок выше). Без него
 //            сторона падает на мгновенную строку снимка, и это видно полем `directionKnown`.
-export function faSliceRow({ inst, snap = null, book = null, rows = [], nowMs, gmxAt = null, windowH = null }) {
+export function faSliceRow({ inst, snap = null, book = null, rows = [], nowMs, gmxAt = null, windowH = null, impactOf = null }) {
   const strategy = schemeOf(inst);
   const raw = snap?.raw || {};
   // Конфигурацию (какая нога GMX) выбирает `scanTwoLeg` на окне оценки: тот же расчёт, что у книг,
@@ -115,6 +120,10 @@ export function faSliceRow({ inst, snap = null, book = null, rows = [], nowMs, g
   // этой правкой, живьём не отказывают ни одному рынку, а подмену базы ловят: та же подмена
   // интереса в токенах даёт невязку 0.92% у BTC и 20.6% у ETH.
   const baseId = snap ? resolveBase(raw, gmxSide) : null;
+  // КРИВАЯ УДАРА БЕРЁТСЯ У ЧИТАТЕЛЯ, а не читается здесь: срез чистый, файлов он не открывает.
+  // Не переданный читатель это `none`, то есть ПРЕЖНЕЕ поведение (пустые узлы) - и оно остаётся
+  // достижимым намеренно, иначе тест среза пришлось бы снабжать снимком ради чужого предмета.
+  const gmxCurve = (impactOf ? impactOf(inst, gmxSide) : null) || { nodes: [], src: "none" };
   return {
     token: inst.key,
     config,
@@ -144,9 +153,17 @@ export function faSliceRow({ inst, snap = null, book = null, rows = [], nowMs, g
       gmxAvailOwnUsd: gmxSide === "short" ? snap?.avail?.shortUsd : snap?.avail?.longUsd,
       hlVisibleNtl: book?.slip?.visibleNtl,
       hlExhaustedFrom: book?.slip?.exhaustedFrom ?? undefined,
+      // ОТКУДА ВЗЯЛАСЬ КРИВАЯ УДАРА. Читает только трасса: правило этого поля не видит и видеть не
+      // должно. `market` это своя измеренная кривая рынка, `tier` и `pooled` это запасной путь
+      // (рынка в снимке нет либо он на другой цепи), `none` это отсутствие узлов вовсе. Поле
+      // существует ровно затем, чтобы подстановка чужой кривой НИКОГДА не была молчаливой.
+      gmxCurveSrc: gmxCurve.src,
     },
-    // Кривая удара GMX в приложении отсутствует (см. шапку); стакан Hyperliquid живой.
-    impact: { gmxNodes: [], hlNodes: book?.slip?.nodes || [] },
+    // КРИВАЯ УДАРА GMX ИЗМЕРЕННАЯ, а не пустая (18.09). Пустая здесь означала НЕ ноль издержки, а
+    // плоскую константу 0.1% в `costAtSize`, и это -$64.46 нетто за год на 63 рынках при $2500.
+    // Узлы приносит `impactOf`, знак приведён в `impact-curve.js` и только там; источник назван
+    // строкой ниже, потому что молчаливой подстановки у этой правки быть не должно.
+    impact: { gmxNodes: gmxCurve.nodes, hlNodes: book?.slip?.nodes || [] },
     // ЖИВЫЕ ФАКТОРЫ НОГ, как их отдал источник. Правило размера их не читает: ему нужны базы и
     // стакан. Их читает сводка оценки (`legSpreadApr`), чтобы назвать котируемую ставку схемы одним
     // числом - и считает его ДВИЖОК, потому что разбор схемы на ноги живёт там.
@@ -161,7 +178,7 @@ export function faSliceRow({ inst, snap = null, book = null, rows = [], nowMs, g
 // Доступ к состоянию идёт ТРЕМЯ ЧИТАТЕЛЯМИ, а не тремя картами: ключ кадра (`cacheKeyFor`) и ключ
 // стакана (монета биржи, а не ключ инструмента) живут в главном процессе, и тащить их сюда значило
 // бы завести здесь вторую копию обеих схем ключей.
-export function buildFaSlice({ instruments, nowMs, gmxAt = null, windowH = null, snapshotOf, bookOf, rowsOf }) {
+export function buildFaSlice({ instruments, nowMs, gmxAt = null, windowH = null, snapshotOf, bookOf, rowsOf, impactOf = null }) {
   const out = [];
   for (const inst of instruments || []) {
     out.push(faSliceRow({
@@ -172,6 +189,7 @@ export function buildFaSlice({ instruments, nowMs, gmxAt = null, windowH = null,
       nowMs,
       gmxAt,
       windowH,
+      impactOf,
     }));
   }
   return out;

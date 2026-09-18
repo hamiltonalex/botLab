@@ -41,6 +41,7 @@ import { applyObservedBases, backfillBases, baseBackfillWindow, emptyBaseJournal
 // оказалось бы вне тестов, как и всякое решение, написанное рядом с `fetch`.
 import { selectUniverse, resolveUniverse, instrumentFor, schemeOf, explainUniverse, FA_UNIVERSE_DEFAULTS } from "../engine/fa/universe-scan.js";
 import { buildFaSlice } from "../engine/fa/slice.js";
+import { makeImpactCurve } from "./impact-load.js";
 import { FA_RECORD_PREFIX, buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord, faDecisionsFromRecords, faRecordDayKey, faTradesFromRecords } from "../engine/fa/record.js";
 import { faEvalClears, faEvalFromDisk, faEvalOfTick, faEvalToDisk } from "./fa-eval.js";
 import { applyFaEntryTraceEvent, snapshotFaEntryTrace, finishFaEntryTrace, bindFaEntryTrace, closeFaEntryTrace, faEntryTraceFromDisk, displayFaEntryTrace } from "./fa-entry-trace.js";
@@ -958,6 +959,13 @@ async function faFetchBooks() {
 // намеренно. Снабжать полусотню под открытой сделкой безопасно, подавать её в правило выхода нет.
 const faAutoUniverse = () => (FA_UNIVERSE_APPLY ? faMarkets() : ALL_MARKETS);
 
+// ── ИЗМЕРЕННАЯ КРИВАЯ УДАРА GMX. Снимок читается ОДИН РАЗ за запуск: он неподвижен (год истории,
+// 63 рынка), и перечитывать его на каждом тике значило бы платить разбором 1.7 МБ JSON за
+// неизменившийся файл. Четвёртый читатель среза рядом с тремя прежними.
+const faImpact = makeImpactCurve();
+if (faImpact.error) console.warn(`[fa-impact] снимок глубины GMX не прочитан (${faImpact.error}): круг издержек считается по плоской константе 0.1%`);
+else console.log(`[fa-impact] снимок глубины GMX: ${faImpact.markets} рынков, цепь ${faImpact.chain}`);
+
 // ── СРЕЗ ДЛЯ ПРАВИЛ. Форма ровно та, которую принимает `sizeUniverse`, плюс марка и предельное
 // плечо биржи для сторожа залога. САМА СКЛАДКА ЖИВЁТ В ДВИЖКЕ (`fa/slice.js`) и там же под тестом:
 // приёмка фазы 3 требует проверить срез на полусотне инструментов, а проверка по копии складки
@@ -977,6 +985,9 @@ function faAutoMarkets() {
     // монет три, и один стакан обслуживает несколько ключей.
     bookOf: (inst) => state.auto.books.get(inst.hlCoin || inst.token) || null,
     rowsOf: (inst, strategy) => state.frames.get(cacheKeyFor(strategy, inst.key)) || [],
+    // Кривая удара GMX: своя у рынка из снимка, названный запасной путь у всех прочих. Знак
+    // приведён внутри читателя и только там (`impact-curve.js`).
+    impactOf: faImpact.impactOf,
   });
 }
 
