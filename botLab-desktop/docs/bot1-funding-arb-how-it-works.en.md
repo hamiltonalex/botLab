@@ -31,10 +31,16 @@ on Hyperliquid, B is a long on GMX and a short on Hyperliquid. Plus three one-le
 ETH on Arbitrum, BTC on Arbitrum and ETH on Avalanche. In those the bot opens a short and keeps the
 collateral in the same coin, with no Hyperliquid leg.
 
-Seven variants in all. First the bot picks direction A or B for BTC and ETH by the current net
-rate spread (`net_A >= net_B` selects A). It then evaluates size and net over the historical window
-for those two variants and the three one-leg schemes, and funds the first by net. The other
-direction of each two-leg market does not undergo a separate size optimization.
+Seven variants in all. First the bot picks direction A or B for BTC and ETH by the mean net rate
+spread over the evaluation window: whichever direction has the higher mean over 720 hours is the one
+taken. It then evaluates size and net over the same window for those two variants and the three
+one-leg schemes, and funds the first by net. The other direction of each two-leg market does not
+undergo a separate size optimization.
+
+The direction is computed over the window rather than from the rates of the current minute, and that
+matters. Rates move every hour, and a choice made on the latest observation would flip about four
+times a day, so the bot would be measuring size and income over a month-long window for the leg that
+one minute had picked. The mean over the window flipped once every three weeks over the same year.
 
 After entry, once a day and on an event, it compares holding with the same alternatives and with an
 exit to cash, and on every tick it guards the room to liquidation of both legs and the drawdown of
@@ -51,7 +57,7 @@ hourly fee for it.
 - On perpetual markets one side is always overcrowded and the other is short of takers. The
   exchange makes the crowded side **pay the missing side** for every hour of holding. That fee is
   called funding.
-- The bot takes the missing side on GMX V2 (which one exactly, the sign of the rates says each time)
+- The bot takes the missing side on GMX V2 (which one exactly, the sign of the rates over the evaluation window says)
   and receives the fee. To stay independent of price, it either takes the opposite side of the same
   asset on Hyperliquid at the same time (the two-leg scheme) or holds the collateral in the asset
   itself at leverage 1 (the one-leg scheme: the collateral is the counterweight). The positions are
@@ -364,8 +370,8 @@ The live pass over the seven setups takes a fraction of a second and cannot be w
 with pauses added for viewing: the same numbers in the same order, nothing is recomputed, and the
 card's status reads "replay" while it runs. A live trace update interrupts the replay.
 
-The table includes seven schemes. The two directions not selected by current rates are marked
-separately: their full size and net calculation did not run. The other rows show the engine's
+The table includes seven schemes. The two directions not selected by the mean rate over the window
+are marked separately: their full size and net calculation did not run. The other rows show the engine's
 size, gross, round-trip costs, net and evaluation outcome. Once evaluation ends, eligible
 variants follow the engine's rank. The best candidate does not guarantee entry: the card
 distinguishes selection, a guard refusal and an actually opened paper position.
@@ -400,8 +406,8 @@ without a saved snapshot, the entry calculation is not reconstructed from curren
 
 The two-leg scheme has two legs on different exchanges. Configuration A: a short leg on GMX
 (receives funding, pays borrowing) and a long one on Hyperliquid; configuration B: the other way
-round. Which configuration is chosen is decided by the sign of the rates at the moment of
-evaluation: the one where the quoted net is higher. The one-leg scheme has one leg: short on GMX with
+round. Which configuration is chosen is decided by the mean rate over the evaluation window: the one
+where the quoted net over the window is higher. The one-leg scheme has one leg: short on GMX with
 collateral in the asset itself, and the collateral is the counterweight. At leverage 1 a price rise
 adds to the collateral exactly what the short loses, and a fall takes away exactly what the short
 gains, so in dollars the position is neutral to price, like the two-leg one. That is why the ledger

@@ -39,6 +39,7 @@ import { ALL_MARKETS } from "../src/engine/universe.js";
 import { sizeUniverse, FA_SIZING_DEFAULTS } from "../src/engine/fa/sizing.js";
 import { armAuto, autoTick, createAutoState } from "../src/engine/fa/auto.js";
 import { DEFAULT_COSTS } from "../src/engine/costs.js";
+import { annualizeRow, scanTwoLeg } from "../src/engine/math.js";
 import { hour } from "./fa-helpers.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -90,7 +91,7 @@ const liveBookOf = (inst) => {
 };
 
 const sliceOf = ({ bookFor = liveBookOf, instruments = INSTRUMENTS } = {}) => buildFaSlice({
-  instruments, nowMs: T, gmxAt: GMX_AT,
+  instruments, nowMs: T, gmxAt: GMX_AT, windowH: H,
   snapshotOf: snapOf, bookOf: bookFor, rowsOf: (inst) => rowsOf(inst),
 });
 
@@ -309,6 +310,89 @@ test("нет кадра истории - рынок для правила не �
   assert.deepEqual(m.rows, []);
   const tick = autoTick({ now: T, bootAt: BOOT, state: armed(), markets: [m], position: null, nominalSec: 300 });
   assert.ok(tick.refusals.some((r) => r.code === "hist_short"), "рынок без кадра прошёл ворота покрытия");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4а. СТОРОНА НОГИ ВЫБИРАЕТСЯ ПО ОКНУ, А НЕ ПО МГНОВЕННОЙ СТРОКЕ ОПРОСА
+//
+// Находка 2 аудита механики 18.09. Живой бот исполнял НЕ ТО правило, которое стерегут шесть книг:
+// они выбирают сторону `scanTwoLeg` по окну оценки, а срез брал её из одной мгновенной строки
+// снимка. Цена -$15.33 нетто за год и минус 27% профинансированных рынков на срез. Ни одна
+// проверка проекта увидеть этого не могла: книги этот код не трогают вовсе, а тест ниже до правки
+// подавал сторону фикстурой и проверял её ПРОНОС.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Кадр, на котором два критерия РАСХОДЯТСЯ: 719 часов получает короткая сторона (схема A), а в
+// последний час платит она же, и по последней строке выигрывает схема B. Расхождение не
+// назначается словами, а доказывается ниже теми же функциями, которыми считают книги и снимок.
+const DIVERGING = Array.from({ length: H }, (_, h) =>
+  hour(h, { pot: 4000 / (3600 * H), bShort: 1e5, bLong: 1e12, recv: h === H - 1 ? "long" : "short" }));
+
+// Снимок ТОГО ЖЕ кадра, со стороной, посчитанной по последней строке: ровно то, что кладёт в
+// `chosen` функция `buildSnapshot` (`assemble.js`, `a.net_A >= a.net_B`).
+const divergingSnap = () => {
+  const last = DIVERGING.at(-1);
+  const a = annualizeRow(last);
+  return {
+    chosen: a.net_A >= a.net_B ? "A" : "B", price: 100, hlMaxLev: 25, dataComplete: true, gateOk: true,
+    avail: { longUsd: 5e6, shortUsd: 5e6 },
+    raw: {
+      fbase_long: last.fbase_long, fbase_short: last.fbase_short,
+      f_long: last.f_long, f_short: last.f_short, b_long: 0, b_short: 0, hl_rate: 0,
+    },
+  };
+};
+
+test("кадр расхождения: окно выбирает A, мгновенная строка B, и оба факта доказаны, а не назначены", () => {
+  const a = annualizeRow(DIVERGING.at(-1));
+  assert.ok(a.net_B > a.net_A, "мгновенная строка обязана выбирать B, иначе тест ниже ничего не ловит");
+  assert.equal(divergingSnap().chosen, "B", "снимок считает сторону той же формулой, что `assemble.js`");
+  assert.equal(scanTwoLeg(DIVERGING).chosen, "A", "а средняя по окну обязана выбирать A");
+});
+
+test("СРЕЗ БЕРЁТ ОКОННУЮ СТОРОНУ, и базы едут за ней, а не за снимком", () => {
+  const inst = INSTRUMENTS.find((i) => schemeOf(i) === "two");
+  const m = faSliceRow({ inst, snap: divergingSnap(), book: bookOf(1), rows: DIVERGING, nowMs: T, gmxAt: GMX_AT, windowH: H });
+  assert.equal(m.config, "A", "срез обязан взять сторону окна: это критерий книг, стендов и SPEC 1.2");
+  assert.equal(m.config, scanTwoLeg(DIVERGING.slice(-H)).chosen, "и взять её ТЕМ ЖЕ расчётом, а не своей копией");
+  assert.equal(m.directionKnown, true, "сторона подтверждена окном");
+  // База СВОЕЙ стороны зависит от выбора: у схемы A нога GMX короткая, и своя база это fbase_short.
+  // Мгновенная сторона B дала бы здесь 1e12, то есть правило считало бы разбавление по чужой базе.
+  assert.equal(m.live.bOwnUsd, 1e5);
+  assert.equal(m.live.bOtherUsd, 1e12);
+  // И обратная сторона: без окна срез падает на мгновенную строку, и это ПРЕЖНЕЕ поведение.
+  const noWindow = faSliceRow({ inst, snap: divergingSnap(), book: bookOf(1), rows: DIVERGING, nowMs: T, gmxAt: GMX_AT });
+  assert.equal(noWindow.config, "B", "без окна сторона берётся из снимка");
+  assert.equal(noWindow.directionKnown, false, "и это ВИДНО: выбор A/B не подтверждён");
+  assert.equal(noWindow.live.bOwnUsd, 1e12, "вместе со стороной уезжает и база");
+});
+
+test("кадр короче окна: сторона падает на снимок, и запасной путь НАЗВАН", () => {
+  const inst = INSTRUMENTS.find((i) => schemeOf(i) === "two");
+  const short = DIVERGING.slice(-100);
+  const m = faSliceRow({ inst, snap: divergingSnap(), book: bookOf(1), rows: short, nowMs: T, gmxAt: GMX_AT, windowH: H });
+  assert.equal(m.config, "B", "окна нет: сторона из снимка, выдумывать её нельзя");
+  assert.equal(m.directionKnown, false);
+  // Такой рынок до правила всё равно не доходит: его отсеивают ворота покрытия автомата.
+  const tick = autoTick({ now: T, bootAt: BOOT, state: armed(), markets: [m], position: null, nominalSec: 300 });
+  assert.ok(tick.refusals.some((r) => r.code === "hist_short"), "рынок короче окна прошёл ворота покрытия");
+  // Ни снимка, ни кадра: сторона это «A» по умолчанию, и она тоже НЕ подтверждена.
+  const blind = faSliceRow({ inst, snap: null, book: bookOf(1), rows: [], nowMs: T, gmxAt: GMX_AT, windowH: H });
+  assert.equal(blind.config, "A");
+  assert.equal(blind.directionKnown, false);
+});
+
+test("сторона живого тракта считается ТЕМ ЖЕ выбирателем, что у книг: рукописной копии нет", () => {
+  const src = readFileSync(join(HERE, "..", "src", "engine", "fa", "slice.js"), "utf8");
+  assert.match(src, /import \{ scanTwoLeg \} from "\.\.\/math\.js"/, "выбиратель обязан входить ссылкой");
+  assert.match(src, /scanTwoLeg\(all\.slice\(all\.length - windowH\)\)/, "сторона считается на окне, а не на всём кадре");
+  // Сравнение `net_A >= net_B` это формула СНИМКА. Вторая её копия здесь означала бы возврат
+  // мгновенного критерия под другим именем. Шапка формулу ЦИТИРУЕТ, поэтому проверяется код без
+  // комментариев: иначе проверка ловила бы собственное объяснение.
+  const code = src.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+  assert.ok(!/net_A/.test(code), "сравнение мгновенных ставок вернулось в срез рукописной копией");
+  // Окно не имеет права стоять здесь числом: оно приходит от замороженных параметров сделки.
+  assert.ok(!/windowH\s*=\s*\d/.test(src), "рукописное окно в срезе: правка пресета развела бы сторону с брутто");
 });
 
 test("кривая удара GMX в срезе приложения ПУСТА у каждой строки: живого источника глубины нет", () => {

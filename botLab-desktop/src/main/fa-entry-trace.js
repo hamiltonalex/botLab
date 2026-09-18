@@ -22,7 +22,10 @@ export function createFaEntryTrace(event) {
       candidates.push({
         id: faCandidateId({ ...market, config }), token: market.token, strategy: market.strategy || "two", config,
         chain: market.chain ?? null, directionKnown,
-        directionSource: market.strategy === "one" ? null : directionKnown ? "live_rates" : "snapshot_fallback",
+        // ОТКУДА СТОРОНА A/B. С 18.09 это ОКНО ОЦЕНКИ (`scanTwoLeg` на `windowH` часах), а не
+        // мгновенные ставки опроса: живой тракт приведён к книгам и к SPEC 1.2. Запасной путь
+        // остался прежним - мгновенная строка снимка, когда кадра на окно не хватает.
+        directionSource: market.strategy === "one" ? null : directionKnown ? "window" : "snapshot_fallback",
         status: alternate && !sourceRefusal ? "direction_skipped" : refusal ? "rejected" : "pending",
         refusal: alternate && !sourceRefusal ? null : refusal,
         refusalFrom: alternate && !sourceRefusal ? null : refusal ? (sourceRefusal ? "slice" : "gate") : null,
