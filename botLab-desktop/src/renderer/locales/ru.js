@@ -295,6 +295,7 @@ registerLocale('ru', {
   'fa.cost.gmxOpen': 'Комиссия открытия GMX',
   'fa.cost.gmxClose': 'Комиссия закрытия GMX',
   'fa.cost.gmxImpact': 'Проскальзывание GMX (price impact, вход+выход)',
+  'fa.cost.gmxImpactMark': 'правило входа не берёт, когда у рынка есть измеренная кривая; круг ниже и леджер берут',
   'fa.cost.gmxGas': 'Газ / keeper GMX',
   'fa.cost.hlTaker': 'Комиссия taker HL · за сторону',
   'fa.cost.hlSides': 'Число сторон HL (вход+выход)',

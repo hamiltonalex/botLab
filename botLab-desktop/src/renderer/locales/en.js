@@ -272,6 +272,7 @@ registerLocale('en', {
   'fa.cost.gmxOpen': 'GMX open fee',
   'fa.cost.gmxClose': 'GMX close fee',
   'fa.cost.gmxImpact': 'GMX slippage (price impact, entry+exit)',
+  'fa.cost.gmxImpactMark': 'the entry rule skips it when the market has a measured curve; the round trip below and the ledger do not',
   'fa.cost.gmxGas': 'GMX gas / keeper',
   'fa.cost.hlTaker': 'HL taker fee · per side',
   'fa.cost.hlSides': 'HL sides count (entry+exit)',

@@ -606,6 +606,9 @@ button.botcard:hover .bc-open .arw{ transform:translateX(2px); }
 .cost-row{ display:grid; grid-template-columns:1fr 86px 78px; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--line-soft); }
 .cost-row .k{ font-size:12px; color:var(--txt-dim); }
 .cost-row .k small{ color:var(--txt-faint); font-size:10px; display:block; }
+/* Пометка статьи, которую правило входа не берёт. Янтарный, а не синий: синий в этой карточке
+   означает «поле редактируемо» (см. .blue-hint), и оговорка им читалась бы как приглашение. */
+.cost-row .k small.mark{ color:var(--neu); font-size:10px; display:block; margin-top:2px; }
 .cost-row input{
   font-family:var(--f-mono); font-size:12px; color:var(--accent); text-align:right;
   background:color-mix(in srgb, var(--accent) 6%, transparent); border:1px solid color-mix(in srgb, var(--accent) 28%, transparent); border-radius:6px; padding:5px 7px; width:100%;
@@ -4131,8 +4134,14 @@ function renderCosts(){
   rows.forEach(([key,label,unit,show])=>{
     if(!show){ return; }
     html += '<div class="cost-row">'+
-      '<div class="k">'+label+'<small>'+(key==='hlTaker'?t('fa.cost.xSides',{n:COSTS.hlSides}):unit)+'</small></div>'+
-      '<input type="number" min="0" max="'+COST_LIMITS[key]+'" step="'+(key==='hlSides'?'1':'any')+'" data-cost="'+key+'" value="'+COSTS[key]+'" inputmode="decimal" aria-label="'+label+'"/>'+
+      '<div class="k">'+label+'<small>'+(key==='hlTaker'?t('fa.cost.xSides',{n:COSTS.hlSides}):unit)+'</small>'+
+        // ПРОСКАЛЬЗЫВАНИЕ GMX ПОМЕЧЕНО, потому что с 18.09 его берут НЕ ВСЕ потребители круга.
+        // `costAtSize` при живой кривой удара зануляет эту статью и подставляет измеренное
+        // (`hasGmxCurve ? { ...c, gmxImpact: 0 } : c`), а кривая сегодня есть у всех инструментов
+        // состава. Круг ниже и леджер бумажной сделки продолжают считать по ней, поэтому «не в
+        // силе» было бы неправдой: в силе, но не у правила входа. Поле оставлено редактируемым.
+        (key==='gmxImpact'?'<small class="mark">'+t('fa.cost.gmxImpactMark')+'</small>':'')+'</div>'+
+      '<input type="number" min="0" max="'+COST_LIMITS[key]+'" step="'+(key==='hlSides'?'1':'any')+'" data-cost="'+key+'" value="'+COSTS[key]+'" inputmode="decimal" aria-label="'+label+(key==='gmxImpact'?' ('+t('fa.cost.gmxImpactMark')+')':'')+'"/>'+
       '<div class="usd '+(key==='hlSides'?'faint':'neg')+'" data-usd="'+key+'">-</div></div>';
   });
   $('costRows').innerHTML=html;
