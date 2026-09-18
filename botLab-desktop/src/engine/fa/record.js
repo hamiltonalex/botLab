@@ -10,13 +10,17 @@
 //       25   5 мин       2.88       1.05
 //       25   1 мин      14.37       5.24
 //       63   5 мин       7.14       2.60
-//       63   1 мин      35.65      13.01
+//       63   1 мин      35.66      13.01
 //
 // С ЖИВЫМ ОТБОРОМ ВСЕЛЕННОЙ (фаза 2, `FA_UNIVERSE_SCAN=1`) в строке снимка появляется блок
 // состава, и объём считается той же функцией с `universeOn`:
 //
 //   инстр.  опрос   МБ в сутки   ГБ в год
 //       51   5 мин       5.85       2.14   <- ОТБОР ПРИ ПОРОГЕ 10% НА СНИМКЕ 16.09
+//
+// СТРОКА РЕШЕНИЯ ПОДОРОЖАЛА 18.09 на блок снимка глубины (`im`: дата конца периода, возраст,
+// просрочка) и на имя источника кривой у каждого рынка и каждого отказа. Решение одно в сутки,
+// поэтому в таблице выше сдвинулась одна сотая в клетке «63, 1 мин», остальные клетки те же.
 //
 // ЧИСЛО 3.66 МБ, СТОЯВШЕЕ В ПЛАНЕ РАСШИРЕНИЯ, ОТНОСИЛОСЬ К 32 ИМЕНАМ (клетка «32, 5 мин» этой же
 // модели), а правило отбора при рекомендованном пороге даёт 49 рынков, то есть 51 инструмент
@@ -153,6 +157,7 @@ import { FA_DECISION_TRIGGERS } from "./events.js";
 // Реестр источников состава вселенной берётся ТАМ ЖЕ, где собирается список: запись обязана
 // называть источник тем же словом, каким его называет правило, иначе архив и журнал разойдутся.
 import { FA_UNIVERSE_SOURCES } from "./universe-scan.js";
+import { IMPACT_SOURCES } from "./impact-curve.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // РЕЕСТРЫ. Реестры отказов входа и выхода СУЩЕСТВУЮТ и переиспользуются как есть; здесь заведено
@@ -465,7 +470,7 @@ function cfgDiff(cfg) {
 
 // Кривая профинансированного рынка. Здесь только то, что ВЕРНУЛО правило: сырьё решения (ставки,
 // базы, стакан) лежит в строке снимка того же момента и не дублируется.
-function curveCell(c) {
+function curveCell(c, srcOf = null) {
   return {
     t: c.token ?? null,
     c: c.config ?? null,
@@ -479,6 +484,11 @@ function curveCell(c) {
     b: c.binding ?? null,
     wb: usd(c.flowWeightedBaseUsd),
     dr: rate(c.dilutionRetained),
+    // ИСТОЧНИК КРИВОЙ УДАРА GMX У ЭТОГО РЫНКА (`market`, `tier`, `pooled`, `none`). Без него круг
+    // `k` выше нечем объяснить: он посчитан либо по СВОЕЙ измеренной кривой рынка, либо по чужой
+    // подстановке по ярусу, и задним числом эти два решения не отличить ничем иным. Дата снимка
+    // стоит один раз на строку, в блоке `im`, потому что она у всех рынков одна.
+    im: srcOf ? srcOf(c.token) : null,
   };
 }
 
@@ -500,10 +510,23 @@ function curveCell(c) {
 export function buildFaDecisionRecord({
   t, source = "live", ageSec, capitalUsd, presetId = null, cfg = null,
   universe = null, exit = null, hold = null, window: win = null, gate = null, trigger = null,
+  markets = null, impact = null,
 } = {}) {
   if (!fin(t)) return null;
   const xc = [];
   if (trigger != null && !FA_DECISION_TRIGGERS.includes(trigger)) push(xc, `trig:${trigger}`);
+  // ИСТОЧНИК КРИВОЙ УДАРА БЕРЁТСЯ ИЗ СТРОК СРЕЗА, А НЕ ИЗ КРИВЫХ ПРАВИЛА. Правило источника не
+  // видит и видеть не должно (иначе появился бы второй критерий отбора, не замеренный ни одной
+  // книгой), поэтому `sizeUniverse` его не возвращает, и связь идёт по ключу инструмента. Срез не
+  // подан - поле пишется `null` у каждого рынка, а не пропадает: форма строки от снабжения не
+  // зависит, иначе читателю архива пришлось бы гадать, поля нет или источника не было.
+  const impSrc = new Map();
+  for (const m of markets || []) if (m?.token) impSrc.set(m.token, m.live?.gmxCurveSrc ?? null);
+  const srcOf = markets ? (token) => {
+    const s = impSrc.get(token) ?? null;
+    if (s != null && !IMPACT_SOURCES.includes(s)) push(xc, `imp:${s}`);
+    return s;
+  } : null;
   const curves = (universe?.curves || []).filter((c) => c && !c.refusal && fin(c.sizeUsd));
   for (const c of universe?.curves || []) {
     if (c?.binding != null && !FA_SIZING_BINDINGS.includes(c.binding)) push(xc, `bind:${c.binding}`);
@@ -513,7 +536,7 @@ export function buildFaDecisionRecord({
     if (!r) continue;
     const code = r.refusal ?? null;
     if (code != null && !FA_SIZING_REFUSALS.includes(code)) push(xc, `refuse:${code}`);
-    rf.push({ t: r.token ?? null, c: r.config ?? null, x: code });
+    rf.push({ t: r.token ?? null, c: r.config ?? null, x: code, im: srcOf ? srcOf(r.token) : null });
   }
   const row = {
     v: FA_RECORD_VERSION,
@@ -541,11 +564,22 @@ export function buildFaDecisionRecord({
       cl: int(gate.covLiveH), ci: int(gate.covIndexerH), cu: int(gate.covUnknownH),
     } : null,
     hold: hold ?? null,
-    mk: curves.map(curveCell),
+    mk: curves.map((c) => curveCell(c, srcOf)),
     rf,
     al: [...(universe?.alloc instanceof Map ? universe.alloc : new Map())].map(([k, v]) => [k, usd(v)]),
     us: usd(universe?.usedUsd),
     nt: usd(universe?.netTotal),
+    // СНИМОК ГЛУБИНЫ GMX, ПО КОТОРОМУ СЧИТАН КРУГ. Дата это КОНЕЦ ПЕРИОДА снимка, а не день его
+    // съёмки: стареет в нём то, по каким данным он посчитан (см. `impact-curve.js`). Возраст и
+    // просрочка пишутся НА МОМЕНТ РЕШЕНИЯ, потому что бот живёт неделями и срок годности переходит
+    // под ним на ходу; читать их из даты задним числом можно, но тогда пришлось бы держать здесь
+    // ещё и срок в силе, а он тоже менялся бы правками.
+    // Поля приходят ровно те, что отдаёт `impactSnapshotAge`, без переименования на границе.
+    im: impact ? {
+      d: fin(impact.periodEndMs) ? impact.periodEndMs : null,
+      a: fin(impact.days) ? Math.round(impact.days * 10) / 10 : null,
+      st: impact.stale ? 1 : 0,
+    } : null,
     ex: null,
   };
   if (exit) {
@@ -756,10 +790,13 @@ export const FA_RECORD_SIZE = Object.freeze({
   // раз в каданс решения, поэтому в суточном объёме это сотые доли процента.
   snapUnivRefusal: 38,
   gap: 113, // строка пропуска
-  decFixed: 306, // строка решения без рынков и без блока выхода, с блоком ворот `gt`, окном `wn` и поводом `tr`
+  // Строка решения без рынков и без блока выхода: ворота `gt`, окно `wn`, повод `tr` и снимок
+  // глубины `im` (дата конца периода, возраст, просрочка). Было 306 до блока снимка.
+  decFixed: 347,
   decExit: 101, // блок правила выхода
-  decMarket: 167, // один профинансированный рынок
-  decRefusal: 42, // один отказ
+  // Рынок и отказ подорожали одинаково, на 14 байт: это поле `im` с именем источника кривой удара.
+  decMarket: 181, // один профинансированный рынок
+  decRefusal: 56, // один отказ
   trade: 625, // паспорт перекладки: обе стороны, обе ноги, издержки по статьям
 });
 

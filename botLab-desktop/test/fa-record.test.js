@@ -451,6 +451,67 @@ test("решение несёт кривые профинансированны�
   assert.equal(c.dr, 0.995123, "какую долю потока удержим после собственного разбавления");
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ИСТОЧНИК КРИВОЙ УДАРА И ВОЗРАСТ СНИМКА В СТРОКЕ РЕШЕНИЯ. Без них круг издержек `k` нечем
+// объяснить задним числом: он посчитан либо по СВОЕЙ измеренной кривой рынка, либо по чужой
+// подстановке по ярусу, и эти два решения по числам неразличимы.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const sliceRow = (token, src) => ({ token, live: { gmxCurveSrc: src } });
+const IMP = { periodEndMs: Date.parse("2026-06-20T07:00:00Z"), days: 90.28, stale: false };
+
+test("решение несёт источник кривой у каждого рынка и дату снимка один раз на строку", () => {
+  const row = note(buildFaDecisionRecord({
+    t: T0, ageSec: 1, capitalUsd: 5000, cfg: { ...FA_SIZING_DEFAULTS },
+    universe: universe([curve("BTC"), curve("ZEC")], [{ token: "XPL", config: "A", refusal: "below_fund_ratio" }]),
+    markets: [sliceRow("BTC", "market"), sliceRow("ZEC", "tier"), sliceRow("XPL", "pooled")],
+    impact: IMP,
+  }));
+  assert.equal(row.mk.find((m) => m.t === "BTC").im, "market", "рынок из снимка несёт свою кривую");
+  assert.equal(row.mk.find((m) => m.t === "ZEC").im, "tier", "рынка в снимке нет: подстановка названа, а не скрыта");
+  assert.equal(row.rf.find((r) => r.t === "XPL").im, "pooled", "отказанный рынок называет источник наравне с профинансированным");
+  assert.equal(row.im.d, IMP.periodEndMs, "дата это КОНЕЦ ПЕРИОДА снимка, а не день съёмки");
+  assert.equal(row.im.a, 90.3, "возраст округляется записью до десятой доли суток");
+  assert.equal(row.im.st, 0, "не просрочен");
+  assert.deepEqual(faUnknownCodes(row), [], "все источники из реестра `IMPACT_SOURCES`");
+});
+
+test("просроченный снимок виден флагом строки, а расчёт при этом не меняется", () => {
+  const row = note(buildFaDecisionRecord({
+    t: T0, ageSec: 1, capitalUsd: 5000, cfg: { ...FA_SIZING_DEFAULTS },
+    universe: universe([curve("BTC")]),
+    markets: [sliceRow("BTC", "market")],
+    impact: { periodEndMs: IMP.periodEndMs, days: 400.5, stale: true },
+  }));
+  assert.equal(row.im.st, 1);
+  assert.equal(row.im.a, 400.5);
+  // Кривая та же и круг тот же: просрочка это СООБЩЕНИЕ, а не другой расчёт. Обе замены измерены
+  // и обе хуже, поэтому менять на них поведение было бы платой за спокойствие.
+  assert.equal(row.mk[0].im, "market");
+  assert.equal(row.mk[0].k, 7.2, "круг издержек не тронут просрочкой (запись округляет доллары до цента)");
+});
+
+test("неизвестный источник кривой не проглатывается молча: он виден полем xc", () => {
+  const row = note(buildFaDecisionRecord({
+    t: T0, ageSec: 1, capitalUsd: 5000, cfg: { ...FA_SIZING_DEFAULTS },
+    universe: universe([curve("BTC")]),
+    markets: [sliceRow("BTC", "придумали_на_месте")],
+    impact: IMP,
+  }));
+  assert.deepEqual(row.xc, ["imp:придумали_на_месте"]);
+  assert.equal(row.mk[0].im, "придумали_на_месте", "сам источник всё равно записан: терять наблюдение нельзя");
+});
+
+test("срез не подан - источник пишется null у всех, и блока снимка нет вовсе", () => {
+  const row = note(buildFaDecisionRecord({
+    t: T0, ageSec: 1, capitalUsd: 5000, cfg: { ...FA_SIZING_DEFAULTS },
+    universe: universe([curve("BTC")], [{ token: "X", config: "A", refusal: "below_fund_ratio" }]),
+  }));
+  assert.equal(row.mk[0].im, null, "форма строки от снабжения не зависит");
+  assert.equal(row.rf[0].im, null);
+  assert.equal(row.im, null, "даты нет, и это сказано явной пустотой, а не отсутствием поля");
+});
+
 test("решение несёт ВСЕ коды отказа, а не только решивший", () => {
   const row = note(buildFaDecisionRecord({
     t: T0, ageSec: 1, capitalUsd: 5000, cfg: { ...FA_SIZING_DEFAULTS },
@@ -463,7 +524,9 @@ test("решение несёт ВСЕ коды отказа, а не тольк
   assert.equal(row.rf.length, 3);
   assert.deepEqual(row.rf.map((r) => r.x).sort(),
     ["below_fund_ratio", "decreasing_at_every_size", "no_capital_left"]);
-  assert.deepEqual(row.rf.find((r) => r.t === "ANIME"), { t: "ANIME", c: "B", x: "below_fund_ratio" });
+  // ФОРМА ОТКАЗА СТАБИЛЬНА: `im` стоит и тогда, когда срез не подан. Поле, пропадающее без
+  // снабжения, заставило бы читателя архива гадать, источника не было или запись его потеряла.
+  assert.deepEqual(row.rf.find((r) => r.t === "ANIME"), { t: "ANIME", c: "B", x: "below_fund_ratio", im: null });
   assert.equal(row.mk.length, 1, "профинансированные и отказанные лежат раздельно и не дублируются");
   assert.deepEqual(faUnknownCodes(row), [], "все коды из существующего реестра входа");
 });
@@ -717,6 +780,14 @@ test("FA_RECORD_SIZE сверяется с ДЛИНОЙ настоящих ст�
     exit, hold: funded ? "T0" : null, window: { firstTsHour: 1_697_400_000, lastTsHour: 1_699_992_000, rows: 720 },
     gate: gateOf(), // полный вид строки: ворота снабжения пишутся на каждом решении
     trigger: "cadence", // и повод решения тоже
+    // Снимок глубины тоже часть полного вида: блок `im` идёт раз на строку, источник кривой - у
+    // каждого рынка и у каждого отказа. Источник взят `market`, самый длинный из четырёх наравне
+    // с `pooled`: размер обязан мерить худший случай, а не средний.
+    markets: [
+      ...Array.from({ length: funded }, (_, i) => ({ token: `T${i}`, live: { gmxCurveSrc: "market" } })),
+      ...Array.from({ length: refused }, (_, i) => ({ token: `R${i}`, live: { gmxCurveSrc: "market" } })),
+    ],
+    impact: { periodEndMs: 1_781_938_800_000, days: 90.3, stale: false },
   });
   assert.equal(bytes(dec(0, 0, null)), FA_RECORD_SIZE.decFixed, "строка решения без рынков и без выхода");
   assert.equal(bytes(dec(0, 0, exitOf())) - bytes(dec(0, 0, null)), FA_RECORD_SIZE.decExit, "блок выхода");
@@ -811,7 +882,7 @@ test("объём в сутки: боевая клетка шапки воспр�
   assert.equal(cell(25, 300), 2.88);
   assert.equal(cell(25, 60), 14.37);
   assert.equal(cell(63, 300), 7.14);
-  assert.equal(cell(63, 60), 35.65);
+  assert.equal(cell(63, 60), 35.66); // 35.65 до блока снимка глубины в строке решения
 });
 
 test("объём линеен по частоте и по числу рынков, и нулевая частота даёт ноль", () => {

@@ -21,7 +21,8 @@ import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  makeImpactReader, tierOfRoom, IMPACT_SOURCES, IMPACT_FALLBACKS, IMPACT_TIERS,
+  makeImpactReader, tierOfRoom, impactPeriodEndMs, impactSnapshotAge,
+  IMPACT_SOURCES, IMPACT_FALLBACKS, IMPACT_TIERS, IMPACT_SHELF_LIFE_DAYS,
 } from "../src/engine/fa/impact-curve.js";
 import { loadImpactSnapshot, IMPACT_SNAPSHOT_PATH } from "../src/main/impact-load.js";
 import { interpBps } from "../src/engine/fa/sizing.js";
@@ -160,6 +161,50 @@ test("измеренный удар на тикете $2500 много мень�
   const median = sorted[Math.floor(sorted.length / 2)];
   assert.ok(median < 1, `медиана удара ${median.toFixed(3)} бп, ожидалось много меньше 10 бп константы`);
   assert.ok(vals.every((v) => v >= 0), "нашёлся отрицательный удар, знак приведён не к издержке");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// СРОК ГОДНОСТИ. Возраст меряется от КОНЦА ПЕРИОДА снимка, и `now` всегда подаётся числом:
+// тест, сверяющийся с настоящими часами, протухает вместе со снимком и роняет охрану в день,
+// который никто не выбирал.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("конец периода снимка читается из самого файла, а не вбит константой", () => {
+  const end = impactPeriodEndMs(SNAP);
+  assert.equal(new Date(end).toISOString().slice(0, 10), "2026-06-20", "конец периода снимка");
+  assert.ok(end < Date.parse("2026-08-30T00:00:00Z"), "период обязан кончаться РАНЬШЕ дня съёмки: этим разрывом и стареет снимок");
+});
+
+test("непрочитанный период это неизвестный возраст, а не нулевой", () => {
+  assert.equal(impactPeriodEndMs(null), null);
+  assert.equal(impactPeriodEndMs({ meta: {} }), null);
+  assert.equal(impactPeriodEndMs({ meta: { period: "с июня по июнь" } }), null, "без меток времени разбирать нечего");
+});
+
+test("неизвестный возраст считается ПРОСРОЧЕННЫМ, а не свежим", () => {
+  const a = impactSnapshotAge({ periodEndMs: null, nowMs: Date.parse("2026-09-18T00:00:00Z") });
+  assert.equal(a.days, null);
+  assert.equal(a.stale, true, "неизвестность не поворачивается в удобную сторону");
+  assert.equal(impactSnapshotAge({ periodEndMs: 1e12, nowMs: null }).stale, true, "момент не назван - возраст неизвестен");
+  assert.equal(impactSnapshotAge().stale, true, "без единого довода тоже просрочен");
+});
+
+test("срок годности считается от конца периода и переходит ровно на своей границе", () => {
+  const end = impactPeriodEndMs(SNAP);
+  const day = 86400e3;
+  const at = (d) => impactSnapshotAge({ periodEndMs: end, nowMs: end + d * day });
+  assert.equal(at(0).days, 0);
+  assert.equal(at(IMPACT_SHELF_LIFE_DAYS).stale, false, "в последний день срока снимок ещё годен");
+  assert.equal(at(IMPACT_SHELF_LIFE_DAYS + 0.001).stale, true, "сразу за границей просрочен");
+  assert.equal(Math.round(at(90.3).days * 10) / 10, 90.3, "возраст отдаётся дробью, округляет его запись");
+  // Своё число срока подаётся отдельно: замер пересчитывают, а не правят ради него реестр.
+  assert.equal(impactSnapshotAge({ periodEndMs: end, nowMs: end + 10 * day, shelfLifeDays: 5 }).stale, true);
+});
+
+test("срок годности нынешнего снимка называется днём, а не ощущением", () => {
+  const end = impactPeriodEndMs(SNAP);
+  const till = new Date(end + IMPACT_SHELF_LIFE_DAYS * 86400e3).toISOString().slice(0, 10);
+  assert.equal(till, "2026-12-17", "срок годности снимка 18.09 истекает 17.12.2026");
 });
 
 test("реестры источников и запасных путей закрыты и непусты", () => {

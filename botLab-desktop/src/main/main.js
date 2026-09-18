@@ -42,6 +42,7 @@ import { applyObservedBases, backfillBases, baseBackfillWindow, emptyBaseJournal
 import { selectUniverse, resolveUniverse, instrumentFor, schemeOf, explainUniverse, FA_UNIVERSE_DEFAULTS } from "../engine/fa/universe-scan.js";
 import { buildFaSlice } from "../engine/fa/slice.js";
 import { makeImpactCurve } from "./impact-load.js";
+import { IMPACT_SHELF_LIFE_DAYS, impactSnapshotAge } from "../engine/fa/impact-curve.js";
 import { FA_RECORD_PREFIX, buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord, faDecisionsFromRecords, faRecordDayKey, faTradesFromRecords } from "../engine/fa/record.js";
 import { faEvalClears, faEvalFromDisk, faEvalOfTick, faEvalToDisk } from "./fa-eval.js";
 import { applyFaEntryTraceEvent, snapshotFaEntryTrace, finishFaEntryTrace, bindFaEntryTrace, closeFaEntryTrace, faEntryTraceFromDisk, displayFaEntryTrace } from "./fa-entry-trace.js";
@@ -963,8 +964,20 @@ const faAutoUniverse = () => (FA_UNIVERSE_APPLY ? faMarkets() : ALL_MARKETS);
 // 63 рынка), и перечитывать его на каждом тике значило бы платить разбором 1.7 МБ JSON за
 // неизменившийся файл. Четвёртый читатель среза рядом с тремя прежними.
 const faImpact = makeImpactCurve();
+// ВОЗРАСТ СНИМКА СЧИТАЕТСЯ НА МОМЕНТ РЕШЕНИЯ, А НЕ ЗДЕСЬ. Эта строка журнала только называет
+// состояние на буте: бот живёт неделями, и срок годности переходит под ним на ходу, поэтому в
+// запись едет возраст того часа, когда решение принято (`faDecisionImpact`).
+const faImpactDay = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : "н-д");
+const faDecisionImpact = (nowMs) => impactSnapshotAge({ periodEndMs: faImpact.periodEndMs, nowMs });
 if (faImpact.error) console.warn(`[fa-impact] снимок глубины GMX не прочитан (${faImpact.error}): круг издержек считается по плоской константе 0.1%`);
-else console.log(`[fa-impact] снимок глубины GMX: ${faImpact.markets} рынков, цепь ${faImpact.chain}`);
+else {
+  const age = faDecisionImpact(Date.now());
+  console.log(`[fa-impact] снимок глубины GMX: ${faImpact.markets} рынков, цепь ${faImpact.chain}, период до ${faImpactDay(faImpact.periodEndMs)}, возраст ${age.days == null ? "неизвестен" : `${age.days.toFixed(0)} сут`} при сроке годности ${IMPACT_SHELF_LIFE_DAYS} сут`);
+  // ПРОСРОЧКА НЕ МЕНЯЕТ РАСЧЁТ, И ЭТО ЗАМЕР, А НЕ СМЕЛОСТЬ: обе замены хуже (плоская константа
+  // ошибается в медиане на 10.00 бп против 0.07 у яруса, отказ снимает 31% вселенной). Поэтому
+  // после срока бот считает тем же, а говорит об этом здесь и строкой `im` в записи решения.
+  if (age.stale) console.warn(`[fa-impact] снимок ПРОСРОЧЕН (срок ${IMPACT_SHELF_LIFE_DAYS} сут от конца периода): расчёт не меняется, но кривую пора пересчитать, и каждое решение записи несёт это флагом`);
+}
 
 // ── СРЕЗ ДЛЯ ПРАВИЛ. Форма ровно та, которую принимает `sizeUniverse`, плюс марка и предельное
 // плечо биржи для сторожа залога. САМА СКЛАДКА ЖИВЁТ В ДВИЖКЕ (`fa/slice.js`) и там же под тестом:
@@ -1275,12 +1288,16 @@ async function faAutoStep(sources) {
   // выводиться из отчёта. Сборка и запись итоговой трассы ниже в счёт НЕ входят: это одна копия и
   // одна запись на диск, а число здесь сравнивается со стендом, который меряет одно правило.
   const decideFrom = Date.now();
+  // СРЕЗ ЛОВИТСЯ В ПЕРЕМЕННУЮ, потому что он нужен дважды: правилу и записи решения. Второй вызов
+  // `faAutoMarkets()` дал бы ДРУГОЙ срез (иной возраст стакана, иной живой снимок), и запись
+  // описывала бы не то решение, которое принято.
+  const faSlice = faAutoMarkets();
   const tick = faauto.autoTick({
     now: nowMs,
     bootAt: APP_BOOT_MS,
     state: st,
     corrupt: state.auto.corrupt,
-    markets: faAutoMarkets(),
+    markets: faSlice,
     sources,
     costs: state.settings.costs,
     position: posBefore,
@@ -1402,6 +1419,10 @@ async function faAutoStep(sources) {
       t: nowMs, source: "live", ageSec: gmxAgeSec, capitalUsd: params.capitalUsd,
       presetId: params.presetId, cfg: tick.cfg, universe: tick.universe, exit: tick.exit,
       hold: posBefore?.token ?? null, window: tick.window, gate: tick.gate, trigger: tick.trigger,
+      // ИСТОЧНИК КРИВОЙ УДАРА У КАЖДОГО РЫНКА И ВОЗРАСТ СНИМКА НА ЭТОТ ЧАС. Без них круг издержек
+      // в строке решения нечем объяснить: он посчитан либо по своей измеренной кривой рынка, либо
+      // по подстановке по ярусу, и разницу видно только отсюда.
+      markets: faSlice, impact: faDecisionImpact(nowMs),
     }));
   }
 

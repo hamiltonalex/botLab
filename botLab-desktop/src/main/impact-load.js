@@ -25,7 +25,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
-import { makeImpactReader } from "../engine/fa/impact-curve.js";
+import { impactPeriodEndMs, makeImpactReader } from "../engine/fa/impact-curve.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -49,5 +49,8 @@ export function makeImpactCurve(path = IMPACT_SNAPSHOT_PATH) {
   const { snapshot, error } = loadImpactSnapshot(path);
   const impactOf = makeImpactReader(snapshot, { fallback: "tier" });
   const markets = snapshot?.interp ? Object.keys(snapshot.interp).filter((k) => !k.startsWith("_")).length : 0;
-  return { impactOf, error, chain: snapshot?.meta?.chain ?? null, markets };
+  // КОНЕЦ ПЕРИОДА СНИМКА ЕДЕТ НАВЕРХ ЧИСЛОМ, а возраст считается на момент РЕШЕНИЯ, а не на момент
+  // бута: бот живёт неделями и срок годности переходит под ним на ходу. Поэтому здесь отдаётся
+  // неподвижная метка, а `impactSnapshotAge` зовётся там, где известен `now`.
+  return { impactOf, error, chain: snapshot?.meta?.chain ?? null, markets, periodEndMs: impactPeriodEndMs(snapshot) };
 }

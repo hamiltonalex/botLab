@@ -29,6 +29,7 @@ import { legModel } from "../src/engine/paper.js";
 import { costAtSize, interpBps, FA_SIZING_DEFAULTS } from "../src/engine/fa/sizing.js";
 import { DEFAULT_COSTS } from "../src/engine/costs.js";
 import { makeImpactCurve } from "../src/main/impact-load.js";
+import { IMPACT_SHELF_LIFE_DAYS, impactSnapshotAge } from "../src/engine/fa/impact-curve.js";
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -56,8 +57,17 @@ const scan = selectUniverse({
 const instruments = resolveUniverse({ scan, saved: null, fallback: ALL_MARKETS, held: [] }).instruments;
 
 const curve = makeImpactCurve();
+// СРОК ГОДНОСТИ МЕРИТСЯ ПО НАСТОЯЩИМ ЧАСАМ, а не по `--at`: `--at` это момент отбора для ворот
+// возраста фикстуры, а вопрос здесь другой, годен ли снимок СЕГОДНЯ. Юнит-тесты возраст проверяют
+// поданным числом и настоящих часов не касаются: тест, протухающий вместе со снимком, ронял бы
+// охрану в день, который никто не выбирал. Смоук в охрану не входит, и падать ему тут можно.
+const age = impactSnapshotAge({ periodEndMs: curve.periodEndMs, nowMs: Date.now() });
+const day = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : "н-д");
 if (curve.error) console.log(`! снимок глубины не прочитан: ${curve.error}\n`);
-else console.log(`снимок глубины: ${curve.markets} рынков, цепь ${curve.chain}\n`);
+else {
+  console.log(`снимок глубины: ${curve.markets} рынков, цепь ${curve.chain}`);
+  console.log(`период до ${day(curve.periodEndMs)}, возраст ${age.days == null ? "неизвестен" : `${age.days.toFixed(0)} сут`}, срок годности ${IMPACT_SHELF_LIFE_DAYS} сут (до ${day(curve.periodEndMs + IMPACT_SHELF_LIFE_DAYS * 86400e3)})${age.stale ? " - ПРОСРОЧЕН" : ""}\n`);
+}
 
 // СРЕЗ СТРОИТСЯ ТОЙ ЖЕ СКЛАДКОЙ, ЧТО У ЖИВОГО БОТА. Снимок и стакан здесь пустые: предмет смоука
 // это кривая удара, а ворота данных отсеяли бы каждую строку и показывать стало бы нечего.
@@ -96,5 +106,14 @@ console.log(`круг издержек при $${TICKET}: с кривой деш
 // ПРОВАЛ СМОУКА ЭТО ПРОВАЛ КОДА ВОЗВРАТА, а не строчка в выводе: смоук, который «сообщает» о
 // поломке нулевым кодом, отличается от отсутствующего только длиной вывода.
 if (curve.error) { console.error(`\nПРОВАЛ: снимок глубины не прочитан`); process.exit(1); }
+// ПРОСРОЧКА РОНЯЕТ СМОУК, И ЭТО ВЕСЬ «ПОСЛЕ СРОКА» В КОДЕ. Живой бот считает по тому же снимку и
+// говорит о возрасте строкой журнала и полем `im` записи решения, потому что обе замены измерены и
+// обе хуже: плоская константа ошибается в медиане на 10.00 бп против 0.07 у яруса, а отказ рынку
+// без своей кривой снимает 31% вселенной. Но срок, о котором никто не узнает, отличается от
+// отсутствующего только длиной шапки, поэтому узнаёт о нём тот, кто гоняет смоук.
+if (age.stale) {
+  console.error(`\nПРОВАЛ: снимок просрочен (возраст ${age.days == null ? "неизвестен" : `${age.days.toFixed(0)} сут`} при сроке ${IMPACT_SHELF_LIFE_DAYS}). Пересчитать снимок глубины, а до тех пор знать, что запасная кривая стареет первой и на тесных рынках недооценивает удар.`);
+  process.exit(1);
+}
 if (!named.length) { console.error(`\nПРОВАЛ: ни одному инструменту не досталось кривой`); process.exit(1); }
 if (!tally.market) { console.error(`\nПРОВАЛ: своя кривая рынка не досталась никому`); process.exit(1); }
