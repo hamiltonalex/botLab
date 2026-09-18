@@ -48,7 +48,11 @@ prices every market with the same economics and funds the best net.
 - **Entry rule** (`src/engine/fa/sizing.js`). For every eligible market a net curve by size over
   the horizon after the full round trip, with ceilings (free GMX liquidity, order book, dilution cap,
   ticket cap brought down to the trade capital), named refusal codes, and rank by net. Round trip at
-  $2500 per leg: $8.75.
+  $2500 per leg: $6.25 plus the measured GMX depth impact and Hyperliquid book slippage. The impact
+  comes from a depth snapshot shipped inside the app (`src/engine/fa/data/impact-gmx.json.gz`, 63
+  Arbitrum markets); a market the snapshot does not cover falls back to its liquidity tier, and the
+  source of the curve is recorded next to every market of every decision. The snapshot has a shelf
+  life of 180 days from the end of its period.
 - **Exit rule** (`src/engine/fa/exit.js`). Once a day the maximum of three numbers in the same
   units: hold gross, zero, net of the best alternative; the hysteresis band is one round trip wide.
   Between cadences the rule is called on events (`src/engine/fa/events.js`): the rate of our leg

@@ -258,8 +258,8 @@ is computed for it. If no market passes the gate, the tick ends with the code `h
 Why computing on incomplete data is forbidden. An hour without a base gives zero income, so an
 estimate on incomplete coverage is biased downward, and the rule would rather refuse a good market
 than enter a bad one. For entry that is safe; for holding it is expensive: an understated gross
-pushes the exit rule to cash and to switching, and every such decision costs a round trip (about
-$8.75 at $2,500). That is why the gate is the same for entry and for holding. The value 0.95 was set
+pushes the exit rule to cash and to switching, and every such decision costs a round trip
+($6.25 to $6.90 at $2,500). That is why the gate is the same for entry and for holding. The value 0.95 was set
 by the owner, not measured: a threshold of 1.0 would carry the risk of never entering (any hole
 postpones the decision until it leaves the window), 0.95 tolerates 36 holes per window at the cost
 of understating gross by up to 5%.
@@ -343,9 +343,11 @@ sifted out by a size we would not enter with anyway.
 
 **Market selection.** A market is funded if its net over the horizon repays the round trip at its own
 size at least once (net greater than the round trip, that is gross greater than two round trips).
-The round trip is not a constant: 0.31% of notional plus $1 for the two-leg scheme (0.22% plus $1 for
-the one-leg) plus the measured Hyperliquid book slippage at that size; $2.55 at $500, $7.20 at
-$2,000, $8.75 at $2,500 without the book. The size rule's refusal codes, each reachable and visible
+The round trip is not a constant: 0.21% of notional plus $1 for the two-leg scheme (0.12% plus $1 for
+the one-leg), plus the measured GMX depth impact, plus the measured Hyperliquid book slippage at that
+size. Without either measurement that is $2.05 at $500, $5.20 at $2,000, $6.25 at $2,500; on the live
+composition of 2026-09-18 the GMX impact added between zero and 2.6 basis points at $2,500, that is
+no more than $0.65 on top. The size rule's refusal codes, each reachable and visible
 in the summary: `no_capital_cap`, `horizon_missing`, `src_gmx_down`, `src_hl_down`,
 `src_implausible`, `no_base`, `stale_base`, `zero_base`, `base_identity_broken`, `no_book`,
 `stale_book`, `no_funding`, `no_room`, `room_unknown`, `below_min_ticket`,
@@ -354,6 +356,18 @@ Negative net across the whole grid is a normal outcome, not an error.
 
 Three of those codes appeared after the mechanics audit of 2026-09-18, and all three are about the
 same thing: the unknown must be named rather than substituted with a convenient value.
+
+**Where the GMX depth impact comes from.** It is not observable live at all: no GMX response carries
+a field for how your own size moves the price. So the bot takes it from a measured depth snapshot
+that ships inside the app: 63 Arbitrum markets, 623,256 executed trades over a year. A market the
+snapshot does not cover (a different chain, or a listing newer than the snapshot) gets the curve of
+its own liquidity tier, and the source of the curve is written next to every market of every
+decision, so that substituting someone else's curve is never silent. The snapshot has a shelf life,
+180 days from the end of its period, which for the current one is 2026-12-17. Past that date the
+computation does not change, because both replacements were measured and both are worse, but the age
+and the overdue flag ride into the decision record, and at startup the bot says so in the log. The
+"GMX slippage" item in the round trip settings applies ONLY to a market without a curve: when there
+is a curve, the rule takes the measured value instead of the configured one.
 `room_unknown` means "room on the market was never observed at all", and such a market used to read
 as a market of infinite capacity. `zero_base` is an observed zero funding base, previously
 indistinguishable from an unverified identity. `src_implausible` means "the source answered, but its
@@ -559,7 +573,11 @@ files are cut by UTC day:
   eight nodes of the book curve, data age of both sources; with an open trade a position block with
   notional, collateral, price and liquidation price of each leg. Gap rows live here too.
 - `fa-dec-<day>.ndjson` - the decision computation at every decision point: data age, capital,
-  preset, trailing window, curves of all funded markets, all refusals, the exit rule block.
+  preset, trailing window, curves of all funded markets, all refusals, the exit rule block. Also the
+  GMX depth snapshot the round trip was computed from: the end date of its period, its age at the
+  hour of the decision and the overdue flag, plus the name of the curve source for every market and
+  every refusal (the market's own curve, the liquidity tier, the common pool, none at all). Without
+  them the round trip in the row cannot be explained after the fact.
 - `fa-trade-<day>.ndjson` - the trade passport on entry, exit and switch: both sizes, both legs with
   collateral and liquidation price, itemized costs, the reason.
 
@@ -827,7 +845,7 @@ flowchart LR
     F2["GMX funding in hours when we pay:<br/>at full notional, no multiplier"] --> N
     B["GMX borrowing:<br/>always a cost"] --> N
     H["Hyperliquid funding:<br/>once an hour, either sign,<br/>untouched by dilution"] --> N
-    C["Round trip: 0.31% plus $1<br/>plus book slippage,<br/>once at entry"] --> N
+    C["Round trip: 0.21% plus $1<br/>plus GMX impact and book slippage,<br/>once at entry"] --> N
 ```
 
 The trade has one income: the fee for the missing side, and what arrives is its share after
@@ -936,7 +954,7 @@ are no toggles in either.
 | Forward curve | Accumulated net equity since t0: GMX per second, Hyperliquid hourly |
 | Ledger | Every accrual and position event as a row with filters and CSV, XLSX, JSON export; entry costs as a row at open, exit costs at close, the uncharged exit as a footer under the totals |
 | Zone Ⅰ · The bot's market | The pill "trade: market" or "candidate: market", an honest empty state until the first cycle; market data of both exchanges, net spread by intervals, decomposition by legs, reference price (Binance), raw hourly data; a 30 day window equal to the rule's horizon |
-| Transaction costs · model | Editable items of the round trip (GMX fees, GMX slippage, gas, Hyperliquid fee, number of sides) at the bot's size; the net over the horizon is taken ready-made from the rule's evaluation |
+| Transaction costs · model | Editable items of the round trip (GMX fees, GMX slippage, gas, Hyperliquid fee, number of sides) at the bot's size; the net over the horizon is taken ready-made from the rule's evaluation. The "GMX slippage" item works only for a market without a measured impact curve: when there is a curve, the rule takes the measured value instead of the configured one |
 | Freshness stamp and polling | The LIVE pill blinks on the arrival of a snapshot, "STALE" after 15 minutes without data, the stamp "data as of UTC"; polling interval 1, 5 or 15 minutes; clicking the pill refreshes the data now |
 | Overview | The bot card with a dot, a chip and a state line ("HUNTING ENTRY · bases N of 684 h · live L, backfilled I"), the "Automaton console" button (leads to the ticket) or "Stop the automaton" (two steps) |
 | Persistence | Automaton state, evaluation summary, positions with journals, base journals and history frames on disk; a restart resumes where it stopped, a corrupt state goes to quarantine |
