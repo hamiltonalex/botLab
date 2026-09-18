@@ -1022,6 +1022,27 @@ function faLegsOf(pos, params) {
   return { gmx: v.legs[0] || null, hl: v.legs[1] || null };
 }
 
+// ПАСПОРТ ЗАКРЫВАЕМОЙ СТОРОНЫ, СОБРАННЫЙ ИЗ ЛЕДЖЕРА. Нужен РУЧНОМУ закрытию, у которого нет ни тика,
+// ни `faAutoPosition`: та ищет только ОТКРЫТУЮ сделку автомата, а закрывать руками можно и чужую,
+// оставшуюся от времён до автомата. Плечо и ноционал берутся у САМОЙ позиции, а не у замороженных
+// параметров автомата: у чужой сделки этих параметров нет вовсе, а у своей они совпадают.
+function faClosedSideFromLedger(p) {
+  const params = state.auto.engine?.params
+    ? { ...faauto.defaultAutoParams(), ...state.auto.engine.params }
+    : faauto.defaultAutoParams();
+  const snap = state.snapshots.byKey[p.instrumentKey];
+  const pos = {
+    token: p.instrumentKey, config: p.config, strategy: p.strategy, sizeUsd: p.notional,
+    entryPx: p.openMarkPx, markPx: Number.isFinite(snap?.price) ? snap.price : null,
+    hlMaxLev: snap?.hlMaxLev ?? instFor(p.strategy, p.instrumentKey)?.hlMaxLev ?? null,
+  };
+  return {
+    ...pos, ...faLegsOf(pos, { ...params, leverage: p.leverage }),
+    wantUsd: p.meta?.wantUsd ?? null, gotUsd: p.notional, leverage: p.leverage,
+    realizedUsd: positionSummary(p).netPnl,
+  };
+}
+
 // ── ЗАПИСЬ. Ошибка записи НЕ имеет права уронить тик (закон бота 2), поэтому try/catch и
 // console.warn; счётчик строк за сессию нужен панели честности фазы 6.
 function faAppendRecord(kind, ts, row) {
@@ -1203,6 +1224,13 @@ async function faAutoStep(sources) {
   const hlAgeSec = f.hlAt ? (nowMs - f.hlAt) / 1000 : undefined;
   const params = st.params ? { ...faauto.defaultAutoParams(), ...st.params } : faauto.defaultAutoParams();
   const posBefore = faAutoPosition();
+  // УКАЗАТЕЛЬ СЛОТА ПРОТИВ ЛЕДЖЕРА. `faAutoPosition` ищет ТОЛЬКО открытую сделку, поэтому у сделки,
+  // закрытой мимо тика, и у сделки, удалённой из леджера руками, ответ у неё один и тот же (null), а
+  // состояния это разные: первое лечится само (слот свободен, это факт), второе обязано остановить
+  // автомат (что случилось со сделкой, не знает никто). Различить их может только владелец леджера,
+  // то есть это место; тик получает готовый признак и своего поиска по позициям не делает.
+  const posClosed = !!(st.positionId && !posBefore
+    && state.positions.some((x) => x.id === st.positionId && x.status !== "open"));
 
   if (armed) {
     const wrote = faAppendRecord("snap", nowMs, buildFaSnapRecord({
@@ -1233,6 +1261,7 @@ async function faAutoStep(sources) {
     sources,
     costs: state.settings.costs,
     position: posBefore,
+    positionClosed: posClosed,
     foreignOpen: state.positions.some((x) => x.status === "open" && x.id !== st.positionId),
     nominalSec: pollSec(),
     gapHints: { sleepWindow: lastSleepWindow, bootAt: APP_BOOT_MS, sourceErrorSince: sourceErrorFirstAt },
@@ -1263,6 +1292,11 @@ async function faAutoStep(sources) {
   }
   const prev = state.auto.lastTick;
   state.auto.engine = tick.state;
+  // САМОЛЕЧЕНИЕ УКАЗАТЕЛЯ В ЖУРНАЛ ОТДЕЛЬНОЙ СТРОКОЙ. Печать по смене исхода этот случай не
+  // покрывает: тик продолжился и назвал исход правила, а не отказ, поэтому без своей строки
+  // единственным следом освобождения слота осталась бы перепись кодов.
+  const healed = (tick.refusals || []).find((r) => r.code === "orphan_position" && r.healed);
+  if (healed) console.log(`[fa-auto] слот освобождён: сделка ${healed.positionId} закрыта мимо тика, указатель обнулён`);
   // ЧТО ИЗ ТИКА ВИДИТ ИНТЕРФЕЙС. Код исхода, отказы С ЧИСЛАМИ, вердикт сторожа залога и счёт ворот
   // снабжения. Строка `line` остаётся для ЛОГА и наружу не показывается: она по-русски всегда, а
   // перевод кодов живёт в словарях локализации (см. комментарий блока `auto` в assembleDataset).
@@ -3969,6 +4003,21 @@ function wireIpc() {
       }
       closePosition(p, now);
       faCloseEntryEvidence(p, "manual_close");
+      // ПАСПОРТ ЗАКРЫТИЯ В АРХИВ. Строка `close` писалась ТОЛЬКО в тике автомата, поэтому сделка,
+      // закрытая руками, оставалась в потоке `fa-trade` открытием без закрытия: журнал показывал её
+      // живой навсегда, а итог сделки в архив не попадал вовсе. Проверено на закрытии 18.09: записи
+      // нет. Пишется ДО сохранения позиций и до отправки в интерфейс, тем же порядком, что в тике.
+      faAppendRecord("trade", now, buildFaTradeRecord({
+        t: now, source: "live", event: "close", why: "manual_close",
+        ageSec: state.snapshots.fresh.gmxAt ? (now - state.snapshots.fresh.gmxAt) / 1000 : undefined,
+        // РЕШЕНИЯ НЕ БЫЛО: закрытие пришло от оператора, и пришить паспорт к последнему расчёту
+        // правила значило бы соврать про то, из чего он вырос.
+        decisionAt: null,
+        closed: faClosedSideFromLedger(p),
+        // ИЗДЕРЖКИ ЛЕЖАТ НА СТРОКЕ ВХОДА, а не выхода (см. `faTradesFromRecords`): круг этой сделки
+        // записан её собственным открытием, и второй раз здесь он не появляется.
+        costs: null,
+      }));
       savePositions(baseDir, state.positions);
       push();
     }

@@ -26,7 +26,7 @@ import { FA_AUTO_REFUSALS, FA_AUTO_OUTCOMES } from "../src/engine/fa/auto.js";
 import { FA_SIZING_REFUSALS, FA_SIZING_BINDINGS } from "../src/engine/fa/sizing.js";
 import { FA_EXIT_REASONS, FA_EXIT_ACTIONS } from "../src/engine/fa/exit.js";
 import { FA_UNIVERSE_REFUSALS, FA_UNIVERSE_SOURCES } from "../src/engine/fa/universe-scan.js";
-import { FA_GAP_CAUSES } from "../src/engine/fa/record.js";
+import { FA_GAP_CAUSES, FA_TRADE_WHY_MANUAL } from "../src/engine/fa/record.js";
 import { FA_DECISION_TRIGGERS } from "../src/engine/fa/events.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -68,9 +68,14 @@ test("fa-ui: каждый код реестров движка назван сл
   // экран составом вселенной над сводкой оценки, то есть ровно так же, как все прочие: из реестра
   // движка. Пока реестра не было в этом списке, ЛЮБОЙ код отбора выглядел для сверки лишним, и
   // правка садилась четырьмя частями сразу - таблица, обе локали и вот этот список.
+  //
+  // РУЧНОЕ ЗАКРЫТИЕ ШЕСТЫМ (18.09). Это единственная причина закрытия, которой нет ни в одном
+  // реестре правил и быть не может: не вывод правила и не сработавший сторож, а действие человека.
+  // На экран она приходит колонкой «причина» в журнале сделок, то есть тем же путём, что все
+  // прочие коды, и без места в этом списке была бы для сверки лишней.
   const engine = [...new Set([
     ...FA_AUTO_REFUSALS, ...FA_AUTO_OUTCOMES, ...FA_SIZING_REFUSALS, ...FA_EXIT_REASONS,
-    ...FA_UNIVERSE_REFUSALS,
+    ...FA_UNIVERSE_REFUSALS, ...FA_TRADE_WHY_MANUAL,
   ])].sort();
   assert.deepEqual([...CODE_TEXT.keys()].sort(), engine,
     "FA_CODE_TEXT обязан совпадать с объединением реестров движка в обе стороны");

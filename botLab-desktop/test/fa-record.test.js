@@ -31,7 +31,7 @@ import { FA_UNIVERSE_DEFAULTS, FA_UNIVERSE_SOURCES } from "../src/engine/fa/univ
 import {
   FA_GAP_CAUSES, FA_GAP_SLOTS, FA_LIQ_SOURCES, FA_POS_MISSING, FA_RECORD_KINDS, FA_RECORD_PREFIX,
   FA_RECORD_SIZE, FA_RECORD_SOURCES, FA_RECORD_VERSION, FA_SNAP_LEG_FIELDS, FA_SNAP_MISSING,
-  FA_TRADE_EVENTS,
+  FA_TRADE_EVENTS, FA_TRADE_WHY_MANUAL,
   buildFaDecisionRecord, buildFaGapRecord, buildFaSnapRecord, buildFaTradeRecord,
   classifyFaGap, faCoverage, faDecisionsFromRecords, faHeldRank, faLiqRoom, faRecordDayKey,
   faRecordsToPrune, faTradesFromRecords, faUnknownCodes, faVanishedMarkets, faVolumePerDay,
@@ -604,6 +604,35 @@ test("выход в кэш: закрытая сторона есть, откры
   assert.equal(row.pos, null);
   assert.equal(row.prev.real, -12.5);
   assert.equal(row.why, "gross_negative");
+});
+
+test("РУЧНОЕ ЗАКРЫТИЕ это штатная строка архива, а не «причина вне реестра»", () => {
+  // До 18.09 строка `close` писалась ТОЛЬКО в тике автомата, и сделка, закрытая кнопкой интерфейса,
+  // оставалась в потоке открытием без закрытия: журнал показывал её живой навсегда, а итог в архив
+  // не попадал вовсе. Проверено на живом закрытии 18.09: записи нет.
+  const rows = [
+    buildFaTradeRecord({ t: T0, event: "open", opened: tradeSide("BTC"), costs: COSTS }),
+    note(buildFaTradeRecord({
+      t: T0 + 5 * H, event: "close", why: "manual_close", ageSec: 1,
+      closed: tradeSide("BTC", { realizedUsd: -10.7 }),
+    })),
+  ];
+  const row = rows[1];
+  assert.equal(row.why, "manual_close");
+  assert.equal(row.d, null, "решения не было: пришивать паспорт к чужому расчёту нельзя");
+  assert.equal(row.cost, null, "круг лежит на строке ВХОДА, и второй раз он здесь не появляется");
+  assert.deepEqual(row.xc, undefined, "действие оператора это не дефект записи");
+  assert.deepEqual(faUnknownCodes(row), []);
+  // И сшивка читает сделку ЗАКРЫТОЙ, с итогом и с длительностью.
+  const [tr] = faTradesFromRecords(rows);
+  assert.equal(tr.live, false, "закрытая руками сделка обязана перестать быть живой");
+  assert.equal(tr.netUsd, -10.7);
+  assert.equal(tr.hours, 5);
+  assert.equal(tr.why, "manual_close");
+  // Реестр ручной причины свой, и с реестрами правил он не пересекается: иначе читателю архива
+  // было бы не различить действие человека и вывод правила.
+  const rules = new Set([...FA_EXIT_REASONS, ...FA_SIZING_REFUSALS]);
+  for (const c of FA_TRADE_WHY_MANUAL) assert.ok(!rules.has(c), `код «${c}» повторяет код правила`);
 });
 
 test("причина сделки вне реестра выхода видна полем xc, а событие вне реестра не пишется вовсе", () => {

@@ -204,6 +204,40 @@ test("бухгалтерия слота: чужая позиция и потер
   assert.equal(foreign.kind, "none");
 });
 
+test("СДЕЛКА, ЗАКРЫТАЯ МИМО ТИКА, лечится на месте: указатель обнуляется, тик продолжается", () => {
+  // Найдено 18.09 на живой машине: кнопка закрытия в интерфейсе статус меняет, а указатель слота
+  // нет, и `orphan_position` (третий по старшинству) отказывал раньше, чем тик доходил до
+  // обнуления. Автомат вставал НАВСЕГДА, перевзвод не лечил.
+  const st = armed({ positionId: "p1" });
+  const before = { ...st.uptime };
+  const t = run({ state: st, position: null, positionClosed: true, markets: [rich()] });
+  assert.equal(t.state.positionId, null, "слот свободен: сделка в леджере ЛЕЖИТ и лежит закрытой");
+  assert.notEqual(t.why, "orphan_position", "отказ, который сам себя лечит, решать права не имеет");
+  assert.equal(t.kind, "open", "тик обязан ДОЙТИ до правила входа, а не выйти отказом");
+  // Отказ при этом НАЗВАН: без строки в журнале расхождение указателя с леджером было бы невидимо.
+  const named = t.refusals.filter((r) => r.code === "orphan_position");
+  assert.equal(named.length, 1, "самолечение обязано оставить след в журнале тика");
+  assert.equal(named[0].healed, true, "и след обязан отличаться от разошедшейся бухгалтерии");
+  assert.equal(named[0].positionId, "p1");
+  // Счётчик непрерывности не трогается: перерыв это свойство опроса, а не слота.
+  assert.equal(t.state.uptime.firstAt, before.firstAt, "непрерывность НЕ обнуляется самолечением");
+  assert.equal(t.state.uptime.ticks, before.ticks + 1);
+  // И обратная сторона: сделки нет в леджере ВОВСЕ, и тогда открывать вторую поверх неизвестной
+  // первой нельзя. Признак `positionClosed` отсутствует, и код снова решает.
+  const lost = run({ state: armed({ positionId: "p1" }), position: null, markets: [rich()] });
+  assert.equal(lost.why, "orphan_position");
+  assert.equal(lost.state.positionId, "p1", "неизвестное состояние указатель не теряет");
+});
+
+test("самолечение слота уважает запрошенную остановку: новых входов после неё нет", () => {
+  // Остановка ждала закрытия сделки, сделку закрыли руками. Слот освободился, и остановка обязана
+  // состояться, а не пропасть вместе с отказом, который её загораживал.
+  const t = run({ state: armed({ positionId: "p1", stopRequested: true }), position: null, positionClosed: true });
+  assert.equal(t.state.positionId, null);
+  assert.equal(t.why, "stop_pending");
+  assert.equal(t.kind, "none");
+});
+
 test("первый тик после старта и перерыв опроса называются ОТДЕЛЬНО, и оба видны сразу", () => {
   // Бут: прошлого тика не было вовсе.
   const boot = run({ state: armed({ lastTickAt: null }) });
@@ -819,6 +853,22 @@ test("горизонт и окно панелей выводятся из дви
   // Неизвестный пресет не выдумывает горизонта: падать назад можно только на умолчание правила.
   const bad = armAuto(createAutoState({ nowMs: T }), { nowMs: T, params: { presetId: "нет-такого" } });
   assert.equal(autoHorizonH(bad), FA_SIZING_DEFAULTS.horizonH);
+});
+
+test("проводка самолечения слота и строки закрытия руками в главном процессе", () => {
+  // `main.js` тянет Electron и под юнит-тест не идёт, поэтому проводка проверяется по исходнику,
+  // тем же способом, каким ниже проверяется окно панелей.
+  const main = readFileSync(join(HERE, "..", "src", "main", "main.js"), "utf8");
+  // Признак «сделка закрыта» считается ПО ЛЕДЖЕРУ и отдаётся тику готовым: своего поиска по
+  // позициям у движка нет и быть не может, он леджера не видит вовсе.
+  assert.match(main, /positionClosed:\s*posClosed/, "признак закрытой сделки не доехал до тика");
+  assert.match(main, /x\.id === st\.positionId && x\.status !== "open"/,
+    "признак обязан выводиться из леджера, а не из отсутствия позиции");
+  // Ручное закрытие пишет паспорт в поток сделок: иначе архив остаётся открытием без закрытия.
+  const handler = main.match(/ipcMain\.handle\("fa:closePaper"[\s\S]*?\n  \}\);/);
+  assert.ok(handler, "канал ручного закрытия не найден: сломался разбор, а не код");
+  assert.match(handler[0], /faAppendRecord\("trade"/, "ручное закрытие обязано писать строку сделки");
+  assert.match(handler[0], /event: "close", why: "manual_close"/, "и называть причину своим словом");
 });
 
 test("окна и горизонта нет рукописной копией ни в главном процессе, ни в отрисовщике, ни в оракуле", () => {

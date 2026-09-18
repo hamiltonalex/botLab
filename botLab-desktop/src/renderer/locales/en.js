@@ -1463,6 +1463,7 @@ registerLocale('en', {
   'fa.code.noSlot': 'the slot is taken by a position opened before the switch to the automaton',
   'fa.code.stopPending': 'a stop was requested: no new entries',
   'fa.code.cadenceWait': 'the decision cadence has not come round',
+  'fa.code.manualClose': 'closed by the operator from the interface',
   'fa.code.funded': 'the entry rule funded a market',
   'fa.code.noCapitalCap': 'the capital cap is not set',
   'fa.code.horizonMissing': 'the holding horizon is not named',

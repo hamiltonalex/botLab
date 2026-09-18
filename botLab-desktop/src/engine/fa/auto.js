@@ -241,7 +241,7 @@ export const FA_AUTO_OUTCOMES = Object.freeze(["funded"]);
 export const FA_AUTO_REFUSALS = Object.freeze([
   "state_corrupt", // состояние не прочиталось и было отправлено в карантин
   "off", // тумблер выключен
-  "orphan_position", // автомат помнит позицию, которой в леджере нет: бухгалтерия разошлась
+  "orphan_position", // указатель слота разошёлся с леджером. РЕШАЕТ только когда сделки нет вовсе; сделка, закрытая мимо тика, лечится на месте
   "state_stale", // состояние старше срока годности решения
   "boot_warmup", // первый тик после старта процесса: непрерывность ещё не наблюдалась
   "poll_gap", // перерыв опроса: срез и трейлинг на этом тике не непрерывны
@@ -507,6 +507,10 @@ function evalSummary({ markets, gates, curves, capitalUsd, sliceRefusal = null }
 //                   нарезку по горизонту делает автомат, потому что сравнивать нетто на окнах
 //                   разной длины значит сравнивать разные единицы;
 //   position      - НАША открытая сделка в форме правила выхода плюс `id`, `entryPx`, `markPx`;
+//   positionClosed - сделка, на которую указывает автомат, НАЙДЕНА в леджере и ЗАКРЫТА. Отдельный
+//                   признак, а не вывод из `position === null`: пустой `position` покрывает и
+//                   закрытую сделку, и сделку, которой в леджере нет вовсе, а это разные состояния
+//                   (шаг 1b), и различить их может только тот, у кого леджер на руках;
 //   foreignOpen   - в леджере есть открытая позиция, которую автомат не открывал;
 //   nominalSec    - номинальный интервал опроса, для порога перерыва.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -524,7 +528,7 @@ function minCoveredHours(hours, min) {
 export function autoTick({
   now, bootAt = null, state = null, corrupt = false,
   markets = [], sources = null, costs = DEFAULT_COSTS,
-  position = null, foreignOpen = false,
+  position = null, positionClosed = false, foreignOpen = false,
   nominalSec = null, gapHints = {}, onProgress = null,
 } = {}) {
   const st = ensureAutoState(state ? { ...state, uptime: { ...state.uptime, gaps: [...(state.uptime?.gaps || [])] } } : null);
@@ -594,7 +598,31 @@ export function autoTick({
   if (silenceH > params.decisionMaxAgeH) add("state_stale", { silenceH });
 
   // ── ШАГ 1b. БУХГАЛТЕРИЯ СЛОТА. Слот ОДИН.
-  if (st.positionId && !position) add("orphan_position", { positionId: st.positionId });
+  //
+  // УКАЗАТЕЛЬ, ПЕРЕЖИВШИЙ СВОЮ СДЕЛКУ, ЛЕЧИТСЯ НА МЕСТЕ, и это не смягчение отказа, а разбор двух
+  // РАЗНЫХ состояний, которые до 18.09 назывались одним кодом. Сделка, закрытая мимо тика (кнопка
+  // интерфейса, канал `fa:closePaper`), в леджере ЛЕЖИТ и лежит закрытой: слот свободен, и это
+  // ФАКТ, а не догадка. Сделка, которой в леджере нет вовсе (запись удалили руками), это
+  // разошедшаяся бухгалтерия: что с ней случилось, не знает никто, и открывать вторую поверх
+  // неизвестной первой нельзя.
+  //
+  // ПОЧЕМУ БЕЗ ЭТОГО АВТОМАТ ВСТАВАЛ НАВСЕГДА. `orphan_position` третий по старшинству, то есть
+  // решает раньше любого правила, и тик выходил раньше, чем доходил до обнуления указателя (оно
+  // стоит в исполнении намерения, `main.js`). Перевзвод из интерфейса указателя не трогает и не
+  // лечил, зато стирал счётчик непрерывности. Найдено 18.09 на живой машине после ручного закрытия
+  // сделки BTC/B.
+  //
+  // ОТКАЗ ПРИ ЭТОМ НАЗВАН, А НЕ ПРОГЛОЧЕН: код едет в журнал тика и в перепись с признаком
+  // `healed`, потому что расхождение указателя с леджером обязано быть видно оператору, даже когда
+  // состояние сошлось само. Решать он права не имеет: решать нечего, слот пуст.
+  if (st.positionId && !position) {
+    if (positionClosed) {
+      note("orphan_position", { positionId: st.positionId, healed: true });
+      st.positionId = null;
+    } else {
+      add("orphan_position", { positionId: st.positionId });
+    }
+  }
   if (!st.positionId && foreignOpen) add("no_slot");
   if (!st.positionId && !foreignOpen && st.stopRequested) add("stop_pending");
 

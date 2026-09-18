@@ -1463,6 +1463,7 @@ registerLocale('ru', {
   'fa.code.noSlot': 'слот занят позицией, открытой до перехода на автомат',
   'fa.code.stopPending': 'запрошена остановка: новых входов нет',
   'fa.code.cadenceWait': 'каданс решения не подошёл',
+  'fa.code.manualClose': 'закрыто оператором из интерфейса',
   'fa.code.funded': 'правило входа профинансировало рынок',
   'fa.code.noCapitalCap': 'потолок капитала не задан',
   'fa.code.horizonMissing': 'горизонт удержания не назван',
