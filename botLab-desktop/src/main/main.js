@@ -20,7 +20,7 @@ import { fetchGmxCurrent, fetchHlCurrent, fetchHlBook, fetchHlHistory, fetchBina
 import { getTwoLegFrame, getOneLegFrame, nowHourTs, WINDOW_DAYS, STALE_AFTER_SEC } from "../engine/backfill.js";
 import { buildSnapshot, buildTwoLegEntry, buildOneLegEntry, buildSeries } from "../engine/assemble.js";
 import { openPosition, accrue, accrueFromRows, settlePosition, recordUnpricedGap, closePosition, positionSummary, accountSummary, legModel, hlSettleFromObservations } from "../engine/paper.js";
-import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts } from "../engine/costs.js";
+import { roundTripCost, roundTripCostBreakdown, DEFAULT_COSTS, normalizeCosts, breakdownForTotal } from "../engine/costs.js";
 import { ledgerView, buildLedger } from "../engine/ledger.js";
 import { toLedgerCsv, toLedgerSheet, toLedgerJson, ledgerFileName, dialogFiltersFor } from "./export.js";
 import { buildXlsxBuffer } from "./xlsx-writer.js";
@@ -1122,6 +1122,19 @@ function faSnapMarkets() {
 
 // ── ИСПОЛНЕНИЕ. Единственное место, где намерение автомата становится сделкой. Бухгалтерия та же,
 // что у ручного входа, и это принципиально: две бухгалтерии разошлись бы на первом же исправлении.
+// Круг и его статьи для леджера. Разбивка строится ПОД круг правила, поэтому Σ статей сходится с
+// кругом до ошибки округления двоичной дроби (`breakdownForTotal`, там же названа её величина). Круга у намерения нет либо модель поменяли между решением и
+// открытием - обе стороны честно падают на модель целиком, без смешивания двух чисел.
+function faOpenCosts(intent, notional, isOne) {
+  const ruleUsd = Number(intent?.costUsd);
+  const bd = Number.isFinite(ruleUsd) ? breakdownForTotal(state.settings.costs, notional, isOne, ruleUsd) : null;
+  if (bd) return { roundTripCost: ruleUsd, costBreakdown: bd };
+  return {
+    roundTripCost: roundTripCost(state.settings.costs, notional, isOne),
+    costBreakdown: roundTripCostBreakdown(state.settings.costs, notional, isOne),
+  };
+}
+
 function faOpenFromIntent(intent, nowMs) {
   const inst = instFor(intent.strategy, intent.token);
   if (!inst) return null;
@@ -1137,8 +1150,17 @@ function faOpenFromIntent(intent, nowMs) {
     capital: intent.gotUsd / intent.leverage,
     leverage: intent.leverage,
     nowMs,
-    roundTripCost: roundTripCost(state.settings.costs, notional, isOne),
-    costBreakdown: roundTripCostBreakdown(state.settings.costs, notional, isOne),
+    // КРУГ БЕРЁТСЯ У ПРАВИЛА, А НЕ ПЕРЕСЧИТЫВАЕТСЯ ПО МОДЕЛИ. `intent.costUsd` это то самое число,
+    // на котором принято решение (`curve.costUsd` правила входа), и оно считано по ИЗМЕРЕННЫМ
+    // кривым: удар GMX из снимка глубины и стакан Hyperliquid. Плоская модель после правки 18.09
+    // даёт другое: `costAtSize` при живой кривой зануляет статью `gmxImpact`, а модель нет. Замер
+    // на живой записи: правило $7.36, модель $8.75, из них $2.50 статьёй удара, которую правило на
+    // том же рынке оценило в $0.00. Списывать по модели значило бы решать одним критерием, а
+    // отчитываться другим, и на 27 кругах в год это до $67 издержек, которых не было.
+    //
+    // ПЕРЕСЧИТЫВАТЬ ЗДЕСЬ НЕЛЬЗЯ и не нужно: вторая копия расчёта круга разошлась бы с первой на
+    // следующей же правке, а число правила уже приехало в намерении.
+    ...faOpenCosts(intent, notional, isOne),
     openMarkPx: Number.isFinite(snap?.price) ? snap.price : null,
     // РАЗБАВЛЕНИЕ ВКЛЮЧЕНО, и без этого флага вся фаза бессмысленна. Правило выбрало размер С
     // УЧЁТОМ множителя B/(B+S); леджер без разбавления начислил бы котируемую ставку целиком, то
@@ -1429,6 +1451,10 @@ async function faAutoStep(sources) {
   // ИСПОЛНЕНИЕ. Только здесь, и только по намерению.
   let closed = null;
   let opened = null;
+  // Разбивка круга берётся С САМОЙ ПОЗИЦИИ и ловится здесь: `opened` ниже это ПРОЕКЦИЯ позиции для
+  // интерфейса (`faAutoPosition`), статей круга в ней нет вовсе, и `opened.costBreakdown` молча
+  // читался бы как `undefined`.
+  let openedCosts = null;
   if (armed && (tick.kind === "close" || tick.kind === "switch") && posBefore) {
     const p = state.positions.find((x) => x.id === posBefore.id);
     if (p) {
@@ -1453,6 +1479,7 @@ async function faAutoStep(sources) {
       }
       const pos = faAutoPosition();
       opened = { ...pos, ...faLegsOf(pos, params), wantUsd: tick.intent.wantUsd, gotUsd: tick.intent.gotUsd, leverage: tick.intent.leverage };
+      openedCosts = p.costBreakdown ?? null;
     }
   }
   if (armed && (closed || opened)) {
@@ -1466,7 +1493,14 @@ async function faAutoStep(sources) {
       why: ev === "open" ? null : tick.why,
       ageSec: gmxAgeSec, decisionAt: tick.decided ? nowMs : null,
       opened, closed,
-      costs: opened ? roundTripCostBreakdown(state.settings.costs, opened.gotUsd, opened.strategy === "one") : null,
+      // СТАТЬИ БЕРУТСЯ С ПОЗИЦИИ, А НЕ ПЕРЕСЧИТЫВАЮТСЯ ИЗ НАСТРОЕК. Здесь стоял пересчёт по
+      // `state.settings.costs`, и он врал дважды. Во-первых, модель издержек редактируема, и правка
+      // между открытием и записью переписала бы историю того, что реально списано (ровно об этом
+      // говорит шапка `roundTripCostBreakdown`: детализация снимается НА позиции в момент входа).
+      // Во-вторых, с 18.09 круг списывается по числу ПРАВИЛА, посчитанному по измеренным кривым, а
+      // пересчёт по модели давал другое: замер на живой записи дал в записи $2.50 статьёй удара
+      // против $0.72, реально списанных с позиции. Запись обязана документировать списанное.
+      costs: opened ? openedCosts : null,
     }));
   }
   // РЕЖИМ ОДНОЙ СДЕЛКИ И ЗАПРОШЕННАЯ ОСТАНОВКА гасят тумблер РОВНО когда слот освободился: бросать

@@ -10,7 +10,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { openPosition, accrue, recordUnpricedGap, positionSummary, closePosition } from "../src/engine/paper.js";
 import { buildLedger, ledgerTotals, ledgerReconciles, ledgerView, LEDGER_TYPES } from "../src/engine/ledger.js";
-import { roundTripCost, roundTripCostBreakdown, splitRoundTripCost } from "../src/engine/costs.js";
+import { roundTripCost, roundTripCostBreakdown, splitRoundTripCost, breakdownForTotal } from "../src/engine/costs.js";
 
 const HOUR = 3600 * 1000;
 const BASE = 1699999200000; // hour-aligned epoch ms
@@ -79,6 +79,51 @@ test("buildLedger: 1h two-leg accrual → funding + borrow + HL rows, split sums
   near(rec.netFromEvents, s.bookedNetPnl, 1e-9, "sum(income)-sum(expense) = booked net (exit not charged yet)");
   near(ev[ev.length - 1].runningBalance, s.bookedNetPnl, 1e-9, "last running balance = booked net");
   near(s.bookedNetPnl - s.exitPendingUsd, s.netPnl, 1e-9, "booked - pending exit = netPnl");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// РАЗБИВКА ПОД КРУГ ПРАВИЛА. Леджер списывает то число, на котором принято решение, а не своё:
+// правило считает круг по ИЗМЕРЕННЫМ кривым, модель по плоским статьям, и с 18.09 это разные
+// числа. Тождество «сумма статей = круг» обязано держаться по построению, потому что интерфейс
+// леджера показывает Σ детализации рядом с кругом целиком.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("breakdownForTotal: сумма статей равна кругу правила, комиссии точные, остаток это проскальзывание", () => {
+  for (const oneLeg of [false, true]) {
+    const model = roundTripCostBreakdown({}, 2500, oneLeg);
+    const fees = model.gmxOpenUsd + model.gmxCloseUsd + model.gmxGasUsd + model.hlTakerUsd;
+    const total = fees + 1.11; // круг правила: комиссии плюс измеренное проскальзывание
+    const b = breakdownForTotal({}, 2500, oneLeg, total);
+    // Допуск, а не равенство: остаток считается вычитанием суммы четырёх статей, а здесь (и в
+    // интерфейсе) складываются пять в другом порядке, и последний бит двоичной дроби расходится.
+    near(b.gmxOpenUsd + b.gmxCloseUsd + b.gmxImpactUsd + b.gmxGasUsd + b.hlTakerUsd, total, 1e-9,
+      `сумма статей = круг правила (oneLeg=${oneLeg})`);
+    near(b.gmxImpactUsd, 1.11, 1e-12, "остаток это ровно измеренное проскальзывание");
+    for (const k of ["gmxOpenUsd", "gmxCloseUsd", "gmxGasUsd", "hlTakerUsd"]) {
+      assert.equal(b[k], model[k], `${k} берётся из модели без изменений`);
+    }
+    // Разнесение на вход и выход работает поверх новой разбивки так же, как поверх модельной.
+    const sp = splitRoundTripCost({ roundTripCost: total, costBreakdown: b });
+    assert.equal(sp.byModel, true);
+    assert.equal(sp.entryUsd + sp.exitUsd, total, "вход + выход = круг правила, здесь ПОБИТОВО: выход считается остатком");
+  }
+});
+
+test("breakdownForTotal: замеренный случай 18.09 даёт $1.11 вместо $2.50 плоской статьи", () => {
+  // Живой вход LINK-arb-linkusdc/B на $2500: правило посчитало круг $7.36, модель даёт $8.75.
+  const b = breakdownForTotal({}, 2500, false, 7.36);
+  near(b.gmxImpactUsd, 1.11, 1e-9, "проскальзывание по правилу");
+  near(roundTripCostBreakdown({}, 2500, false).gmxImpactUsd, 2.5, 1e-12, "плоская статья, которую списывали до правки");
+  near(roundTripCost({}, 2500, false) - 7.36, 1.39, 1e-9, "цена расхождения на одной сделке");
+});
+
+test("breakdownForTotal: круг ниже комиссий разбивки НЕ даёт, чтобы не выдумывать отрицательную статью", () => {
+  assert.equal(breakdownForTotal({}, 2500, false, 4), null, "модель поменяли между решением и открытием");
+  assert.equal(breakdownForTotal({}, 2500, false, NaN), null);
+  assert.equal(breakdownForTotal({}, -1, false, 10), null, "негодный ноционал");
+  // Ровно комиссии без проскальзывания это годный случай, а не краевой: рынок с нулевым ударом.
+  const fees = roundTripCost({}, 2500, false) - 2.5;
+  assert.equal(breakdownForTotal({}, 2500, false, fees).gmxImpactUsd, 0);
 });
 
 test("splitRoundTripCost: вход + выход = круг побитово, половины по соглашению, без детализации пополам", () => {
