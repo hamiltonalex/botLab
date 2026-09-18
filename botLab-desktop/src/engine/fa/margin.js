@@ -183,21 +183,62 @@ export function positionLegs({ strategy = "two", config = null, sizeUsd, leverag
 // случай, а тот же максимум по пустому дополнению. Неизвестный запас хотя бы у одной ноги даёт
 // `margin_unknown`, а не пропуск: «не знаем» и «в порядке» это разные состояния, и сливать их
 // значит выдавать отказ снабжения за вывод правила.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// ДОСМАТРИВАЮТСЯ ВСЕ НОГИ, И ИЗМЕРЕННАЯ ОПАСНОСТЬ СИЛЬНЕЕ НЕВИДИМОЙ
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// До 18.09 цикл выходил на ПЕРВОЙ ноге с непосчитанным запасом, не досмотрев вторую, и отдавал
+// `margin_unknown` с `roomFrac: null`. Находка 6.1 аудита механики: `margin_unknown` стоял в
+// старшинстве ВЫШЕ `margin_thin`, поэтому измеренная опасность на второй ноге глушилась целиком.
+// Проверено запуском: нога GMX шорт при цене плюс 40% и пропавшем `hlMaxLev` давала вердикт
+// `margin_unknown` и `roomFrac: null`, а при известном плече тот же случай давал `margin_thin` и
+// `roomFrac: 0.43`. То есть запас 43% при требуемых 50% не просто не закрывал сделку, он даже не
+// показывался оператору. Своя же шапка выше говорит «слабейшая нога решает за всю сделку», а
+// слабейшая из ПОСЧИТАННЫХ не решала ничего.
+//
+// ПОРЯДОК ТЕПЕРЬ ТАКОЙ. Тонкая посчитанная нога это ИЗМЕРЕННАЯ опасность, и она требует закрытия:
+// ликвидация ноги невосстановима, а второй ноги мы всё равно не видим, то есть ждать от неё
+// хороших новостей нечего. Непосчитанная нога при всех посчитанных здоровых остаётся
+// `margin_unknown`: закрываться по ней значит платить круг издержек за икоту источника. Факт, что
+// нога осталась невидимой, при этом НЕ ТЕРЯЕТСЯ - он едет полем `unknownLegs`, и вердикт `ok`
+// невозможен, пока хоть одна нога не посчитана.
+//
+// Цена сегодня ноль: за 3627 живых тиков `hlMaxLev` не пропал ни разу. Состояние становится
+// достижимым при живом отборе вселенной, когда монета уходит с биржи, то есть ровно тогда, когда
+// нога и в самом деле в беде.
 export function marginGuard({ legs = [], minRoomFraction = FA_MARGIN_DEFAULTS.minRoomFraction } = {}) {
   const need = numOf(minRoomFraction);
   const evaluated = (legs || []).map((l) => legMargin(l));
   if (!evaluated.length || !Number.isFinite(need)) {
-    return { ok: false, code: "margin_unknown", roomFrac: null, need: Number.isFinite(need) ? need : null, worst: null, legs: evaluated };
+    return {
+      ok: false, code: "margin_unknown", roomFrac: null, need: Number.isFinite(need) ? need : null,
+      worst: null, unknownLegs: evaluated.length, legs: evaluated,
+    };
   }
-  let worst = null;
+  let worst = null; // слабейшая из ПОСЧИТАННЫХ ног
+  let unknown = null; // первая непосчитанная, для объяснения оператору
+  let unknownLegs = 0;
   for (const l of evaluated) {
     if (!Number.isFinite(l.roomFrac)) {
-      return { ok: false, code: "margin_unknown", roomFrac: null, need, worst: l, legs: evaluated };
+      unknownLegs += 1;
+      if (!unknown) unknown = l;
+      continue;
     }
     if (!worst || l.roomFrac < worst.roomFrac) worst = l;
   }
-  const ok = worst.roomFrac >= need;
-  return { ok, code: ok ? null : "margin_thin", roomFrac: worst.roomFrac, need, worst, legs: evaluated };
+  const thin = !!worst && worst.roomFrac < need;
+  if (thin) {
+    return { ok: false, code: "margin_thin", roomFrac: worst.roomFrac, need, worst, unknownLegs, legs: evaluated };
+  }
+  if (unknownLegs > 0) {
+    // ЗАПАС ОСТАЁТСЯ ПРОЧЕРКОМ, и это не упущение. Поле `roomFrac` означает запас СЛАБЕЙШЕЙ ноги, а
+    // слабейшая здесь это ровно та, которой мы не видим: показать вместо неё здоровые 98% посчитанной
+    // ноги значило бы подменить неизвестность известным числом, то есть сделать ровно то, за что
+    // аудит и завёл эту находку. Число появляется тогда, когда оно РЕШАЕТ, то есть в ветке выше.
+    return { ok: false, code: "margin_unknown", roomFrac: null, need, worst: unknown, unknownLegs, legs: evaluated };
+  }
+  return { ok: true, code: null, roomFrac: worst.roomFrac, need, worst, unknownLegs: 0, legs: evaluated };
 }
 
 // Одна строка на вердикт. Существует потому, что решение, которого нельзя объяснить оператору, в
