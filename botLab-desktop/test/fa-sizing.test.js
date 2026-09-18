@@ -479,6 +479,33 @@ test("АГРЕГИРОВАННЫЙ стакан даёт другую прохо
 // 7. Лестница отказов и полнота реестров
 // ─────────────────────────────────────────────────────────────────────────────
 
+test("кривая несёт ЧИСЛО ПОСЧИТАННЫХ ЧАСОВ и причины недосчёта, а не только нетто", () => {
+  // Находка 6.11 аудита механики 18.09: часы без базы съедают брутто (доход обнулён, борроу и нога
+  // Hyperliquid начислены), а ворота покрытия выравнивают число СТРОК, не число посчитанных часов.
+  // Счётчики считались и не читались никем, поэтому сравнение рынков с разным числом посчитанных
+  // часов выглядело равным. Приведения брутто здесь нет нарочно: это правка правила, а не
+  // диагностики, и она двигает обе книги.
+  const full = bestSizeForMarket({ ...marketOf(flatMarket({ P: 16438, bShort: 1e6 })) });
+  assert.equal(full.refusal, null);
+  assert.equal(full.hoursApplied, 720, "полное окно посчитано целиком");
+  assert.equal(full.noBaseSec, 0);
+  assert.equal(full.zeroBaseSec, 0);
+  assert.equal(full.badBaseSec, 0);
+
+  // Тот же рынок, но у 36 часов (5% окна, ровно граница ворот покрытия) базы нет вовсе. Дыры стоят
+  // в СЕРЕДИНЕ окна нарочно: живая база снимка берётся из последней строки, и дыра на конце
+  // отказала бы воротами данных, то есть проверяла бы совсем другое.
+  const holed = flatMarket({ P: 16438, bShort: 1e6 }).map((r, i) => {
+    if (i >= 100 && i < 136) { const { fbase_long, fbase_short, ...rest } = r; return rest; }
+    return r;
+  });
+  const thin = bestSizeForMarket({ ...marketOf(holed) });
+  assert.equal(thin.refusal, null, "рынок на границе покрытия правило по-прежнему финансирует");
+  assert.equal(thin.hoursApplied, 720, "строк столько же: час без базы НЕ выбрасывается");
+  assert.equal(thin.noBaseSec, 36 * 3600, "но 36 часов дохода обнулены, и это ВИДНО числом");
+  assert.ok(thin.grossUsd < full.grossUsd, "брутто у него меньше при тех же ставках и том же окне");
+});
+
 test("каждый код отказа ДОСТИЖИМ, и ни одна ветка не возвращает кода вне реестра", () => {
   // Проверка, которая перечисляет коды, но не умеет их получить, охраняет только собственный список.
   const rows = flatMarket({ P: 16438, bShort: 1e6 });
@@ -490,6 +517,7 @@ test("каждый код отказа ДОСТИЖИМ, и ни одна вет
   take(bestSizeForMarket({ ...marketOf(rows, { bOwnUsd: 0 }) }));
   take(bestSizeForMarket({ ...marketOf(rows, { baseAgeSec: 999 }) }));
   take(bestSizeForMarket({ ...marketOf(rows, { baseIdentityOk: false }) }));
+  take(bestSizeForMarket({ ...marketOf(rows, { srcPlausible: false }) }));
   take(bestSizeForMarket({ ...marketOf(rows, { bookMissing: true }) }));
   take(bestSizeForMarket({ ...marketOf(rows, { bookAgeSec: 999 }) }));
   take(bestSizeForMarket({ ...marketOf(rows, { hlVisibleNtl: 100 }) }));

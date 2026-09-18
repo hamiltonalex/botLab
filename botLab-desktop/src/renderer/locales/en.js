@@ -1470,6 +1470,7 @@ registerLocale('en', {
   'fa.code.windowMissing': 'the evaluation window is not named',
   'fa.code.srcGmxDown': 'the GMX source is unavailable',
   'fa.code.srcHlDown': 'the Hyperliquid source is unavailable',
+  'fa.code.srcImplausible': 'the source answered, but its numbers do not hold together',
   'fa.code.noBase': 'there is no funding base',
   'fa.code.staleBase': 'the base is stale',
   'fa.code.baseIdentityBroken': 'the wrong base arrived: the identity did not check out',

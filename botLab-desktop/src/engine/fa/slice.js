@@ -41,6 +41,7 @@
 
 import { legModel } from "../paper.js";
 import { scanTwoLeg } from "../math.js";
+import { resolveBase } from "./dilution.js";
 import { schemeOf } from "./universe-scan.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,6 +99,22 @@ export function faSliceRow({ inst, snap = null, book = null, rows = [], nowMs, g
   const windowSide = strategy === "two" ? windowConfig(rows, windowH) : null;
   const config = strategy === "two" ? (windowSide ?? snap?.chosen ?? "A") : null;
   const { gmxSide } = legModel(strategy, config);
+  // ТОЖДЕСТВО БАЗ СТОРОН СЧИТАЕТСЯ ЖИВЬЁМ, И ЭТО ТО САМОЕ, ЧТО ОБЕЩАЕТ SPEC 3.3. До 18.09 в поле
+  // `baseIdentityOk` ехал `snap.gateOk`, то есть СОВСЕМ ДРУГАЯ проверка: тождество `netRate ==
+  // funding + borrow` внутри ответа `markets/info` (находка 6.8 аудита механики). Следствий было
+  // два, и оба неприятные. Оператору при сбое знаков говорили «база пришла не та», то есть
+  // указывали чинить не то место. И защита от переключения флага GMX
+  // `useOpenInterestInTokensForBalance` на уровне рынка отсутствовала вовсе, хотя шапка
+  // `assemble.js` ссылается на неё как на действующую.
+  //
+  // ПОРОГ СТРОГИЙ, И ЭТО ЗАМЕР, А НЕ СМЕЛОСТЬ. Живой снимок несёт базы и ставки ОДНОГО ответа
+  // источника, поэтому им незачем расходиться (слабый допуск 5% заведён для строк кадра, где базы
+  // живые, а ставки индексаторские). Замер по копии живой записи mb12 (18 110 наблюдений, 3627
+  // снимков за 12.6 суток, пять инструментов): медиана невязки 2.9e-10, у ETH-Avax 3.2e-8,
+  // максимум 1.3e-7, и НИ ОДНОГО наблюдения выше строгого порога 1e-6. То есть ворота, включённые
+  // этой правкой, живьём не отказывают ни одному рынку, а подмену базы ловят: та же подмена
+  // интереса в токенах даёт невязку 0.92% у BTC и 20.6% у ETH.
+  const baseId = snap ? resolveBase(raw, gmxSide) : null;
   return {
     token: inst.key,
     config,
@@ -116,7 +133,12 @@ export function faSliceRow({ inst, snap = null, book = null, rows = [], nowMs, g
       bOwnUsd: gmxSide === "short" ? raw.fbase_short : raw.fbase_long,
       bOtherUsd: gmxSide === "short" ? raw.fbase_long : raw.fbase_short,
       baseAgeSec: gmxAt ? (nowMs - gmxAt) / 1000 : undefined,
-      baseIdentityOk: snap ? snap.gateOk !== false : undefined,
+      // Только про тождество баз: отсутствие базы это `no_base`, и мешать их нельзя.
+      baseIdentityOk: baseId ? baseId.reason !== "base_identity_broken" : undefined,
+      // ЧИСЛА ИСТОЧНИКА СХОДЯТСЯ САМИ С СОБОЙ. Отдельное поле и отдельный код отказа: источник
+      // ответил, но его тождество нетто ноги против фандинга и борроу не сошлось либо ставка
+      // Hyperliquid вне разумной полосы. Раньше это ехало под кодом тождества баз.
+      srcPlausible: snap ? snap.gateOk !== false : undefined,
       bookMissing: !book,
       bookAgeSec: book ? (nowMs - book.at) / 1000 : undefined,
       gmxAvailOwnUsd: gmxSide === "short" ? snap?.avail?.shortUsd : snap?.avail?.longUsd,

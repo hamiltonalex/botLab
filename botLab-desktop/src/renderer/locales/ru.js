@@ -1470,6 +1470,7 @@ registerLocale('ru', {
   'fa.code.windowMissing': 'окно оценки не названо',
   'fa.code.srcGmxDown': 'источник GMX недоступен',
   'fa.code.srcHlDown': 'источник Hyperliquid недоступен',
+  'fa.code.srcImplausible': 'источник ответил, но его числа не сходятся сами с собой',
   'fa.code.noBase': 'базы фандинга нет',
   'fa.code.staleBase': 'база устарела',
   'fa.code.baseIdentityBroken': 'база пришла не та: тождество не сошлось',

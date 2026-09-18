@@ -433,6 +433,7 @@ export function positionSummary(position) {
   let flowQuoted = 0; // сколько обещала КОТИРУЕМАЯ ставка в часы получения
   let flowReceived = 0; // сколько досталось после разбавления собственным входом
   let noBaseSec = 0; // время, где базы не было вовсе и доход обнулён (издержки ноги остались)
+  let zeroBaseSec = 0; // время, где база НАБЛЮДЕНА нулём: интереса на стороне нет, платить некому
   let badBaseSec = 0; // время, где база пришла не та (тождество не сошлось) и доход обнулён
   for (const a of position.accruals || []) {
     gapSkippedSec += a.gapSkippedSec || 0;
@@ -440,6 +441,9 @@ export function positionSummary(position) {
     flowQuoted += a.fundingQuotedUsd || 0;
     flowReceived += a.fundingUsd || 0;
     if (a.dilutionReason === "no_base") noBaseSec += a.dtSec || 0;
+    // Свой счётчик у наблюдённого нуля (находка 6.10): без него такие часы с 18.09 не попадали бы
+    // ни в один счётчик, то есть новый код отказа молча съел бы диагностику.
+    if (a.dilutionReason === "zero_base") zeroBaseSec += a.dtSec || 0;
     if (a.dilutionReason === "base_identity_broken") badBaseSec += a.dtSec || 0;
   }
   // Доля удержания это ГЛАВНОЕ число карточки честности: при рабочем размере $2500 на рынок рынок
@@ -479,6 +483,7 @@ export function positionSummary(position) {
     flowReceived,
     dilutionRetained, // null у позиции без разбавления
     noBaseSec,
+    zeroBaseSec,
     badBaseSec,
     maxDrawdown: position.maxDrawdown, // $, <= 0
     // drawdown as a fraction of NOTIONAL (the base the excursion actually scales with); the UI

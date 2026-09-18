@@ -156,6 +156,7 @@ export const FA_SIZING_REFUSALS = Object.freeze([
   "window_missing", // окно оценки назад названо, но непригодно: молча подставлять горизонт нельзя
   "src_gmx_down", // markets/info недоступен: размер не считается НИ НА ОДНОМ рынке
   "src_hl_down", // metaAndAssetCtxs недоступен: то же для двуногих схем
+  "src_implausible", // источник ОТВЕТИЛ, но его числа не сходятся сами с собой: тождество нетто ноги против фандинга и борроу либо ставка Hyperliquid вне полосы
   "no_base", // базы фандинга на рынке нет
   "stale_base", // база старее baseMaxAgeSec, и переносить её с прошлого тика запрещено
   "base_identity_broken", // тождество не сошлось: база пришла НЕ ТА
@@ -545,6 +546,7 @@ export function netAtSize({ rows, config, strategy = "two", sizeUsd, costs = DEF
     flowReceived: s.flowReceived,
     dilutionRetained: s.dilutionRetained,
     noBaseSec: s.noBaseSec,
+    zeroBaseSec: s.zeroBaseSec,
     badBaseSec: s.badBaseSec,
     hoursApplied: p.accruals.length,
   };
@@ -567,6 +569,10 @@ function dataGate(live, cfg) {
   if (!live) return "no_base";
   if (live.gmxDown) return "src_gmx_down";
   if (live.hlDown) return "src_hl_down";
+  // Источник ответил, но сам себе противоречит. Свой код, а не код тождества баз: оператору нужно
+  // знать, ЧТО именно не сошлось, иначе он пойдёт чинить базы там, где разъехались ставки
+  // (находка 6.8 аудита механики).
+  if (live.srcPlausible === false) return "src_implausible";
   if (!Number.isFinite(live.bOwnUsd) || live.bOwnUsd <= 0) return "no_base";
   if (Number.isFinite(live.baseAgeSec) && live.baseAgeSec > cfg.baseMaxAgeSec) return "stale_base";
   if (live.baseIdentityOk === false) return "base_identity_broken";
@@ -763,6 +769,21 @@ export function bestSizeForMarket({ token, config, strategy = "two", rows, live,
     binding,
     flowWeightedBaseUsd: weightedBaseUsd,
     dilutionRetained: at.dilutionRetained,
+    // ЗА СКОЛЬКО ЧАСОВ БРУТТО ПОСЧИТАНО НА САМОМ ДЕЛЕ, и почему их меньше окна (находка 6.11
+    // аудита механики 18.09). Часы без ставки леджер выбрасывает целиком, а час без базы обнуляет
+    // доход и при этом начисляет борроу и ногу Hyperliquid полностью, то есть такие часы съедают
+    // брутто. До 18.09 эти три счётчика считались и НЕ ЧИТАЛИСЬ НИКЕМ: ни правилом, ни записью, ни
+    // экраном, поэтому сравнение рынков с разным числом посчитанных часов выглядело равным.
+    //
+    // ЧЕГО ЗДЕСЬ НЕТ НАРОЧНО: приведения брутто к полному окну (множитель `windowH / hoursApplied`).
+    // Это была бы правка ПРАВИЛА, а не диагностики: она двигает нетто каждого рынка, то есть обе
+    // книги правил, и требует отдельного решения владельца. Величина искажения при этом ограничена
+    // самими воротами покрытия: они не пускают рынок ниже `baseCoverageMin` (0.95), то есть
+    // занижение брутто не превышает 5%, а по 63 рынкам фикстур покрытие 97.1%..100%.
+    hoursApplied: at.hoursApplied,
+    noBaseSec: at.noBaseSec,
+    zeroBaseSec: at.zeroBaseSec,
+    badBaseSec: at.badBaseSec,
     points,
     // ОБОЛОЧКА ОБРЕЗАНА ВЫБРАННЫМ РАЗМЕРОМ, и это не мелочь. Распределитель ходит по ней, и если
     // оставить в ней узлы выше потолка тикета, он выдаст рынку больше, чем разрешило правило,

@@ -395,6 +395,41 @@ test("сторона живого тракта считается ТЕМ ЖЕ в
   assert.ok(!/windowH\s*=\s*\d/.test(src), "рукописное окно в срезе: правка пресета развела бы сторону с брутто");
 });
 
+test("ТОЖДЕСТВО БАЗ сверяется живьём, а тождество ставок источника отказывает СВОИМ кодом", () => {
+  // Находка 6.8 аудита механики 18.09: в поле `baseIdentityOk` ехал `snap.gateOk`, то есть совсем
+  // другая проверка (тождество `netRate == funding + borrow` внутри ответа GMX). Оператору при сбое
+  // знаков говорили «база пришла не та», а обещанной SPEC 3.3 защиты от подмены базы не было вовсе.
+  const inst = INSTRUMENTS.find((i) => schemeOf(i) === "two");
+  const rows = rowsOf(inst);
+
+  // Здоровый рынок: оба тождества сходятся.
+  const good = faSliceRow({ inst, snap: snapOf(inst), book: bookOf(1), rows, nowMs: T, gmxAt: GMX_AT, windowH: H });
+  assert.equal(good.live.baseIdentityOk, true);
+  assert.equal(good.live.srcPlausible, true);
+  assert.equal(run([good]).curves[0].refusal, null, "здоровый рынок обязан финансироваться, иначе тест ничего не ловит");
+
+  // ПОДМЕНА БАЗЫ: отношение сторон уехало на 20%, ставки те же. Именно так выглядит переключение
+  // флага GMX `useOpenInterestInTokensForBalance`, от которого защита и обещана.
+  const snap = snapOf(inst);
+  const swapped = { ...snap, raw: { ...snap.raw, fbase_long: snap.raw.fbase_long * 1.2 } };
+  const bad = faSliceRow({ inst, snap: swapped, book: bookOf(1), rows, nowMs: T, gmxAt: GMX_AT, windowH: H });
+  assert.equal(bad.live.baseIdentityOk, false, "тождество баз обязано не сойтись");
+  assert.equal(bad.live.srcPlausible, true, "а числа источника при этом сами с собой сходятся");
+  assert.equal(run([bad]).curves[0].refusal, "base_identity_broken");
+
+  // СБОЙ ТОЖДЕСТВА СТАВОК источника: базы верны, отказ другой и называется по-другому.
+  const shaky = faSliceRow({ inst, snap: { ...snap, gateOk: false }, book: bookOf(1), rows, nowMs: T, gmxAt: GMX_AT, windowH: H });
+  assert.equal(shaky.live.srcPlausible, false);
+  assert.equal(shaky.live.baseIdentityOk, true, "базы не виноваты, и говорить про них нельзя");
+  assert.equal(run([shaky]).curves[0].refusal, "src_implausible");
+
+  // Отсутствие базы это ТРЕТЬЕ состояние, и тождество тут молчит: иначе «базы нет» уезжало бы
+  // кодом «база пришла не та».
+  const empty = faSliceRow({ inst, snap: { ...snap, raw: { ...snap.raw, fbase_short: undefined } }, book: bookOf(1), rows, nowMs: T, gmxAt: GMX_AT, windowH: H });
+  assert.equal(empty.live.baseIdentityOk, true, "тождество не опровергнуто: проверять было нечем");
+  assert.equal(run([empty]).curves[0].refusal, "no_base");
+});
+
 test("кривая удара GMX в срезе приложения ПУСТА у каждой строки: живого источника глубины нет", () => {
   for (const m of sliceOf()) assert.deepEqual(m.impact.gmxNodes, [], `${m.token}: откуда-то взялась кривая удара GMX`);
 });
