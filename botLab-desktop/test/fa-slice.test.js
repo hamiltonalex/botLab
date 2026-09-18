@@ -440,6 +440,35 @@ test("ТОЖДЕСТВО БАЗ сверяется живьём, а тождес
   assert.equal(run([empty]).curves[0].refusal, "no_base");
 });
 
+test("УДЕРЖИВАЕМЫЙ РЫНОК СОВПАДАЕТ С ПОЗИЦИЕЙ ПО СТОРОНЕ, и перекладка в себя снова возможна", () => {
+  // Находка 6.14 аудита механики 18.09: инвариант «текущий рынок обязан входить во вселенную»
+  // держался по ТОКЕНУ, а строка среза несла сторону, выбранную мгновенной ставкой. Когда они
+  // расходились, варианта «тот же рынок, та же сторона, другой размер» не было ни одного: за 22
+  // решения живой сделки BTC/B сторона среза была B в 10 решениях и A в 12, и с первого переворота
+  // 06.09 поле `sn` записи решения стало `null` и осталось таким до закрытия. Находка закрывается
+  // Ф1 целиком: сторону теперь выбирает окно, то же, на котором её выбрали при входе.
+  const inst = INSTRUMENTS.find((i) => schemeOf(i) === "two");
+  const sideRow = (windowH) => faSliceRow({
+    inst, snap: divergingSnap(), book: bookOf(1), rows: DIVERGING, nowMs: T, gmxAt: GMX_AT, windowH,
+  });
+  const hold = (m) => autoTick({
+    now: T, bootAt: BOOT, state: armed(), markets: [m], nominalSec: 300,
+    position: { id: "p1", token: m.token, config: "A", strategy: "two", sizeUsd: 2500, entryPx: 100, markPx: 100, hlMaxLev: 25, cumUsd: 0, peakUsd: 0, roundTripUsd: 8.75 },
+  });
+
+  // ОКНО: сторона среза равна стороне позиции, рынок посчитан, альтернатива есть числом.
+  const withWindow = hold(sideRow(H));
+  assert.equal(withWindow.universe.curves[0].config, "A", "срез подал НАШУ сторону");
+  assert.ok(Number.isFinite(withWindow.exit.switchNetUsd), "поле `sn` записи решения обязано быть числом");
+  assert.equal(withWindow.exit.best.token, INSTRUMENTS.find((i) => schemeOf(i) === "two").key);
+  assert.equal(withWindow.exit.best.config, "A", "перекладка в тот же рынок той же стороной возможна");
+
+  // МГНОВЕННАЯ СТРОКА (прежнее поведение): срез подаёт ДРУГУЮ сторону, и альтернативы нет вовсе.
+  const withLive = hold(sideRow(null));
+  assert.equal(withLive.universe.curves[0].config, "B", "прежний критерий подавал чужую сторону");
+  assert.equal(withLive.exit.switchNetUsd, null, "и `sn` был null: выражать перекладку в себя нечем");
+});
+
 test("кривая удара GMX в срезе приложения ПУСТА у каждой строки: живого источника глубины нет", () => {
   for (const m of sliceOf()) assert.deepEqual(m.impact.gmxNodes, [], `${m.token}: откуда-то взялась кривая удара GMX`);
 });
