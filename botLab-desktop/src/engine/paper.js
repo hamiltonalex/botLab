@@ -136,6 +136,16 @@ export function openPosition({ strategy, instrumentKey, config = null, capital, 
 }
 
 // Shared: apply one signed P&L delta to the running position state and emit ledger/curve points.
+//
+// КРИВАЯ РЕЗУЛЬТАТА СЧИТАЕТ `equityNet` НА ПОЛНЫЙ КРУГ, и разнос круга 07.09 сюда НЕ ДОШЁЛ (находка
+// 7.8 аудита механики 18.09). Решение владельца от 2026-09-07 разнесло круг на вход и выход:
+// списывается вход при открытии, выход при закрытии, и `positionSummary` считает это полем
+// `bookedNetPnl`, а несписанный выход полем `exitPendingUsd`. Кривая же (и точка открытия выше, и
+// каждая точка здесь) вычитает круг ЦЕЛИКОМ, поэтому на одном экране два числа об одной позиции
+// расходятся на половину круга ($4.375 при круге $8.75) всю её жизнь. Рядом карточка честно пишет
+// «выход по модели, не списан», то есть просьба владельца выполнена в шести местах из семи.
+// Править кривую значит двигать `equityCurve`, который печатают книги леджера, поэтому это решение
+// владельца, а не правка на месте: `netPnl` и кривая должны остаться одним числом.
 function applyDelta(position, nowMs, entry) {
   position.cumFunding += entry.dPnl;
   if (position.cumFunding > position.peakCum) position.peakCum = position.cumFunding;
