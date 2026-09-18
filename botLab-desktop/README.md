@@ -24,9 +24,13 @@ in Russian and English (a switch in the top bar), dark and light theme.
 ## Bot 1: funding-rate arbitrage (GMX V2 x Hyperliquid)
 
 Rents out the side of a perpetual market that is short of takers and collects the hourly funding
-fee. Universe of five markets: two-leg ETH and BTC (GMX V2 on Arbitrum against Hyperliquid) and
-one-leg ETH-Arb, BTC-Arb and ETH-Avax (a short on GMX with collateral in the same asset, neutral to
-price at leverage 1). The bot does not care which scheme, coin or venue it enters: the entry rule
+fee. The universe is assembled by live selection since 0.4.0: every perpetual GMX market on Arbitrum
+and Avalanche that passes the gates (perpetual, listed, present on Hyperliquid, enough free room, our
+share of open interest under the threshold) - about 50 markets out of 151 on the snapshot of
+2026-09-18 - plus five hard-wired reserve names: two-leg ETH and BTC (GMX V2 on Arbitrum against
+Hyperliquid) and one-leg ETH-Arb, BTC-Arb and ETH-Avax (a short on GMX with collateral in the same
+asset, neutral to price at leverage 1). `FA_UNIVERSE_SCAN=0` returns the old five-market behaviour
+bit for bit. The bot does not care which scheme, coin or venue it enters: the entry rule
 prices every market with the same economics and funds the best net.
 
 - **One control.** The automaton switch in the app, or the `FA_AUTO=1` environment variable that
@@ -56,7 +60,8 @@ prices every market with the same economics and funds the best net.
 - **Record** (`src/engine/fa/record.js`): three append-only NDJSON streams under
   `userData/scan-records/`, one file per UTC day: `fa-snap` (every poll, plus gap rows with a
   cause), `fa-dec` (every decision with its trigger, window, horizon and supply gate), `fa-trade`
-  (entry, exit and switch passports). About 0.63 MB a day at five markets and five-minute polling.
+  (entry, exit and switch passports). About 0.63 MB a day at five markets and five-minute polling,
+  and 5.72 MB a day measured on a live universe of 53 instruments.
 - **Honesty card**: quoted flow against received flow and the retained share (about 8.4% of the
   quoted flow at $2500 per market over 63 markets and a year), requested and working size side by
   side, room to liquidation per leg, and the note that the rule did not reproduce out of sample.
@@ -161,9 +166,10 @@ for you. `DEMO_AUTOCLOSE=1` closes it right after the replay.
 ### Live checks (they hit the real exchanges)
 
 ```
-npm run smoke          # current net APR and the sign gate of the five markets
+npm run smoke          # current net APR and the sign gate of the five reserve markets
 npm run smoke:size     # the entry rule on a live slice of 25 coins, with a --fail ladder
-npm run smoke:bases    # funding base history of the five markets from the indexer, identity residuals
+npm run smoke:universe # the live universe selection: what was scanned, taken and refused, by code
+npm run smoke:bases    # funding base history of the five reserve markets from the indexer, identity residuals
 npm run smoke:scan     # the scanner cycle on live Deribit data
 npm run verify:loris   # the Hyperliquid leg against loris.tools and the official API, report to reports/
 npm run oracle         # the renderer against a fixed 400-day frame in Electron

@@ -18,7 +18,7 @@ market data.
 - **Bot 1, funding-rate arbitrage.** Rents out the missing side of a perpetual market on GMX V2
   (Arbitrum, Avalanche) and collects the funding fee, either against an opposite leg on Hyperliquid
   or with collateral in the same asset. Fully autonomous: one switch, an entry rule that prices
-  all five markets of its universe with one economics and funds the best net, an exit rule once a
+  every market of its live universe with one economics and funds the best net, an exit rule once a
   day and on events, a margin guard on every tick, a written record of every poll, decision and
   trade. Guide: [ru](botLab-desktop/docs/bot1-funding-arb-how-it-works.ru.md),
   [en](botLab-desktop/docs/bot1-funding-arb-how-it-works.en.md).

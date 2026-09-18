@@ -26,16 +26,33 @@ the horizon must repay the full round trip of costs.
 There are two venues: GMX V2 and Hyperliquid. GMX is checked on the Arbitrum and Avalanche
 networks. Binance serves only as a source of a reference price; no trades are opened there.
 
-The assets for now are BTC and ETH only. Each has two paired schemes: A is a short on GMX and a long
-on Hyperliquid, B is a long on GMX and a short on Hyperliquid. Plus three one-leg schemes on GMX:
-ETH on Arbitrum, BTC on Arbitrum and ETH on Avalanche. In those the bot opens a short and keeps the
-collateral in the same coin, with no Hyperliquid leg.
+The bot assembles the set of markets itself, by live selection, and since version 0.4.0 that is the
+default. The universe used to be five hard-wired rows: BTC and ETH in two paired schemes plus three
+one-leg schemes on GMX (ETH on Arbitrum, BTC on Arbitrum, ETH on Avalanche). Now the bot takes every
+perpetual GMX market on Arbitrum and Avalanche and screens out the ones it must not work on. On the
+live snapshot of 2026-09-18, 50 markets survived out of 151, and together with the five hard-wired
+names 52 instruments went into the rule slice.
 
-Seven variants in all. First the bot picks direction A or B for BTC and ETH by the mean net rate
-spread over the evaluation window: whichever direction has the higher mean over 720 hours is the one
-taken. It then evaluates size and net over the same window for those two variants and the three
-one-leg schemes, and funds the first by net. The other direction of each two-leg market does not
-undergo a separate size optimization.
+Why this matters, as a number: the same rules and the same $2500 of capital yield about $40 a year on
+two coins and about $560 on fifty names. The rule did not get better; it got something to choose
+from. In the hours when nobody pays on BTC and ETH, somebody pays on other coins.
+
+Selection screens a market out for five reasons, and each is visible in the interface under its own
+code: the market is not perpetual, the market is not listed, the coin is absent from Hyperliquid,
+free room on the venue is below what is required, and our share of the market's open interest would
+exceed the threshold (10% by default). That last gate matters most: it keeps the bot out of a market
+its own size would crush. On the same snapshot there were 101 refusals: interest share 55, absent
+from the exchange 24, too little room 12, not perpetual 8, not listed 2.
+
+The five hard-wired names did not go anywhere. They stay as the reserve: if selection is unavailable,
+the list is restored from the saved profile file, and failing that from the same five rows. New
+markets are taken two-leg only; the three one-leg schemes stay on their previous names.
+
+Everything else works as before. For each paired market the bot picks direction A or B by the mean
+net rate spread over the evaluation window: whichever direction has the higher mean over 720 hours is
+the one taken. It then evaluates size and net over the same window for every variant, and funds the
+first by net. The other direction of each two-leg market does not undergo a separate size
+optimization.
 
 The direction is computed over the window rather than from the rates of the current minute, and that
 matters. Rates move every hour, and a choice made on the latest observation would flip about four
@@ -146,8 +163,8 @@ sequenceDiagram
     participant D as Disk and screen
     T->>G: rates, borrowing, open interest, free liquidity
     T->>H: rate, premium, mark, max leverage
-    G-->>E: snapshot of five markets
-    H-->>E: snapshot of five markets
+    G-->>E: snapshot of the universe markets
+    H-->>E: snapshot of the universe markets
     E->>E: accrue open positions (first, before deciding)
     E->>D: the hour's base observation to the journal (first in the hour wins)
     opt history frame is stale (once per 2 h)
@@ -173,10 +190,13 @@ What matters about ticks:
 - **Public data only.** GMX is polled via `markets/info` on Arbitrum and Avalanche, Hyperliquid via
   `metaAndAssetCtxs`; the `l2Book` order book for two coins is pulled only while the automaton is
   armed. The bot sends no orders and authenticates nowhere.
-- **The universe is fixed.** Five markets: two-leg ETH and BTC (GMX V2 on Arbitrum against
-  Hyperliquid) and one-leg ETH-Arb, BTC-Arb (Arbitrum) and ETH-Avax (Avalanche), where there is a
-  single leg: short on GMX with collateral in the asset itself, and at leverage 1 the collateral is
-  the counterweight. For the entry rule all five markets are peers.
+- **The universe is assembled by live selection.** Every perpetual GMX market on Arbitrum and
+  Avalanche minus the ones cut by the selection gates; on the snapshot of 2026-09-18 that is 50
+  markets out of 151. Plus the five hard-wired reserve names: two-leg ETH and BTC (GMX V2 on
+  Arbitrum against Hyperliquid) and one-leg ETH-Arb, BTC-Arb (Arbitrum) and ETH-Avax (Avalanche),
+  where there is a single leg: short on GMX with collateral in the asset itself, and at leverage 1
+  the collateral is the counterweight. The composition is rebuilt on its own cadence and never
+  changes inside one decision. For the entry rule all markets of the universe are peers.
 - **Accrual goes first.** Open positions are accrued before the automaton decides: a decision on an
   under-accrued account would be a decision on different data.
 - **Bases are observed always, and the backfill does not replace that.** The base journal is written
@@ -268,7 +288,7 @@ Once at least one market has passed the gate, the automaton waits for the cadenc
 taken no more often than once every 24 hours (the first one is allowed at once). Between decisions
 the tick computes only the cheap gates; the expensive rules are called on the decision tick.
 
-The bot does not care where it enters. All five markets of the universe, two-leg and one-leg, on
+The bot does not care where it enters. All markets of the universe, two-leg and one-leg, on
 Arbitrum and on Avalanche, are priced by one rule with one economics: the net curve by size over
 the horizon after the round trip. Scheme, coin and venue are not part of the criterion, only the
 net is, and rank 1 gets funded. The exit rule compares the open trade with the same alternatives,
@@ -292,7 +312,7 @@ the trigger of every decision is written to the record and visible in the decisi
 ```mermaid
 %%{init: {"themeVariables": {"fontSize": "12px"}, "flowchart": {"nodeSpacing": 26, "rankSpacing": 18, "diagramPadding": 4, "wrappingWidth": 380}}}%%
 flowchart TD
-    A["Universe: 5 markets"] --> B{{"Supply gate: 720 rows of history,<br/>base known in 684 h?"}}
+    A["Universe: selection, about 50 markets"] --> B{{"Supply gate: 720 rows of history,<br/>base known in 684 h?"}}
     B -- "no: hist_short or hist_no_base" --> X["Market is not evaluated; the code is visible in the summary"]
     B -- "yes" --> C{{"Rule data gate: base fresher than 120 s, side identity<br/>checks out, order book present and fresher than 30 s?"}}
     C -- "no: no_base, stale_base, base_identity_broken,<br/>no_book, stale_book" --> X
@@ -326,10 +346,19 @@ size at least once (net greater than the round trip, that is gross greater than 
 The round trip is not a constant: 0.31% of notional plus $1 for the two-leg scheme (0.22% plus $1 for
 the one-leg) plus the measured Hyperliquid book slippage at that size; $2.55 at $500, $7.20 at
 $2,000, $8.75 at $2,500 without the book. The size rule's refusal codes, each reachable and visible
-in the summary: `no_capital_cap`, `horizon_missing`, `src_gmx_down`, `src_hl_down`, `no_base`,
-`stale_base`, `base_identity_broken`, `no_book`, `stale_book`, `no_funding`, `no_room`,
-`below_min_ticket`, `decreasing_at_every_size`, `negative_at_every_size`, `below_fund_ratio`,
-`no_capital_left`. Negative net across the whole grid is a normal outcome, not an error.
+in the summary: `no_capital_cap`, `horizon_missing`, `src_gmx_down`, `src_hl_down`,
+`src_implausible`, `no_base`, `stale_base`, `zero_base`, `base_identity_broken`, `no_book`,
+`stale_book`, `no_funding`, `no_room`, `room_unknown`, `below_min_ticket`,
+`decreasing_at_every_size`, `negative_at_every_size`, `below_fund_ratio`, `no_capital_left`.
+Negative net across the whole grid is a normal outcome, not an error.
+
+Three of those codes appeared after the mechanics audit of 2026-09-18, and all three are about the
+same thing: the unknown must be named rather than substituted with a convenient value.
+`room_unknown` means "room on the market was never observed at all", and such a market used to read
+as a market of infinite capacity. `zero_base` is an observed zero funding base, previously
+indistinguishable from an unverified identity. `src_implausible` means "the source answered, but its
+numbers do not agree with themselves". Separately, `held_missing` in the automaton journal means the
+market we stand in is absent from the slice entirely, and the exit rule is then not called blind.
 
 **Funding.** Funded markets are ranked by net; only those whose size fits $2,500 get a rank. Rank 1
 passes the margin guard as a candidate (room to liquidation at the current price at least 50%) and
@@ -349,7 +378,7 @@ resets the continuity accumulator, so the `FA_AUTO=1` flag leaves an already arm
 that the last 720 hours of rates and bases repeat. It is not a return and not a forecast, and no
 annual estimate is built from it.
 
-What is visible meanwhile. The "Last evaluation by market" card: a row for each of the five markets
+What is visible meanwhile. The "Last evaluation by market" card: a row for each market of the universe
 with the outcome (funded; a refusal with a code, including a gate code; "not evaluated" with a
 reason that covered the whole slice, for example a source being down), the binding
 constraint, size, net over the horizon, rank, base coverage, retained share and the quoted scheme
@@ -427,6 +456,15 @@ The result drips in hour by hour, and the ledger keeps it in three items:
   the boundary is a forecast of the next hour, and the ledger no longer settles on it: a measurement
   on 2026-09-05 over 62 boundaries of the live trade showed the HL leg understated by 8% that way,
   with spurious negative hours. The source of the rate is named in the operations journal row.
+
+One more correction to the Hyperliquid leg came out of the audit of 2026-09-18. The exchange pays on
+the CURRENT value of the position, while the ledger booked the leg on the ENTRY notional, an amount
+that stops matching reality once the price moves. The accrual is now multiplied by the ratio of the
+current mark price to the entry price. On the closed BTC trade the recomputation gave $7.8559 instead
+of $7.7760, about one percent of the leg at a 1% price move; on the coins of the expanded universe,
+where the price travels tens of percent within a trade, the correction is of the same order as the
+move. The mark price is used because the oracle price does not reach the application at all; the
+residual difference between them is measured and sits in tenths of a basis point.
 
 The round trip (entry plus exit) is deducted once at opening and frozen on the position. A position
 without the dilution flag in the ledger would be accrued at the full quoted rate; for the automaton's
@@ -525,9 +563,11 @@ files are cut by UTC day:
 - `fa-trade-<day>.ndjson` - the trade passport on entry, exit and switch: both sizes, both legs with
   collateral and liquidation price, itemized costs, the reason.
 
-The volume is measured: a snapshot row with a position and five markets is about 2.2 KB, at 5 minute
-polling 0.63 MB per day and 0.23 GB per year; snapshots make up over 99% of the volume. Retention is
-infinite: the application cannot delete records, and there is no deletion channel.
+The volume is measured twice. On the five hard-wired markets a snapshot row with a position is about
+2.2 KB, at 5 minute polling 0.63 MB per day and 0.23 GB per year. On a live universe of 53
+instruments the measurement on the running machine gave 5.72 MB per day, about 2.09 GB per year.
+Snapshots make up over 99% of the volume. Retention is infinite: the application cannot delete
+records, and there is no deletion channel.
 
 **What survives a restart.** The automaton state (the switch, frozen parameters, the slot, the
 continuity accumulator, the stamp of the last tape row) lives in `funding-arb-auto.json`; the last
@@ -745,6 +785,16 @@ switch to the automaton", the automaton answers with the code `no_slot` and will
 trade. The automaton has no right to run someone else's trade, so neither the exit rule nor the
 margin guard looks at it.
 
+Closing by hand a trade the automaton itself was running is allowed too, and since version 0.4.0 it
+no longer jams it. The slot pointer used to keep pointing at the closed trade, the automaton could
+not find it and stalled forever with the code `orphan_position`, and re-arming from the interface did
+not heal it and did harm. The pointer now heals in place: if the trade lies closed in the ledger, the
+slot counts as free, the tick continues, and the journal carries a "healed" mark next to the code.
+The case where the trade is absent from the ledger entirely still stops the automaton: that is no
+longer a close, it is a loss of state. The manual close itself writes a `close` row with the reason
+`manual_close` into the trade archive, so that a human action cannot be mistaken for a verdict of the
+rule.
+
 ## What is visible
 
 - **Decision and scanning journal**: the columns are listed above; unreadable archive rows (a torn
@@ -874,7 +924,8 @@ are no toggles in either.
 | Automaton console | State token and chip, the last tick's reason in words and numbers, supply gate (markets polled, passed the gate, best base coverage, horizon), continuity and slot (ticks, longest gap, last tick, last decision, slot), the "N ticks · step" pill, the cadence note, an expandable explanation with the date of reaching the threshold |
 | Arming ticket | Shows what the automaton does without you and the frozen parameters: entry rule, capital $2,500, leverage 1, room to liquidation 50%, cadence 24 h, expiry 72 h, base coverage 95%, the thresholds of the off-cadence events, "loss: not capped", "polling starts at boot: yes"; confirmation with one button |
 | Stop and undo | Two-step stop with a 3.5 s rollback; with an open trade a wind-down to the exit rule; an undo button |
-| Last evaluation by market | A row for each of the five markets: instrument, configuration, rank, outcome, what binds the size, size, net over the horizon, base coverage, retained share, scheme rate; the stamp "taken · capital ceiling · next no earlier than" |
+| Universe composition | A strip above the summary: how the list was assembled (live selection, saved file, reserve), how many markets were scanned and taken, the selection thresholds and the tally of refusals by code |
+| Last evaluation by market | A row for each market of the universe: instrument, configuration, rank, outcome, what binds the size, size, net over the horizon, base coverage, retained share, scheme rate; the stamp "taken · capital ceiling · next no earlier than". With fifty markets there is search by name, ordering by net, an outcome filter as chips with counts, and folding: the first ten plus the held market are shown, the rest expand on a button |
 | Entry calculation | Sequential evaluation of seven schemes with actual size-optimization updates, refusals and final ranking; distinguishes the selected candidate from an opened trade and retains the entry calculation with the position until closing; replays the recorded course on demand |
 | Account honesty | Four measurements: retained share of the quoted flow, requested and working size, room to a leg liquidation with liquidation prices, out of sample the rule did not reproduce itself |
 | Recording archive | Read from disk on demand: window, polling slot coverage and gaps by cause, markets vanished from polling, codes outside the registries, room to liquidation by record, volume per day and on disk, retention in the subjunctive; a "Re-read" button; no deletion |
@@ -967,7 +1018,9 @@ are no toggles in either.
 | `src/engine/fa/record.js` | Live recording: three streams, gap causes, archive readers, volume |
 | `src/engine/paper.js` | The paper ledger: opening, hourly accrual with dilution, closing, summaries |
 | `src/engine/costs.js` | The round trip cost model |
-| `src/engine/assemble.js`, `src/engine/sources.js`, `src/engine/universe.js` | Snapshots and frames, access to GMX and Hyperliquid, the rate and base history from the indexer, the universe of five markets |
+| `src/engine/assemble.js`, `src/engine/sources.js`, `src/engine/universe.js` | Snapshots and frames, access to GMX and Hyperliquid, the rate and base history from the indexer, the five hard-wired reserve markets |
+| `src/engine/fa/universe-scan.js` | Live universe selection: gates, thresholds, refusal codes, the market key, scheme resolution |
+| `src/engine/fa/slice.js` | The slice fold: what goes from the universe into the rules, and in what shape |
 | `src/engine/store.js` | State files, base journals, NDJSON records |
 | `src/main/main.js` | The polling timer, arming by flag, the slice for the rules, intent execution, persistence, the `fa:*` channels |
 | `src/main/fa-eval.js`, `src/main/fa-archive.js` | The last evaluation summary on disk; archive aggregates for the card |
