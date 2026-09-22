@@ -8,6 +8,7 @@ import {
   SELLHEDGE_DEFAULTS, pickSellLeg, openSellTrade, halfSpreadUsd, wantHedge, shouldRehedge,
   walkSellTrade, settleSellTrade, lotsByMargin, usdDeltaOfInversePerp, sellhedgeEngineCfg, shouldOpenNext,
   rankSellLegs, shouldOpenDegraded, sellerZone, stepMtm, shouldStopOut, makeStopGate, makeStopAt, liveSellStop,
+  parseSizeTiltSpec, formatSizeTilt, sizeTiltMult,
 } from "../src/engine/otmscan/sellhedge.js";
 import { markPerp } from "../src/engine/btcopt/pnl.js";
 import { effectiveDeadband } from "../src/engine/btcopt/hedge.js";
@@ -512,4 +513,78 @@ test("явное перекрытие правила выхода побежда
 
 test("офлайн-дефолт схемы остаётся БЕЗ правила выхода: книги сверок сняты им", () => {
   assert.equal(C.stop, null, "выключенный дефолт - якорь пятилетних книг");
+});
+
+// ── НАКЛОН РАЗМЕРА ОТ РАЗРЫВА IV-RV (sizeTiltMult). Правило замера по предрегистрации 2026-09-22:
+// ответом на волатильность меряется изменение РАЗМЕРА, а не запрет входа. Проверяется прежде
+// всего то, ради чего правило так устроено: выключенное правило не исполняет ни одной ветки,
+// множитель никогда не ноль, а час без данных не превращается в запрет входа.
+
+test("наклон размера: боевой дефолт ВЫКЛЮЧЕН, и при нём множитель ровно единица", () => {
+  // Пятилетние книги охраны сняты схемой без этого правила. Множитель, отличный от единицы при
+  // дефолте, сдвинул бы их арифметику и поведение живого бота заодно.
+  assert.equal(C.sizeTilt, null);
+  const r = sizeTiltMult({ tilt: C.sizeTilt, ivPct: 50, rv7dPct: 30 });
+  assert.equal(r.mult, 1);
+  assert.equal(r.hasData, false);
+});
+
+test("наклон размера: на нулевом разрыве множитель ровно единица", () => {
+  // Ноль разрыва означает, что проданная волатильность равна недавно реализованной: сделка открыта
+  // по справедливой цене и получает номинальный размер. Это якорь правила.
+  const { tilt } = parseSizeTiltSpec("0.5:1.4:10");
+  assert.equal(sizeTiltMult({ tilt, ivPct: 40, rv7dPct: 40 }).mult, 1);
+});
+
+test("наклон размера: множитель линеен по разрыву и зажат обеими границами", () => {
+  const { tilt } = parseSizeTiltSpec("0.5:1.4:10");
+  near(sizeTiltMult({ tilt, ivPct: 42, rv7dPct: 40 }).mult, 1.2, 1e-12, "разрыв +2 п.в. при полосе 10");
+  near(sizeTiltMult({ tilt, ivPct: 37, rv7dPct: 40 }).mult, 0.7, 1e-12, "разрыв -3 п.в. при полосе 10");
+  assert.equal(sizeTiltMult({ tilt, ivPct: 90, rv7dPct: 40 }).mult, 1.4); // выше верха не растёт
+  assert.equal(sizeTiltMult({ tilt, ivPct: 10, rv7dPct: 40 }).mult, 0.5); // ниже низа не падает
+});
+
+test("наклон размера: час без RV7d даёт единицу, а не ноль и не верхнюю границу", () => {
+  // Ноль превратил бы правило в ЗАПРЕТ ВХОДА на этих часах, то есть подменил бы измеряемое:
+  // запрет уже замерен отдельно и проиграл. Верхняя граница раздала бы размер там, где о разрыве
+  // ничего не известно. hasData даёт вызывающему сосчитать, как часто правило промолчало.
+  const { tilt } = parseSizeTiltSpec("0.5:1.4:10");
+  for (const bad of [NaN, null, undefined, "40"]) {
+    const r = sizeTiltMult({ tilt, ivPct: 50, rv7dPct: bad });
+    assert.equal(r.mult, 1, `rv7d = ${String(bad)}`);
+    assert.equal(r.hasData, false);
+  }
+});
+
+test("наклон размера: нулевой низ НЕ разбирается, потому что это запрет входа", () => {
+  assert.match(parseSizeTiltSpec("0:1.2:10").error, /запрет входа/);
+  assert.match(parseSizeTiltSpec("-0.5:1.2:10").error, /положительным/);
+});
+
+test("наклон размера: разбор называет виновника, а не отказывает молча", () => {
+  assert.equal(parseSizeTiltSpec("0.7:1.2:10").error, null);
+  assert.deepEqual(parseSizeTiltSpec("0.7:1.2:10").tilt, { loMult: 0.7, hiMult: 1.2, spanPts: 10 });
+  assert.match(parseSizeTiltSpec("0.7:1.2").error, /две части|2 част|част/);
+  assert.match(parseSizeTiltSpec("1.4:0.7:10").error, /не меньше низа/);
+  assert.match(parseSizeTiltSpec("0.7:1.2:0").error, /ширина/);
+  assert.match(parseSizeTiltSpec("0.7:абв:10").error, /верх/);
+  assert.match(parseSizeTiltSpec("").error, /пустая/);
+});
+
+test("наклон размера: равные границы дают постоянный множитель - это нулевой контроль замера", () => {
+  // Клетка сетки сравнивается с ПОСТОЯННЫМ множителем той же средней величины: он несёт то же
+  // плечо и не знает о волатильности ничего. Без такого контроля рост клетки нельзя отличить от
+  // роста, купленного одним лишь увеличением размера.
+  const { tilt } = parseSizeTiltSpec("1.2:1.2:10");
+  for (const gap of [-30, 0, 30]) {
+    assert.equal(sizeTiltMult({ tilt, ivPct: 40 + gap, rv7dPct: 40 }).mult, 1.2);
+  }
+});
+
+test("наклон размера: подпись правила называет обе границы и полосу", () => {
+  const { tilt } = parseSizeTiltSpec("0.7:1.2:10");
+  const s = formatSizeTilt(tilt);
+  for (const part of ["0.7", "1.2", "10"]) assert.ok(s.includes(part), `в подписи «${s}» нет ${part}`);
+  assert.ok(!s.includes("|"), "подпись печатается в markdown-таблице, вертикальной черты в ней быть не может");
+  assert.equal(formatSizeTilt(null), "размер без наклона");
 });

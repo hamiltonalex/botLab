@@ -38,8 +38,13 @@ import { legMargin, lotsByStressMargin } from "../src/engine/btcopt/margin.js";
 import {
   SELLHEDGE_DEFAULTS, pickSellLeg, openSellTrade, halfSpreadUsd, walkSellTrade, settleSellTrade,
   lotsByMargin, stepMtm, sellerZone, parseStopSpec, makeStopAt, stopCostUsd,
+  parseSizeTiltSpec, formatSizeTilt, sizeTiltMult,
 } from "../src/engine/otmscan/sellhedge.js";
 import { pickStranglePair, openStrangleTrade, stranglePrice } from "../src/engine/otmscan/sellstrangle.js";
+import {
+  parseGateSpec, formatGateTerms, makeGateCounter, testGate, idleFraction, GATE_AXES,
+} from "../src/engine/otmscan/hist-gate.js";
+import { realizedVolPct } from "../src/engine/otmscan/rv.js";
 
 const fin = (x) => Number.isFinite(x);
 const args = process.argv.slice(2);
@@ -63,11 +68,25 @@ if (args.includes("--help") || !argOf("--dir")) {
                         варианта в прогоне (например --mode strangle); счёт целыми лотами
                         от --deposit при deployPct дефолта схемы, без ликвидации - тот же
                         масштаб, каким пишет книгу hist-sellhedge и читает сверка compare-books
+  --from <ГГГГ-ММ-ДД>   левый край записи (для раздельного зачёта по половинам и холдаута)
+  --to <ГГГГ-ММ-ДД>     правый край записи
+  --gate <условия>      входной гейт: не открывать сделку, пока условие не выполнено. Ось
+                        ivrv - разрыв IV минус RV7d в пунктах волатильности; у стрэнгла IV пары
+                        взвешена по премиям ног. Пример: --gate "ivrv>=5"
+  --gate-sweep          таблица «гейт -> сделок / рост / хвост / простой» рядом с базой,
+                        в размере базы (стресс-правило X=45 cap=0.8)
+  --tilt <низ:верх:шир> наклон размера от разрыва IV-RV: множитель к лотам стресс-правила,
+                        равный единице на нулевом разрыве и зажатый между низом и верхом,
+                        полоса в пунктах волатильности. Пример: --tilt 0.7:1.2:10
+  --tilt-sweep          таблица наклонов размера рядом с базой (сетка предрегистрации)
   --size-rule stress    ДОБАВИТЬ таблицу автономного правила размера: лоты от двухсторонней
                         стресс-маржи (движковый lotsByStressMargin) вместо доли IM на входе
   --stress-x <а,б,..>   проценты стресс-хода спота (по умолчанию 10,15,20,25,30)
   --stress-cap <а,б,..> доли equity для MM на стрессе (по умолчанию 0.8,1.0)
-  --json <файл>         машинный дамп метрик`);
+  --json <файл>         машинный дамп метрик
+  --trades-json <файл>  ПОСДЕЛОЧНАЯ выгрузка: вход, выход, проданная IV, RV7d до входа,
+                        РЕАЛИЗОВАННАЯ волатильность за время удержания, итог сделки и залог.
+                        Нужна, чтобы положить живую сделку рядом с пятилетней выборкой`);
   process.exit(argOf("--dir") ? 0 : 1);
 }
 
@@ -82,6 +101,43 @@ const WINDOWS = (argOf("--windows", "48-168,168-336,336-672")).split(",").map(pa
 const SW = parseWin(argOf("--strangle-window", "336-672"));
 const LADDER = (argOf("--ladder", "168-336+336-672")).split("+").map(parseWin);
 if (LADDER.length !== 2) { console.error("--ladder: ожидается ровно пара окон «а-б+в-г»"); process.exit(1); }
+// ── ВХОДНОЙ ГЕЙТ. Разбор спецификации, сравнение и счётчик отклонённых входов живут в движковом
+// hist-gate.js, и зовутся отсюда как есть: второй реализации у стенда нет намеренно, иначе два
+// отчёта проекта называли бы одним словом «гейт ivrv>=5» два разных правила.
+//
+// ОСЬ, КОТОРУЮ ЭТОТ СТЕНД НЕ СНАБЖАЕТ, ЭТО НАЗВАННАЯ ОШИБКА, А НЕ ВЕТО. У гейта отказ по
+// отсутствию данных - законный исход, и hist-gate.js считает его отдельным столбцом. Но здесь
+// причина другая: импульса движения (ось imp) в загрузчике eval-accel нет вовсе, а скос (ось skew)
+// считается из снимка поверхности, чего этот стенд тоже не делает. Пропустить такую ось молча
+// значило бы напечатать таблицу, где гейт отклонил ВСЕ входы, и она читалась бы как свойство
+// рынка вместо «стенд не умеет».
+const GATE_SUPPLIED = new Set(["ivrv"]);
+const GATE = (() => {
+  const spec = argOf("--gate");
+  if (spec == null) return null;
+  const { terms, error } = parseGateSpec(spec);
+  if (error) { console.error(`--gate: ${error}`); process.exit(1); }
+  for (const t of terms) {
+    if (!GATE_SUPPLIED.has(t.axis)) {
+      console.error(`--gate: ось «${t.axis}» (${GATE_AXES[t.axis]?.label}) этот стенд не снабжает; `
+        + `здесь есть только ${[...GATE_SUPPLIED].join(", ")}. Оси imp и skew умеет эталон `
+        + `hist-sellhedge.mjs, у него есть и импульс в строке тика, и снимок поверхности.`);
+      process.exit(1);
+    }
+  }
+  return { spec, terms };
+})();
+
+// ── НАКЛОН РАЗМЕРА ОТ РАЗРЫВА IV-RV. Правило живёт в движке (sizeTiltMult в sellhedge.js), здесь
+// только разбор флага. Замер по предрегистрации 2026-09-22: второй из двух ответов на сигнал.
+const TILT = (() => {
+  const spec = argOf("--tilt");
+  if (spec == null) return null;
+  const { tilt, error } = parseSizeTiltSpec(spec);
+  if (error) { console.error(`--tilt: ${error}`); process.exit(1); }
+  return tilt;
+})();
+
 const SIZE_RULE = argOf("--size-rule", "deploy");
 const STRESS_X = (argOf("--stress-x", "10,15,20,25,30")).split(",").map(Number).filter(fin);
 const STRESS_CAP = (argOf("--stress-cap", "0.8,1.0")).split(",").map(Number).filter(fin);
@@ -203,6 +259,9 @@ const spotBefore = (T) => { let lo = 0, hi = N - 1, res = null;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (R.times[m] <= T) { res = R.spot[m]; lo = m + 1; } else hi = m - 1; } return res; };
 
 const mean = (a) => { const s = a.filter(fin); return s.length ? s.reduce((x, y) => x + y, 0) / s.length : NaN; };
+// Доля записи ВНЕ позиции в процентах. Формула общая с эталоном hist-sellhedge.mjs и живёт в
+// движковом hist-gate.js: это главный столбец любой таблицы гейта, потому что гейт платит временем.
+const idlePct = (rows) => 100 * idleFraction({ rows, spanMs: R.times.at(-1) - R.times[0] });
 const q = (a, p) => { const s = a.filter(fin).sort((x, y) => x - y); if (!s.length) return NaN;
   const i = (s.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
   return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (i - lo); };
@@ -292,6 +351,10 @@ function runTradeLeg(i, leg, cfg) {
     retIm: (s.pnl / im) * 100, rtPct: costs.roundTripCostPct, costUsd: s.cost,
     optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, fund: s.fund, turnover: walk.turnoverBtc,
     zone: sellerZone({ ivPct: leg.iv, rv7dPct: R.rv7[i] }),
+    // Та же пара полей, что у строки стрэнгла: правило размера читает у обеих схем одно имя.
+    // У одной ноги взвешивать нечего, поэтому ivPrem это её собственная IV, а ivMean не ставится
+    // вовсе - врезка о расхождении двух свёрток относится только к паре.
+    ivPrem: fin(leg.iv) ? leg.iv : null, rv7: R.rv7[i],
     spot0: S0, legsAtEntry: [{ type: mtype(leg.s), strike: leg.k, mark: leg.m }],
     reh: walk.rehedges, stepTs: steps.map((st) => st.ts), mtm1s, mm1s,
     stopped: walk.stopped === true, stopCount: walk.stopCount ?? 0, expiryEndIdx };
@@ -390,6 +453,9 @@ function runTradeStrangle(i, pair, cfg) {
     optLeg: s.optLeg, hedgeLeg: s.hedgeLeg, fund: s.fund, turnover: walk.turnoverBtc,
     // Зона судится по КОЛЛОВОЙ ноге - тем же числом, каким её судит базовая схема и живой чип.
     zone: sellerZone({ ivPct: pair.call.iv, rv7dPct: R.rv7[i] }),
+    // Обе свёртки IV пары: взвешенная по премиям (ею судит гейт) и простое среднее. Лежат рядом,
+    // чтобы разница между ними была замером, а не утверждением.
+    ivPrem: ivWeighted(pair), ivMean: (pair.call.iv + pair.put.iv) / 2, rv7: R.rv7[i],
     spot0: S0,
     legsAtEntry: [{ type: "call", strike: pair.call.k, mark: pair.call.m },
       { type: "put", strike: pair.put.k, mark: pair.put.m }],
@@ -397,10 +463,38 @@ function runTradeStrangle(i, pair, cfg) {
     stopped: walk.stopped === true, stopCount: walk.stopCount ?? 0, expiryEndIdx };
 }
 
+// ── СНАБЖЕНИЕ ВХОДНОГО ГЕЙТА (правила сравнения - hist-gate.js, здесь только величины).
+//
+// У СТРЭНГЛА ДВЕ НОГИ С РАЗНЫМИ IV, А ОСЬ ivrv ОПРЕДЕЛЕНА НА ОДНОЙ. IV пары берётся взвешенной ПО
+// ПРЕМИЯМ ног: нога, которая принесла больше денег, и весит больше. Приём не изобретён здесь, им
+// уже взвешен круг издержек пары (`rtPct` ниже по файлу и `costs.roundTripCostPct` у живой
+// структуры). Простое среднее весило бы дешёвое дальнее крыло наравне с ногой, на которой стоит
+// сделка, поэтому обе свёртки кладутся на строку сделки и их расхождение печатается числом.
+//
+// RV7d берётся из строки тика записи, её посчитал `computeRvBundle` при сборке. Считать её заново
+// здесь значило бы завести второе определение рядом с движком.
+const ivWeighted = (c) => (c?.call && c?.put
+  ? (fin(c.call.iv) && fin(c.put.iv) && c.call.m + c.put.m > 0
+    ? (c.call.iv * c.call.m + c.put.iv * c.put.m) / (c.call.m + c.put.m) : null)
+  : (fin(c?.iv) ? c.iv : null));
+// Величина ЛЕНИВА (геттер) по образцу эталона: гейт без оси ivrv её не спросит вовсе.
+const gateMeasures = (i, cand) => ({
+  get ivrv() { const iv = ivWeighted(cand); return fin(iv) && fin(R.rv7[i]) ? iv - R.rv7[i] : null; },
+});
+
 // ── цепочка: закрылась сделка - со следующего снимка ищем новую (i = endIdx + 1, как у эталона).
-function chain(cfg, kind = "leg") {
+//
+// ГЕЙТ ТОЛЬКО ОТКЛАДЫВАЕТ ВХОД. Пара уже выбрана правилом схемы, гейт её не меняет и не улучшает:
+// «не сейчас» означает ровно то, что цепочка попробует на следующем снимке. Поэтому цена гейта это
+// простой, и она видна в столбце «вне рынка», а не в качестве контракта.
+//
+// СЧЁТЧИК ВОЗВРАЩАЕТСЯ ВМЕСТЕ С ЦЕПОЧКОЙ, а не заводится вызывающим. Цепочки мемоизируются, и
+// счётчик, созданный снаружи, у второго обращения к тому же гейту остался бы нулевым: таблица
+// напечатала бы «отклонено 0» под клеткой, которая отклонила сотни входов.
+function chain(cfg, kind = "leg", gateTerms = null) {
   const rows = [];
   let priceFail = 0, noPut = 0;
+  const gateCounter = gateTerms ? makeGateCounter() : null;
   let i = 0;
   while (i < N - 1) {
     const S = R.spot[i];
@@ -411,10 +505,16 @@ function chain(cfg, kind = "leg") {
         const arr = [...snap.values()];
         const pair = pickStranglePair(arr, cfg);
         if (!pair && pickSellLeg(arr, cfg)) noPut += 1; // колл был, пары нет - это надо ВИДЕТЬ
-        if (pair) { t = runTradeStrangle(i, pair, cfg); if (!t) priceFail += 1; }
+        // Гейт спрашивается ПОСЛЕ выбора пары и ДО прогона сделки: отложенный вход не должен
+        // попасть в счётчик «цена не вышла», это разные причины отсутствия сделки.
+        if (pair && (!gateTerms || testGate(gateTerms, gateMeasures(i, pair), gateCounter))) {
+          t = runTradeStrangle(i, pair, cfg); if (!t) priceFail += 1;
+        }
       } else {
         const leg = pickSellLeg(snap.values(), cfg);
-        if (leg) { t = runTradeLeg(i, leg, cfg); if (!t) priceFail += 1; }
+        if (leg && (!gateTerms || testGate(gateTerms, gateMeasures(i, leg), gateCounter))) {
+          t = runTradeLeg(i, leg, cfg); if (!t) priceFail += 1;
+        }
       }
     }
     if (!t) { i += 1; continue; }
@@ -423,7 +523,7 @@ function chain(cfg, kind = "leg") {
     // экспирацию, иначе выигрыш правила окажется выигрышем скважности записи.
     i = (t.stopped && STOP_REENTRY === "expiry" ? t.expiryEndIdx : t.endIdx) + 1;
   }
-  return { rows, priceFail, noPut };
+  return { rows, priceFail, noPut, gateCounter };
 }
 
 // ── размер сделки по правилу: доля IM на входе (deploy, боевое lotsByMargin) либо автономное
@@ -433,7 +533,18 @@ function lotsOf(sizing, t, acc, cfg) {
   if (sizing && sizing.kind === "stress") {
     const s = lotsByStressMargin({ legs: t.legsAtEntry, indexUsd: t.spot0, equityUsd: acc,
       xPct: sizing.xPct, capFrac: sizing.capFrac, lot: LOT });
-    return Math.min(s.lots, Math.floor(acc / (t.im * LOT)));
+    // ПОРЯДОК ОБЯЗАТЕЛЕН: стресс-правило стережёт хвост, наклон распоряжается тем, что оно
+    // разрешило, предел биржи «IM не больше счёта» стоит последним как ограничение исполнения.
+    // При sizing.tilt = null множитель равен единице и лоты те же ДО БИТА.
+    const m = sizeTiltMult({ tilt: sizing.tilt ?? null, ivPct: t.ivPrem, rv7dPct: t.rv7 });
+    if (sizing.tiltStat && sizing.tilt) {
+      sizing.tiltStat.seen += 1;
+      if (!m.hasData) sizing.tiltStat.noData += 1;
+      else sizing.tiltStat.multSum += m.mult;
+    }
+    const tilted = m.mult === 1 ? s.lots : Math.floor(s.lots * m.mult);
+    if (sizing.tiltStat && sizing.tilt && s.lots >= 1 && tilted < 1) sizing.tiltStat.belowLot += 1;
+    return Math.min(tilted, Math.floor(acc / (t.im * LOT)));
   }
   const pct = typeof sizing === "number" ? sizing : sizing.pct;
   return lotsByMargin({ imUsdPerContract: t.im, equityUsd: acc, cfg: { ...cfg, deployPct: pct } }).lots;
@@ -607,14 +718,16 @@ function contractStats(rows) {
 // ── прогоны по сетке, зафиксированной флагами.
 const winKey = (w) => `${w.expiryMinH}-${w.expiryMaxH}`;
 const chains = new Map(); // ключ - `${kind}:${окно}`: цепочка считается один раз, лестница переиспользует
-function chainOf(kind, w, legType = "C", stop = null, stopDeploy = null) {
+function chainOf(kind, w, legType = "C", stop = null, stopDeploy = null, gate = null) {
   // ПОДПИСЬ ПРАВИЛА В КЛЮЧЕ ОБЯЗАТЕЛЬНА. Без неё все клетки оси стопа вернули бы одну и ту же
   // посчитанную цепочку и напечатались одинаковыми числами БЕЗ ЕДИНОЙ ОШИБКИ - самый тихий из
-  // возможных дефектов замера.
-  const key = `${kind}:${legType}:${winKey(w)}:${stop ? `${STOP_SIG}@d${stopDeploy}` : "off"}`;
+  // возможных дефектов замера. По той же причине в ключе стоит и спецификация гейта: шесть клеток
+  // сетки порогов отличаются только ею.
+  const key = `${kind}:${legType}:${winKey(w)}:${stop ? `${STOP_SIG}@d${stopDeploy}` : "off"}`
+    + `:${gate ? gate.spec : "nogate"}`;
   if (!chains.has(key)) {
     chains.set(key, chain(cfgOf({ ...w, legType, stop, stopDeploy, stopCostMult: STOP_COST_MULT }),
-      kind === "strangle" ? "strangle" : "leg"));
+      kind === "strangle" ? "strangle" : "leg", gate ? gate.terms : null));
   }
   return chains.get(key);
 }
@@ -623,12 +736,15 @@ function chainOf(kind, w, legType = "C", stop = null, stopDeploy = null) {
 // при КОНТРФАКТНОМ размере - deployPct берётся из калибровки БАЗОВОЙ цепочки (предрегистрация,
 // раздел 1). Иначе стоп по утилизации маржи зажимал бы ровно ту величину, по которой идёт
 // калибровка, и получал бы рост через разрешённое плечо, а не через качество выходов.
+// Гейт, поданный флагом --gate, меняет ГЛАВНУЮ цепочку варианта: отчёт тогда описывает схему с
+// гейтом, ровно как у эталона hist-sellhedge.mjs. Таблица --gate-sweep свои клетки строит сама и
+// от этого флага не зависит.
 function variantChains(kind, w, legType, cfg) {
-  const base = chainOf(kind, w, legType);
+  const base = chainOf(kind, w, legType, null, null, GATE);
   if (!HAS_STOP) return { ch: base, base, baseCal: null, stopDeploy: null };
   const baseCal = calibrate(base.rows, cfg);
   const stopDeploy = fin(baseCal.deploy) ? baseCal.deploy : SELLHEDGE_DEFAULTS.deployPct;
-  return { ch: chainOf(kind, w, legType, STOP, stopDeploy), base, baseCal, stopDeploy };
+  return { ch: chainOf(kind, w, legType, STOP, stopDeploy, GATE), base, baseCal, stopDeploy };
 }
 
 console.log(`# Ускорение оборота схемы продавца: равный хвост (пик MM ≤ ${CAP})\n`);
@@ -640,12 +756,24 @@ console.log(`Депозит $${DEPOSIT}. Дельта ${SELLHEDGE_DEFAULTS.delta
 
 const variants = [];
 const seriesByKey = new Map();
+// Строки цепочки варианта, ключ ТОТ ЖЕ, под которым вариант попал в `variants`. Своего ключа эта
+// карта не собирает, и это не стиль: таблица автономного размера раньше собирала ключ сама
+// (`strangle:C:336-672`), а цепочка лежала под ключом с подписью правила на конце
+// (`strangle:C:336-672:off`; подпись приписана 2026-08-28 вместе со стопом). Промах Map гасился
+// `?? null`, строка таблицы пропускалась по `continue`, и `--size-rule stress` с той даты печатал
+// ОДНУ ШАПКУ БЕЗ СТРОК, ни на что не пожаловавшись. В сам вариант строки не кладутся: `--json`
+// сериализует `variants` целиком, а это 84 сделки с почасовыми путями маржи в каждой.
+const rowsByKey = new Map();
+// Чем вариант СТРОИТСЯ: вид схемы, окно срока и тип ноги. Нужна таблице перебора гейтов, которая
+// пересобирает цепочку варианта с другим гейтом. Разбирать это обратно из ключа варианта было бы
+// вторым местом, знающим форму ключа, а именно так и сломалась таблица автономного размера.
+const chainSpecByKey = new Map();
 
 // Размер БАЗЫ по предрегистрации, раздел 0: автономное стресс-правило движка. В этом размере
 // читаются хвостовые метрики обеих цепочек, поэтому сравнение идёт при одинаковом риске входа.
 const SIZE_BASE = { kind: "stress", xPct: 45, capFrac: 0.8 };
 
-function reportVariant(key, label, chs, cfg) {
+function reportVariant(key, label, chs, cfg, spec) {
   const ch = chs.ch ?? chs;
   const st = contractStats(ch.rows);
   // Размер-ЗАВИСИМЫЕ метрики читаются контрфактным размером, а не своей калибровкой: см.
@@ -664,6 +792,8 @@ function reportVariant(key, label, chs, cfg) {
     return simAccount(rows.filter((_, i) => !drop.has(i)), SIZE_BASE, cfg).growth;
   };
   seriesByKey.set(key, dailySeries(ch.rows));
+  rowsByKey.set(key, ch.rows);
+  chainSpecByKey.set(key, spec);
   variants.push({ key, label, ...st, priceFail: ch.priceFail, noPut: ch.noPut ?? 0,
     deploy: cal.deploy, growth: cal.growth, finalEq: cal.finalEq, tickDd: cal.tickDd,
     peakMM: cal.peakMM, liqs: cal.liqs, skipped: cal.skipped, played: cal.played,
@@ -683,18 +813,21 @@ const tenorRows = [];
 if (MODES.includes("tenor") || MODES.includes("ladder")) {
   for (const w of WINDOWS) {
     const ch = variantChains("leg", w, "C", cfgOf({ ...w }));
-    tenorRows.push(reportVariant(`C:${winKey(w)}`, `колл ${winKey(w)} ч`, ch, cfgOf({ ...w })));
+    tenorRows.push(reportVariant(`C:${winKey(w)}`, `колл ${winKey(w)} ч`, ch, cfgOf({ ...w }),
+      { kind: "leg", w, legType: "C" }));
   }
 }
 if (MODES.includes("put")) {
   for (const w of WINDOWS) {
     const ch = variantChains("leg", w, "P", cfgOf({ ...w, legType: "P" }));
-    reportVariant(`P:${winKey(w)}`, `пут ${winKey(w)} ч`, ch, cfgOf({ ...w, legType: "P" }));
+    reportVariant(`P:${winKey(w)}`, `пут ${winKey(w)} ч`, ch, cfgOf({ ...w, legType: "P" }),
+      { kind: "leg", w, legType: "P" });
   }
 }
 if (MODES.includes("strangle")) {
   const ch = variantChains("strangle", SW, "C", cfgOf({ ...SW }));
-  reportVariant(`S:${winKey(SW)}`, `стрэнгл ${winKey(SW)} ч`, ch, cfgOf({ ...SW }));
+  reportVariant(`S:${winKey(SW)}`, `стрэнгл ${winKey(SW)} ч`, ch, cfgOf({ ...SW }),
+    { kind: "strangle", w: SW, legType: "C" });
 }
 
 // таблица вариантов
@@ -792,29 +925,220 @@ if (MODES.includes("ladder")) {
 // пределах критерия равного хвоста, и сколько роста стоит отказ от подгонки по прошлому.
 if (SIZE_RULE === "stress") {
   console.log(`## Автономный размер: MM при споте ×(1±X%) не выше cap·счёта (lotsByStressMargin)\n`);
-  console.log(`| вариант | X% | cap | сыграно | проп. | рост | тиковая просадка | пик MM | ликв. | связывает низ |`);
-  console.log(`|---|---|---|---|---|---|---|---|---|---|`);
-  const rowsOfKey = (key) => {
-    const [kind, win] = key.split(":");
-    const mapKey = kind === "S" ? `strangle:C:${win}` : `leg:${kind}:${win}`;
-    return chains.get(mapKey)?.rows ?? null;
-  };
+  if (TILT) console.log(`Поверх правила наложен наклон: ${formatSizeTilt(TILT)}.\n`);
+  console.log(`| вариант | X% | cap | сыграно | проп. | рост | тиковая просадка | пик MM | ликв. | вне рынка | средняя сделка | связывает низ |`);
+  console.log(`|---|---|---|---|---|---|---|---|---|---|---|---|`);
   for (const v of variants) {
-    const rowsV = rowsOfKey(v.key);
-    if (!rowsV || !rowsV.length) continue;
+    // Промах здесь ПАДАЕТ, а не пропускает строку молча: пустая таблица при живом флаге это
+    // отчёт, который выглядит посчитанным и не посчитан, и ровно так эта таблица и сломалась.
+    const rowsV = rowsByKey.get(v.key);
+    if (!rowsV || !rowsV.length) throw new Error(`таблица автономного размера: у варианта «${v.label}» нет строк цепочки (ключ ${v.key})`);
     for (const x of STRESS_X) {
       const downN = rowsV.filter((t) => lotsByStressMargin({ legs: t.legsAtEntry, indexUsd: t.spot0,
         equityUsd: 1e9, xPct: x, capFrac: 1, lot: LOT }).bindingSide === "down").length;
       for (const cap of STRESS_CAP) {
-        const s = simAccount(rowsV, { kind: "stress", xPct: x, capFrac: cap }, cfgOf({}));
+        const s = simAccount(rowsV, { kind: "stress", xPct: x, capFrac: cap, tilt: TILT }, cfgOf({}));
         console.log(`| ${v.label} | ${x} | ${cap.toFixed(2)} | ${s.played} | ${s.skipped} | ×${f2(s.growth, 2)} | `
-          + `${pct(s.tickDd)} | ${pct(s.peakMM)} | ${s.liqs} | ${f2((100 * downN) / rowsV.length, 0)}% |`);
+          + `${pct(s.tickDd)} | ${pct(s.peakMM)} | ${s.liqs} | ${f2(idlePct(rowsV), 1)}% | `
+          + `${f2(mean(rowsV.map((t) => t.retIm)))}% | ${f2((100 * downN) / rowsV.length, 0)}% |`);
       }
     }
   }
   console.log(`\nЧитать так: искомые константы - наибольший X (запас на ход), при котором пик MM за`);
   console.log(`запись не выше критерия хвоста на ВСЕХ вариантах сразу; «связывает низ» показывает,`);
   console.log(`какой доле входов размер задала нижняя сторона (у пары стороны меняются местами).\n`);
+}
+
+// ── ПЕРЕБОР ВХОДНЫХ ГЕЙТОВ НА БОЕВОЙ КОНФИГУРАЦИИ (--gate-sweep).
+//
+// ЗАЧЕМ ОТДЕЛЬНО ОТ ЭТАЛОНА. Такая таблица в проекте уже есть у hist-sellhedge.mjs, и прогон
+// 2026-08-24 дал по ней вывод «входные гейты цепочку только ухудшают»: база 84 сделки и рост
+// залога в 45.64 раза против 33.38 у лучшей из девяти клеток. Но снят тот замер со схемы ОДНОЙ
+// проданной ноги при размере deploy 0.70, то есть при фиксированной доле счёта в залоге на входе.
+// Бот с 4 сентября торгует СТРЭНГЛ, то есть проданные колл и пут сразу, и размер ему считает
+// стресс-правило движка. Ни одна из двух величин в том замере не та, поэтому его таблицу нельзя
+// положить рядом с сегодняшней базой, и эта таблица считает то же самое на боевой конфигурации.
+//
+// РАЗМЕР ЗДЕСЬ БОЕВОЙ, А НЕ КАЛИБРОВАННЫЙ. Каждая клетка читается стресс-правилом X=45 cap=0.8
+// (SIZE_BASE), тем же, каким открыта живая сделка. Калибровка максимального deployPct под потолок
+// хвоста ответила бы на другой вопрос: «сколько плеча разрешает эта цепочка», а предрегистрация
+// спрашивает «сколько зарабатывает правило при риске входа, который бот уже принял».
+//
+// ЧИТАТЬ НАДО ЗНАК РАЗНИЦЫ С БАЗОЙ НА ВСЕЙ СЕТКЕ, А НЕ МАКСИМУМ СТОЛБЦА: пороги перебираются по
+// той же записи, на которой меряется итог, поэтому клетка выше базы была бы подгонкой, а не
+// находкой. Столбец «вне рынка» главный: он показывает механизм, которым гейт платит.
+if (args.includes("--gate-sweep")) {
+  console.log(`## Перебор входных гейтов на боевой конфигурации\n`);
+  if (!R.rv7.some(fin)) {
+    console.log(`ВНИМАНИЕ: в строках тика записи нет поля rv7, ось ivrv даст «нет данных» на каждом`);
+    console.log(`входе и таблица ниже покажет не свойство рынка, а нехватку записи.\n`);
+  }
+  // Сетка задана руками и не выводится из данных: пороги обязаны быть теми же от прогона к
+  // прогону, иначе таблицы двух записей несравнимы. Значения - из предрегистрации 2026-09-22.
+  // Направление то, которого хочет продавец: разрыв IV-RV ВЫШЕ порога означает, что недавно
+  // реализованная волатильность дешевле проданной.
+  const GRID = ["ivrv>=-5", "ivrv>=-2", "ivrv>=0", "ivrv>=2", "ivrv>=5", "ivrv>=8"];
+  console.log(`| гейт | сделок | рост | тиковая просадка | пик MM | ликв. | вне рынка | средняя сделка | входов отклонено |`);
+  console.log(`|---|---|---|---|---|---|---|---|---|`);
+  const line = (label, ch, cfg) => {
+    const rs = ch.rows;
+    const c = ch.gateCounter;
+    const rej = c ? `${c.blocked}${c.noData ? ` (+${c.noData} без данных)` : ""}` : "-";
+    if (!rs.length) {
+      console.log(`| ${label} | 0 | - | - | - | - | 100.0% | - | ${rej} |`);
+      return null;
+    }
+    const a = simAccount(rs, SIZE_BASE, cfg);
+    console.log(`| ${label} | ${rs.length} | ×${f2(a.growth, 2)} | ${pct(a.tickDd)} | ${pct(a.peakMM)} | `
+      + `${a.liqs} | ${f2(idlePct(rs), 1)}% | ${f2(mean(rs.map((r) => r.retIm)))}% | ${rej} |`);
+    return a;
+  };
+  for (const [key, sp] of chainSpecByKey) {
+    const label = variants.find((v) => v.key === key)?.label ?? key;
+    const cfg = cfgOf({ ...sp.w, legType: sp.legType });
+    line(`${label}: без гейта (база)`, chainOf(sp.kind, sp.w, sp.legType), cfg);
+    for (const spec of GRID) {
+      const { terms, error } = parseGateSpec(spec);
+      if (error) { console.log(`| ${spec} | - | - | - | - | - | - | - | ${error} |`); continue; }
+      line(`${label}: ${formatGateTerms(terms)}`, chainOf(sp.kind, sp.w, sp.legType, null, null, { spec, terms }), cfg);
+    }
+  }
+  console.log(`\nГейт не выбирает ногу и не меняет размер, он умеет только ОТЛОЖИТЬ вход, поэтому`);
+  console.log(`каждая его клетка отдаёт сделки и время. Строка выше базы означала бы, что отложенные`);
+  console.log(`входы были в среднем хуже пропущенного простоя, и на сетке это надо видеть целиком.\n`);
+
+  // ── ЧЕМ СУДИТ ГЕЙТ У ПАРЫ. Взвешивание IV по премиям объявлено в предрегистрации, а не
+  // выведено из данных, поэтому цена этого выбора печатается числом: насколько взвешенная IV
+  // расходится с простым средним двух ног на тех входах, где правило действительно сработало.
+  const pairRows = [...rowsByKey.values()].flat().filter((r) => fin(r.ivPrem) && fin(r.ivMean));
+  if (pairRows.length) {
+    const d = pairRows.map((r) => r.ivPrem - r.ivMean);
+    const ad = d.map(Math.abs);
+    console.log(`IV пары гейт судит взвешенной по премиям ног. На ${pairRows.length} входах цепочки она`);
+    console.log(`расходится с простым средним двух IV на ${f2(mean(d))} п.в. в среднем, ${f2(mean(ad))} по модулю,`);
+    console.log(`максимум ${f2(Math.max(...ad))} п.в. Сравнивать это надо с самим разрывом IV-RV, который гейт`);
+    console.log(`и меряет: его медиана на этих входах ${f2(q(pairRows.map((r) => r.ivPrem - r.rv7), 0.5))} п.в.`);
+    console.log(`То есть выбор веса двигает ось много меньше, чем шаг сетки порогов в 2-3 п.в.\n`);
+  }
+}
+
+// ── ПЕРЕБОР НАКЛОНОВ РАЗМЕРА (--tilt-sweep). Второй из двух ответов на сигнал волатильности.
+//
+// ЦЕПОЧКА У ВСЕХ КЛЕТОК ОДНА И ТА ЖЕ, и это главное свойство измеряемого, а не экономия времени.
+// Наклон не решает, открывать ли сделку: сделки, их инструменты и их моменты те же самые, что у
+// базы, меняется только число контрактов. Поэтому у наклона нет простоя по построению, тогда как
+// запрет входа выше в отчёте платит простоем до 21.9% записи. Пересчитывается здесь только счёт.
+//
+// СЕТКА ИЗ ПРЕДРЕГИСТРАЦИИ 2026-09-22 и руками не двигается. Верх 1.00 входит намеренно: это
+// форма «только уменьшать», которая по построению не может поднять хвост. Клетка низ 0.90 с
+// верхом 1.00 почти неотличима от базы и служит внутренним контролем сетки: заметное расхождение
+// там означало бы поломку замера, а не находку.
+if (args.includes("--tilt-sweep")) {
+  console.log(`## Перебор наклонов размера от разрыва IV-RV\n`);
+  const LO = [0.50, 0.70, 0.90];
+  const HI = [1.00, 1.20, 1.40];
+  const SPAN = [5, 10, 20];
+  for (const [key, sp] of chainSpecByKey) {
+    const rowsV = rowsByKey.get(key);
+    if (!rowsV?.length) throw new Error(`перебор наклонов: у варианта ${key} нет строк цепочки`);
+    const label = variants.find((v) => v.key === key)?.label ?? key;
+    const cfg = cfgOf({ ...sp.w, legType: sp.legType });
+    const base = simAccount(rowsV, SIZE_BASE, cfg);
+    console.log(`### ${label}\n`);
+    console.log(`| низ | верх | полоса | рост | к базе | тиковая просадка | пик MM | ликв. | ср. множитель | тот же множитель ПОСТОЯННЫМ | его пик MM | его ликв. | вклад сигнала | ниже лота | без данных |`);
+    console.log(`|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|`);
+    console.log(`| - | - | - | ×${f2(base.growth, 2)} | 1.000 | `
+      + `${pct(base.tickDd)} | ${pct(base.peakMM)} | ${base.liqs} | - | - | - | - | - | - | - |`);
+    const cells = [];
+    for (const loMult of LO) for (const hiMult of HI) for (const spanPts of SPAN) {
+      const tilt = { loMult, hiMult, spanPts };
+      const tiltStat = { seen: 0, noData: 0, belowLot: 0, multSum: 0 };
+      const a = simAccount(rowsV, { ...SIZE_BASE, tilt, tiltStat }, cfg);
+      const ratio = base.growth > 0 ? a.growth / base.growth : NaN;
+      const withData = tiltStat.seen - tiltStat.noData;
+      const meanMult = withData ? tiltStat.multSum / withData : NaN;
+      // ── НУЛЕВОЙ КОНТРОЛЬ КЛЕТКИ: ТОТ ЖЕ СРЕДНИЙ МНОЖИТЕЛЬ, НО ПОСТОЯННЫЙ, без всякой связи с
+      // разрывом IV-RV (нижняя и верхняя границы равны, поэтому ответ один на всех входах). Он
+      // отвечает на единственный вопрос, ради которого эта таблица существует: сколько из роста
+      // клетки дал СИГНАЛ, а сколько просто увеличенное плечо. Без него строка «×5.54, к базе
+      // 1.346» читается как находка, хотя тот же рост может давать постоянное умножение на 1.24,
+      // ничего не знающее о волатильности.
+      const flat = fin(meanMult)
+        ? simAccount(rowsV, { ...SIZE_BASE, tilt: { loMult: meanMult, hiMult: meanMult, spanPts: 1 } }, cfg)
+        : null;
+      const edge = flat && flat.growth > 0 ? a.growth / flat.growth : NaN;
+      cells.push({ loMult, hiMult, spanPts, ...a, ratio, meanMult, flatGrowth: flat?.growth ?? NaN, edge });
+      console.log(`| ${loMult.toFixed(2)} | ${hiMult.toFixed(2)} | ${spanPts} | `
+        + `×${f2(a.growth, 2)} | ${f2(ratio, 3)} | ${pct(a.tickDd)} | ${pct(a.peakMM)} | ${a.liqs} | `
+        + `${f2(meanMult, 3)} | ×${f2(flat?.growth, 2)} | ${pct(flat?.peakMM)} | ${flat ? flat.liqs : "-"} | ${f2(edge, 3)} | `
+        + `${tiltStat.belowLot} | ${tiltStat.noData} |`);
+    }
+    // ── ЗАЧЁТ ПО ПРЕДРЕГИСТРАЦИИ, а не глазами по таблице. Условия читаются здесь же, чтобы
+    // между числами и вердиктом не было места для чтения «почти прошло».
+    const above = cells.filter((c) => c.ratio > 1).length;
+    const med = q(cells.map((c) => c.ratio), 0.5);
+    const tailOk = cells.filter((c) => c.peakMM <= CAP && c.liqs === 0).length;
+    const ddOk = cells.filter((c) => c.tickDd <= base.tickDd + 0.005).length;
+    const win = cells.filter((c) => c.ratio >= 1.20 && c.peakMM <= CAP && c.liqs === 0
+      && c.tickDd <= base.tickDd + 0.005);
+    console.log(`\nЗачёт по предрегистрации 2026-09-22 на ${cells.length} клетках сетки.`);
+    console.log(`Условие «равный хвост» (пик MM не выше ${CAP} и ноль ликвидаций): прошли ${tailOk}.`);
+    console.log(`Условие «не ухудшает просадку» (не хуже базы более чем на 0.5 п.п.): прошли ${ddOk}.`);
+    console.log(`Условие «знак на всей сетке» (медиана отношения к базе выше единицы и клеток выше`);
+    console.log(`базы не меньше двух третей): медиана ${f2(med, 3)}, клеток выше базы ${above} из ${cells.length}`);
+    console.log(`при нужных ${Math.ceil((2 * cells.length) / 3)}.`);
+    console.log(`Клеток, взявших планку роста 1.20 при обоих хвостовых условиях: ${win.length}.`);
+    // Вклад сигнала поверх плеча: отношение роста клетки к росту ПОСТОЯННОГО множителя той же
+    // средней величины. Единица означает, что разрыв IV-RV не добавил ничего и весь эффект клетки
+    // это плечо, которое можно получить, ничего не зная о волатильности.
+    const edges = cells.map((c) => c.edge).filter(fin);
+    if (edges.length) {
+      console.log(`Вклад САМОГО СИГНАЛА поверх плеча (рост клетки к росту постоянного множителя той же`);
+      console.log(`средней величины): медиана ${f2(q(edges, 0.5), 3)}, разброс от ${f2(Math.min(...edges), 3)}`);
+      console.log(`до ${f2(Math.max(...edges), 3)}, клеток с вкладом выше единицы ${edges.filter((x) => x > 1).length} из ${edges.length}.`);
+    }
+    console.log(`${win.length ? "Холдаут по половинам записи снимается отдельными прогонами с --from/--to." : "Холдаут не снимается: брать его не с чего."}\n`);
+  }
+}
+
+// ── ПОСДЕЛОЧНАЯ ВЫГРУЗКА (--trades-json). Отвечает на вопрос «эта живая сделка нормальна или
+// аномальна»: без распределения по выборке одна сделка не судится вообще никак.
+//
+// РЕАЛИЗОВАННАЯ ВОЛАТИЛЬНОСТЬ ЗА ВРЕМЯ УДЕРЖАНИЯ считается движковым realizedVolPct по часовому
+// пути спота между входом и выходом, то есть ТЕМ ЖЕ правилом, каким записан rv7 в строке тика.
+// Второго определения этой величины в проекте нет и заводить его здесь нельзя: именно на ней
+// стоит весь вывод о доходности продавца, и расхождение определений переставило бы знак.
+//
+// rv7 и rvHold РАЗНЫЕ ПО СМЫСЛУ: первое это прошлое на входе (его видит гейт), второе это будущее,
+// которого на входе никто не знает. Разница «проданная IV минус rvHold» и есть край продавца.
+if (argOf("--trades-json")) {
+  const out = [];
+  for (const [key, rows] of rowsByKey) {
+    for (const t of rows) {
+      // Путь спота сделки часовыми свечами: у записи шаг час, закрытие бара это спот снимка.
+      const candles = [];
+      for (let i = t.i; i <= t.endIdx; i++) {
+        if (R.spot[i] > 0) candles.push({ ts: R.times[i], open: R.spot[i], high: R.spot[i], low: R.spot[i], close: R.spot[i] });
+      }
+      const bars = Math.max(2, candles.length - 1);
+      // realizedVolPct отдаёт ОБЪЕКТ с полнотой ряда рядом с числом, и брать из него надо `rvPct`:
+      // сам объект в поле «волатильность» превратил бы каждое сравнение в тихое сравнение с
+      // неопределённым значением, а не уронил бы прогон.
+      const rvBundle = candles.length >= 3
+        ? realizedVolPct(candles, { bars, nowMs: R.times[t.endIdx] + 3600000 })
+        : null;
+      const rvHold = fin(rvBundle?.rvPct) ? rvBundle.rvPct : null;
+      out.push({ key, name: t.name, ts: t.ts, exitTs: t.exitTs,
+        holdDays: (t.exitTs - t.ts) / 86400000,
+        ivSold: fin(t.ivPrem) ? t.ivPrem : null, rv7Entry: fin(t.rv7) ? t.rv7 : null, rvHold, rvHoldPairs: rvBundle?.nPairs ?? null,
+        edgePts: fin(t.ivPrem) && fin(rvHold) ? t.ivPrem - rvHold : null,
+        pnlPerContract: t.pnl, imPerContract: t.im, retIm: t.retIm,
+        rehedges: t.reh, turnoverBtc: t.turnover, costUsd: t.costUsd,
+        optLeg: t.optLeg, hedgeLeg: t.hedgeLeg, fund: t.fund, premSold: t.premSold });
+    }
+  }
+  writeFileSync(argOf("--trades-json"), JSON.stringify(out, null, 1));
+  console.log(`Посделочная выгрузка: ${out.length} сделок в ${argOf("--trades-json")}.\n`);
 }
 
 console.log(`## Снабжение и границы\n`);

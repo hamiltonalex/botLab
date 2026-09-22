@@ -56,7 +56,7 @@ import {
   pickSellLeg, openSellTrade, halfSpreadUsd, walkSellTrade, settleSellTrade, lotsByMargin, sellerZone,
   stepMtm, makeStopAt, parseStopSpec, stopCostUsd,
 } from "../src/engine/otmscan/sellhedge.js";
-import { parseGateSpec, formatGateTerms, makeGateCounter, testGate } from "../src/engine/otmscan/hist-gate.js";
+import { parseGateSpec, formatGateTerms, makeGateCounter, testGate, idleFraction } from "../src/engine/otmscan/hist-gate.js";
 
 const fin = (x) => Number.isFinite(x);
 const args = process.argv.slice(2);
@@ -385,15 +385,11 @@ const equity = (rows, pick = (r) => r.retIm) => {
   return { eq, dd: dd * 100 };
 };
 
-// Доля времени записи ВНЕ позиции. Без неё таблица гейта нечитаема: гейт не улучшает сделку, он её
-// откладывает, и потерянное время это и есть его цена. Считается по покрытию всей записи, а не по
-// промежутку между первой и последней сделкой: ожидание ПЕРЕД первым входом гейт создаёт тоже.
-const idlePct = (rows) => {
-  const span = R.times.at(-1) - R.times[0];
-  if (!(span > 0)) return NaN;
-  const held = rows.reduce((a, r) => a + (r.exitTs - r.ts), 0);
-  return Math.max(0, 100 * (1 - held / span));
-};
+// Доля времени записи ВНЕ позиции в процентах. Сама формула живёт в движковом hist-gate.js рядом с
+// правилами гейта, потому что это же число печатает вторая таблица гейта - у стрэнгла в
+// eval-accel.mjs. Здесь остаётся только длина записи, которую знает этот стенд, и перевод в
+// проценты, в которых печатает эта таблица.
+const idlePct = (rows) => 100 * idleFraction({ rows, spanMs: R.times.at(-1) - R.times[0] });
 
 // Есть ли в записи то, чем гейт судит. Столбец «нет данных» отвечает на это по факту, но молчаливый
 // прогон, где ВСЕ входы отклонены отсутствием поля, читался бы как «гейт всё зарезал» - поэтому
