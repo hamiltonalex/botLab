@@ -50,6 +50,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { priceAt, makePriceStats, countPrice, formatPriceStats } from "../src/engine/otmscan/hist-price.js";
+import { black76Greeks } from "../src/engine/otmscan/black76.js";
 import { computeTradeCosts } from "../src/engine/otmscan/economics.js";
 import { legMargin } from "../src/engine/btcopt/margin.js";
 import {
@@ -89,7 +90,10 @@ if (has("--help") || !argOf("--dir")) {
   --book <файл>       записать книгу сделок (TSV) для сверки с прогоном движка
   --book-lots <n>     книга ФИКСИРОВАННЫМ размером в лотах вместо счёта: убирает обратную связь
                       счёта (итог задаёт лоты, лоты задают итог) и делает каждую сделку независимой точкой
-  --band-sweep        перебрать полосу при трёх стоимостях перекладки
+  --fine <файл>       МЕЛКИЙ КАДАНС: таблица пути индекса от hist-index-path.mjs. Без неё
+                      протяжка идёт по часовым снимкам записи, то есть кадансом, которым
+                      живой бот не торгует (замер 22.09: 6.9 перекладки в сутки против 35.2)
+  --band-sweep        перебрать полосу при сетке стоимостей перекладки
   --stress            перебрать сценарии исполнения и параметры
   --gate <условия>    входной гейт: не открывать сделку, пока условие не выполнено. Оси:
                       ivrv (IV ноги минус RV7d, п.в.), imp (импульс движения за сутки, в s1d), skew (±1s пут
@@ -159,6 +163,32 @@ const GATE_TERMS = (() => {
   if (error) { console.error(`--gate: ${error}`); process.exit(1); }
   return terms;
 })();
+
+// ── МЕЛКИЙ ПУТЬ ИНДЕКСА. Разобран заранее (`hist-index-path.mjs`) и лежит таблицей «секунда метки,
+// цена». Нужен затем, что ПОЛОСУ ПЕРЕСЕКАЕТ ДВИЖЕНИЕ ИНДЕКСА, а запись часовая: часовая сетка не
+// может показать больше 24 пересечений в сутки по построению, и медиана 6.9 у стенда это её
+// потолок, а не поведение рынка (живая сделка 2 дала 35.2 в сутки). Без ключа `--fine` ни одна
+// строка ниже не исполняется, и прогон остаётся побайтово прежним: книги охраны сняты часовым.
+const FINE = (() => {
+  const f = argOf("--fine");
+  if (!f) return null;
+  const buf = readFileSync(f);
+  if (buf.length < 8 || buf.readUInt32LE(0) !== 0x42544350) {
+    console.error(`--fine: ${f} не таблица пути индекса (нет метки BTCP)`); process.exit(1);
+  }
+  const n = buf.readUInt32LE(4);
+  const ts = new Float64Array(n), px = new Float64Array(n);
+  for (let i = 0; i < n; i++) { ts[i] = buf.readUInt32LE(8 + i * 8) * 1000; px[i] = buf.readFloatLE(8 + i * 8 + 4); }
+  return { ts, px, n };
+})();
+let FINE_EVALS = 0; // оценок Блэком-76 на мелких шагах: лестница цены их не видит, а печатать надо
+// Первый индекс таблицы со строго большей меткой, чем t. Двоичный поиск, потому что таблица за
+// пять лет это несколько миллионов шагов, а спрашивают её на каждой сделке.
+function fineAfter(t) {
+  let lo = 0, hi = FINE.n - 1, res = FINE.n;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (FINE.ts[m] > t) { res = m; hi = m - 1; } else lo = m + 1; }
+  return res;
+}
 
 // ── запись
 function load(dir) {
@@ -312,11 +342,71 @@ function runTrade(i, leg, cfg) {
     cfg,
   }) : undefined;
 
+  // ── МЕЛКАЯ СЕТКА ШАГОВ. Без `--fine` её нет и протяжка идёт по часовым снимкам, как прежде.
+  //
+  // ЧТО В СЕТКЕ ЛЕЖИТ: наблюдённые шаги пути индекса строго между входом и экспирацией, а ПОСЛЕДНИМ
+  // элементом - тот самый часовой снимок записи, на котором сделка кончается у часового прогона.
+  // Экспирационный шаг взят из записи НАМЕРЕННО: вопрос замера это частота хеджа, а не цена выхода,
+  // и если бы выход оценивался первым принтом после экспирации, к разнице каданса подмешалась бы
+  // разница цены закрытия. Так изменение остаётся ровно одно.
+  //
+  // ВОЛАТИЛЬНОСТЬ И ФОРВАРД НА МЕЛКОМ ШАГЕ берутся из ПОСЛЕДНЕЙ ПРОШЕДШЕЙ часовой точки через ту же
+  // лестницу цены (`hist-price.js`), что и у часового прогона, а цена и дельта пересчитываются
+  // Блэком-76 от НАБЛЮДЁННОГО индекса. Форвард переносится ОТНОШЕНИЕМ f/S часа: базис меняется
+  // медленно, индекс быстро. Лестница спрашивается раз в час, а не раз в шаг: ответ её от индекса
+  // не зависит, и лишние вызовы стоили бы минут на пяти годах.
+  //
+  // ПОЧЕМУ ДЕЛЬТА ПЕРЕСЧИТЫВАЕТСЯ, А НЕ ПРОТЯГИВАЕТСЯ МЕЖДУ ЧАСАМИ: линейная протяжка монотонна по
+  // построению, а перекладки создаёт именно немонотонность внутри часа (индекс ушёл и вернулся,
+  // полоса пересечена дважды). Протяжка стёрла бы ровно то, что здесь замеряется.
+  let FT = null, FS = null, fineEndIdx = -1;
+  if (FINE) {
+    const a = fineAfter(R.times[i]);
+    let j = base;
+    while (j < N - 1 && R.times[j] < leg.e) j += 1;
+    while (j < N - 1 && !(R.spot[j] > 0)) j += 1;
+    if (!(R.spot[j] > 0)) return null;
+    FT = []; FS = [];
+    for (let k = a; k < FINE.n && FINE.ts[k] < R.times[j]; k++) { FT.push(FINE.ts[k]); FS.push(FINE.px[k]); }
+    FT.push(R.times[j]); FS.push(R.spot[j]);
+    fineEndIdx = j;
+  }
+  const hourAt = (t) => { let lo = 0, hi = N - 1, res = 0;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (R.times[m] <= t) { res = m; lo = m + 1; } else hi = m - 1; } return res; };
+  const ivCache = new Map(); // час записи -> { iv, basis } проданной ноги
+  const slowAt = (hi) => {
+    let v = ivCache.get(hi);
+    if (v !== undefined) return v;
+    const p = priceAt({ snapshot: R.snaps.get(R.times[hi]), expiryRows: R.byExp.get(R.times[hi])?.get(leg.e),
+      meta, tsMs: R.times[hi], spotAtExpiry: spotBefore(leg.e) });
+    const S = R.spot[hi];
+    v = p && fin(p.ivPct) && fin(p.forwardUsd) && S > 0 ? { iv: p.ivPct, basis: p.forwardUsd / S } : null;
+    ivCache.set(hi, v);
+    return v;
+  };
+
   const walk = walkSellTrade({
-    count: N - base,
-    tsAt: (k) => R.times[base + k],
-    spotAt: (k) => R.spot[base + k],
-    priceAt: (k) => {
+    count: FINE ? FT.length : N - base,
+    tsAt: FINE ? (k) => FT[k] : (k) => R.times[base + k],
+    spotAt: FINE ? (k) => FS[k] : (k) => R.spot[base + k],
+    priceAt: FINE ? (k) => {
+      const ts = FT[k], S = FS[k];
+      if (k === FT.length - 1) { // экспирационный шаг: та же оценка, что у часового прогона
+        if (HAS_STOP) lastRow = R.snaps.get(ts)?.get(leg.n) ?? null;
+        return countPrice(R.stats, priceAt({ snapshot: R.snaps.get(ts), expiryRows: R.byExp.get(ts)?.get(leg.e),
+          meta, tsMs: ts, spotAtExpiry: spotBefore(leg.e) }));
+      }
+      const hi = hourAt(ts);
+      const slow = slowAt(hi);
+      if (!slow) return countPrice(R.stats, null);
+      const g = black76Greeks({ forwardUsd: S * slow.basis, strikeUsd: leg.k, ivPct: slow.iv,
+        tYears: (leg.e - ts) / (365 * 86400000), optionType: leg.s === "P" ? "put" : "call" });
+      if (!fin(g?.priceUsd) || !fin(g?.delta)) return countPrice(R.stats, null);
+      if (HAS_STOP) lastRow = R.snaps.get(R.times[hi])?.get(leg.n) ?? null;
+      FINE_EVALS += 1;
+      return { markUsd: Math.max(0, g.priceUsd), ivPct: slow.iv, delta: g.delta,
+        hoursToExpiry: (leg.e - ts) / 3600000, forwardUsd: S * slow.basis, how: "fine" };
+    } : (k) => {
       if (HAS_STOP) lastRow = R.snaps.get(R.times[base + k])?.get(leg.n) ?? null;
       return countPrice(R.stats, priceAt({ snapshot: R.snaps.get(R.times[base + k]),
         expiryRows: R.byExp.get(R.times[base + k])?.get(leg.e), meta, tsMs: R.times[base + k],
@@ -329,7 +419,12 @@ function runTrade(i, leg, cfg) {
   });
   if (!walk) return null;
   const s = settleSellTrade({ open, walk, cfg });
-  const endIdx = base + walk.exitIndex;
+  // Индекс конца сделки В ЗАПИСИ. На мелкой сетке `walk.exitIndex` указывает в неё саму, а цепочке
+  // нужен снимок записи: с него откроется следующая сделка. Выход у боевой схемы один - экспирация,
+  // и её шаг в сетке последний, поэтому нормальный случай это заранее найденный `fineEndIdx`.
+  const endIdx = FINE
+    ? (walk.exitIndex === FT.length - 1 ? fineEndIdx : hourAt(FT[walk.exitIndex]))
+    : base + walk.exitIndex;
   // Шаг ИСХОДНОЙ экспирации остановленной сделки. Нужен перевходу `expiry`: капитал не должен
   // переразмещаться раньше, чем сделка кончилась бы сама, иначе замеряется скважность записи.
   // До первого ОЦЕНИВАЕМОГО шага, а не просто до метки времени: снимок без спота протяжка
@@ -412,6 +507,7 @@ console.log(`Срок ${E_MIN}-${E_MAX} ч · дельта ${D_TARGET} · пол
   + `${DEPLOY !== 0.70 ? ` · в залоге до ${Math.round(DEPLOY * 100)}% счёта` : ""}`
   + `${HAIRCUT ? ` · вычет ${HAIRCUT} п. воли` : ""}${CHAIN_ADJ !== 1 ? ` · поправка цепочки ×${CHAIN_ADJ}` : ""}.`);
 console.log(`Фандинг ${USE_FUNDING ? `учтён почасово (${FUND.size} записей)` : "ОТКЛЮЧЁН (контроль)"}.`);
+console.log(`Каданс протяжки: ${FINE ? `МЕЛКИЙ, ${argOf("--fine")}` : "часовой (шаг записи)"}.`);
 if (GATE_TERMS) {
   console.log(`Входной гейт: ${formatGateTerms(GATE_TERMS)}. У ЖИВОЙ СХЕМЫ ГЕЙТОВ НЕТ - это измерение,`);
   console.log(`а не конфигурация; книга такого прогона с прогоном движка не сверяется.`);
@@ -691,17 +787,28 @@ if (has("--gate-sweep")) {
 // со стоимостью перекладки. Конфигурация, выбранная при одной стоимости, при другой вредна.
 if (has("--band-sweep")) {
   console.log(`\n## Перебор полосы хеджа против стоимости перекладки\n`);
-  const fees = [[0, "мейкер"], [0.00025, "2.5 б.п."], [0.001, "10 б.п."]];
+  // Сетка стоимостей объявлена предрегистрацией полосы (2026-09-22) и после первых чисел не
+  // двигается. 0.015% это ЖИВАЯ мейкерская ставка биржи из меты инструмента, по которой книжит
+  // бот 2; ноль оставлен затем, что при нём сняты пятилетние книги охраны, и его надо видеть
+  // рядом, а не вместо.
+  const fees = [[0, "мейкер 0"], [0.00015, "0.015% живая"], [0.00025, "2.5 б.п."], [0.001, "10 б.п."]];
   const bands = [0.01, 0.02, 0.03, 0.05, 0.08, 0.12, 0.20];
-  console.log(`| полоса | ${fees.map((f) => f[1]).join(" | ")} | просадка (мейкер) | перекладок (мейкер) |`);
-  console.log(`|---|${fees.map(() => "---").join("|")}|---|---|`);
+  // Просадка и перекладки печатаются при ЖИВОЙ ставке 0.015%, а не при нуле: критерий
+  // предрегистрации читается именно там, а нулевая ставка это условие, при котором сняты книги.
+  const READ_FEE = 0.00015;
+  const spanDays = (R.times.at(-1) - R.times[0]) / 86400000;
+  console.log(`| полоса | ${fees.map((f) => f[1]).join(" | ")} | просадка при 0.015% | перекладок всего | в сутки |`);
+  console.log(`|---|${fees.map(() => "---").join("|")}|---|---|---|`);
   for (const band of bands) {
     const cells = [], extra = [];
     for (const [fee] of fees) {
       const rs = chain({ ...CFG, bandBtc: band, perpFee: fee });
       const e = equity(rs);
       cells.push(rs.length ? `${f2(e.eq)}` : "-");
-      if (fee === 0) extra.push(f2(e.dd, 1) + "%", String(Math.round(mean(rs.map((r) => r.reh)))));
+      if (fee === READ_FEE) {
+        const reh = rs.reduce((a, r) => a + r.reh, 0);
+        extra.push(f2(e.dd, 1) + "%", String(reh), f2(reh / spanDays, 1));
+      }
     }
     console.log(`| ${band} | ${cells.join(" | ")} | ${extra.join(" | ")} |`);
   }
@@ -736,6 +843,16 @@ if (has("--stress")) {
 
 console.log(`\n## Границы расчёта\n`);
 console.log(`- ${formatPriceStats(R.stats)}`);
+if (FINE) {
+  // Лестница цены (`hist-price.js`) считает только ЧАСОВЫЕ оценки, а мелкие шаги считаются
+  // Блэком-76 от наблюдённого индекса при волатильности того же часа. Без этой строки отчёт
+  // умалчивал бы, чем посчитана подавляющая часть шагов.
+  console.log(`- МЕЛКИЙ КАДАНС: ${FINE.n} шагов пути индекса, ${FINE_EVALS} оценок Блэком-76 от наблюдённого`);
+  console.log(`  индекса при волатильности и базисе последней прошедшей часовой точки; выход сделки`);
+  console.log(`  оценён часовым снимком записи, то есть той же ценой, что у часового прогона;`);
+  console.log(`- окна каданса без принта ПРОПУЩЕНЫ, а не заполнены протяжкой, поэтому число перекладок`);
+  console.log(`  занижено, а не завышено;`);
+}
 console.log(`- проскальзывание хеджа сверх комиссии НЕ моделируется (глубины перпа в записи нет);`);
 console.log(`- доход хеджа считается линейно q·ΔS, выпуклость обратного перпа не учтена;`);
 console.log(`- комиссия биржи за расчёт опциона в деньгах не учтена;`);
