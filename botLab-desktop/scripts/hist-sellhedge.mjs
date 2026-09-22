@@ -58,6 +58,7 @@ import {
   stepMtm, makeStopAt, parseStopSpec, stopCostUsd,
 } from "../src/engine/otmscan/sellhedge.js";
 import { parseGateSpec, formatGateTerms, makeGateCounter, testGate, idleFraction } from "../src/engine/otmscan/hist-gate.js";
+import { readIndexPath, stepAfter } from "../src/engine/otmscan/hist-index-path.js";
 
 const fin = (x) => Number.isFinite(x);
 const args = process.argv.slice(2);
@@ -169,27 +170,17 @@ const GATE_TERMS = (() => {
 // может показать больше 24 пересечений в сутки по построению, и медиана 6.9 у стенда это её
 // потолок, а не поведение рынка (живая сделка 2 дала 35.2 в сутки). Без ключа `--fine` ни одна
 // строка ниже не исполняется, и прогон остаётся побайтово прежним: книги охраны сняты часовым.
+// Разбор двоичной таблицы живёт в движковом hist-index-path.js: её читают ОБА стенда
+// продавца, а две копии разбора одного формата расходятся МОЛЧА - прогон не падает, он
+// печатает другие цены и другую частоту перекладок.
 const FINE = (() => {
   const f = argOf("--fine");
   if (!f) return null;
-  const buf = readFileSync(f);
-  if (buf.length < 8 || buf.readUInt32LE(0) !== 0x42544350) {
-    console.error(`--fine: ${f} не таблица пути индекса (нет метки BTCP)`); process.exit(1);
-  }
-  const n = buf.readUInt32LE(4);
-  const ts = new Float64Array(n), px = new Float64Array(n);
-  for (let i = 0; i < n; i++) { ts[i] = buf.readUInt32LE(8 + i * 8) * 1000; px[i] = buf.readFloatLE(8 + i * 8 + 4); }
-  return { ts, px, n };
+  const { path, error } = readIndexPath(readFileSync(f), `--fine ${f}`);
+  if (error) { console.error(error); process.exit(1); }
+  return path;
 })();
-let FINE_EVALS = 0; // оценок Блэком-76 на мелких шагах: лестница цены их не видит, а печатать надо
-// Первый индекс таблицы со строго большей меткой, чем t. Двоичный поиск, потому что таблица за
-// пять лет это несколько миллионов шагов, а спрашивают её на каждой сделке.
-function fineAfter(t) {
-  let lo = 0, hi = FINE.n - 1, res = FINE.n;
-  while (lo <= hi) { const m = (lo + hi) >> 1; if (FINE.ts[m] > t) { res = m; hi = m - 1; } else lo = m + 1; }
-  return res;
-}
-
+let FINE_EVALS = 0; 
 // ── запись
 function load(dir) {
   const D = readdirSync(dir).some((f) => f === "scan-records") ? join(dir, "scan-records") : dir;
@@ -361,7 +352,7 @@ function runTrade(i, leg, cfg) {
   // полоса пересечена дважды). Протяжка стёрла бы ровно то, что здесь замеряется.
   let FT = null, FS = null, fineEndIdx = -1;
   if (FINE) {
-    const a = fineAfter(R.times[i]);
+    const a = stepAfter(FINE, R.times[i]);
     let j = base;
     while (j < N - 1 && R.times[j] < leg.e) j += 1;
     while (j < N - 1 && !(R.spot[j] > 0)) j += 1;
