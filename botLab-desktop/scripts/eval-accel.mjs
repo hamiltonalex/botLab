@@ -33,6 +33,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { priceAt, makePriceStats, countPrice, formatPriceStats } from "../src/engine/otmscan/hist-price.js";
+import { black76Greeks } from "../src/engine/otmscan/black76.js";
 import { computeTradeCosts } from "../src/engine/otmscan/economics.js";
 import { legMargin, lotsByStressMargin } from "../src/engine/btcopt/margin.js";
 import {
@@ -61,6 +62,11 @@ if (args.includes("--help") || !argOf("--dir")) {
   --windows <а-б,..>    сетка окон срока для tenor и put (по умолчанию 48-168,168-336,336-672)
   --strangle-window <а-б> окно стрэнгла (по умолчанию 336-672)
   --ladder <а-б+в-г>    пара окон лестницы (по умолчанию 168-336+336-672)
+  --fine <файл>         МЕЛКИЙ КАДАНС: таблица пути индекса от hist-index-path.mjs. Без неё
+                        протяжка идёт по часовым снимкам, то есть кадансом, которым живой бот
+                        не торгует: часовая сетка по построению не даёт больше 24 пересечений
+                        полосы хеджа в сутки, а живая сделка 2 дала 35.2
+  --band <x>            полоса хеджа, BTC на 1.0 контракта (по умолчанию дефолт схемы 0.03)
   --perp-fee <x>        комиссия перпа долей (0 мейкер, 0.00025 = 2.5 б.п.; стресс исполнения)
   --exec <модель>       maker-mid | taker-cross (вход в опцион; стресс исполнения)
   --spread-scale <x>    множитель модельного спреда (по умолчанию дефолт схемы 1.10)
@@ -183,6 +189,28 @@ const STOP_SIG = HAS_STOP
   ? `${STOP.metric}@${STOP.level}/${STOP.action}/${STOP.hyst}/${STOP.fill}/${STOP_REENTRY}/x${STOP_COST_MULT}`
   : "off";
 
+// ── МЕЛКИЙ КАДАНС. Таблица «секунда метки, цена» от `hist-index-path.mjs`: наблюдённый путь
+// индекса BTC, разобранный из кэша поштучных сделок один раз. Нужен затем, что протяжка идёт по
+// ЧАСОВЫМ снимкам записи, а живой бот переоценивает позицию раз в 15 секунд. Часовая сетка по
+// построению не даёт больше 24 пересечений полосы хеджа в сутки, поэтому на ней не видно ни
+// настоящего числа перекладок, ни внутричасовых пиков маржи, ни убытка короткой гаммы на
+// развороте цены. Замер 2026-09-22 на схеме одиночного колла: рост залога ×32.84 на часовом шаге
+// против ×9.36 на настоящем кадансе при живой мейкерской ставке 0.015%.
+//
+// Без ключа `--fine` ни одна строка ниже не исполняется и прогон остаётся прежним до бита.
+const FINE = (() => {
+  const f = argOf("--fine");
+  if (!f) return null;
+  const buf = readFileSync(f);
+  if (buf.length < 8 || buf.readUInt32LE(0) !== 0x42544350) {
+    console.error(`--fine: ${f} не таблица пути индекса (нет метки BTCP)`); process.exit(1);
+  }
+  const n = buf.readUInt32LE(4);
+  const ts = new Float64Array(n), px = new Float64Array(n);
+  for (let i = 0; i < n; i++) { ts[i] = buf.readUInt32LE(8 + i * 8) * 1000; px[i] = buf.readFloatLE(8 + i * 8 + 4); }
+  return { n, ts, px, path: f };
+})();
+
 // ── запись: загрузчик слово в слово тот же, что у эталона (слой снабжения общий).
 function load(dir) {
   const D = readdirSync(dir).some((f) => f === "scan-records") ? join(dir, "scan-records") : dir;
@@ -258,6 +286,74 @@ const fundRate = (ts) => FUND.get(Math.floor(ts / 3600000) * 3600000) ?? 0;
 const spotBefore = (T) => { let lo = 0, hi = N - 1, res = null;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (R.times[m] <= T) { res = R.spot[m]; lo = m + 1; } else hi = m - 1; } return res; };
 
+// ── СНАБЖЕНИЕ МЕЛКОГО КАДАНСА. Три вещи, и все три общие для одиночной ноги и для стрэнгла:
+// сетка шагов сделки, медленная часть цены ноги и сама цена на мелком шаге.
+//
+// СЕТКА ШАГОВ. Наблюдённые шаги пути индекса строго между входом и экспирацией, а ПОСЛЕДНИМ
+// элементом тот часовой снимок записи, на котором сделка кончается у часового прогона.
+// Экспирационный шаг взят из записи намеренно: замеряется частота хеджа, а не цена выхода, и если
+// бы выход оценивался первым принтом после экспирации, к разнице каданса подмешалась бы разница
+// цены закрытия. Так между часовым и мелким прогоном меняется ровно одна вещь.
+let FINE_EVALS = 0; // оценок Блэком-76 на мелких шагах: лестница цены их не видит, а печатать надо
+function fineAfter(t) {
+  let lo = 0, hi = FINE.n - 1, res = FINE.n;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (FINE.ts[m] > t) { res = m; hi = m - 1; } else lo = m + 1; }
+  return res;
+}
+const hourAt = (t) => { let lo = 0, hi = N - 1, res = 0;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (R.times[m] <= t) { res = m; lo = m + 1; } else hi = m - 1; } return res; };
+function fineGrid(i, expiryMs) {
+  const a = fineAfter(R.times[i]);
+  let j = i + 1;
+  while (j < N - 1 && R.times[j] < expiryMs) j += 1;
+  while (j < N - 1 && !(R.spot[j] > 0)) j += 1;
+  if (!(R.spot[j] > 0)) return null;
+  const ts = [], px = [];
+  for (let k = a; k < FINE.n && FINE.ts[k] < R.times[j]; k++) { ts.push(FINE.ts[k]); px.push(FINE.px[k]); }
+  ts.push(R.times[j]); px.push(R.spot[j]);
+  return { ts, px, endRecIdx: j };
+}
+
+// МЕДЛЕННАЯ ЧАСТЬ ЦЕНЫ: волатильность и базис форварда ноги из ПОСЛЕДНЕЙ ПРОШЕДШЕЙ часовой точки.
+// Спрашивается лестница цены движка (`hist-price.js`), та же, какой пользуется часовой прогон,
+// поэтому пропавшая строка инструмента чинится теми же ступенями (брат по паритету, IV соседа), а
+// не превращается в пропуск шага. Ответ лестницы от индекса НЕ зависит, поэтому кэшируется на час:
+// без кэша на пяти годах это были бы миллионы лишних вызовов.
+//
+// Из последней прошедшей, а не интерполяцией между соседними: интерполяция подмешала бы в решение
+// на 10:05 волатильность, наблюдённую в 11:00, то есть будущее.
+function makeSlow(meta) {
+  const cache = new Map();
+  return (hi) => {
+    let v = cache.get(hi);
+    if (v !== undefined) return v;
+    const p = priceAt({ snapshot: R.snaps.get(R.times[hi]), expiryRows: R.byExp.get(R.times[hi])?.get(meta.expiryMs),
+      meta, tsMs: R.times[hi], spotAtExpiry: spotBefore(meta.expiryMs) });
+    const S = R.spot[hi];
+    v = p && fin(p.ivPct) && fin(p.forwardUsd) && S > 0 ? { iv: p.ivPct, basis: p.forwardUsd / S } : null;
+    cache.set(hi, v);
+    return v;
+  };
+}
+
+// ЦЕНА И ДЕЛЬТА НА МЕЛКОМ ШАГЕ: Блэк-76 от НАБЛЮДЁННОГО индекса при волатильности часа. Форвард
+// переносится ОТНОШЕНИЕМ f/S того часа, потому что базис меняется медленно, а индекс быстро.
+// Дельта именно ПЕРЕСЧИТЫВАЕТСЯ: линейная протяжка дельты между часовыми точками монотонна по
+// построению, а перекладки создаёт ровно немонотонность внутри часа (индекс ушёл и вернулся,
+// полоса пересечена дважды), то есть протяжка стёрла бы замеряемое.
+function finePrice(meta, slow, hi, ts, S) {
+  const v = slow(hi);
+  if (!v) return null;
+  const tY = (meta.expiryMs - ts) / (365 * 86400000);
+  if (!(tY > 0)) return null;
+  const g = black76Greeks({ forwardUsd: S * v.basis, strikeUsd: meta.strikeUsd, ivPct: v.iv,
+    tYears: tY, optionType: meta.type === "P" ? "put" : "call" });
+  if (!fin(g?.priceUsd) || !fin(g?.delta)) return null;
+  FINE_EVALS += 1;
+  return { markUsd: Math.max(0, g.priceUsd), ivPct: v.iv, delta: g.delta,
+    hoursToExpiry: (meta.expiryMs - ts) / 3600000, forwardUsd: S * v.basis, how: "fine" };
+}
+
 const mean = (a) => { const s = a.filter(fin); return s.length ? s.reduce((x, y) => x + y, 0) / s.length : NaN; };
 // Доля записи ВНЕ позиции в процентах. Формула общая с эталоном hist-sellhedge.mjs и живёт в
 // движковом hist-gate.js: это главный столбец любой таблицы гейта, потому что гейт платит временем.
@@ -269,8 +365,14 @@ const f2 = (x, d = 2) => (fin(x) ? x.toFixed(d) : "н/д");
 const pct = (x, d = 1) => (fin(x) ? (100 * x).toFixed(d) + "%" : "н/д");
 const dt = (ms) => new Date(ms).toISOString().slice(0, 10);
 
+// Полоса хеджа ключом, а не только дефолтом схемы. Нужна затем, что полоса это КОНСТАНТА схемы, и
+// проверить её на боевом правиле размера (стресс-маржа) иначе нечем: у эталона hist-sellhedge ключ
+// --band есть, но там правило размера другое (доля счёта в залоге), а потолок утилизации маржи 0.8
+// калиброван именно под стресс-правило.
+const BAND = argOf("--band") == null ? null : Number(argOf("--band"));
+if (BAND != null && !(BAND > 0)) { console.error("--band: положительное число, BTC на 1.0 контракта"); process.exit(1); }
 const cfgOf = (over) => ({ ...SELLHEDGE_DEFAULTS, lot: LOT, execModel: EXEC, perpFee: PERP_FEE,
-  ...(SPREAD == null ? {} : { spreadScale: SPREAD }), ...over });
+  ...(SPREAD == null ? {} : { spreadScale: SPREAD }), ...(BAND == null ? {} : { bandBtc: BAND }), ...over });
 const mtype = (s) => (s === "P" ? "put" : "call");
 
 // Затвор нулевого контроля: та же частота срабатываний, момент внутри сделки распределён равномерно,
@@ -316,11 +418,27 @@ function runTradeLeg(i, leg, cfg) {
         mark: ctx.mark, underlying: ctx.S, index: ctx.S, amount: 1 }).mm,
       costAt, cfg,
     }));
+  // Сетка шагов: часовая без --fine, мелкая с ним. Ветви выписаны раздельно, чтобы при выключенном
+  // мелком кадансе исполнялось ровно прежнее выражение и книга осталась побитово той же.
+  const grid = FINE ? fineGrid(i, leg.e) : null;
+  if (FINE && !grid) return null;
+  const slow = FINE ? makeSlow(meta) : null;
   const walk = walkSellTrade({
-    count: N - base,
-    tsAt: (k) => R.times[base + k],
-    spotAt: (k) => R.spot[base + k],
-    priceAt: (k) => {
+    count: FINE ? grid.ts.length : N - base,
+    tsAt: FINE ? (k) => grid.ts[k] : (k) => R.times[base + k],
+    spotAt: FINE ? (k) => grid.px[k] : (k) => R.spot[base + k],
+    priceAt: FINE ? (k) => {
+      const ts = grid.ts[k];
+      if (k === grid.ts.length - 1) { // экспирационный шаг: та же оценка, что у часового прогона
+        if (cfg.stop) lastRow = R.snaps.get(ts)?.get(leg.n) ?? null;
+        return countPrice(R.stats, priceAt({ snapshot: R.snaps.get(ts),
+          expiryRows: R.byExp.get(ts)?.get(leg.e), meta, tsMs: ts, spotAtExpiry: spotBefore(leg.e) }));
+      }
+      const hi = hourAt(ts);
+      if (cfg.stop) lastRow = R.snaps.get(R.times[hi])?.get(leg.n) ?? null;
+      const p = finePrice(meta, slow, hi, ts, grid.px[k]);
+      return p ?? countPrice(R.stats, null);
+    } : (k) => {
       if (cfg.stop) lastRow = R.snaps.get(R.times[base + k])?.get(leg.n) ?? null;
       return countPrice(R.stats, priceAt({ snapshot: R.snaps.get(R.times[base + k]),
         expiryRows: R.byExp.get(R.times[base + k])?.get(leg.e), meta, tsMs: R.times[base + k],
@@ -333,7 +451,11 @@ function runTradeLeg(i, leg, cfg) {
   });
   if (!walk) return null;
   const s = settleSellTrade({ open, walk, cfg });
-  const endIdx = base + walk.exitIndex;
+  // Индекс конца сделки В ЗАПИСИ: на мелкой сетке walk.exitIndex указывает в неё саму, а цепочке
+  // нужен снимок записи, с которого откроется следующая сделка.
+  const endIdx = FINE
+    ? (walk.exitIndex === grid.ts.length - 1 ? grid.endRecIdx : hourAt(grid.ts[walk.exitIndex]))
+    : base + walk.exitIndex;
   // Шаг ИСХОДНОЙ экспирации. Идти надо не только по времени, но и до первого ОЦЕНИВАЕМОГО шага:
   // базовый endIdx это шаг, на котором протяжка получила цену, а снимок без спота она пропускает
   // целиком. На этой записи обе версии совпали на всех срабатываниях, но на записи с дырами
@@ -408,11 +530,41 @@ function runTradeStrangle(i, pair, cfg) {
     costAt: pairCostAt,
     cfg,
   }));
+  // Мелкая сетка у пары та же, что у одиночной ноги, но цена СОСТАВНАЯ: обе ноги считаются от
+  // одного наблюдённого индекса и складываются тем же движковым stranglePrice, каким их складывает
+  // часовой прогон. Складывать надо именно цены ног, а не считать пару как один инструмент: у пары
+  // два страйка и две волатильности, и общей волатильности у неё нет.
+  const grid = FINE ? fineGrid(i, pair.call.e) : null;
+  if (FINE && !grid) return null;
+  const slowC = FINE ? makeSlow(metaC) : null;
+  const slowP = FINE ? makeSlow(metaP) : null;
   const walk = walkSellTrade({
-    count: N - base,
-    tsAt: (k) => R.times[base + k],
-    spotAt: (k) => R.spot[base + k],
-    priceAt: (k) => {
+    count: FINE ? grid.ts.length : N - base,
+    tsAt: FINE ? (k) => grid.ts[k] : (k) => R.times[base + k],
+    spotAt: FINE ? (k) => grid.px[k] : (k) => R.spot[base + k],
+    priceAt: FINE ? (k) => {
+      const ts = grid.ts[k];
+      if (k === grid.ts.length - 1) { // экспирационный шаг: та же оценка, что у часового прогона
+        const snap = R.snaps.get(ts); const er = R.byExp.get(ts);
+        if (cfg.stop) { rowC = snap?.get(pair.call.n) ?? null; rowP = snap?.get(pair.put.n) ?? null; }
+        const pc = countPrice(R.stats, priceAt({ snapshot: snap, expiryRows: er?.get(pair.call.e),
+          meta: metaC, tsMs: ts, spotAtExpiry: spotBefore(pair.call.e) }));
+        const pp = countPrice(R.stats, priceAt({ snapshot: snap, expiryRows: er?.get(pair.put.e),
+          meta: metaP, tsMs: ts, spotAtExpiry: spotBefore(pair.put.e) }));
+        const p = stranglePrice(pc, pp);
+        if (p) marks.push({ c: pc.markUsd, p: pp.markUsd });
+        return p;
+      }
+      const hi = hourAt(ts);
+      if (cfg.stop) { rowC = R.snaps.get(R.times[hi])?.get(pair.call.n) ?? null;
+        rowP = R.snaps.get(R.times[hi])?.get(pair.put.n) ?? null; }
+      const pc = finePrice(metaC, slowC, hi, ts, grid.px[k]);
+      const pp = finePrice(metaP, slowP, hi, ts, grid.px[k]);
+      if (!pc || !pp) return countPrice(R.stats, null);
+      const p = stranglePrice(pc, pp);
+      if (p) marks.push({ c: pc.markUsd, p: pp.markUsd });
+      return p;
+    } : (k) => {
       const ts = R.times[base + k];
       const snap = R.snaps.get(ts);
       const er = R.byExp.get(ts);
@@ -433,7 +585,9 @@ function runTradeStrangle(i, pair, cfg) {
   if (!walk) return null;
   if (steps.length !== marks.length) throw new Error("рассинхрон шагов и марков ног стрэнгла");
   const s = settleSellTrade({ open, walk, cfg });
-  const endIdx = base + walk.exitIndex;
+  const endIdx = FINE
+    ? (walk.exitIndex === grid.ts.length - 1 ? grid.endRecIdx : hourAt(grid.ts[walk.exitIndex]))
+    : base + walk.exitIndex;
   let expiryEndIdx = endIdx;
   if (walk.stopped) {
     while (expiryEndIdx < N - 1 && R.times[expiryEndIdx] < pair.call.e) expiryEndIdx += 1;
@@ -629,7 +783,12 @@ function simLadder(pair, p, cfg) {
     const ts = R.times[i];
     // 1. шаги открытых сделок до этой метки (снимки без спота шагов не несут - курсор просто ждёт)
     for (const o of [openA, openB]) {
-      if (o && o.j < o.t.stepTs.length && o.t.stepTs[o.j] === ts) {
+      // Курсор идёт до ПОСЛЕДНЕГО шага не позже метки, а не по точному совпадению. На часовом
+      // кадансе метки шагов совпадают с метками записи, шаг на метку ровно один, и поведение
+      // прежнее до бита. На мелком кадансе шагов между двумя метками записи сотни, точное
+      // совпадение не нашлось бы ни разу, и портфель шёл бы с нулевым МтМ обеих цепочек, напечатав
+      // таблицу, которую от настоящей не отличить.
+      while (o && o.j < o.t.stepTs.length && o.t.stepTs[o.j] <= ts) {
         o.lastMtm = o.t.mtm1s[o.j]; o.lastMm = o.t.mm1s[o.j]; o.j += 1;
       }
     }
@@ -749,7 +908,8 @@ function variantChains(kind, w, legType, cfg) {
 
 console.log(`# Ускорение оборота схемы продавца: равный хвост (пик MM ≤ ${CAP})\n`);
 console.log(`Запись ${DIR}: ${N} снимков, ${dt(R.times[0])} .. ${dt(R.times.at(-1))} (${f2(spanDays / 365, 2)} года).`);
-console.log(`Депозит $${DEPOSIT}. Дельта ${SELLHEDGE_DEFAULTS.deltaTarget} · полоса ${SELLHEDGE_DEFAULTS.bandBtc} BTC ·`
+console.log(`Каданс протяжки: ${FINE ? `МЕЛКИЙ, ${FINE.n} шагов пути индекса (${FINE.path})` : "часовой (шаг записи)"}.`);
+console.log(`Депозит $${DEPOSIT}. Дельта ${SELLHEDGE_DEFAULTS.deltaTarget} · полоса ${BAND ?? SELLHEDGE_DEFAULTS.bandBtc} BTC ·`
   + ` перп ${PERP_FEE ? (PERP_FEE * 1e4).toFixed(1) + " б.п." : "мейкер"} · вход ${EXEC}`
   + ` · спред ×${SPREAD ?? SELLHEDGE_DEFAULTS.spreadScale}. Размер варианта калибруется бинарным поиском`
   + ` максимального deployPct, при котором пик MM-утилизации за ВСЮ запись не превышает ${CAP}.\n`);
@@ -1146,7 +1306,18 @@ console.log(`- ${formatPriceStats(R.stats)}`);
 const fails = [...chains.entries()].map(([k, c]) => `${k}: цена не вышла ${c.priceFail}`
   + (c.noPut ? `, колл без пары ${c.noPut}` : "")).join("; ");
 console.log(`- незасчитанные попытки входа по цепочкам: ${fails || "нет"};`);
-console.log(`- шаг записи ЧАС: внутричасовые пики MM и перекладки не видны, для коротких окон недоучёт больше;`);
+if (FINE) {
+  console.log(`- каданс МЕЛКИЙ: ${FINE_EVALS} оценок Блэком-76 от наблюдённого индекса при волатильности и`);
+  console.log(`  базисе последней прошедшей часовой точки; выход сделки оценён часовым снимком записи,`);
+  console.log(`  то есть той же ценой, что у часового прогона, поэтому между кадансами меняется только хедж;`);
+  console.log(`- окна каданса без принта ПРОПУЩЕНЫ, а не заполнены протяжкой: число перекладок и пик MM`);
+  console.log(`  занижены, а не завышены;`);
+  console.log(`- ЛЕСТНИЦА (режим ladder) сводит две цепочки на ЧАСОВОЙ сетке записи даже здесь, поэтому её`);
+  console.log(`  пик маржи остаётся часовым; у остальных режимов пик считается по мелким шагам;`);
+} else {
+  console.log(`- шаг записи ЧАС: внутричасовые пики MM и перекладки не видны, для коротких окон недоучёт больше;`);
+  console.log(`  ключ --fine <таблица пути индекса> снимает это ограничение (см. hist-index-path.mjs);`);
+}
 console.log(`- проскальзывание перпа и его маржа не моделируются (реальный счёт строже);`);
 console.log(`- фандинг: почасовой кэш (${FUND.size} записей), начисление на дельта×спот (конвенция эталона);`);
 console.log(`- лестница: тайминг сделок из независимых цепочек, счёт общий - интерактивность занятого счёта`);
