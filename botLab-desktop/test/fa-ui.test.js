@@ -498,3 +498,38 @@ test("fa-ui: состав вселенной показан, и коды отб�
     assert.equal(CODE_TEXT.get(code), key, `код отбора ${code} не назван в FA_CODE_TEXT`);
   }
 });
+
+test("«Обзор» называет текущую сделку тем же числом, что и кокпит вкладки", () => {
+  // ЗАЧЕМ ЭТОТ ТЕСТ. Большое число карточки бота 1 на «Обзоре» это `accountSummary`, то есть сумма
+  // по ВСЕМ позициям, включая закрытые; кокпит вкладки Funding-arb показывает одну текущую сделку.
+  // 22.09.2026 владелец увидел на «Обзоре» -$6.12 при текущей сделке +$4.57 и спросил, что из этого
+  // прибыль бота. Оба числа были верны, разница в $10.70 принадлежала сделке, закрытой руками
+  // 18.09, но с «Обзора» нельзя было понять, зарабатывает бот сейчас.
+  //
+  // СТЕРЕЖЁТСЯ ДВА ОБЕЩАНИЯ. Первое: «текущая» на обоих экранах это ОДНА И ТА ЖЕ позиция, потому
+  // что отбирает её одно выражение `tradeSelectedPosition`, а не два похожих. Второе: два разных
+  // числа в одной строке не имеют права идти под одной подписью, иначе строка складывает сумму
+  // счёта с результатом сделки на глаз читателя.
+  const i = HTML.indexOf("function refreshOverview()");
+  assert.ok(i > 0, "refreshOverview не найдена");
+  const box = HTML.slice(i, HTML.indexOf("// - карточка/точка btc-options -", i));
+  assert.ok(box.length > 0, "блок карточки funding-arb не найден");
+
+  assert.ok(/faCur\s*=\s*\(faRun\s*&&\s*acc\.count>1\)\s*\?\s*tradeSelectedPosition\(\)/.test(box),
+    "текущая сделка обязана отбираться выражением кокпита `tradeSelectedPosition`");
+  assert.ok(/faCur\.summary\.netPnl/.test(box),
+    "на «Обзоре» обязано стоять то же число, что в кокпите: summary.netPnl");
+  // Кокпит берёт позицию тем же выражением: без этого «та же сделка» держалось бы на совпадении.
+  const cockpit = HTML.indexOf("function renderTrade()");
+  assert.ok(cockpit > 0 && /const p=tradeSelectedPosition\(\)/.test(HTML.slice(cockpit, cockpit + 2500)),
+    "кокпит перестал звать tradeSelectedPosition: два экрана разойдутся в том, какая сделка текущая");
+
+  // Подпись итога переключается вместе с появлением второго числа.
+  assert.ok(/Number\.isFinite\(faCurPnl\)\s*\?\s*t\('home\.fa\.allIfClosed'\)\s*:\s*t\('home\.fa\.ifClosed'\)/.test(box),
+    "рядом с числом текущей сделки итог счёта обязан называться своей подписью");
+  for (const [code, dict] of Object.entries(loadDicts())) {
+    for (const key of ["home.fa.current", "home.fa.allIfClosed"]) {
+      assert.ok(dict[key], `${code}: нет ключа ${key}`);
+    }
+  }
+});

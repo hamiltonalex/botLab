@@ -72,6 +72,8 @@ registerLocale('en', {
   'home.openOf': '{open} open of {total}',
   'home.pnlNet': 'net P&L',
   'home.fa.ifClosed': 'if closed now',
+  'home.fa.current': 'current trade',
+  'home.fa.allIfClosed': 'account total, if closed',
   'home.fa.exitModel': 'modelled exit {v}',
   'home.fa.desc': 'Delta-neutral funding rate arbitrage · GMX V2 (Arbitrum) × Hyperliquid',
   'home.fa.idle': '○ not running - no open positions',

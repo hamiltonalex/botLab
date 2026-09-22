@@ -6351,6 +6351,19 @@ function refreshOverview(){
   const acc = LIVE.account;
   const faOpen = acc ? acc.open : 0, faRun = faOpen>0;
   const faPnl = (acc && acc.count>0) ? acc.netPnl : null;
+  /* ПРИБЫЛЬ ТЕКУЩЕЙ СДЕЛКИ РЯДОМ С ИТОГОМ СЧЁТА. Большое число карточки это `accountSummary`, то
+     есть сумма по ВСЕМ позициям, включая давно закрытые; кокпит вкладки Funding-arb показывает
+     ОДНУ текущую сделку. Пока сделка на счету одна, это одно и то же число, и второй раз его
+     печатать незачем. Как только рядом появляется закрытая, числа расходятся на её результат: на
+     22.09.2026 счёт показывал -$6.12 при текущей сделке +$4.57, то есть с «Обзора» нельзя было
+     понять, зарабатывает бот сейчас или нет, а разница в $10.70 целиком принадлежала сделке,
+     закрытой руками ещё 18.09.
+     ПОЗИЦИЯ БЕРЁТСЯ ТЕМ ЖЕ ВЫРАЖЕНИЕМ, ЧТО И КОКПИТ (`tradeSelectedPosition`), а не своим отбором
+     открытой: два экрана, называющие «текущей» разные сделки, хуже одного экрана без числа. По той
+     же причине берётся `summary.netPnl`, то есть ровно то число, что стоит в кокпите под подписью
+     «если закрыть сейчас». */
+  const faCur = (faRun && acc.count>1) ? tradeSelectedPosition() : null;
+  const faCurPnl = faCur && faCur.summary && Number.isFinite(faCur.summary.netPnl) ? faCur.summary.netPnl : null;
   // - BTC-опционы (bot 2) -
   const s1cyc = (LIVE_S1 && LIVE_S1.cycle) || null;
   const s1ch = (LIVE_S1 && LIVE_S1.sellChain) || null;
@@ -6380,7 +6393,13 @@ function refreshOverview(){
   const faPreAuto = !faAutoOn && !!(LIVE.auto && LIVE.auto.foreignOpen);
   // - карточка/точка funding-arb -
   overviewCard('funding-arb', faRun, faPnl,
-    faRun ? t('home.openOf',{open:faOpen,total:acc.count})+' · '+t('home.fa.ifClosed')+' <span class="'+clsSign(faPnl)+'">'+fmtUSDfull(faPnl)+'</span>'
+    faRun ? t('home.openOf',{open:faOpen,total:acc.count})
+             +(Number.isFinite(faCurPnl) ? ' · '+t('home.fa.current')+' <span class="'+clsSign(faCurPnl)+'">'+fmtUSDfull(faCurPnl)+'</span>' : '')
+             /* Подпись итога меняется вместе с составом строки: пока число одно, «если закрыть
+                сейчас» точно; рядом с числом текущей сделки та же подпись стояла бы у двух разных
+                величин и не различала бы их. */
+             +' · '+(Number.isFinite(faCurPnl) ? t('home.fa.allIfClosed') : t('home.fa.ifClosed'))
+             +' <span class="'+clsSign(faPnl)+'">'+fmtUSDfull(faPnl)+'</span>'
              +(acc && Number.isFinite(acc.exitPendingUsd) && acc.exitPendingUsd>0 ? ' · '+t('home.fa.exitModel',{v:'−'+fmtUSDfull(acc.exitPendingUsd).replace('+','')}) : '')
              +(faPreAuto ? ' · '+t('home.fa.preAuto') : '')
       : (acc && acc.count>0 ? t('home.fa.closed',{n:acc.count}) : t('home.fa.idle')));

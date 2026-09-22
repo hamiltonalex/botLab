@@ -72,6 +72,8 @@ registerLocale('ru', {
   'home.openOf': '{open} откр. из {total}',
   'home.pnlNet': 'P&L нетто',
   'home.fa.ifClosed': 'если закрыть сейчас',
+  'home.fa.current': 'текущая сделка',
+  'home.fa.allIfClosed': 'счёт целиком, если закрыть',
   'home.fa.exitModel': 'выход по модели {v}',
   'home.fa.desc': 'Дельта-нейтральный арбитраж ставок фандинга · GMX V2 (Arbitrum) × Hyperliquid',
   'home.fa.idle': '○ не запущен - нет открытых позиций',
