@@ -1,29 +1,43 @@
 // regime.js - «BTC-опционы» (Strategy One) IV-regime / entry-score CORE (Phase 3b).
 // PURE: no fetch / fs / DOM / Date.now - deterministic, unit-testable. Isolated from funding-arb.
 //
-// One question for the entry advisor: is ATM implied vol currently CHEAP within its recent window?
-// (Strategy One BUYS the straddle body - entries want low vol.) iv_rank positions the latest ATM IV
-// inside the window's [min, max] span - 0 = at the window low, 1 = at the window high - and the
-// entry screen reads favorable when iv_rank ≤ ivEntryMaxRank.
+// ЧТО ЭТО МЕРЯЕТ: где сейчас стоит ATM-волатильность внутри своего недавнего окна. iv_rank это
+// положение последней ATM IV в размахе окна [min, max]: 0 у низа окна, 1 у верха.
+//
+// ВЕРДИКТА ЗДЕСЬ БОЛЬШЕ НЕТ, И ЭТО ИСПРАВЛЕНИЕ ДЕФЕКТА. Модуль возвращал признак `favorable`,
+// посчитанный как «ранг не выше порога 0.35», то есть «вход выгоден, когда волатильность ДЕШЕВА».
+// Это верно для схемы, которая волатильность ПОКУПАЕТ (исходная Strategy One, длинный стрэддл), и
+// ровно наоборот для той, которая её продаёт. Живой бот продаёт стрэнгл с 4 сентября 2026, то есть
+// вердикт стоял перевёрнутым и показывался зелёным.
+//
+// ПОЧЕМУ ПРИЗНАК УБРАН, А НЕ РАЗВЁРНУТ. Разворот утверждал бы «вход выгоден, когда IV у верха
+// окна», а такого замера у проекта нет. Ближайший замеренный ответ отрицательный: замер 2026-09-22
+// на пяти годах показал, что запрет входа по волатильности проигрывает базе на всех шести порогах
+// (рост залога ×4.08 у лучшей клетки против базовых ×4.12), а изменение размера от той же величины
+// не даёт ничего сверх плеча. Зелёный вердикт звал бы оператора действовать по сигналу, про
+// который известно, что действовать по нему не окупается.
+//
+// Карточка осталась НАБЛЮДЕНИЕМ: числа те же, суждения нет.
 //
 // Policy decisions (documented because the caller renders them verbatim):
 //   • FLAT window (n ≥ 2, max === min) → iv_rank 0.5: a constant series carries no low/high signal,
-//     so it sits exactly mid-range - never "favorable" under any threshold below 0.5.
-//   • NULL policy: iv_rank is null with n < 2 (no span to rank against); favorable is null unless
-//     BOTH n ≥ ivMinObs AND iv_rank exists - too few observations mean "no signal", never a fake
-//     yes/no. atm_iv / dvol are null when the window holds no finite value of that field.
+//     so it sits exactly mid-range.
+//   • NULL policy: iv_rank is null with n < 2 (no span to rank against). `enough` говорит, набрано
+//     ли окно (n ≥ ivMinObs И ранг посчитан): «мало данных» это отдельное состояние карточки, и
+//     подменять его числом нельзя. atm_iv / dvol are null when the window holds no finite value of
+//     that field.
 // The caller owns the clock (nowMs) and the series (observation timestamps); the input array is
 // NEVER mutated (filter copies before the sort). All outputs are JSON-safe (number/boolean/null).
 
-// computeRegime(ivSeries, { nowMs, cfg }) → { atm_iv, dvol, iv_rank, favorable, n, window_sec }.
+// computeRegime(ivSeries, { nowMs, cfg }) → { atm_iv, dvol, iv_rank, enough, n, window_sec }.
 //   ivSeries - [{ ts(ms), atmIv?, dvol? }] in ANY order; atmIv/dvol are percent-points and may be
 //   null/undefined. Window = entries with nowMs − ivWindowSec·1000 < ts ≤ nowMs (strict left edge).
 //   n counts window entries with a finite atmIv; atm_iv / dvol echo the NEWEST finite value of each
 //   field independently (a null in a newer entry never masks an older finite one).
-//   cfg defaults: ivWindowSec 86400 (24h), ivEntryMaxRank 0.35, ivMinObs 12.
+//   cfg defaults: ivWindowSec 86400 (24h), ivMinObs 12. ivMinObs решает только, считать ли окно
+//   набранным: при n ниже него iv_rank всё равно возвращается, а вызывающий печатает «мало данных».
 export function computeRegime(ivSeries, { nowMs, cfg = {} } = {}) {
   const ivWindowSec = cfg.ivWindowSec ?? 86400;
-  const ivEntryMaxRank = cfg.ivEntryMaxRank ?? 0.35;
   const ivMinObs = cfg.ivMinObs ?? 12;
   const cutoffMs = nowMs - ivWindowSec * 1000;
 
@@ -48,7 +62,6 @@ export function computeRegime(ivSeries, { nowMs, cfg = {} } = {}) {
   }
 
   const iv_rank = n >= 2 ? (max === min ? 0.5 : (atm_iv - min) / (max - min)) : null;
-  const favorable = n >= ivMinObs && iv_rank !== null ? iv_rank <= ivEntryMaxRank : null;
 
-  return { atm_iv, dvol, iv_rank, favorable, n, window_sec: ivWindowSec };
+  return { atm_iv, dvol, iv_rank, enough: n >= ivMinObs && iv_rank !== null, n, window_sec: ivWindowSec };
 }

@@ -38,6 +38,15 @@ export const SCHEMA_VERSION = 1;
 // хеджируется полосой схемы, но не попадает в цепочку, и расхождение всплыло бы только в сверке.
 export const isSellKind = (kind) => kind === "sell-call" || kind === "sell-strangle";
 
+// МОЖНО ЛИ СЕЙЧАС ХЕДЖИТЬ: у снимка есть перп и у перпа есть марк. Это не то же самое, что «перп
+// оценён для фандинга» (там нужна СТАВКА, а не цена), и смешивать их нельзя: без ставки начисление
+// ждёт, без цены не может исполниться ордер.
+//
+// ОПРЕДЕЛЕНИЕ ОДНО НА ДВА МЕСТА НАМЕРЕННО. По нему решение уходит в SKIP (evaluate), и по нему же
+// тик засчитывается слепым (ingest). Две копии этого условия означали бы счётчик, который считает
+// не те минуты, что пропустил хедж, а такой счётчик хуже отсутствующего: он выглядит ответом.
+export const canHedgeOn = (snapshot) => !!(snapshot?.perp && snapshot.perp.mark > 0);
+
 // Cost-model rates + blackout windows the hedge engine needs but that aren't user-facing knobs. Merged
 // under the persisted settings at evaluate time (settings win if they ever override one).
 // КОМИССИИ ПЕРПА ЗДЕСЬ ЗАПАСНЫЕ. Живой снимок перпа несёт ставки биржи (deribit.js: makerFee/takerFee
@@ -118,7 +127,6 @@ export function defaultSettings() {
     paperEquityUsd: 100, // starting paper deposit (USD); equity = this + cumulative net P&L
     marginAlertPct: 0.8, // alert when maintenance-margin utilisation ≥ this fraction of equity (Phase 2c)
     ivWindowSec: 86400, // IV-regime rolling window (Phase 3b) - rank ATM IV within the last 24h
-    ivEntryMaxRank: 0.35, // entry favorable when IV-rank ≤ this (long-vol thesis: enter when IV is LOW)
   };
 }
 
@@ -205,6 +213,43 @@ function exchangeDeltaTotal(structure, snapshot, Qperp) {
 // funding-arb) и оставляет строку funding-gap в леджере (нулевые суммы, только видимость - закон
 // §7 «деградация видима»). Сам кламп НЕ меняется: оценивать многочасовой разрыв текущей
 // мгновенной ставкой было бы неверно, отказ от оценки - правильная механика.
+// closeBlindSpell - закрыть эпизод слепоты и ЗАПИСАТЬ ЕГО В ЛЕДЖЕР. Чистой быть не может: в этом
+// и смысл, отказ обязан оставить след (закон А6 R3 «деградация видима» - отказ, которого никто не
+// видит, это не отказ, а тихая потеря).
+//
+// СТРОКА ПИШЕТСЯ ОДНА НА ЭПИЗОД, А НЕ НА ТИК. Слепота 36 минут при опросе раз в 15 секунд это 144
+// тика: построчная запись утопила бы леджер в том самом месте, где его будут читать. Эпизод несёт
+// начало, длительность и число слепых тиков, то есть всё, по чему его можно найти в записи.
+//
+// Короткие эпизоды тоже пишутся, и порог здесь НЕ ставится: одиночный слепой тик это пропущенная
+// перекладка, а пропущенная перекладка на живой траектории стоила десятков долларов.
+function closeBlindSpell(state, u, nowMs, hints) {
+  const from = u.blindFrom;
+  const ticks = u.blindTicksSpell || 0;
+  u.blindFrom = null;
+  u.blindTicksSpell = 0;
+  if (from == null) return;
+  const ms = Math.max(0, nowMs - from);
+  // from это ПОСЛЕДНИЙ ЗРЯЧИЙ тик перед отказом, а не первый слепой, и это скобка, а не точность:
+  // между зрячим тиком и первым слепым цена пропала в какой-то неизвестный момент. Верхняя
+  // граница взята намеренно, потому что у счётчика риска ошибаться надо в эту сторону. Живое и
+  // закрытое число считаются одинаково (см. blindNowMs в uptimeStats), иначе эпизод менял бы
+  // длительность в момент, когда кончается.
+  u.blindMs = (u.blindMs || 0) + ms;
+  if (ms > (u.maxBlindMs || 0)) u.maxBlindMs = ms;
+  const spell = { at: from, ms, ticks, cause: classifyGapCause({ fromMs: from, toMs: nowMs, hints }) };
+  u.blindSpells = u.blindSpells || [];
+  u.blindSpells.push(spell);
+  if (u.blindSpells.length > 50) u.blindSpells.shift(); // хвост важнее головы, как у gaps
+  appendLedger(state, {
+    t: nowMs,
+    type: "blind",
+    note: `хедж не мог исполниться ${Math.round(ms / 1000)}с (${ticks} тик(ов) без цены перпа, `
+      + `с ${new Date(from).toISOString().slice(11, 19)}Z): опрос шёл, превышение полосы в эти минуты`
+      + ` осталось нехеджированным`,
+  });
+}
+
 // classifyGapCause({ fromMs, toMs, hints }) - причина перерыва опроса по хинтам вызывающего.
 // PURE: движок только сравнивает переданные метки, ни одна причина не выдумывается - не покрыл ни
 // один хинт, значит "unknown" («причина не установлена»). Порядок проверки = точность сигнала:
@@ -238,7 +283,14 @@ export function ingest(state, snapshot, nowMs, hints = {}) {
         appendLedger(state, {
           t: nowMs,
           type: "funding-gap",
-          note: `разрыв тиков ${Math.round(dtSec)}с: фандинг начислен за ${cfg.fundingMaxGapSec}с, ${Math.round(res.gapSkippedSec)}с не оценены (анти-catch-up кламп)`,
+          // ПРИЧИНУ НАЗЫВАЕТ СЧЁТЧИК, А НЕ ДОГАДКА. Часы фандинга стоят и когда бота не было, и
+          // когда он шёл слепым (тики приходили, цены перпа не было), а строка раньше называла
+          // любой такой интервал «разрывом тиков». На живом прогоне это врало дважды: 05.09 и
+          // 15.09 тики шли все 36-38 минут отказа биржи.
+          note: `${(state.ticksSinceAccrual || 0) > 0
+            ? `слепой ход ${Math.round(dtSec)}с (${state.ticksSinceAccrual} тик(ов) пришло, цены перпа не было)`
+            : `разрыв тиков ${Math.round(dtSec)}с`}`
+            + `: фандинг начислен за ${cfg.fundingMaxGapSec}с, ${Math.round(res.gapSkippedSec)}с не оценены (анти-catch-up кламп)`,
         });
       }
     }
@@ -265,6 +317,27 @@ export function ingest(state, snapshot, nowMs, hints = {}) {
         if (u.gaps.length > 50) u.gaps.shift(); // хвост важнее головы: свежие перерывы объяснимы
       }
     }
+    // ── СЛЕПОТА СЧИТАЕТСЯ ОТДЕЛЬНО ОТ ПЕРЕРЫВА ОПРОСА, и это разные риски.
+    //
+    // Перерыв выше означает «таймер не сработал»: бота не было. Слепота означает «таймер сработал, а
+    // хеджиться было нечем»: снимок пришёл без цены перпа, решение ушло в SKIP, и превышение полосы
+    // осталось нехеджированным. Для счёта тиков это обычный тик, поэтому в `gaps` слепота НЕ ПОПАДАЕТ
+    // ВООБЩЕ.
+    //
+    // Цена молчания замерена: аудит 2026-09-22 нашёл 83.7 минуты удержания позиции без цены перпа
+    // пятью эпизодами, из них 36.0 минуты 05.09 и 38.3 минуты 15.09, оба начались ровно в 09:00Z
+    // отказом биржи 503. Счётчик показывал в это время два перерыва по 75-111 секунд СОВСЕМ ДРУГОГО
+    // дня, а сами 83.7 минуты пришлось восстанавливать из 233 МБ записи тиков. Денег тот раз не
+    // стоило: позиция была маленькой. Риск счётчик не видел.
+    const blindNow = !canHedgeOn(snapshot);
+    if (blindNow) {
+      u.blindTicks = (u.blindTicks || 0) + 1;
+      u.blindTicksSpell = (u.blindTicksSpell || 0) + 1;
+      if (u.blindFrom == null) u.blindFrom = u.lastSeenAt ?? prev ?? nowMs;
+    } else {
+      if (u.blindFrom != null) closeBlindSpell(state, u, nowMs, hints);
+      u.lastSeenAt = nowMs;
+    }
     u.lastAt = nowMs;
     u.nominalSec = cfg.repriceSec || 15;
   }
@@ -275,6 +348,10 @@ export function ingest(state, snapshot, nowMs, hints = {}) {
   // тот же анти-catch-up кламп, а разрыв больше клампа виден строкой funding-gap (закон А6 R3
   // «деградация видима»). Плоской позиции ждать нечего - часы идут как шли.
   if (!holdingPerp || perpPriced) state.lastIngestAt = nowMs;
+  // Сколько тиков пришло с прошлого ОЦЕНЁННОГО начисления. Нужно строке `funding-gap`: без этого
+  // числа она называет любой разрыв «разрывом тиков», хотя тики могли идти все эти минуты, а не
+  // приходила цена. Счётчик обнуляется там же, где двигаются часы фандинга.
+  state.ticksSinceAccrual = (!holdingPerp || perpPriced) ? 0 : (state.ticksSinceAccrual || 0) + 1;
   state.lastUnderlying = snapshot.underlying;
   return state;
 }
@@ -302,6 +379,15 @@ export function uptimeStats(state) {
     lostSlots,
     gaps: u.gaps.slice(-10).reverse(),
     spanMs,
+    // ── СЛЕПОТА, отдельной группой от перерывов. Покрытие опроса её не видит по построению:
+    // слепой тик для счёта тиков обычный, поэтому высокое покрытие и живая слепота уживаются в
+    // одном отчёте, и читать их надо рядом. Открытый эпизод (blindNowMs) отдаётся живым, иначе
+    // текущая слепота была бы видна только после того, как кончится.
+    blindTicks: u.blindTicks || 0,
+    blindMs: (u.blindMs || 0) + (u.blindFrom != null ? Math.max(0, u.lastAt - u.blindFrom) : 0),
+    maxBlindMs: Math.max(u.maxBlindMs || 0, u.blindFrom != null ? Math.max(0, u.lastAt - u.blindFrom) : 0),
+    blindNowMs: u.blindFrom != null ? Math.max(0, u.lastAt - u.blindFrom) : 0,
+    blindSpells: (u.blindSpells || []).slice(-10).reverse(),
   };
 }
 
@@ -335,12 +421,12 @@ export function evaluate(state, snapshot, nowMs) {
   const liquidity =
     snapshot.liquidity ||
     { bid: perp?.bid ?? null, ask: perp?.ask ?? null, mid: perp?.bid != null && perp?.ask != null ? (perp.bid + perp.ask) / 2 : perp?.bid ?? perp?.ask ?? null, halfSpread: 0 };
-  const step = perp && perp.mark ? perp.contractSize / perp.mark : 0; // BTC per $10 contract
+  const step = canHedgeOn(snapshot) ? perp.contractSize / perp.mark : 0; // BTC per $10 contract
 
   // Hedge decision. Only run when a structure is open, the perp is priced, and the greeks gate is OK;
   // otherwise stand pat (a degraded snapshot must never trigger a trade on bad data).
   let decision;
-  if (structure && perp && step > 0 && gateOk) {
+  if (structure && step > 0 && gateOk) {
     decision = decideHedge({
       optionDelta,
       Qperp,
@@ -357,8 +443,15 @@ export function evaluate(state, snapshot, nowMs) {
       structureQty: structure.legs[0]?.qtyAbs ?? cfg.qty,
     });
   } else {
+    // ПРИЧИНА ПРОПУСКА НАЗЫВАЕТСЯ, а не остаётся пустым списком. Без неё «SKIP при нулевом
+    // превышении» (всё в порядке, дельта внутри полосы) и «SKIP при живом превышении, потому что
+    // цены перпа нет» (хедж НЕ СМОГ, превышение осталось на счёте) выглядят в цикле одинаково, и
+    // оператор не отличит здоровый тик от слепого. Проверяется в том же порядке, в каком условие
+    // выше отказывает.
+    const skipReason = !structure ? "no_structure" : !canHedgeOn(snapshot) ? "no_perp" : !gateOk ? "stale" : null;
     decision = {
       decision: "SKIP",
+      skip_reason: skipReason,
       trigger_reason: [],
       estimated_cost: null,
       estimated_benefit: 0,
@@ -514,7 +607,8 @@ export function evaluate(state, snapshot, nowMs) {
     iv_regime = computeRegime(snapshot.ivContext.series, { nowMs, cfg: liveCfg });
     // The same ranking applied to the DVOL series: its history is backfilled 24–48h from the public
     // volatility-index endpoint, so this rank is meaningful from the first minutes of a session while
-    // the ATM window is still filling. Context only - `favorable` stays ATM-driven.
+    // the ATM window is still filling. Второй ранг это КОНТЕКСТ рядом с первым: карточка их только
+    // показывает, вердикта о входе у неё нет ни по одному из них (см. шапку regime.js).
     iv_regime.dvol_rank = computeRegime(
       snapshot.ivContext.series.map((e) => ({ ts: e.ts, atmIv: e.dvol })),
       { nowMs, cfg: liveCfg },
@@ -552,6 +646,10 @@ export function evaluate(state, snapshot, nowMs) {
     estimated_cost: decision.estimated_cost,
     estimated_benefit: decision.estimated_benefit,
     decision: decision.decision,
+    // Причина пропуска. null на здоровом тике; "no_perp" означает, что хедж НЕ СМОГ исполниться,
+    // а не что дельта внутри полосы, и эти два случая обязаны быть различимы в одном поле цикла:
+    // именно их неразличимость скрыла 83.7 минуты слепоты на живом прогоне (аудит 2026-09-22).
+    skip_reason: decision.skip_reason ?? null,
     hedge_order: decision.hedge_order,
     last_hedge: lastHedge,
     account: acct,

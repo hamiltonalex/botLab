@@ -1215,3 +1215,96 @@ test("ingest: при обеих ставках в снимке начисляе�
   engine.ingest(st, { perp: { currentFunding: 0.0002, contractSize: 10, mark: 61000 }, underlying: 61000 }, NOON + 60_000);
   near(st.perpState.fundingCum - b2, 12 * 10 * 0.0002 * (30 / 28800), 1e-15, "доначислен весь интервал 30 с");
 });
+
+// ── СЛЕПОТА ХЕДЖА: ТИКИ ИДУТ, ЦЕНЫ ПЕРПА НЕТ ────────────────────────────────────────────────────
+// Аудит 2026-09-22 нашёл на живом прогоне 83.7 минуты удержания позиции без цены перпа (пять
+// эпизодов, крупнейшие 36.0 мин 05.09 и 38.3 мин 15.09, оба от отказа биржи 503 ровно в 09:00Z).
+// Счётчик непрерывности показывал в это время два перерыва по 75-111 секунд совсем другого дня,
+// потому что перерывом он считает пропуск ТИКА, а тики все эти минуты приходили исправно. Ни
+// счётчика, ни строки леджера у слепоты не было вовсе, и 83.7 минуты пришлось восстанавливать из
+// 233 МБ записи тиков.
+
+function blindSetup(nowMs) {
+  const f = sellFixture(nowMs);
+  const st = engine.create({ nowMs, settings: { paperEquityUsd: 200000 } });
+  assert.ok(engine.openStructure(st, { kind: "sell-call", execStyle: "limit", sanityCfg: SANITY_OFF },
+    f.chain, f.snapshot, nowMs).ok, "структура продавца не открылась");
+  return { st, f };
+}
+const blindSnap = (f, ts) => ({ ...f.snapshot, ts, perp: null });
+const seeingSnap = (f, ts) => ({ ...f.snapshot, ts });
+
+test("слепота: тик без цены перпа считается слепым и НЕ считается перерывом опроса", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const { st, f } = blindSetup(nowMs);
+  // Три тика подряд ровно по расписанию: таймер не сбоил ни разу, сбоила цена.
+  engine.ingest(st, seeingSnap(f, nowMs), nowMs);
+  for (let k = 1; k <= 3; k++) engine.ingest(st, blindSnap(f, nowMs + k * 15_000), nowMs + k * 15_000);
+  const u = engine.uptimeStats(st);
+  assert.equal(u.blindTicks, 3, "три слепых тика сосчитаны");
+  assert.equal(u.gaps.length, 0, "перерыва опроса НЕ БЫЛО: таймер срабатывал каждые 15 с");
+  // Эпизод считается от ПОСЛЕДНЕГО ЗРЯЧЕГО тика: цена пропала где-то между ним и первым слепым,
+  // и верхняя граница взята намеренно, у счётчика риска ошибаться надо в эту сторону.
+  assert.equal(u.blindNowMs, 45_000, "открытый эпизод виден живым, а не только после того, как кончится");
+  assert.equal(u.lostSlots, 0, "покрытие опроса слепоту не видит по построению - потому она и считается отдельно");
+});
+
+test("слепота: эпизод закрывается зрячим тиком и оставляет строку в леджере", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const { st, f } = blindSetup(nowMs);
+  engine.ingest(st, seeingSnap(f, nowMs), nowMs);
+  const before = st.ledger.length;
+  for (let k = 1; k <= 4; k++) engine.ingest(st, blindSnap(f, nowMs + k * 15_000), nowMs + k * 15_000);
+  assert.equal(st.ledger.length, before, "пока эпизод идёт, строки нет: 36 минут по 15 с это 144 тика");
+
+  const wake = nowMs + 5 * 15_000;
+  engine.ingest(st, seeingSnap(f, wake), wake);
+  const rows = st.ledger.filter((r) => r.type === "blind");
+  assert.equal(rows.length, 1, "одна строка на ЭПИЗОД, а не на тик");
+  assert.match(rows[0].note, /75с/, "строка называет длительность");
+  assert.match(rows[0].note, /4 тик/, "строка называет, сколько тиков пришло вслепую");
+
+  const u = engine.uptimeStats(st);
+  assert.equal(u.blindNowMs, 0, "эпизод закрыт");
+  assert.equal(u.blindMs, 75_000, "накопленная слепота");
+  assert.equal(u.maxBlindMs, 75_000, "худший эпизод");
+  assert.equal(u.blindSpells.length, 1);
+  assert.equal(u.blindSpells[0].ticks, 4);
+});
+
+test("слепота: решение называет причину пропуска, а не молчит пустым списком", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const { st, f } = blindSetup(nowMs);
+  // Дельта проданного колла держит превышение полосы: хедж НУЖЕН и именно поэтому его отсутствие
+  // надо отличать от «всё внутри полосы».
+  const blindCyc = engine.evaluate(st, blindSnap(f, nowMs + 15_000), nowMs + 15_000);
+  assert.equal(blindCyc.decision, "SKIP");
+  assert.equal(blindCyc.skip_reason, "no_perp", "причина названа");
+  assert.ok(blindCyc.delta_excess > 0, "превышение полосы посчитано и осталось нехеджированным");
+
+  const okCyc = engine.evaluate(st, seeingSnap(f, nowMs + 30_000), nowMs + 30_000);
+  assert.notEqual(okCyc.skip_reason, "no_perp", "зрячий тик причиной «нет перпа» не помечается");
+});
+
+test("слепота: строка разрыва фандинга называет слепой ход, а не разрыв тиков", () => {
+  // Часы фандинга стоят и когда бота не было, и когда он шёл слепым. Раньше строка называла любой
+  // такой интервал «разрывом тиков», и на живом прогоне это врало дважды: 05.09 и 15.09 тики шли
+  // все 36-38 минут отказа биржи.
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const { st, f } = blindSetup(nowMs);
+  st.perpState.qty = -12;
+  st.perpState.avgEntry = 100000;
+  st.lastIngestAt = nowMs;
+  const maxGap = 300; // анти-catch-up кламп схемы (HEDGE_CONSTANTS.fundingMaxGapSec, не настройка профиля)
+  const step = 15_000;
+  const blindMs = (maxGap * 1000) + 10 * 60_000; // заведомо больше клампа
+  for (let t = step; t <= blindMs; t += step) engine.ingest(st, blindSnap(f, nowMs + t), nowMs + t);
+  const wake = nowMs + blindMs + step;
+  engine.ingest(st, { ...f.snapshot, ts: wake, perp: { ...f.snapshot.perp, funding8h: 0.0001 } }, wake);
+
+  const gap = st.ledger.filter((r) => r.type === "funding-gap").at(-1);
+  assert.ok(gap, "строка разрыва фандинга появилась");
+  assert.match(gap.note, /слепой ход/, "названа настоящая причина");
+  assert.match(gap.note, /тик\(ов\) пришло/, "сказано, что тики всё это время шли");
+  assert.doesNotMatch(gap.note, /разрыв тиков/, "прежняя формулировка врала: тики не прерывались");
+});
