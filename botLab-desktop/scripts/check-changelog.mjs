@@ -3,7 +3,8 @@
 //   1. CHANGELOG.md has a `## [X.Y.Z]` section, and that section carries an **Влияние** (impact) line
 //      - the forcing function so every release consciously states its blast radius.
 //   2. If the release's diff touches src/engine/** (the trading math), the impact line may NOT declare
-//      "нет"/"none": a change to the engine must state a real impact (⚠️/💰/🖥/⚙️). This is the
+//      "нет"/"none": a change to the engine must name a real impact in words right after «Влияние:»
+//      (торговая логика · P&L · UI · настройки/данные; the project writes no emoji). This is the
 //      §9.2-3 "engine diff ⇒ impact marker" gate, checked against CHANGELOG.md (which IS the release
 //      body, §8.2) so it needs no GitHub API. The git-diff half is best-effort: if history/tags are
 //      unavailable (shallow clone), it degrades to a notice rather than a false failure.
@@ -46,7 +47,7 @@ const section = sectionLines.join("\n");
 
 const impactLine = section.split("\n").find((l) => /Влияние/i.test(l));
 if (!impactLine) {
-  console.error(`check-changelog: FAIL - the [${version}] section has no **Влияние** (impact) line.\n  State the release impact (⚠️ торговая логика · 💰 P&L · 🖥 UI · ⚙️ настройки/данные, or "Влияние: нет").`);
+  console.error(`check-changelog: FAIL - the [${version}] section has no **Влияние** (impact) line.\n  State the release impact in words right after «Влияние:» (торговая логика · P&L · UI · настройки/данные), or "Влияние: нет".`);
   process.exit(1);
 }
 
@@ -68,11 +69,17 @@ try {
   engineNote = `engine-diff skipped (git unavailable: ${String(err.message || err).split("\n")[0]})`;
 }
 
-// \b is ASCII-only in JS and forms no boundary around Cyrillic, so use \p{L} lookarounds as a
-// Unicode-aware word boundary - otherwise "Влияние: нет" would slip past the engine gate.
-const saysNone = /(?<!\p{L})(нет|none)(?!\p{L})/iu.test(impactLine) && !/[⚠️💰🖥⚙️]/u.test(impactLine);
+// The declared impact is whatever follows «Влияние:» on the line, with the bold markers stripped:
+// "**Влияние: торговая логика · UI.** Меняется ..." declares "торговая логика · UI. Меняется ...".
+// Only "нет"/"none" at the START of that text means "this release changes nothing". The old check
+// looked for "нет" anywhere on the line and took emoji as proof of a real impact; the project no
+// longer writes emoji, so a plain explanation that happened to contain "нет" would fail the gate.
+// \b is ASCII-only in JS and forms no boundary around Cyrillic, so a \p{L} lookahead serves as a
+// Unicode-aware word boundary: "нетривиальный" is not "нет".
+const declared = impactLine.replace(/\*/g, "").replace(/^.*?Влияние\s*:?\s*/iu, "");
+const saysNone = /^(нет|none)(?!\p{L})/iu.test(declared);
 if (engineChanged && saysNone) {
-  console.error(`check-changelog: FAIL - src/engine/** changed but [${version}] declares "Влияние: нет".\n  An engine change must state a real impact (⚠️ торговая логика / 💰 P&L at minimum). Line was:\n  ${impactLine.trim()}`);
+  console.error(`check-changelog: FAIL - src/engine/** changed but [${version}] declares "Влияние: нет".\n  An engine change must name a real impact (торговая логика or P&L at minimum). Line was:\n  ${impactLine.trim()}`);
   process.exit(1);
 }
 

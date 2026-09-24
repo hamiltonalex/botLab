@@ -25,7 +25,7 @@ const tmpProfile = mkdtempSync(join(tmpdir(), "botlab-shot-profile-"));
 const results = [];
 const check = (name, ok, detail = "") => {
   results.push({ name, ok });
-  console.log(`${ok ? "✓" : "✗"} ${name}${detail ? " - " + detail : ""}`);
+  console.log(`${ok ? "ok" : "FAIL"} ${name}${detail ? " - " + detail : ""}`);
   return ok;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

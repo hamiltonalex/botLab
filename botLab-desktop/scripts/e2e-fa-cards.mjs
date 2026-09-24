@@ -98,12 +98,12 @@ const check = (name, got, exp, opts = {}) => {
   const g = norm(got), e = norm(exp);
   const ok = opts.contains ? g.includes(e) : g === e;
   results.push({ section, name, ok });
-  console.log(`${ok ? "✓" : "✗"} [${section}] ${name}${ok ? "" : `\n      экран: «${g}»\n      ждали: «${e}»`}`);
+  console.log(`${ok ? "ok" : "FAIL"} [${section}] ${name}${ok ? "" : `\n      экран: «${g}»\n      ждали: «${e}»`}`);
   return ok;
 };
 const checkBool = (name, ok, detail = "") => {
   results.push({ section, name, ok });
-  console.log(`${ok ? "✓" : "✗"} [${section}] ${name}${detail ? " - " + detail : ""}`);
+  console.log(`${ok ? "ok" : "FAIL"} [${section}] ${name}${detail ? " - " + detail : ""}`);
   return ok;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
