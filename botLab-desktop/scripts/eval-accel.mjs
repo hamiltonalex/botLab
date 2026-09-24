@@ -68,6 +68,8 @@ if (args.includes("--help") || !argOf("--dir")) {
                         не торгует: часовая сетка по построению не даёт больше 24 пересечений
                         полосы хеджа в сутки, а живая сделка 2 дала 35.2
   --band <x>            полоса хеджа, BTC на 1.0 контракта (по умолчанию дефолт схемы 0.03)
+  --delta <x>           целевая |дельта| проданной ноги у всех цепочек прогона (по умолчанию
+                        дефолт схемы 0.45, допуск тот же 0.10); у стрэнгла одна на обе ноги
   --perp-fee <x>        комиссия перпа долей (0 мейкер, 0.00025 = 2.5 б.п.; стресс исполнения)
   --exec <модель>       maker-mid | taker-cross (вход в опцион; стресс исполнения)
   --spread-scale <x>    множитель модельного спреда (по умолчанию дефолт схемы 1.10)
@@ -92,7 +94,8 @@ if (args.includes("--help") || !argOf("--dir")) {
   --stress-cap <а,б,..> доли equity для MM на стрессе (по умолчанию 0.8,1.0)
   --json <файл>         машинный дамп метрик
   --trades-json <файл>  ПОСДЕЛОЧНАЯ выгрузка: вход, выход, проданная IV, RV7d до входа,
-                        РЕАЛИЗОВАННАЯ волатильность за время удержания, итог сделки и залог.
+                        РЕАЛИЗОВАННАЯ волатильность за время удержания, итог сделки и залог,
+                        ноги на входе и доля счёта в залоге при стресс-правиле базы (X=45 cap=0.8).
                         Нужна, чтобы положить живую сделку рядом с пятилетней выборкой`);
   process.exit(argOf("--dir") ? 0 : 1);
 }
@@ -364,8 +367,17 @@ const dt = (ms) => new Date(ms).toISOString().slice(0, 10);
 // калиброван именно под стресс-правило.
 const BAND = argOf("--band") == null ? null : Number(argOf("--band"));
 if (BAND != null && !(BAND > 0)) { console.error("--band: положительное число, BTC на 1.0 контракта"); process.exit(1); }
+// Целевая дельта ключом по той же причине, что полоса. Путы разной дельты сравнимы только при
+// одинаковом стрессе: у пута 0.25 залог на контракт меньше, чем у пута 0.45, и эталон hist-sellhedge,
+// у которого ключ --delta есть давно, при той же доле счёта в залоге даёт дальнему путу больше
+// контрактов и больший хвост. Здесь размер считает стресс-правило, поэтому сравнение честное. Правило
+// выбора ноги прежнее: deltaTarget читают движковые pickSellLeg и pickStranglePair, стенд только
+// перестаёт брать его всегда дефолтным. Замер предрегистрации 2026-09-24 (три направления бота 2).
+const DELTA = argOf("--delta") == null ? null : Number(argOf("--delta"));
+if (DELTA != null && !(DELTA > 0 && DELTA < 1)) { console.error("--delta: |дельта| в (0,1), например 0.25"); process.exit(1); }
 const cfgOf = (over) => ({ ...SELLHEDGE_DEFAULTS, lot: LOT, execModel: EXEC, perpFee: PERP_FEE,
-  ...(SPREAD == null ? {} : { spreadScale: SPREAD }), ...(BAND == null ? {} : { bandBtc: BAND }), ...over });
+  ...(SPREAD == null ? {} : { spreadScale: SPREAD }), ...(BAND == null ? {} : { bandBtc: BAND }),
+  ...(DELTA == null ? {} : { deltaTarget: DELTA }), ...over });
 const mtype = (s) => (s === "P" ? "put" : "call");
 
 // Затвор нулевого контроля: та же частота срабатываний, момент внутри сделки распределён равномерно,
@@ -902,7 +914,7 @@ function variantChains(kind, w, legType, cfg) {
 console.log(`# Ускорение оборота схемы продавца: равный хвост (пик MM ≤ ${CAP})\n`);
 console.log(`Запись ${DIR}: ${N} снимков, ${dt(R.times[0])} .. ${dt(R.times.at(-1))} (${f2(spanDays / 365, 2)} года).`);
 console.log(`Каданс протяжки: ${FINE ? `МЕЛКИЙ, ${FINE.n} шагов пути индекса (${FINE.path})` : "часовой (шаг записи)"}.`);
-console.log(`Депозит $${DEPOSIT}. Дельта ${SELLHEDGE_DEFAULTS.deltaTarget} · полоса ${BAND ?? SELLHEDGE_DEFAULTS.bandBtc} BTC ·`
+console.log(`Депозит $${DEPOSIT}. Дельта ${DELTA ?? SELLHEDGE_DEFAULTS.deltaTarget} · полоса ${BAND ?? SELLHEDGE_DEFAULTS.bandBtc} BTC ·`
   + ` перп ${PERP_FEE ? (PERP_FEE * 1e4).toFixed(1) + " б.п." : "мейкер"} · вход ${EXEC}`
   + ` · спред ×${SPREAD ?? SELLHEDGE_DEFAULTS.spreadScale}. Размер варианта калибруется бинарным поиском`
   + ` максимального deployPct, при котором пик MM-утилизации за ВСЮ запись не превышает ${CAP}.\n`);
@@ -1281,13 +1293,24 @@ if (argOf("--trades-json")) {
         ? realizedVolPct(candles, { bars, nowMs: R.times[t.endIdx] + 3600000 })
         : null;
       const rvHold = fin(rvBundle?.rvPct) ? rvBundle.rvPct : null;
+      // ДОЛЯ СЧЁТА В ЗАЛОГЕ ПРИ РАЗМЕРЕ БАЗЫ, то есть при стресс-правиле X=45 cap=0.8. Лоты правила
+      // пропорциональны счёту, поэтому доля это свойство СДЕЛКИ, а не пути счёта: cap × залог
+      // контракта / худшая стресс-маржа контракта, и не больше единицы, потому что биржа не даёт
+      // залогу превысить счёт. Округление до лота сюда не входит. Нужна, чтобы счёт по годам и
+      // оценки по подмножествам сделок считались тем размером, которым торгует бот, а не чужой
+      // постоянной долей. Маржа при стрессе считается тем же движковым lotsByStressMargin.
+      const st = lotsByStressMargin({ legs: t.legsAtEntry, indexUsd: t.spot0, equityUsd: 1,
+        xPct: SIZE_BASE.xPct, capFrac: SIZE_BASE.capFrac, lot: LOT });
+      const worst = fin(st.mm1Up) && fin(st.mm1Down) ? Math.max(st.mm1Up, st.mm1Down) : null;
       out.push({ key, name: t.name, ts: t.ts, exitTs: t.exitTs,
         holdDays: (t.exitTs - t.ts) / 86400000,
         ivSold: fin(t.ivPrem) ? t.ivPrem : null, rv7Entry: fin(t.rv7) ? t.rv7 : null, rvHold, rvHoldPairs: rvBundle?.nPairs ?? null,
         edgePts: fin(t.ivPrem) && fin(rvHold) ? t.ivPrem - rvHold : null,
         pnlPerContract: t.pnl, imPerContract: t.im, retIm: t.retIm,
         rehedges: t.reh, turnoverBtc: t.turnover, costUsd: t.costUsd,
-        optLeg: t.optLeg, hedgeLeg: t.hedgeLeg, fund: t.fund, premSold: t.premSold });
+        optLeg: t.optLeg, hedgeLeg: t.hedgeLeg, fund: t.fund, premSold: t.premSold,
+        spot0: t.spot0, legs: t.legsAtEntry, stressMmUp: st.mm1Up, stressMmDown: st.mm1Down,
+        stressShare: worst > 0 ? Math.min((SIZE_BASE.capFrac * t.im) / worst, 1) : null });
     }
   }
   writeFileSync(argOf("--trades-json"), JSON.stringify(out, null, 1));
