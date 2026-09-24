@@ -901,7 +901,7 @@ function chainMarkOpen(state, nowMs) {
 // СОСТОЯНИЕ ЗАТВОРА ЛЕЖИТ НА СТРУКТУРЕ, а не в замыкании: файл состояния переживает перезапуск
 // приложения, и гистерезис обязан пережить его вместе с позицией. Затвор в памяти процесса после
 // рестарта начинал бы с нуля, то есть `oneshot` стал бы многоразовым, а `band` потерял бы счётчик
-// подряд идущих часов - другое правило под тем же именем.
+// подряд идущих шагов - другое правило под тем же именем.
 //
 // Единицы: правило измерено НА ОДИН КОНТРАКТ, поэтому МтМ, премия, залог и маржа делятся на
 // `units` (то же произведение qtyAbs·contractSize, каким считает расчёт в экспирацию).
@@ -918,15 +918,28 @@ function stopOutDecision(state, snapshot, cfg) {
   if (quotes.some((q) => !q || !Number.isFinite(q.mark))) return null;
   const spot = snapshot.index ?? snapshot.underlying;
   if (!Number.isFinite(spot) || !(spot > 0)) return null;
+  // ТИК БЕЗ ЦЕНЫ ПЕРПА ПРИ ОТКРЫТОМ ХЕДЖЕ НЕ СУДИТСЯ метриками, которые читают капитал или МтМ
+  // сделки. В таком тике markPerp (pnl.js) отдаёт нулевую переоценку хеджа, и капитал account()
+  // ошибается ровно на неё: у сделки 1 живого прогона переоценка длинного перпа доходила до восьми
+  // тысяч долларов, то есть пропажа цены перпа сама по себе рисовала пробой загрузки маржи. Правило
+  // по расстоянию до страйка (mny) от перпа не зависит и судит такой тик как обычный.
+  if (state.perpState.qty !== 0 && !canHedgeOn(snapshot) && stop.metric !== "mny") return null;
   const m = state.sellChain?.mark;
   if (!m) return null; // накопителя сделки нет: судить не по чему
-  const now = chainCounters(state);
-  const mtm1 = (now.opt - m.opt + (now.perp - m.perp) + (now.fund - m.fund) - (now.fees - m.fees)) / units;
+  // МтМ СДЕЛКИ ПОЛНЫЙ, а капитал взят НА ЕЁ НАЧАЛО, как в офлайн-замере (makeStopAt в sellhedge.js
+  // передаёт счёт 1.0 на момент входа и полный МтМ шага). Тогда предикат складывает их обратно в
+  // капитал счёта на этом тике, и загрузка маржи равна той, что показывает account().
+  // Прежде сюда шёл ТЕКУЩИЙ капитал, который уже содержит весь результат сделки, и к нему ещё раз
+  // прибавлялась его реализованная часть (перп, фандинг, комиссии, издержки входа). Знаменатель
+  // зависел от того, какая доля результата успела реализоваться: на срезе 23.09 правило видело
+  // 24.94% вместо 24.01%, у сделки 1 было ниже настоящей загрузки на 2.5 пункта.
+  const tradeMtm = attribute(state, snapshot).net_total - (m.opt + m.perp + m.fund - m.fees);
+  const equityNow = account(state, snapshot).equity;
   const args = {
-    metric: stop.metric, level: stop.level, mtm1,
+    metric: stop.metric, level: stop.level, mtm1: tradeMtm / units,
     premSold: -(st.entryDebitUsd ?? 0) / units, // короткая нога даёт отрицательный дебет
     imUsd: st.sizing?.imPerContract ?? null,
-    equityUsd: account(state, snapshot).equity,
+    equityUsd: equityNow - tradeMtm,
     qty: units,
     mmUsd: structureMargin(st, snapshot).maintenance / units,
     spotUsd: spot,
@@ -949,12 +962,18 @@ function maybeStopOut(state, snapshot, nowMs) {
   if (snapshot.fresh?.gateOk === false) return false;
   const d = stopOutDecision(state, snapshot, cfg);
   if (!d) return false;
-  st.stopGate = d.gate; // состояние затвора переживает и тик, и перезапуск приложения
-  if (d.action !== "exit") return false; // "none" считает срабатывания и ничего не делает
+  if (d.action !== "exit") {
+    st.stopGate = d.gate; // состояние затвора переживает и тик, и перезапуск приложения
+    return false; // "none" считает срабатывания и ничего не делает
+  }
   // Метка ожидания ставится ДО закрытия: closeStructure обнуляет структуру, и её экспирация после
   // этого недоступна. Цепочка не откроет следующую сделку раньше этой метки (shouldOpenNext).
   const reopenAfterMs = st.expiryMs ?? null;
   const res = closeStructure(state, snapshot, nowMs, "stop");
+  // СРАБОТАВШИЙ ЗАТВОР ЗАПИСЫВАЕТСЯ ТОЛЬКО ВМЕСТЕ С ИСПОЛНЕННЫМ ВЫХОДОМ. closeStructure отказывает,
+  // когда у открытого хеджа нет цены перпа. Прежде затвор сохранялся сработавшим до попытки, и после
+  // такого отказа правило молчало до самой экспирации: ни строки в леджере, ни повтора. Теперь
+  // структура остаётся с прежним состоянием затвора, и следующий тик с ценой решает заново.
   if (res?.ok !== true) return false;
   if (state.sellChain) state.sellChain.reopenAfterMs = reopenAfterMs;
   return true;

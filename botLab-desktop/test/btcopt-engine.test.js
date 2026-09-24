@@ -7,6 +7,7 @@ import * as engine from "../src/engine/btcopt/engine.js";
 import { effectiveDeadband } from "../src/engine/btcopt/hedge.js";
 import { SELLHEDGE_DEFAULTS } from "../src/engine/otmscan/sellhedge.js";
 import { legMargin } from "../src/engine/btcopt/margin.js";
+import { markPerp } from "../src/engine/btcopt/pnl.js";
 
 const near = (a, b, tol, l) => assert.ok(Math.abs(a - b) < tol, `${l}: got ${a} want ${b} (±${tol})`);
 
@@ -1193,6 +1194,91 @@ test("стоп: действия halve и restore живой бот не при�
     f.chain, f.snapshot, nowMs);
   assert.ok(r.error && /не реализовано/.test(r.error), `ожидался внятный отказ, получено: ${JSON.stringify(r)}`);
   assert.equal(st.structure, null, "структура не открыта");
+});
+
+// ── СТОП ПО МАРЖЕ: дефекты, найденные внешним аудитом 2026-09-24 и воспроизведённые на копии
+// живого состояния бота 2. Живое правило это `mmu`: поддерживающая маржа опционов, делённая на
+// капитал счёта, закрывает сделку при 0.6.
+const STOP_MMU = (level) => ({ metric: "mmu", level, action: "exit", hyst: "oneshot", fill: "same" });
+// Хедж появляется первым evaluate после открытия, а не самим открытием: без него у сделки нет ни
+// позиции перпа, ни требования к его цене при закрытии.
+const hedgeUp = (f, st, t) => {
+  engine.evaluate(st, f.snapshot, t);
+  assert.ok(st.perpState.qty > 0, `хедж короткого колла это длинный перп: ${st.perpState.qty}`);
+};
+
+test("стоп mmu: судит по марже к капиталу счёта, перевод переоценки хеджа в реализованное его не двигает", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const { f, st } = sellWithStop(nowMs, STOP_MMU(0.99));
+  hedgeUp(f, st, nowMs + 1000);
+  const snap = breachSnap(f); // BTC +4%: длинный перп хеджа в прибыли, проданный колл в убытке
+  const acct = engine.account(st, snap);
+  // Хедж закрыт и тут же открыт заново по марку без комиссии: прибыль перпа из переоценки ушла в
+  // реализованное, стоимость счёта не изменилась ни на цент. Прежде стоп прибавлял реализованный
+  // результат сделки к капиталу, который его уже содержит, и эта перестановка сдвигала метрику.
+  const upl = markPerp(st.perpState, snap.perp).upl_usd;
+  assert.ok(upl > 1000, `в фикстуре хедж обязан быть в заметной прибыли: ${upl}`);
+  st.perpState.realizedUsd += upl;
+  st.perpState.avgEntry = snap.perp.mark;
+  near(engine.account(st, snap).equity, acct.equity, 1e-6, "стоимость счёта та же");
+  // Порог чуть ниже настоящей загрузки: правильное правило обязано сработать.
+  st.structure.engineCfg.stop = STOP_MMU(acct.maintenance_utilisation * 0.999);
+  engine.evaluate(st, snap, nowMs + 3600000);
+  assert.equal(st.structure, null, `загрузка ${acct.maintenance_utilisation} выше порога, сделка обязана закрыться`);
+  assert.equal(st.sellChain.trades.at(-1).reason, "stop");
+});
+
+test("стоп mmu: тик без цены перпа при открытом хедже не судится, а следующий тик с ценой судится", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const { f, st } = sellWithStop(nowMs, STOP_MMU(0.99));
+  hedgeUp(f, st, nowMs + 1000);
+  st.structure.engineCfg.stop = STOP_MMU(0.01); // пробой гарантирован на любом тике с ценой
+  // Без цены перпа account() не видит переоценку хеджа, то есть капитал в таком тике неверен, а
+  // закрыть позицию всё равно нельзя: closeStructure требует цену перпа.
+  engine.evaluate(st, { ...breachSnap(f), perp: null, liquidity: null }, nowMs + 3600000);
+  assert.ok(st.structure, "без цены перпа решения нет");
+  assert.notEqual(st.structure.stopGate?.fired, true, "затвор не израсходован");
+  engine.evaluate(st, breachSnap(f), nowMs + 3600000 + 15000);
+  assert.equal(st.structure, null, "с ценой перпа правило срабатывает");
+});
+
+test("стоп: неудачное закрытие не расходует правило, выход повторяется на следующем тике", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  // Правило по расстоянию до страйка перпа не требует и судит тик без его цены, а закрыть сделку
+  // без цены перпа нельзя. Прежде затвор записывался сработавшим ДО попытки закрытия, и после
+  // отказа правило молчало до экспирации.
+  const { f, st } = sellWithStop(nowMs, STOP_MNY);
+  hedgeUp(f, st, nowMs + 1000);
+  engine.evaluate(st, { ...breachSnap(f), perp: null, liquidity: null }, nowMs + 3600000);
+  assert.ok(st.structure, "без цены перпа закрыть нельзя");
+  assert.notEqual(st.structure.stopGate?.fired, true, "сработавшим затвор записывается только вместе с закрытием");
+  engine.evaluate(st, breachSnap(f), nowMs + 3600000 + 15000);
+  assert.equal(st.structure, null, "следующий тик с ценой перпа закрывает сделку");
+  assert.equal(st.sellChain.trades.at(-1).reason, "stop");
+});
+
+test("стоп mmu: капитал ниже нуля это срабатывание, а не молчание", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const { f, st } = sellWithStop(nowMs, STOP_MMU(0.6));
+  hedgeUp(f, st, nowMs + 1000);
+  // account() берёт депозит из живых настроек: депозит в $1 при той же позиции даёт капитал ниже
+  // нуля на издержки входа. Прежде предикат отвечал «стопа нет» на любой неположительный капитал.
+  st.settings.paperEquityUsd = 1;
+  assert.ok(engine.account(st, f.snapshot).equity < 0, "капитал копии ниже нуля");
+  engine.evaluate(st, f.snapshot, nowMs + 3600000);
+  assert.equal(st.structure, null, "при капитале ниже нуля правило обязано закрыть сделку");
+});
+
+test("стоп band в живом движке: второй тик подряд за порогом закрывает сделку, то есть через 15 секунд", () => {
+  const nowMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+  // Затвор band считает ВЫЗОВЫ evaluate подряд, а бот зовёт evaluate на каждом тике раз в 15 секунд.
+  // В замере 2026-08-28 шаг был часовым, и там те же два шага означали два часа. Тест закрепляет
+  // живой смысл, чтобы его смена была решением, а не случайностью.
+  const { f, st } = sellWithStop(nowMs, { ...STOP_MNY, hyst: "band" });
+  engine.evaluate(st, breachSnap(f), nowMs + 3600000);
+  assert.ok(st.structure, "одного тика мало");
+  engine.evaluate(st, breachSnap(f), nowMs + 3600000 + 15000);
+  assert.equal(st.structure, null, "второй тик через 15 секунд закрывает");
 });
 
 // ── Начисление фандинга по мгновенной ставке биржи (05.09.2026) ─────────────────────────────────

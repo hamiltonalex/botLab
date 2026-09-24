@@ -433,6 +433,16 @@ test("предикат: каждая из пяти метрик отвечает
   assert.equal(shouldStopOut({ metric: "premx", level: 1 }), false, "без величин - молчание, не догадка");
 });
 
+test("предикат mmu: известный капитал ноль и ниже это срабатывание, неизвестный это молчание", () => {
+  const b = { metric: "mmu", level: 0.6, mmUsd: 10, qty: 1, mtm1: 0 };
+  assert.equal(shouldStopOut({ ...b, equityUsd: -1 }), true, "счёт ниже нуля биржа уже закрыла бы сама");
+  assert.equal(shouldStopOut({ ...b, equityUsd: 0 }), true);
+  assert.equal(shouldStopOut({ ...b, equityUsd: 5, mtm1: -6 }), true, "ноль и ниже после сложения с МтМ");
+  assert.equal(shouldStopOut({ ...b, equityUsd: 100 }), false, "10 / 100 ниже порога 0.6");
+  assert.equal(shouldStopOut({ ...b, equityUsd: undefined }), false, "капитал неизвестен: судить не по чему");
+  assert.equal(shouldStopOut({ ...b, equityUsd: NaN }), false);
+});
+
 test("затвор: oneshot один раз за сделку, band требует двух шагов подряд", () => {
   const one = makeStopGate({ metric: "premx", level: 1, action: "exit", hyst: "oneshot" });
   assert.equal(one(true), "exit");
