@@ -1,0 +1,579 @@
+{
+  "results": [
+    {
+      "request_id": 200,
+      "label": "MNQ qualified",
+      "requested_type": 3,
+      "generic_ticks": "",
+      "snapshot": false,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 815824267,
+        "symbol": "MNQ",
+        "localSymbol": "MNQZ6",
+        "secType": "FUT",
+        "exchange": "CME",
+        "currency": "USD",
+        "lastTradeDateOrContractMonth": "20261218"
+      },
+      "requested_utc": "2026-09-29T09:12:12.576593+00:00",
+      "requested_epoch": 1790673132.576677,
+      "cancelled_epoch": 1790673182.700417,
+      "callbacks": 0,
+      "price_callbacks": 0,
+      "valid_bid_ask_last": 0,
+      "types": [],
+      "first_valid": null,
+      "last_valid": null,
+      "errors": [
+        {
+          "code": 10167,
+          "message": "Requested market data is not subscribed. Displaying delayed market data."
+        },
+        {
+          "code": 10167,
+          "message": "Requested market data is not subscribed. Displaying delayed market data."
+        },
+        {
+          "code": 10197,
+          "message": "No market data during competing live session"
+        }
+      ]
+    },
+    {
+      "request_id": 201,
+      "label": "MNQ conId",
+      "requested_type": 3,
+      "generic_ticks": "",
+      "snapshot": false,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 815824267,
+        "symbol": "",
+        "localSymbol": "",
+        "secType": "",
+        "exchange": "CME",
+        "currency": "",
+        "lastTradeDateOrContractMonth": ""
+      },
+      "requested_utc": "2026-09-29T09:12:12.577254+00:00",
+      "requested_epoch": 1790673132.5772648,
+      "cancelled_epoch": 1790673182.700532,
+      "callbacks": 3,
+      "price_callbacks": 0,
+      "valid_bid_ask_last": 0,
+      "types": [
+        3,
+        3
+      ],
+      "first_valid": null,
+      "last_valid": null,
+      "errors": []
+    },
+    {
+      "request_id": 202,
+      "label": "MNQ localSymbol",
+      "requested_type": 3,
+      "generic_ticks": "",
+      "snapshot": false,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 0,
+        "symbol": "",
+        "localSymbol": "MNQZ6",
+        "secType": "FUT",
+        "exchange": "CME",
+        "currency": "USD",
+        "lastTradeDateOrContractMonth": ""
+      },
+      "requested_utc": "2026-09-29T09:12:12.577460+00:00",
+      "requested_epoch": 1790673132.577467,
+      "cancelled_epoch": 1790673182.700595,
+      "callbacks": 3,
+      "price_callbacks": 0,
+      "valid_bid_ask_last": 0,
+      "types": [
+        3,
+        3
+      ],
+      "first_valid": null,
+      "last_valid": null,
+      "errors": []
+    },
+    {
+      "request_id": 203,
+      "label": "MNQ generic221",
+      "requested_type": 3,
+      "generic_ticks": "221",
+      "snapshot": false,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 815824267,
+        "symbol": "MNQ",
+        "localSymbol": "MNQZ6",
+        "secType": "FUT",
+        "exchange": "CME",
+        "currency": "USD",
+        "lastTradeDateOrContractMonth": "20261218"
+      },
+      "requested_utc": "2026-09-29T09:12:12.577636+00:00",
+      "requested_epoch": 1790673132.577642,
+      "cancelled_epoch": 1790673182.700643,
+      "callbacks": 3,
+      "price_callbacks": 0,
+      "valid_bid_ask_last": 0,
+      "types": [
+        3,
+        3
+      ],
+      "first_valid": null,
+      "last_valid": null,
+      "errors": [
+        {
+          "code": 2187,
+          "message": "Generic tick data is not available when using delayed market data fallback."
+        },
+        {
+          "code": 2187,
+          "message": "Generic tick data is not available when using delayed market data fallback."
+        }
+      ]
+    },
+    {
+      "request_id": 204,
+      "label": "EURUSD control",
+      "requested_type": 3,
+      "generic_ticks": "",
+      "snapshot": false,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 0,
+        "symbol": "EUR",
+        "localSymbol": "",
+        "secType": "CASH",
+        "exchange": "IDEALPRO",
+        "currency": "USD",
+        "lastTradeDateOrContractMonth": ""
+      },
+      "requested_utc": "2026-09-29T09:12:12.577806+00:00",
+      "requested_epoch": 1790673132.577811,
+      "cancelled_epoch": 1790673182.7007182,
+      "callbacks": 651,
+      "price_callbacks": 141,
+      "valid_bid_ask_last": 133,
+      "types": [
+        1
+      ],
+      "first_valid": {
+        "received_utc": "2026-09-29T09:12:12.809962+00:00",
+        "received_epoch": 1790673132.809972,
+        "received_monotonic": 52542.57921675,
+        "request_id": 204,
+        "callback": "tickPrice",
+        "tick_id": 1,
+        "tick_name": "BID",
+        "value": 1.13424,
+        "attributes": {
+          "canAutoExecute": true,
+          "pastLimit": false,
+          "preOpen": false
+        }
+      },
+      "last_valid": {
+        "received_utc": "2026-09-29T09:13:02.926880+00:00",
+        "received_epoch": 1790673182.926881,
+        "received_monotonic": 52592.6959965,
+        "request_id": 204,
+        "callback": "tickPrice",
+        "tick_id": 2,
+        "tick_name": "ASK",
+        "value": 1.13395,
+        "attributes": {
+          "canAutoExecute": true,
+          "pastLimit": false,
+          "preOpen": false
+        }
+      },
+      "errors": []
+    },
+    {
+      "request_id": 205,
+      "label": "QQQ delayed control",
+      "requested_type": 3,
+      "generic_ticks": "",
+      "snapshot": false,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 0,
+        "symbol": "QQQ",
+        "localSymbol": "",
+        "secType": "STK",
+        "exchange": "SMART",
+        "currency": "USD",
+        "lastTradeDateOrContractMonth": ""
+      },
+      "requested_utc": "2026-09-29T09:12:12.577935+00:00",
+      "requested_epoch": 1790673132.577939,
+      "cancelled_epoch": 1790673182.7008278,
+      "callbacks": 46,
+      "price_callbacks": 19,
+      "valid_bid_ask_last": 17,
+      "types": [
+        3
+      ],
+      "first_valid": {
+        "received_utc": "2026-09-29T09:12:13.387428+00:00",
+        "received_epoch": 1790673133.387445,
+        "received_monotonic": 52543.156688916,
+        "request_id": 205,
+        "callback": "tickPrice",
+        "tick_id": 68,
+        "tick_name": "DELAYED_LAST",
+        "value": 737.44,
+        "attributes": {
+          "canAutoExecute": false,
+          "pastLimit": false,
+          "preOpen": false
+        }
+      },
+      "last_valid": {
+        "received_utc": "2026-09-29T09:12:59.083347+00:00",
+        "received_epoch": 1790673179.083349,
+        "received_monotonic": 52588.852473625,
+        "request_id": 205,
+        "callback": "tickPrice",
+        "tick_id": 67,
+        "tick_name": "DELAYED_ASK",
+        "value": 737.23,
+        "attributes": {
+          "canAutoExecute": false,
+          "pastLimit": false,
+          "preOpen": false
+        }
+      },
+      "errors": []
+    },
+    {
+      "request_id": 210,
+      "label": "MNQ qualified",
+      "requested_type": 4,
+      "generic_ticks": "",
+      "snapshot": false,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 815824267,
+        "symbol": "MNQ",
+        "localSymbol": "MNQZ6",
+        "secType": "FUT",
+        "exchange": "CME",
+        "currency": "USD",
+        "lastTradeDateOrContractMonth": "20261218"
+      },
+      "requested_utc": "2026-09-29T09:13:03.210942+00:00",
+      "requested_epoch": 1790673183.2109702,
+      "cancelled_epoch": 1790673233.308382,
+      "callbacks": 2,
+      "price_callbacks": 0,
+      "valid_bid_ask_last": 0,
+      "types": [
+        3
+      ],
+      "first_valid": null,
+      "last_valid": null,
+      "errors": []
+    },
+    {
+      "request_id": 211,
+      "label": "MNQ conId",
+      "requested_type": 4,
+      "generic_ticks": "",
+      "snapshot": false,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 815824267,
+        "symbol": "",
+        "localSymbol": "",
+        "secType": "",
+        "exchange": "CME",
+        "currency": "",
+        "lastTradeDateOrContractMonth": ""
+      },
+      "requested_utc": "2026-09-29T09:13:03.211330+00:00",
+      "requested_epoch": 1790673183.211338,
+      "cancelled_epoch": 1790673233.308504,
+      "callbacks": 2,
+      "price_callbacks": 0,
+      "valid_bid_ask_last": 0,
+      "types": [
+        3
+      ],
+      "first_valid": null,
+      "last_valid": null,
+      "errors": []
+    },
+    {
+      "request_id": 212,
+      "label": "MNQ localSymbol",
+      "requested_type": 4,
+      "generic_ticks": "",
+      "snapshot": false,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 0,
+        "symbol": "",
+        "localSymbol": "MNQZ6",
+        "secType": "FUT",
+        "exchange": "CME",
+        "currency": "USD",
+        "lastTradeDateOrContractMonth": ""
+      },
+      "requested_utc": "2026-09-29T09:13:03.211477+00:00",
+      "requested_epoch": 1790673183.2114828,
+      "cancelled_epoch": 1790673233.3085718,
+      "callbacks": 1,
+      "price_callbacks": 0,
+      "valid_bid_ask_last": 0,
+      "types": [
+        3
+      ],
+      "first_valid": null,
+      "last_valid": null,
+      "errors": []
+    },
+    {
+      "request_id": 213,
+      "label": "MNQ generic221",
+      "requested_type": 4,
+      "generic_ticks": "221",
+      "snapshot": false,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 815824267,
+        "symbol": "MNQ",
+        "localSymbol": "MNQZ6",
+        "secType": "FUT",
+        "exchange": "CME",
+        "currency": "USD",
+        "lastTradeDateOrContractMonth": "20261218"
+      },
+      "requested_utc": "2026-09-29T09:13:03.211593+00:00",
+      "requested_epoch": 1790673183.211599,
+      "cancelled_epoch": 1790673233.308631,
+      "callbacks": 1,
+      "price_callbacks": 0,
+      "valid_bid_ask_last": 0,
+      "types": [
+        3
+      ],
+      "first_valid": null,
+      "last_valid": null,
+      "errors": [
+        {
+          "code": 2187,
+          "message": "Generic tick data is not available when using delayed market data fallback."
+        }
+      ]
+    },
+    {
+      "request_id": 214,
+      "label": "EURUSD control",
+      "requested_type": 4,
+      "generic_ticks": "",
+      "snapshot": false,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 0,
+        "symbol": "EUR",
+        "localSymbol": "",
+        "secType": "CASH",
+        "exchange": "IDEALPRO",
+        "currency": "USD",
+        "lastTradeDateOrContractMonth": ""
+      },
+      "requested_utc": "2026-09-29T09:13:03.211708+00:00",
+      "requested_epoch": 1790673183.211715,
+      "cancelled_epoch": 1790673233.308692,
+      "callbacks": 940,
+      "price_callbacks": 197,
+      "valid_bid_ask_last": 192,
+      "types": [
+        1
+      ],
+      "first_valid": {
+        "received_utc": "2026-09-29T09:13:03.719628+00:00",
+        "received_epoch": 1790673183.719639,
+        "received_monotonic": 52593.488752458,
+        "request_id": 214,
+        "callback": "tickPrice",
+        "tick_id": 1,
+        "tick_name": "BID",
+        "value": 1.1339,
+        "attributes": {
+          "canAutoExecute": true,
+          "pastLimit": false,
+          "preOpen": false
+        }
+      },
+      "last_valid": {
+        "received_utc": "2026-09-29T09:13:52.951451+00:00",
+        "received_epoch": 1790673232.9514601,
+        "received_monotonic": 52642.720445791,
+        "request_id": 214,
+        "callback": "tickPrice",
+        "tick_id": 2,
+        "tick_name": "ASK",
+        "value": 1.13375,
+        "attributes": {
+          "canAutoExecute": true,
+          "pastLimit": false,
+          "preOpen": false
+        }
+      },
+      "errors": []
+    },
+    {
+      "request_id": 215,
+      "label": "QQQ delayed control",
+      "requested_type": 4,
+      "generic_ticks": "",
+      "snapshot": false,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 0,
+        "symbol": "QQQ",
+        "localSymbol": "",
+        "secType": "STK",
+        "exchange": "SMART",
+        "currency": "USD",
+        "lastTradeDateOrContractMonth": ""
+      },
+      "requested_utc": "2026-09-29T09:13:03.211813+00:00",
+      "requested_epoch": 1790673183.2118201,
+      "cancelled_epoch": 1790673233.308747,
+      "callbacks": 31,
+      "price_callbacks": 13,
+      "valid_bid_ask_last": 11,
+      "types": [
+        3
+      ],
+      "first_valid": {
+        "received_utc": "2026-09-29T09:13:04.194937+00:00",
+        "received_epoch": 1790673184.194968,
+        "received_monotonic": 52593.964081166,
+        "request_id": 215,
+        "callback": "tickPrice",
+        "tick_id": 66,
+        "tick_name": "DELAYED_BID",
+        "value": 737.17,
+        "attributes": {
+          "canAutoExecute": false,
+          "pastLimit": false,
+          "preOpen": false
+        }
+      },
+      "last_valid": {
+        "received_utc": "2026-09-29T09:13:49.166029+00:00",
+        "received_epoch": 1790673229.1660328,
+        "received_monotonic": 52638.935028666,
+        "request_id": 215,
+        "callback": "tickPrice",
+        "tick_id": 67,
+        "tick_name": "DELAYED_ASK",
+        "value": 737.31,
+        "attributes": {
+          "canAutoExecute": false,
+          "pastLimit": false,
+          "preOpen": false
+        }
+      },
+      "errors": []
+    },
+    {
+      "request_id": 220,
+      "label": "MNQ qualified",
+      "requested_type": 3,
+      "generic_ticks": "",
+      "snapshot": true,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 815824267,
+        "symbol": "MNQ",
+        "localSymbol": "MNQZ6",
+        "secType": "FUT",
+        "exchange": "CME",
+        "currency": "USD",
+        "lastTradeDateOrContractMonth": "20261218"
+      },
+      "requested_utc": "2026-09-29T09:13:53.818884+00:00",
+      "requested_epoch": 1790673233.818913,
+      "cancelled_epoch": 1790673253.889036,
+      "callbacks": 2,
+      "price_callbacks": 0,
+      "valid_bid_ask_last": 0,
+      "types": [
+        3
+      ],
+      "first_valid": null,
+      "last_valid": null,
+      "errors": []
+    },
+    {
+      "request_id": 221,
+      "label": "EURUSD control",
+      "requested_type": 3,
+      "generic_ticks": "",
+      "snapshot": true,
+      "regulatory_snapshot": false,
+      "contract": {
+        "conId": 0,
+        "symbol": "EUR",
+        "localSymbol": "",
+        "secType": "CASH",
+        "exchange": "IDEALPRO",
+        "currency": "USD",
+        "lastTradeDateOrContractMonth": ""
+      },
+      "requested_utc": "2026-09-29T09:13:53.819341+00:00",
+      "requested_epoch": 1790673233.8193548,
+      "cancelled_epoch": 1790673253.889125,
+      "callbacks": 12,
+      "price_callbacks": 5,
+      "valid_bid_ask_last": 2,
+      "types": [
+        1
+      ],
+      "first_valid": {
+        "received_utc": "2026-09-29T09:13:54.305498+00:00",
+        "received_epoch": 1790673234.3055072,
+        "received_monotonic": 52644.074489041,
+        "request_id": 221,
+        "callback": "tickPrice",
+        "tick_id": 1,
+        "tick_name": "BID",
+        "value": 1.13375,
+        "attributes": {
+          "canAutoExecute": true,
+          "pastLimit": false,
+          "preOpen": false
+        }
+      },
+      "last_valid": {
+        "received_utc": "2026-09-29T09:13:54.305701+00:00",
+        "received_epoch": 1790673234.3057039,
+        "received_monotonic": 52644.07468625,
+        "request_id": 221,
+        "callback": "tickPrice",
+        "tick_id": 2,
+        "tick_name": "ASK",
+        "value": 1.13377,
+        "attributes": {
+          "canAutoExecute": true,
+          "pastLimit": false,
+          "preOpen": false
+        }
+      },
+      "errors": []
+    }
+  ],
+  "failure": null
+}

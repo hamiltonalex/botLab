@@ -1,0 +1,179 @@
+{
+  "started_utc": "2026-09-29T08:32:05.283594+00:00",
+  "endpoint": "127.0.0.1:7497",
+  "ibapi_version": "10.50.2",
+  "scope": "market data only; no order requests; no account values",
+  "requests": {
+    "20": {
+      "kind": "streaming L1, delayed requested; live if entitled",
+      "count": 0
+    },
+    "21": {
+      "kind": "live tick-by-tick AllLast",
+      "count": 0
+    },
+    "22": {
+      "kind": "live tick-by-tick BidAsk",
+      "count": 0
+    },
+    "30": {
+      "kind": "historical TRADES, latest 100 ticks",
+      "count": 108,
+      "first": {
+        "event_utc": "2026-09-29T08:22:31+00:00",
+        "price": 30628.0,
+        "size": "2"
+      },
+      "last": {
+        "event_utc": "2026-09-29T08:22:41+00:00",
+        "price": 30625.75,
+        "size": "1"
+      },
+      "completed": true
+    },
+    "31": {
+      "kind": "historical BID_ASK, latest 100 ticks",
+      "count": 156,
+      "first": {
+        "event_utc": "2026-09-29T08:22:39+00:00",
+        "bid": 30624.5,
+        "ask": 30625.0,
+        "bid_size": "7",
+        "ask_size": "1"
+      },
+      "last": {
+        "event_utc": "2026-09-29T08:22:41+00:00",
+        "bid": 30625.5,
+        "ask": 30626.0,
+        "bid_size": "7",
+        "ask_size": "2"
+      },
+      "completed": true
+    },
+    "32": {
+      "kind": "historical TRADES, 1 hour of 1-minute bars ending 20 minutes ago",
+      "count": 61,
+      "first": {
+        "time": "1790665920",
+        "open": 30558.25,
+        "high": 30561.75,
+        "low": 30553.0,
+        "close": 30556.0,
+        "volume": "899",
+        "trade_count": 414
+      },
+      "last": {
+        "time": "1790669520",
+        "open": 30578.0,
+        "high": 30586.25,
+        "low": 30576.5,
+        "close": 30582.5,
+        "volume": "347",
+        "trade_count": 192
+      },
+      "completed": true
+    }
+  },
+  "messages": [
+    {
+      "received_utc": "2026-09-29T08:32:40.372717+00:00",
+      "request_id": -1,
+      "code": 2104,
+      "message": "Market data farm connection is OK:usfarm.nj",
+      "error_time": 1790670760134
+    },
+    {
+      "received_utc": "2026-09-29T08:32:40.372876+00:00",
+      "request_id": -1,
+      "code": 2104,
+      "message": "Market data farm connection is OK:usfuture",
+      "error_time": 1790670760136
+    },
+    {
+      "received_utc": "2026-09-29T08:32:40.373056+00:00",
+      "request_id": -1,
+      "code": 2104,
+      "message": "Market data farm connection is OK:cashfarm",
+      "error_time": 1790670760136
+    },
+    {
+      "received_utc": "2026-09-29T08:32:40.373117+00:00",
+      "request_id": -1,
+      "code": 2104,
+      "message": "Market data farm connection is OK:usfarm",
+      "error_time": 1790670760136
+    },
+    {
+      "received_utc": "2026-09-29T08:32:40.373154+00:00",
+      "request_id": -1,
+      "code": 2106,
+      "message": "HMDS data farm connection is OK:ushmds",
+      "error_time": 1790670760136
+    },
+    {
+      "received_utc": "2026-09-29T08:32:40.373185+00:00",
+      "request_id": -1,
+      "code": 2158,
+      "message": "Sec-def data farm connection is OK:secdefnj",
+      "error_time": 1790670760136
+    },
+    {
+      "received_utc": "2026-09-29T08:32:41.278518+00:00",
+      "request_id": 20,
+      "code": 10167,
+      "message": "Requested market data is not subscribed. Displaying delayed market data.",
+      "error_time": 1790670761000
+    },
+    {
+      "received_utc": "2026-09-29T08:32:41.445009+00:00",
+      "request_id": 21,
+      "code": 10189,
+      "message": "Failed to request tick-by-tick data.No market data permissions for CME FUT",
+      "error_time": 1790670760418
+    },
+    {
+      "received_utc": "2026-09-29T08:32:41.572528+00:00",
+      "request_id": 30,
+      "code": 2188,
+      "message": "Up-to-the-second historical data requires additional subscription for the API.",
+      "error_time": 1790670760545
+    },
+    {
+      "received_utc": "2026-09-29T08:32:41.785332+00:00",
+      "request_id": 31,
+      "code": 2188,
+      "message": "Up-to-the-second historical data requires additional subscription for the API.",
+      "error_time": 1790670760758
+    },
+    {
+      "received_utc": "2026-09-29T08:32:41.988248+00:00",
+      "request_id": 32,
+      "code": 2188,
+      "message": "Up-to-the-second historical data requires additional subscription for the API.",
+      "error_time": 1790670760961
+    },
+    {
+      "received_utc": "2026-09-29T08:32:57.329830+00:00",
+      "request_id": 22,
+      "code": 10189,
+      "message": "Failed to request tick-by-tick data.No market data permissions for CME FUT",
+      "error_time": 1790670776303
+    }
+  ],
+  "connection_closed": true,
+  "paper_account_prefix_check": true,
+  "server_version": 226,
+  "server_time_utc": "2026-09-29T08:32:40+00:00",
+  "local_minus_server_seconds": 0.466,
+  "contract": {
+    "symbol": "MNQ",
+    "local_symbol": "MNQZ6",
+    "expiry": "20261218",
+    "exchange": "CME",
+    "con_id": 815824267,
+    "min_tick": 0.25,
+    "multiplier": "2"
+  },
+  "observation_seconds": 35,
+  "finished_utc": "2026-09-29T08:33:16.292551+00:00"
+}

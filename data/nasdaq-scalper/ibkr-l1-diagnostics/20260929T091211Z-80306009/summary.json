@@ -1,0 +1,236 @@
+{
+  "created_utc": "2026-09-29T09:12:11.795951+00:00",
+  "endpoint": "127.0.0.1:7497",
+  "client_id": 9181,
+  "ibapi_version": "10.50.2",
+  "scope": "market data only; no orders; no account values",
+  "duration_requested_seconds": 120,
+  "historical_interval_seconds_per_kind": 35,
+  "historical_weighted_limit": "Conservative local assumption: 60 requests / 600 seconds; BID_ASK weight 2 (IBKR documents this for small bars, not explicitly historical ticks)",
+  "pagination_policy": "Replay each response's final second; canonical analysis commits only earlier seconds from completed requests",
+  "seed_delay_seconds": 660,
+  "request_timeout_seconds": 65,
+  "connection_closed": true,
+  "limitations": [
+    "No external proof that IBKR supplies every exchange event.",
+    "Historical polling delivers batches, not a real-time tick stream.",
+    "Historical timestamps have second precision; cross-stream order is unknown.",
+    "No explicit aggressor side is returned in these historical trade records.",
+    "Identical tick records within a response are deliberately retained; the final second is replayed and left uncommitted until a later second is observed.",
+    "Timed-out/failed partial responses are retained; retry overlaps may occur.",
+    "The chosen contract is the nearest unexpired MNQ, not a liquidity-based roll."
+  ],
+  "paper_account_prefix_check": true,
+  "server_version": 226,
+  "contract": {
+    "local_symbol": "MNQZ6",
+    "con_id": 815824267
+  },
+  "collection_started_epoch": 1790673132.075247,
+  "collection_started_monotonic": 52541.844494125,
+  "stop_reason": "completed",
+  "collection_ended_epoch": 1790673253.889136,
+  "updated_utc": "2026-09-29T09:14:14.057628+00:00",
+  "final": true,
+  "collection_elapsed_seconds": 121.982,
+  "streaming": {
+    "callbacks": 1669,
+    "fields": {
+      "BID": 146,
+      "BID_SIZE": 596,
+      "ASK": 154,
+      "ASK_SIZE": 576,
+      "LAST": 27,
+      "LAST_SIZE": 29,
+      "VOLUME": 2,
+      "HIGH": 3,
+      "LOW": 10,
+      "CLOSE": 3,
+      "LAST_TIMESTAMP": 45,
+      "HALTED": 5,
+      "DELAYED_LAST": 6,
+      "DELAYED_LAST_SIZE": 6,
+      "DELAYED_LAST_TIMESTAMP": 6,
+      "DELAYED_VOLUME": 6,
+      "DELAYED_CLOSE": 2,
+      "DELAYED_BID": 11,
+      "DELAYED_BID_SIZE": 12,
+      "DELAYED_ASK": 11,
+      "DELAYED_ASK_SIZE": 11,
+      "DELAYED_OPEN": 2
+    },
+    "price_callbacks": 375,
+    "valid_bid_ask_last_callbacks": 355,
+    "first_epoch": 1790673132.809949,
+    "last_epoch": 1790673234.3059971,
+    "last_price_epoch": 1790673234.305881,
+    "max_interarrival_seconds": 1.1933038234710693,
+    "market_data_types": [
+      {
+        "received_utc": "2026-09-29T09:12:12.803331+00:00",
+        "received_epoch": 1790673132.803334,
+        "received_monotonic": 52542.572578625,
+        "request_id": 204,
+        "type": 1,
+        "label": "live"
+      },
+      {
+        "received_utc": "2026-09-29T09:12:12.918094+00:00",
+        "received_epoch": 1790673132.918103,
+        "received_monotonic": 52542.687347583,
+        "request_id": 205,
+        "type": 3,
+        "label": "delayed"
+      },
+      {
+        "received_utc": "2026-09-29T09:12:13.391404+00:00",
+        "received_epoch": 1790673133.3914082,
+        "received_monotonic": 52543.160651166,
+        "request_id": 202,
+        "type": 3,
+        "label": "delayed"
+      },
+      {
+        "received_utc": "2026-09-29T09:12:13.391573+00:00",
+        "received_epoch": 1790673133.391576,
+        "received_monotonic": 52543.16081925,
+        "request_id": 203,
+        "type": 3,
+        "label": "delayed"
+      },
+      {
+        "received_utc": "2026-09-29T09:12:13.391766+00:00",
+        "received_epoch": 1790673133.391768,
+        "received_monotonic": 52543.161011541,
+        "request_id": 201,
+        "type": 3,
+        "label": "delayed"
+      },
+      {
+        "received_utc": "2026-09-29T09:13:03.451832+00:00",
+        "received_epoch": 1790673183.451843,
+        "received_monotonic": 52593.2209565,
+        "request_id": 210,
+        "type": 3,
+        "label": "delayed"
+      },
+      {
+        "received_utc": "2026-09-29T09:13:03.452359+00:00",
+        "received_epoch": 1790673183.452371,
+        "received_monotonic": 52593.221485125,
+        "request_id": 211,
+        "type": 3,
+        "label": "delayed"
+      },
+      {
+        "received_utc": "2026-09-29T09:13:03.453119+00:00",
+        "received_epoch": 1790673183.453127,
+        "received_monotonic": 52593.222240583,
+        "request_id": 202,
+        "type": 3,
+        "label": "delayed"
+      },
+      {
+        "received_utc": "2026-09-29T09:13:03.453428+00:00",
+        "received_epoch": 1790673183.453436,
+        "received_monotonic": 52593.222549458,
+        "request_id": 203,
+        "type": 3,
+        "label": "delayed"
+      },
+      {
+        "received_utc": "2026-09-29T09:13:03.453588+00:00",
+        "received_epoch": 1790673183.453592,
+        "received_monotonic": 52593.222705583,
+        "request_id": 201,
+        "type": 3,
+        "label": "delayed"
+      },
+      {
+        "received_utc": "2026-09-29T09:13:03.511592+00:00",
+        "received_epoch": 1790673183.5116138,
+        "received_monotonic": 52593.280728916,
+        "request_id": 213,
+        "type": 3,
+        "label": "delayed"
+      },
+      {
+        "received_utc": "2026-09-29T09:13:03.552232+00:00",
+        "received_epoch": 1790673183.552247,
+        "received_monotonic": 52593.321361291,
+        "request_id": 212,
+        "type": 3,
+        "label": "delayed"
+      },
+      {
+        "received_utc": "2026-09-29T09:13:03.719271+00:00",
+        "received_epoch": 1790673183.7192872,
+        "received_monotonic": 52593.488400041,
+        "request_id": 214,
+        "type": 1,
+        "label": "live"
+      },
+      {
+        "received_utc": "2026-09-29T09:13:03.823735+00:00",
+        "received_epoch": 1790673183.823741,
+        "received_monotonic": 52593.592853625,
+        "request_id": 215,
+        "type": 3,
+        "label": "delayed"
+      },
+      {
+        "received_utc": "2026-09-29T09:13:54.008706+00:00",
+        "received_epoch": 1790673234.008724,
+        "received_monotonic": 52643.777706958,
+        "request_id": 220,
+        "type": 3,
+        "label": "delayed"
+      },
+      {
+        "received_utc": "2026-09-29T09:13:54.305017+00:00",
+        "received_epoch": 1790673234.305024,
+        "received_monotonic": 52644.074006,
+        "request_id": 221,
+        "type": 1,
+        "label": "live"
+      }
+    ],
+    "seconds_since_last_callback": 19.752
+  },
+  "historical": {
+    "TRADES": {
+      "cursor": null,
+      "records": 0,
+      "first_epoch": null,
+      "last_epoch": null,
+      "completed_requests": 0,
+      "empty_requests": 0,
+      "failed_requests": 0,
+      "timed_out_requests": 0,
+      "last_response_latency_seconds": null,
+      "pending_id": null,
+      "coverage_start_utc": null,
+      "coverage_end_utc": null,
+      "latest_event_age_seconds": null,
+      "cursor_utc": null,
+      "cursor_lag_seconds": null
+    },
+    "BID_ASK": {
+      "cursor": null,
+      "records": 0,
+      "first_epoch": null,
+      "last_epoch": null,
+      "completed_requests": 0,
+      "empty_requests": 0,
+      "failed_requests": 0,
+      "timed_out_requests": 0,
+      "last_response_latency_seconds": null,
+      "pending_id": null,
+      "coverage_start_utc": null,
+      "coverage_end_utc": null,
+      "latest_event_age_seconds": null,
+      "cursor_utc": null,
+      "cursor_lag_seconds": null
+    }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "started_utc": "2026-09-29T09:15:59.326359+00:00",
+  "endpoint": "127.0.0.1:7497",
+  "ibapi_version": "10.50.2",
+  "scope": "market data only; no order requests; no account values",
+  "requests": {
+    "20": {
+      "kind": "streaming L1, delayed requested; live if entitled",
+      "count": 0,
+      "market_data_types": [
+        {
+          "received_utc": "2026-09-29T09:15:59.616133+00:00",
+          "type": 3,
+          "label": "delayed"
+        }
+      ]
+    }
+  },
+  "messages": [
+    {
+      "received_utc": "2026-09-29T09:15:59.329104+00:00",
+      "request_id": -1,
+      "code": 2104,
+      "message": "Market data farm connection is OK:usfarm.nj",
+      "error_time": 1790673358588
+    },
+    {
+      "received_utc": "2026-09-29T09:15:59.329127+00:00",
+      "request_id": -1,
+      "code": 2104,
+      "message": "Market data farm connection is OK:usfuture",
+      "error_time": 1790673358588
+    },
+    {
+      "received_utc": "2026-09-29T09:15:59.329139+00:00",
+      "request_id": -1,
+      "code": 2104,
+      "message": "Market data farm connection is OK:cashfarm",
+      "error_time": 1790673358588
+    },
+    {
+      "received_utc": "2026-09-29T09:15:59.329146+00:00",
+      "request_id": -1,
+      "code": 2104,
+      "message": "Market data farm connection is OK:usfarm",
+      "error_time": 1790673358588
+    },
+    {
+      "received_utc": "2026-09-29T09:15:59.329152+00:00",
+      "request_id": -1,
+      "code": 2106,
+      "message": "HMDS data farm connection is OK:ushmds",
+      "error_time": 1790673358588
+    },
+    {
+      "received_utc": "2026-09-29T09:15:59.329158+00:00",
+      "request_id": -1,
+      "code": 2158,
+      "message": "Sec-def data farm connection is OK:secdefnj",
+      "error_time": 1790673358588
+    }
+  ],
+  "connection_closed": true,
+  "paper_account_prefix_check": true,
+  "connected_utc": "2026-09-29T09:15:59.328919+00:00",
+  "server_version": 226,
+  "server_time_utc": "2026-09-29T09:15:58+00:00",
+  "local_minus_server_seconds": 1.329,
+  "contract": {
+    "symbol": "MNQ",
+    "local_symbol": "MNQZ6",
+    "expiry": "20261218",
+    "exchange": "CME",
+    "con_id": 815824267,
+    "min_tick": 0.25,
+    "multiplier": "2"
+  },
+  "observation_seconds": 60,
+  "finished_utc": "2026-09-29T09:16:59.728235+00:00"
+}

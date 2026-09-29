@@ -1,0 +1,2 @@
+{"received_utc": "2026-09-29T09:12:12.075070+00:00", "received_epoch": 1790673132.0751061, "received_monotonic": 52541.844352583, "callback": "contractDetailsEnd", "request_id": 10, "count": 5}
+{"received_utc": "2026-09-29T09:14:13.889190+00:00", "received_epoch": 1790673253.889194, "received_monotonic": 52663.658125291, "callback": "connectionClosed"}
